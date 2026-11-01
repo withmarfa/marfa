@@ -1842,7 +1842,7 @@ When direct owner or local authority sends `POST /restore` with an archive that 
 
 When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped` and `sources_skipped_reasons`, each for the kind of thing it counts.
 
-**Tests:** `compliance/restore-archive.test.ts › answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`.
+**Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
 ### `search-and-filters/restore-blobs-missing`
 
@@ -1974,7 +1974,7 @@ When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_r
 
 **Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin`, `search-and-filters/restore-edges-unregistered`, `search-and-filters/restore-edges-end-unregistered` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
 
-**Tests:** `compliance/restore-archive.test.ts › answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
+**Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
 ### `search-and-filters/restore-items-kept`
 
@@ -2002,7 +2002,7 @@ When an archived item holds an id or a natural key that a row on the instance al
 
 **Reason:** a link is one row's within its type (`items/link-taken`).
 
-**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers the restore result fields on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
 
 ### `search-and-filters/restore-duplicate-kept`
 

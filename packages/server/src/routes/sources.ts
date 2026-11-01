@@ -242,7 +242,6 @@ function seesEverySource(c: Context<AppEnv>): boolean {
   return isDirectAuthority(c) || holdsPermission(c, "keys.manage");
 }
 
-/** The caller's own source and the sources it claims. */
 function ownedSources(c: Context<AppEnv>): Set<string> {
   if (isDirectAuthority(c)) return new Set();
   const key = requireAuth(c);
@@ -277,7 +276,6 @@ async function readableItemSources(
   return Object.keys(counts);
 }
 
-/** The name an app signed in under `source` is shown by, if it is one. */
 async function appName(
   storage: Storage,
   source: string,
@@ -321,7 +319,6 @@ async function sourceView(
   return view(source, "code");
 }
 
-/** Each source's name and mark, ordered by code. */
 async function sourceViews(
   storage: Storage,
   codes: Iterable<string>,
@@ -338,7 +335,6 @@ async function sourceViews(
   return views;
 }
 
-/** One source's name and mark. */
 async function oneSourceView(
   storage: Storage,
   source: string,

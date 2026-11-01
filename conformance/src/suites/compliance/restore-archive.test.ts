@@ -808,7 +808,7 @@ describe("what a restore answers", () => {
     return { a, b, edgeId, hash, archive };
   }
 
-  it("answers thirteen counts, each for the kind of thing it counts, on the first restore and on a repeat", async () => {
+  it("answers the restore result fields on the first restore and on a repeat", async () => {
     const ids = {
       type: `user.restoreanswer${ctx.runId}`,
       edgeType: `restoreanswer.${ctx.runId}`,
