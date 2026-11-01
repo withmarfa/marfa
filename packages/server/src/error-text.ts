@@ -57,25 +57,19 @@ const PRIMARY_CODES = new Set([
 ]);
 
 /**
- * The codes `@libsql/client` raises itself, each a fixed identifier written
- * in its source (`sqlite3.js`, `hrana.js`, `http.js`, `ws.js`, `node.js`):
- * a closed client or transaction, a refused URL or option, and the remote
- * clients' transport failures. A remote server's own code is not here,
- * because the server chooses its text.
+ * The codes the local `@libsql/client` raises itself, each a fixed identifier
+ * written in its source (`sqlite3.js` and the `expandConfig` of
+ * `@libsql/core` that it opens through, as of 0.17.4): a closed client or
+ * transaction, and a URL or option it refuses. Marfa opens only `file:`
+ * databases, so the remote clients' codes (`HRANA_*`, `SERVER_ERROR` and the
+ * like), whose text a remote server can choose, are not here.
  */
 const LIBSQL_CODES = new Set([
   "CLIENT_CLOSED",
   "TRANSACTION_CLOSED",
   "URL_INVALID",
-  "ENCRYPTION_KEY_NOT_SUPPORTED",
-  "SYNC_NOT_SUPPORTED",
-  "HRANA_PROTO_ERROR",
-  "HRANA_CLOSED_ERROR",
-  "HRANA_WEBSOCKET_ERROR",
-  "SERVER_ERROR",
-  "PROTOCOL_VERSION_ERROR",
-  "INTERNAL_ERROR",
-  "UNKNOWN",
+  "URL_PARAM_NOT_SUPPORTED",
+  "URL_SCHEME_NOT_SUPPORTED",
   "SQLITE_UNKNOWN",
 ]);
 

@@ -11,6 +11,7 @@ import {
 import { DrizzleQueryError } from "drizzle-orm";
 import { LibsqlError } from "@libsql/client";
 import { BulkActionWorker } from "./worker.js";
+import { captureLogLines } from "../test-log.js";
 
 /**
  * Empty matched IDs isolate polling and completion from chunk execution,
@@ -426,11 +427,7 @@ describe("BulkActionWorker and a failed tick", () => {
     fail: Error,
     stopFirst: boolean,
   ): Promise<Record<string, unknown>[]> {
-    const lines: Record<string, unknown>[] = [];
-    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-      lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
-      return true;
-    });
+    const lines = captureLogLines();
     const stub = makeStubStorage();
     let reject!: (error: Error) => void;
     (stub.storage.bulkActionJobs as Partial<BulkActionJobStore>).claimNext =

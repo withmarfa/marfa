@@ -1,16 +1,48 @@
 import { createServer, type Server } from "node:http";
-import { connect, type AddressInfo } from "node:net";
+import { connect, type AddressInfo, type Socket } from "node:net";
 import { serve } from "@hono/node-server";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import {
+  enforceRequestDeadline,
+  severAllConnections,
+} from "../request-deadline.js";
+import { captureLogLines } from "../test-log.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 let receiver: Server;
 let alerts = 0;
-let server: Server;
-let port: number;
 let lines: Record<string, unknown>[];
 const reported = vi.fn();
+
+interface Listener {
+  server: Server;
+  port: number;
+  sockets: Socket[];
+}
+const listeners: Listener[] = [];
+
+/** The app on a real listener, with the request deadline of the public listener when `deadlineMs` is given. */
+async function listen(deadlineMs?: number): Promise<Listener> {
+  const server = serve({
+    fetch: ctx.app.fetch,
+    port: 0,
+    hostname: "127.0.0.1",
+  }) as Server;
+  if (deadlineMs !== undefined) enforceRequestDeadline(server, deadlineMs);
+  const sockets: Socket[] = [];
+  server.on("connection", (socket) => sockets.push(socket));
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const listener = {
+    server,
+    port: (server.address() as AddressInfo).port,
+    sockets,
+  };
+  listeners.push(listener);
+  return listener;
+}
+
+let main: Listener;
 
 beforeAll(async () => {
   receiver = createServer((_req, res) => {
@@ -23,24 +55,23 @@ beforeAll(async () => {
   ctx = await createTestContext({
     errorWebhookUrl: `http://127.0.0.1:${String((receiver.address() as AddressInfo).port)}/alert`,
   });
-  server = serve({
-    fetch: ctx.app.fetch,
-    port: 0,
-    hostname: "127.0.0.1",
-  }) as Server;
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  port = (server.address() as AddressInfo).port;
+  main = await listen();
   globalThis.__marfaReportException = reported;
 });
 
 afterAll(async () => {
   globalThis.__marfaReportException = undefined;
-  server.closeAllConnections();
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve();
-    });
-  });
+  await Promise.all(
+    listeners.map(
+      ({ server }) =>
+        new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve();
+          });
+          server.closeAllConnections();
+        }),
+    ),
+  );
   await ctx.cleanup();
   await new Promise<void>((resolve) => {
     receiver.close(() => {
@@ -55,46 +86,58 @@ afterEach(() => {
   alerts = 0;
 });
 
-function watchLog(): void {
-  lines = [];
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    for (const line of String(chunk).split("\n")) {
-      try {
-        lines.push(JSON.parse(line) as Record<string, unknown>);
-      } catch {
-        // Not a JSON log line.
-      }
-    }
-    return true;
+/** A `POST` to `path` that promises `promised` bytes and sends `sent`, then waits as the caller decides. */
+function openUpload(
+  at: Listener,
+  sent: number,
+  promised: number,
+  path = "/blobs",
+  contentType = "application/octet-stream",
+): {
+  /** Settles once the server has read everything the client sent. */
+  taken: Promise<void>;
+  /** Drops the connection with a reset. */
+  reset: () => void;
+  /** Settles once the connection is closed. */
+  closed: Promise<void>;
+} {
+  const head =
+    `POST ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nAuthorization: Bearer ${ctx.workingKey}\r\n` +
+    `Content-Type: ${contentType}\r\nContent-Length: ${String(promised)}\r\n\r\n`;
+  const total = Buffer.byteLength(head) + sent;
+  const socket = connect(at.port, "127.0.0.1", () => {
+    socket.write(head);
+    socket.write(Buffer.alloc(sent, 1));
   });
-}
-
-/** Send an upload that promises `promised` bytes but delivers `sent`, then either ends or drops the connection. */
-function upload(sent: number, promised: number, drop: boolean): Promise<void> {
-  return new Promise((resolve) => {
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `POST /blobs HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nAuthorization: Bearer ${ctx.workingKey}\r\n` +
-          `Content-Type: application/octet-stream\r\nContent-Length: ${String(promised)}\r\n\r\n`,
+  socket.on("error", () => undefined);
+  socket.resume();
+  return {
+    taken: vi.waitFor(() => {
+      const mine = at.sockets.find(
+        (candidate) => candidate.remotePort === socket.localPort,
       );
-      socket.write(Buffer.alloc(sent, 1), () => {
-        if (drop) setTimeout(() => socket.resetAndDestroy(), 50);
+      expect(mine?.bytesRead).toBe(total);
+    }),
+    reset: () => {
+      socket.resetAndDestroy();
+    },
+    closed: new Promise((resolve) => {
+      socket.on("close", () => {
+        resolve();
       });
-    });
-    socket.on("error", () => undefined);
-    socket.on("close", () => {
-      resolve();
-    });
-    if (!drop) socket.resume();
-  });
+    }),
+  };
 }
 
-const requestLines = () =>
-  lines.filter((line) => line.path === "/blobs" && line.transport === "http");
+const requestLines = (path = "/blobs") =>
+  lines.filter((line) => line.path === path && line.transport === "http");
 
 it("logs an upload the client dropped as aborted, with no 500 and no exception report", async () => {
-  watchLog();
-  await upload(1000, 100_000, true);
+  lines = captureLogLines();
+  const upload = openUpload(main, 1000, 100_000);
+  await upload.taken;
+  upload.reset();
+  await upload.closed;
   await vi.waitFor(() => {
     expect(requestLines()).toHaveLength(1);
   });
@@ -117,11 +160,11 @@ it("still reports a server error on the same route that says it was aborted", as
   // The witness for the test above: a fault is producible on this route and
   // is seen, even when its text matches a client abort, while the client is
   // still there.
-  watchLog();
+  lines = captureLogLines();
   vi.spyOn(ctx.storage.blobs, "register").mockRejectedValue(
     new Error("aborted"),
   );
-  await upload(1000, 1000, false);
+  await openUpload(main, 1000, 1000).closed;
   await vi.waitFor(() => {
     expect(requestLines()).toHaveLength(1);
   });
@@ -134,4 +177,40 @@ it("still reports a server error on the same route that says it was aborted", as
   await vi.waitFor(() => {
     expect(alerts).toBe(1);
   });
+});
+
+/** What the log, the exception reporter and the alert webhook show of a request the server ended itself. */
+function expectLoggedAs(path: string, status: number): void {
+  expect(requestLines(path)).toHaveLength(1);
+  expect(requestLines(path)[0]).toMatchObject({ route: path, status });
+  expect(lines.filter((line) => line.message === "Unhandled error")).toEqual(
+    [],
+  );
+  expect(reported).not.toHaveBeenCalled();
+  expect(alerts).toBe(0);
+}
+
+it("logs a request the request deadline cut off as the 408 the server answered, not as a client drop", async () => {
+  lines = captureLogLines();
+  const at = await listen(300);
+  await openUpload(at, 1000, 100_000, "/items", "application/json").closed;
+  await vi.waitFor(() => {
+    expect(requestLines("/items")).toHaveLength(1);
+  });
+
+  expectLoggedAs("/items", 408);
+});
+
+it("logs an upload cut off when the server closes every connection as the 503, not as a client drop", async () => {
+  lines = captureLogLines();
+  const at = await listen(60_000);
+  const upload = openUpload(at, 1000, 100_000);
+  await upload.taken;
+  severAllConnections(at.server);
+  await upload.closed;
+  await vi.waitFor(() => {
+    expect(requestLines()).toHaveLength(1);
+  });
+
+  expectLoggedAs("/blobs", 503);
 });
