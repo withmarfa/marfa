@@ -317,7 +317,13 @@ impl Folder {
             let flagged = Flagged::of(&bound.path, held);
             return Ok(entry.because(flagged.flag, flagged.reason));
         }
-        if let Some(refused) = bound.writes.refused.last() {
+        if let Some(refused) = bound
+            .writes
+            .refused
+            .iter()
+            .rev()
+            .find(|refused| !matches!(refused.change, state::Change::DefaultEdge { .. }))
+        {
             return Ok(entry.because("refused", refused.reason.clone()));
         }
         let mut named: Vec<&'static str> = Vec::new();
@@ -350,6 +356,13 @@ impl Folder {
                     entry = entry.because("dead", "an upload its current write needs reached the refusal limit and remains held");
                 }
             }
+        }
+        // A default edge's refusal stands until it is mended, so it shows only
+        // where nothing about the person's own edits does.
+        if entry.flag.is_none()
+            && let Some(refused) = bound.writes.refused.last()
+        {
+            entry = entry.because("refused", refused.reason.clone());
         }
         if !named.is_empty() {
             return Ok(waits(entry, named));

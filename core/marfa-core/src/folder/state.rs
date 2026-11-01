@@ -197,6 +197,8 @@ pub enum Change {
     /// names it, so a line-based clean-up never judges it.
     DefaultEdge {
         line: Line,
+        /// Whether the file is a file item's, which has no lines to write.
+        file: bool,
     },
 }
 

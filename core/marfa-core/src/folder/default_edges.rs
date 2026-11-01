@@ -14,6 +14,7 @@ use crate::catalog::End;
 pub(super) struct Defaulted {
     queued: Vec<String>,
     refused: Vec<(state::Line, String)>,
+    file: bool,
 }
 
 impl Defaulted {
@@ -29,29 +30,38 @@ impl Defaulted {
                 default: true,
             }));
         for (line, reason) in self.refused {
-            refuse(writes, &line, reason);
+            refuse(writes, &line, self.file, reason);
         }
     }
 }
 
 /// What a refusal of a default edge says to the person: which edge, and how
-/// to have it anyway.
-pub(super) fn default_reason(line: &state::Line, reason: &str) -> String {
+/// to have it anyway. A document's file can write the line; a file item has
+/// no lines, so its edge is made in an app, or left out of the defaults.
+pub(super) fn default_reason(line: &state::Line, file: bool, reason: &str) -> String {
+    let how = if file {
+        "make that edge in an app, or take it out of the folder's defaults"
+    } else {
+        "write that line in the file to apply it"
+    };
     format!(
-        "{reason} (the folder's default {} edge to {} was not applied; write that line in the file to apply it)",
+        "{reason} (the folder's default {} edge to {} was not applied; {how})",
         line.edge_type, line.other
     )
 }
 
-fn refuse(writes: &mut state::Writes, line: &state::Line, reason: String) {
-    let change = state::Change::DefaultEdge { line: line.clone() };
+fn refuse(writes: &mut state::Writes, line: &state::Line, file: bool, reason: String) {
+    let change = state::Change::DefaultEdge {
+        line: line.clone(),
+        file,
+    };
     writes
         .refused
         .retain(|refused| !change.supersedes(&refused.change));
     writes.refused.push(state::Refused {
         change,
         save: writes.save,
-        reason: default_reason(line, &reason),
+        reason: default_reason(line, file, &reason),
     });
 }
 
@@ -78,7 +88,10 @@ impl Folder {
         front: Option<(&Map<String, Value>, &super::EdgeTypes)>,
         flagged: &mut Vec<Flagged>,
     ) -> Result<Defaulted> {
-        let mut defaulted = Defaulted::default();
+        let mut defaulted = Defaulted {
+            file: front.is_none(),
+            ..Defaulted::default()
+        };
         for (edge_type, targets) in &settings.defaults.edges {
             let end = end_of(edge_type);
             if let Some((front, types)) = front
@@ -96,7 +109,10 @@ impl Folder {
                 match self.make_default_edge(item_id, &line)? {
                     Ok(id) => defaulted.queued.push(id),
                     Err(reason) => {
-                        flagged.push(Flagged::of(path, &default_reason(&line, &reason)));
+                        flagged.push(Flagged::of(
+                            path,
+                            &default_reason(&line, defaulted.file, &reason),
+                        ));
                         defaulted.refused.push((line, reason));
                     }
                 }
@@ -128,9 +144,44 @@ impl Folder {
         }
     }
 
+    /// Whether the copy already holds the edge a default asks for, such as one
+    /// made in an app after the default was refused. An edge shown only by a
+    /// write waiting to be sent counts while that write waits; one a refused
+    /// write once showed does not.
+    fn holds_edge(&self, item_id: &str, line: &state::Line) -> Result<bool> {
+        let (source, target) = match line.end {
+            End::Target => (line.other.as_str(), item_id),
+            End::Source => (item_id, line.other.as_str()),
+        };
+        let edges = match line.end {
+            End::Target => self.core.edges_to(item_id)?,
+            End::Source => self.core.edges_from(item_id)?,
+        };
+        let waiting = |edge: &crate::model::Edge| {
+            self.core.queue().map(|queue| {
+                queue.iter().any(|row| {
+                    row.kind == crate::model::WriteKind::CreateEdge
+                        && row.verdict.is_none()
+                        && row.item_id.as_deref() == Some(edge.source_id.as_str())
+                        && row.target_id.as_deref() == Some(edge.target_id.as_str())
+                })
+            })
+        };
+        for edge in edges {
+            if edge.edge_type == line.edge_type
+                && edge.source_id == source
+                && edge.target_id == target
+                && (edge.version > 0 || waiting(&edge)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Settles each default edge a file holds refused. It is dropped once the
     /// edge is no longer wanted: the defaults stop naming it, the file writes
-    /// a line of that type, or its item is gone or trashed. Otherwise a
+    /// a line of that type, the copy holds the edge, or its item is gone or trashed. Otherwise a
     /// refusal by the copy is judged again, since what refused it can change
     /// without the file, and one by the server only after a later save of the
     /// file, since the server would refuse the same write again.
@@ -147,7 +198,7 @@ impl Folder {
                 .is_some_and(|item| item.state != ItemState::Trashed);
             let owed: Vec<state::Refused> = std::mem::take(&mut bound.writes.refused);
             for refused in owed {
-                let state::Change::DefaultEdge { line } = &refused.change else {
+                let state::Change::DefaultEdge { line, file } = &refused.change else {
                     bound.writes.refused.push(refused);
                     continue;
                 };
@@ -161,7 +212,7 @@ impl Folder {
                         .lines
                         .iter()
                         .any(|held| held.edge_type == line.edge_type && held.end == line.end);
-                if !wanted {
+                if !wanted || self.holds_edge(&bound.item_id, line)? {
                     continue;
                 }
                 if !super::copy_refused(&refused) && refused.save >= bound.writes.save {
@@ -179,7 +230,7 @@ impl Folder {
                         });
                     }
                     Err(reason) => {
-                        refuse(&mut bound.writes, line, reason);
+                        refuse(&mut bound.writes, line, *file, reason);
                     }
                 }
             }
@@ -204,7 +255,10 @@ pub(super) fn as_default(
 ) -> state::Change {
     match change {
         state::Change::Edge { line, .. } if bound.writes.queued[queued].default => {
-            state::Change::DefaultEdge { line }
+            state::Change::DefaultEdge {
+                line,
+                file: bound.blob.is_some(),
+            }
         }
         other => other,
     }
@@ -213,7 +267,7 @@ pub(super) fn as_default(
 /// The reason a refusal of `change` is shown with.
 pub(super) fn reason_of(change: &state::Change, reason: String) -> String {
     match change {
-        state::Change::DefaultEdge { line, .. } => default_reason(line, &reason),
+        state::Change::DefaultEdge { line, file } => default_reason(line, *file, &reason),
         _ => reason,
     }
 }

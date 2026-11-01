@@ -6105,8 +6105,16 @@ mod tests {
                     refused[0].reason.contains("item_not_found")
                         && refused[0].reason.contains("in-collection")
                         && refused[0].reason.contains(BINNED_SHELF)
-                        && refused[0].reason.contains("write that line in the file"),
+                        && refused[0].reason.contains(if path == "a.md" {
+                            "write that line in the file"
+                        } else {
+                            "make that edge in an app"
+                        }),
                     "{refused:?}"
+                );
+                assert!(
+                    path == "a.md" || !refused[0].reason.contains("in the file"),
+                    "a file item has no line to write: {refused:?}"
                 );
                 let status = status_of_file(&folder, path);
                 assert_eq!(status.flag, Some("refused"), "{path}: {status:?}");
@@ -6146,15 +6154,27 @@ mod tests {
         folder.scan().unwrap();
         assert_eq!(edges_to(&folder, SHELF), 1);
         let refuse = |folder: &Folder| {
-            folder
+            let ids: Vec<String> = folder
                 .core
-                .conn()
+                .queue()
                 .unwrap()
-                .execute(
-                    "UPDATE queue SET verdict = 'refused', reason = 'validation_error' WHERE kind = 'create_edge' AND verdict IS NULL",
-                    [],
+                .into_iter()
+                .filter(|row| row.kind == WriteKind::CreateEdge && row.verdict.is_none())
+                .map(|row| row.id)
+                .collect();
+            for id in ids {
+                crate::store::record_verdict(
+                    &folder.core.conn().unwrap(),
+                    &id,
+                    &crate::store::Answered {
+                        verdict: crate::Verdict::Refused,
+                        reason: Some("validation_error"),
+                        answer: None,
+                        conflicted_copy_id: None,
+                    },
                 )
                 .unwrap();
+            }
             folder.hold_refused().unwrap();
         };
         refuse(&folder);
@@ -6231,6 +6251,185 @@ mod tests {
         assert_eq!(status_of_file(&folder, "settings.md").flag, None);
         // The witness for both: nothing was made for the binned shelf.
         assert_eq!(edges_to(&folder, BINNED_SHELF), 0);
+    }
+
+    fn item_of(folder: &Folder, path: &str) -> String {
+        state::bound_at(&folder.core.conn().unwrap(), path)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} is not bound"))
+            .item_id
+    }
+
+    #[test]
+    fn a_default_edge_the_copy_already_holds_is_accepted_not_asked_for_twice() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        std::fs::write(dir.path().join("archive.bin"), [0x80_u8, 0x81, 0x82]).unwrap();
+        folder.scan().unwrap();
+        for path in ["a.md", "archive.bin"] {
+            assert_eq!(default_refusals(&folder, path).len(), 1, "{path}");
+            // The person makes the edge in an app, and the pull brings it.
+            let item = item_of(&folder, path);
+            crate::store::put_server_edge(
+                &folder.core.conn().unwrap(),
+                &crate::store::testing::wire_edge(
+                    &format!("made-{path}"),
+                    &item,
+                    BINNED_SHELF,
+                    "in-collection",
+                ),
+            )
+            .unwrap();
+        }
+        // The witness is the restore test above: without the edge, this
+        // restore queues one edge for each file.
+        put_shelf(&folder, "active");
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, BINNED_SHELF), 0);
+        for path in ["a.md", "archive.bin"] {
+            assert!(default_refusals(&folder, path).is_empty(), "{path}");
+            assert_eq!(status_of_file(&folder, path).flag, None, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_refused_default_edge_is_cleared_when_its_item_is_in_the_bin_or_gone() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        for name in ["kept.md", "binned.md", "gone.md"] {
+            std::fs::write(dir.path().join(name), "a note\n").unwrap();
+        }
+        folder.scan().unwrap();
+        for name in ["kept.md", "binned.md", "gone.md"] {
+            assert_eq!(default_refusals(&folder, name).len(), 1, "{name}");
+        }
+        let binned = item_of(&folder, "binned.md");
+        let gone = item_of(&folder, "gone.md");
+        crate::store::upsert_item(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_item(
+                &binned,
+                "core.note",
+                "trashed",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({}),
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        crate::store::purge_item(&folder.core.conn().unwrap(), &gone).unwrap();
+        folder
+            .settle_default_edges(&folder.settings().unwrap())
+            .unwrap();
+        assert!(default_refusals(&folder, "binned.md").is_empty());
+        assert!(default_refusals(&folder, "gone.md").is_empty());
+        // The witness: the item that is still there keeps its refusal.
+        assert_eq!(default_refusals(&folder, "kept.md").len(), 1);
+    }
+
+    #[test]
+    fn a_dead_edit_shows_as_dead_over_a_standing_default_refusal() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        folder.scan().unwrap();
+        let item = item_of(&folder, "a.md");
+        assert_eq!(status_of_file(&folder, "a.md").flag, Some("refused"));
+        // The create has gone; an edit of the item has reached the limit.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'accepted' WHERE kind = 'create_item'",
+                [],
+            )
+            .unwrap();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('edit','update_item',?1,'edit','{}',1,'dead','2026-01-01T00:00:00Z')",
+                [&item],
+            )
+            .unwrap();
+        let status = status_of_file(&folder, "a.md");
+        assert_eq!(status.flag, Some("dead"), "{status:?}");
+        assert!(default_refusals(&folder, "a.md").len() == 1);
+    }
+
+    #[test]
+    fn a_refused_default_edge_does_not_keep_an_unmatched_file_from_removal() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": { "types": ["core.note"] },
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        folder.scan().unwrap();
+        let mut bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert_eq!(default_refusals(&folder, "a.md").len(), 1);
+        // Left outside the query, with nothing waiting and the bytes as written.
+        crate::store::upsert_item(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_item(
+                FOLDER_ID,
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({
+                    "query": { "types": ["core.file.audio"] },
+                    "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+                }),
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        bound.writes.queued.clear();
+        bound.written_hash = Some(state::hash(
+            &std::fs::read(dir.path().join("a.md")).unwrap(),
+        ));
+        state::bind(&folder.core.conn().unwrap(), &bound).unwrap();
+        state::set_unmatched(&folder.core.conn().unwrap(), &[bound.item_id.clone()]).unwrap();
+
+        // The witness: a refused edit of the person's own keeps it.
+        let mut own = bound.clone();
+        own.writes.refused.push(state::Refused {
+            change: state::Change::Edit,
+            save: 1,
+            reason: "validation_error".into(),
+        });
+        state::bind(&folder.core.conn().unwrap(), &own).unwrap();
+        let kept = folder.unmatched_files().unwrap();
+        assert!(
+            kept[0]
+                .kept
+                .as_deref()
+                .is_some_and(|why| why.contains("held or refused")),
+            "{kept:?}"
+        );
+
+        state::bind(&folder.core.conn().unwrap(), &bound).unwrap();
+        let free = folder.unmatched_files().unwrap();
+        assert_eq!(free.len(), 1, "{free:?}");
+        assert_eq!(free[0].kept, None, "{free:?}");
     }
 
     #[test]

@@ -2,12 +2,20 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  copyItemEvent,
   edgeType,
   refusal,
   SCRIPTED_EDGE_TYPES,
+  wireItem,
 } from "../../device/marfa-answers.js";
 import { acceptUploads, folderHarness } from "./harness.js";
-import { EdgeDoor, edit, put, scriptFolderWrites } from "./folders.shared.js";
+import {
+  EdgeDoor,
+  edit,
+  idIn,
+  put,
+  scriptFolderWrites,
+} from "./folders.shared.js";
 import type { FolderHarness } from "./harness.js";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import type { WireItemOptions } from "../../device/marfa-answers.js";
@@ -40,6 +48,7 @@ async function defaultsHarness(
   const edges = options.edges ?? new EdgeDoor();
   const constraint = options.constraint ?? (() => ["*"]);
   const made = await folderHarness(label, {
+    events: [edges.stream()],
     settings: {
       query: { types: ["core.note", "core.file"] },
       defaults: { edges: { "shelved-in": [beta] } },
@@ -111,7 +120,13 @@ describe("folders: a refused default edge", () => {
       expect(file.reason).toContain("edge_constraint_violation");
       expect(file.reason).toContain("shelved-in");
       expect(file.reason).toContain(beta);
-      expect(file.reason).toContain("write that line in the file");
+      // A document's file can write the line; a file item has no lines.
+      expect(file.reason).toContain(
+        path === BINARY
+          ? "make that edge in an app"
+          : "write that line in the file",
+      );
+      if (path === BINARY) expect(file.reason).not.toContain("in the file");
     }
     // The witness: the file that wrote its own line is held for nothing.
     expect((await statusOf(harness, "Own.md")).flag).toBeUndefined();
@@ -228,6 +243,111 @@ describe("folders: a refused default edge", () => {
     expect(
       (await statusOf(harness, "Settings.md")).flag,
       "a default stayed refused after the defaults stopped naming it",
+    ).toBeUndefined();
+  });
+
+  it("clears a default the person made as an edge themselves, for a document and a file", async () => {
+    let refusing = true;
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      refusing && edge.edge_type === "shelved-in"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    const built = await defaultsHarness("folder-default-refused-made", {
+      edges,
+    });
+    harness = built.made;
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
+    put(harness, BINARY, "not really a picture");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness is the previous test: an edited file asks again, and a file
+    // that is not edited stays refused, where no edge exists.
+    expect(shelvedWrites(harness)).toBe(2);
+    const sources = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "shelved-in",
+      )
+      .map(
+        (request) =>
+          (JSON.parse(request.body) as { source_id: string }).source_id,
+      );
+    expect(sources).toHaveLength(2);
+
+    refusing = false;
+    for (const [index, source] of sources.entries()) {
+      const made = edges.create({
+        id: `01a00000-0000-7000-8000-00000000e0${String(index)}0`,
+        source_id: source,
+        target_id: beta,
+        edge_type: "shelved-in",
+      });
+      expect(made.kind === "json" && made.status, JSON.stringify(made)).toBe(
+        201,
+      );
+    }
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    edit(harness, "Plain.md", "plain\n", "plain, edited\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    for (const path of ["Plain.md", BINARY]) {
+      expect(
+        (await statusOf(harness, path)).flag,
+        `${path} stayed refused for an edge it already has`,
+      ).toBeUndefined();
+    }
+    expect(
+      shelvedWrites(harness),
+      "a second create was sent for an edge the copy holds",
+    ).toBe(2);
+  });
+
+  it("clears when the file's item is in the bin", async () => {
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "shelved-in"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    const built = await defaultsHarness("folder-default-refused-binned", {
+      edges,
+    });
+    harness = built.made;
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nplain\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the refusal stands while the item is not in the bin.
+    expect((await statusOf(harness, "Plain.md")).flag).toBe("refused");
+    const id = idIn(harness, "Plain.md");
+    expect(id).toBeDefined();
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.deleted",
+        wireItem({
+          id: id!,
+          type: "core.note",
+          properties: { title: "Plain", body: "plain\n" },
+          state: "trashed",
+          version: 2,
+        }),
+      ),
+    );
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const status = await harness.folder.status();
+    expect(status.ok).toBe(true);
+    expect(
+      status.ok && status.value.files.find((file) => file.path === "Plain.md"),
+      "a binned item's file still shows its default as refused",
     ).toBeUndefined();
   });
 });

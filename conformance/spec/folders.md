@@ -692,9 +692,9 @@ When a new document or file item has no line for an edge type named by the defau
 
 ### `folders/default-edge-refused-held`
 
-If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type and the other item and says that writing that line in the file applies it.
+If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type and the other item. For a document the reason MUST say that writing that line in the file applies the edge; for a file item, which has no lines, it MUST say that the edge is made in an app or taken out of the folder's defaults.
 
-**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
+**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. A file item has no lines to write, so the way out the reason names is the one its file can take. The refusal holds no other file, and a pull still writes the item's changes into the file, since nothing the person wrote in the file was refused.
 
 **Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
 
@@ -716,9 +716,11 @@ While a file holds a default edge that the server refused, a device MUST NOT sen
 
 ### `folders/default-edge-cleared`
 
-When a default edge's write is accepted, the file writes a line of the edge's type, the defaults stop naming the edge, or the file's item is gone or in the bin, a device MUST clear the file's refusal of that default edge.
+When a default edge's write is accepted, a document's file writes a line of the edge's type, the defaults stop naming the edge, the device holds the edge, or the file's item is gone or in the bin, a device MUST clear the file's refusal of that default edge.
 
-**Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`, `device/folders-default-refused.test.ts › clears when the person writes the line, and when the defaults stop naming the edge`.
+**Reason:** a file item has no lines, so only a document's file clears a refusal by writing one. An edge the person made in an app and the device pulled is the edge the default asked for: sending it again would draw a refusal as a duplicate and show the file refused for an edge it has.
+
+**Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`, `device/folders-default-refused.test.ts › clears when the person writes the line, and when the defaults stop naming the edge`, `device/folders-default-refused.test.ts › clears a default the person made as an edge themselves, for a document and a file`, `device/folders-default-refused.test.ts › clears when the file's item is in the bin`.
 
 ### `folders/default-edit-unchanged`
 
