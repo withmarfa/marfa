@@ -56,6 +56,8 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
     trashed_at: options.trashed_at ?? null,
+    // No connector registration holds a scripted row read only.
+    read_only: false,
     // Present and empty, which is what the server answers for a row with no
     // edges. Absent would be a different thing to a device, and this is the
     // shape every door that returns an item returns.
