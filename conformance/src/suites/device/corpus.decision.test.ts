@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureTitles } from "../../utils/fixture-titles.js";
 import {
+  UNCITED_TESTS,
   citationsIn,
   readChapter,
   statementText,
@@ -30,6 +31,7 @@ interface Statement {
   chapter: string;
   id: string;
   text: string;
+  tests?: string;
 }
 
 function statements(chapter: string): Statement[] {
@@ -45,6 +47,7 @@ function readText(chapter: string, text: string): Statement[] {
     chapter,
     id: statement.id,
     text: statementText(statement),
+    tests: statement.tests?.trim(),
   }));
 }
 
@@ -73,6 +76,7 @@ describe("separate rule metadata", () => {
         chapter: "device.md",
         id: "device/a-rule",
         text: `When asked, the CLI MUST answer. ${cited}`,
+        tests: cited,
       },
     ]);
     expect(citationsIn(found[0].text)).toEqual([
@@ -122,20 +126,25 @@ describe("every device statement is asserted by something", () => {
   });
 
   it("cites a fixture for every statement", () => {
-    // A rule no fixture can assert yet names the issue that makes it
-    // testable instead, which `spec-form.test.ts` holds to its one shape.
-    const WAITING = / waiting on #\d+\.$/;
-    // The witness: an ID statement's waiting line is read as its text ends.
-    const waiting = readText(
-      "device.md",
-      `### \`device/a-rule\`\n\nWhen asked, the CLI MUST answer.\n\n**Tests:** waiting on #1.\n`,
-    )[0];
-    expect(WAITING.test(waiting.text), waiting.text).toBe(true);
+    // A rule no fixture asserts names the issue instead, in a form
+    // `spec-form.test.ts` holds to the same pattern.
+    const uncitedTests = (statement: Statement) =>
+      statement.tests !== undefined && UNCITED_TESTS.test(statement.tests);
+    // The witness: each form is read from an ID statement's Tests line.
+    for (const tests of [
+      "waiting on #1.",
+      "none, closed in #1: no runner has it, and a fixture was judged not worth building.",
+    ]) {
+      const statement = readText(
+        "device.md",
+        `### \`device/a-rule\`\n\nWhen asked, the CLI MUST answer.\n\n**Tests:** ${tests}\n`,
+      )[0];
+      expect(uncitedTests(statement), tests).toBe(true);
+    }
     const uncited = allStatements
       .filter(
         (statement) =>
-          citationsIn(statement.text).length === 0 &&
-          !WAITING.test(statement.text),
+          citationsIn(statement.text).length === 0 && !uncitedTests(statement),
       )
       .map((statement) => `${statement.chapter} ${statement.id}`);
     expect(

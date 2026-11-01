@@ -1573,6 +1573,7 @@ impl Folder {
             had_embeds: bound.map(|bound| bound.embeds.clone()).unwrap_or_default(),
             had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
             embeds: Vec::new(),
+            refused_lookups: BTreeMap::new(),
         }
     }
 
@@ -2330,6 +2331,9 @@ fn typed_title(
 }
 
 #[cfg(test)]
+mod held_links_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2621,7 +2625,7 @@ mod tests {
     }
 
     /// A folder over a fresh directory, with a copy that holds its settings.
-    fn scanned_folder() -> (ScannedDir, Folder) {
+    pub(super) fn scanned_folder() -> (ScannedDir, Folder) {
         scanned_folder_with(serde_json::json!({ "query": {} }), None)
     }
 

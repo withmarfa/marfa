@@ -1968,7 +1968,43 @@ When the server refuses a name lookup, a device MUST flag only the affected file
 
 While a file with a refused name lookup is unchanged, a device MUST NOT repeat that lookup.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
+**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`, `device/folders-held-links.test.ts › asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+
+### `folders/create-before-links`
+
+When a scan finds a new file whose edge lines or body links name a target it cannot resolve, a device MUST create the file's item.
+
+**Reason:** A document that links to one written later would otherwise wait on it, and two documents that link each other, written in separate passes, could never both be made.
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› creates and links two new documents that link each other in one pass`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`.
+
+### `folders/edge-held-retried`
+
+When the working copy has changed since a file was flagged `edges` because a name matched no item or more than one item, a device MUST look that name up again at the next scan, after every item that scan creates.
+
+**Reason:** The target may since have been created on this device, pulled in from another, or one of two namesakes moved to the bin. The working copy changes with every write sent or taken in, local or pulled.
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+
+### `folders/edge-held-quiet`
+
+While a file flagged `edges` because a name matched no item or more than one item is unchanged and the working copy has not changed since the flag, a device MUST NOT look that name up again.
+
+**Reason:** A watch runs a full pass every minute, and a lookup on every pass would ask the server about each held name once a minute for nothing.
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
+
+### `folders/edge-held-cleared`
+
+When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+
+### `folders/edge-held-never-guessed`
+
+If a held edge name still matches more than one item when it is looked up again, then a device MUST NOT create an edge for that name.
+
+**Tests:** `device/folders-held-links.test.ts › never guesses between two items of one name, and resolves once one goes to the bin`.
 
 ### `folders/edge-lookup-page-limit`
 
@@ -5252,9 +5288,9 @@ Where the platform is Linux, when `folders autostart on` writes the agent, the C
 
 ### `folders/autostart-at-login`
 
-Where folder syncing from login is on, when the person signs in, a device MUST keep every listed folder in step with no terminal open.
+When `folders autostart on` writes the agent, the CLI MUST make the service manager start it when the person signs in: `RunAtLoad` true in the property list on macOS, and `WantedBy=default.target` in the unit on Linux.
 
-**Tests:** waiting on #2032.
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
 ### `folders/autostart-own-credential`
 
@@ -6916,7 +6952,7 @@ When a folder is added, or a watch starts on a folder, whose directory is not be
 
 **Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents` that iCloud Drive syncs. macOS reports every File Provider item as ubiquitous, so the key alone does not say which service syncs it.
 
-**Tests:** waiting on #2027.
+**Tests:** none, closed in #2027: no CI runner has a signed-in iCloud account, and a fixture for it was judged not worth building.
 
 ### `folders/cloud-storage-warns`
 
@@ -6932,7 +6968,7 @@ When a folder is added, or a watch starts on a folder, whose directory is on a f
 
 **Reason:** A network file system may not send change notifications for what another computer writes.
 
-**Tests:** waiting on #2027.
+**Tests:** none, closed in #2027: no CI runner has a network file system, and a fixture for one was judged not worth building.
 
 ### `folders/git-tracked-warns`
 

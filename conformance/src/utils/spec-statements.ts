@@ -189,6 +189,14 @@ export function citationsIn(text: string): { file: string; title?: string }[] {
   return out;
 }
 
+/**
+ * A Tests paragraph that names no fixture, in one of its two forms: waiting
+ * on the open issue that makes the rule testable, or none, with the closed
+ * issue that judged a fixture not worth building and the reason.
+ */
+export const UNCITED_TESTS =
+  /^(?:waiting on #\d+|none, closed in #\d+: [^`]+)\.$/;
+
 /** Every citation in a file's text, a paragraph at a time. */
 export function citationsInText(
   text: string,

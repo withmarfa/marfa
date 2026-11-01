@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,25 @@ pub struct Writes {
     /// it was: the line is no edit while it shows that. Any pull ends it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_title: Option<DeferredTitle>,
+    /// When a file held `edges` is judged again while it is unchanged;
+    /// `None` where no judgment recorded it, which is judged at the next scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejudge: Option<Rejudge>,
+    /// The file's names whose lookup the server refused, folded, each with
+    /// its reason: not asked again until the file changes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refused_lookups: BTreeMap<String, String>,
+}
+
+/// When an unchanged file held `edges` is judged again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rejudge {
+    /// A name matched no item or more than one: once the copy has moved from
+    /// this `copy_moment`.
+    Moved(String),
+    /// Nothing a change to the copy can resolve holds it.
+    FileChanged,
 }
 
 /// The title line a file went on showing, which is no edit of the title.
@@ -506,6 +525,15 @@ pub const REFUSED: &str = "refused: ";
 pub const UNREADABLE: &str = "unreadable: ";
 pub const EDGES: &str = "edges: ";
 pub const EDGES_WAITING: &str = "edges, waiting: ";
+
+/// Moves with the event cursor and with every change to the copy's rows,
+/// local or pulled, so a name that matched no item, or several, is looked up
+/// again only after something that can change its answer.
+pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
+    let cursor = crate::store::meta_get(conn, crate::store::META_EVENT_CURSOR)?;
+    let revision = crate::store::copy_revision(conn)?;
+    Ok(format!("{}/{revision}", cursor.unwrap_or_default()))
+}
 
 /// `OR IGNORE` keeps the first sighting, so a folder scanning every second
 /// still reaches the grace.
