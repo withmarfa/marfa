@@ -15,7 +15,9 @@ const lifts = new WeakMap<IncomingMessage, () => void>();
 /**
  * The status the server ended a connection with, set before it ends it. The
  * request stream of a connection the server cut ends with the same `aborted`
- * error as one the client closed, and this is what tells the two apart.
+ * error as one the client closed, and this is what tells the two apart. The
+ * socket is destroyed right after the status is set, so the mark never
+ * outlives the connection it describes.
  */
 const severed = new WeakMap<Socket, number>();
 

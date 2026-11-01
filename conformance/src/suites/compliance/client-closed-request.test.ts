@@ -51,10 +51,11 @@ function serverLog(): Record<string, unknown>[] {
 }
 
 /**
- * Starts a `POST /blobs` that promises far more bytes than it sends, then
- * resets the connection, and settles once the connection is closed.
+ * Starts a `POST /blobs` that promises far more bytes than it sends, holds the
+ * connection open for `holdMs` after the send, then resets it, and settles
+ * once the connection is closed.
  */
-function dropUpload(requestId: string): Promise<void> {
+function dropUpload(requestId: string, holdMs: number): Promise<void> {
   const { hostname, port } = new URL(server!.apiUrl);
   return new Promise((resolve) => {
     const socket = connect(Number(port), hostname, () => {
@@ -64,7 +65,7 @@ function dropUpload(requestId: string): Promise<void> {
           `Content-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\n`,
       );
       socket.write(Buffer.alloc(1000, 1), () => {
-        socket.resetAndDestroy();
+        setTimeout(() => socket.resetAndDestroy(), holdMs);
       });
     });
     socket.on("error", () => undefined);
@@ -72,6 +73,33 @@ function dropUpload(requestId: string): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * Drops uploads until the server shows one it met while reading the body: a
+ * reset that lands before the server has parsed the request leaves no log
+ * line, so the hold before the reset grows with each attempt. Settles on the
+ * ids of every attempt, the last of which is the one the server logged.
+ */
+async function dropUntilLogged(base: string): Promise<string[]> {
+  const attempts: string[] = [];
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const id = `${base}-${attempt}`;
+    attempts.push(id);
+    await dropUpload(id, attempt * 150);
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      if (logLine(id)) return attempts;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("the server never logged a dropped upload");
+}
+
+function logLine(requestId: string): Record<string, unknown> | undefined {
+  return serverLog().find(
+    (entry) => entry.request_id === requestId && entry.transport === "http",
+  );
 }
 
 function audit(requestId: string): Promise<Response> {
@@ -87,14 +115,10 @@ describe("a request whose client closed the connection before the server answere
   it(
     "is not logged as an unhandled fault, sent to the error webhook or reported to error tracking",
     async () => {
-      const dropped = "client-closed-request-dropped";
-      await dropUpload(dropped);
-      // The server has met the request: its own log line for it exists.
-      await until("the dropped request's log line", () =>
-        serverLog().find(
-          (entry) => entry.request_id === dropped && entry.transport === "http",
-        ),
-      );
+      const attempts = await dropUntilLogged("client-closed-request-dropped");
+      const dropped = new Set(attempts);
+      // The drop took the abort path: the server logged it as one the client left.
+      expect(logLine(attempts[attempts.length - 1]!)?.status).toBe(499);
 
       // The witness: a real fault on the same server is reported on every
       // channel the drop's report would have used.
@@ -130,16 +154,21 @@ describe("a request whose client closed the connection before the server answere
       expect(
         serverLog().filter(
           (entry) =>
-            entry.message === "Unhandled error" && entry.request_id === dropped,
+            entry.message === "Unhandled error" &&
+            dropped.has(entry.request_id as string),
         ),
       ).toEqual([]);
       expect(
-        sinks!.notifications.filter((entry) => entry.request_id === dropped),
+        sinks!.notifications.filter((entry) =>
+          dropped.has(entry.request_id as string),
+        ),
       ).toEqual([]);
       expect(
         sinks!
           .sentExceptions()
-          .filter((entry) => entry.properties.request_id === dropped),
+          .filter((entry) =>
+            dropped.has(entry.properties.request_id as string),
+          ),
       ).toEqual([]);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
