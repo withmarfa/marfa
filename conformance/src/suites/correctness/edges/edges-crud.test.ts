@@ -76,6 +76,7 @@ const CORE_EDGE_TYPES: readonly {
   { id: "in-thread", target: makeItem },
   { id: "attached-to", target: makeItem },
   { id: "derived-from", target: makeItem },
+  { id: "excerpt-of", target: makeItem },
   { id: "supersedes", target: makeItem },
   { id: "references", target: makeItem },
   { id: "in-collection", target: makeContainer },

@@ -15,6 +15,7 @@ import {
   classifyNamespace,
   getTypeSchema,
   isCoreEdgeType,
+  unshadowedEdgeTypeRegistrations,
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
   getEdgeTypeSchema,
@@ -394,7 +395,10 @@ export async function planArchiveTypes(
     (await storage.types.listRegistered()).map((s) => [s.id, s]),
   );
   const existingEdgeTypes = new Map(
-    (await storage.edgeTypes.list()).map((s) => [s.id, s]),
+    unshadowedEdgeTypeRegistrations(await storage.edgeTypes.list()).map((s) => [
+      s.id,
+      s,
+    ]),
   );
 
   const conflicts: string[] = [];

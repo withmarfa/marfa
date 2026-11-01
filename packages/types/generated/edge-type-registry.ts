@@ -7,7 +7,7 @@ const about: EdgeTypeSchema = {
   id: "about",
   label: "About",
   reverse_label: "Subject of",
-  description: "Source item is about the target item. Topical connection between items across types.",
+  description: "Source item is about the target item. Topical connection between items across types. For a passage taken from the target use `excerpt-of`; for a mention in the source's text use `references`.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
@@ -36,6 +36,19 @@ const derivedFrom: EdgeTypeSchema = {
   reverse_label: "Basis for",
   description: "Source was produced from the target (imports, AI generation, transformations). Both items remain valid in parallel.",
   cardinality: "many-to-many",
+  source_type_constraints: ["*"],
+  target_type_constraints: ["*"],
+  cascade_on_delete: "orphan",
+  written_at: "source",
+  property_schema: {},
+};
+
+const excerptOf: EdgeTypeSchema = {
+  id: "excerpt-of",
+  label: "Excerpt of",
+  reverse_label: "Excerpts",
+  description: "Source is a highlight, quote or clip taken from the target. Each excerpt is taken from one item; an item can have many excerpts. The excerpt carries its own text, stays in lists and stays when its source is binned or purged (orphan). Use it for a passage taken from an item, `about` for a topical link and `references` for a mention in text.",
+  cardinality: "many-to-one",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
@@ -106,7 +119,7 @@ const references: EdgeTypeSchema = {
   id: "references",
   label: "References",
   reverse_label: "Referenced by",
-  description: "Source explicitly references the target. Distinct from `about` (topical) and `derived-from` (provenance). Covers wikilink-style mentions and the highlight-on-a-book case.",
+  description: "Source mentions the target: a link or embed in the source's text, or a system's own link from one item to another. Nothing else. Distinct from `about` (topical), `derived-from` (provenance) and `excerpt-of` (a passage taken from the target).",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
@@ -132,6 +145,7 @@ export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   about,
   attachedTo,
   derivedFrom,
+  excerptOf,
   inCollection,
   inFolder,
   inThread,
@@ -168,6 +182,18 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   },
   "derived-from": {
     "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {},
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "*"
+    ],
+    "written_at": "source"
+  },
+  "excerpt-of": {
+    "cardinality": "many-to-one",
     "cascade_on_delete": "orphan",
     "property_schema": {},
     "source_type_constraints": [

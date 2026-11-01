@@ -38,6 +38,7 @@ import * as tar from "tar-stream";
 import {
   ErrorCode,
   MarfaError,
+  unshadowedEdgeTypeRegistrations,
   type Edge,
   type EdgeTypeSchema,
   type Item,
@@ -675,7 +676,9 @@ async function collectSelection(input: {
     for (const row of await storage.types.listRegisteredWithProvenance()) {
       registrations.set(row.schema.id, row);
     }
-    for (const schema of await storage.edgeTypes.list()) {
+    for (const schema of unshadowedEdgeTypeRegistrations(
+      await storage.edgeTypes.list(),
+    )) {
       edgeRegistrations.set(schema.id, schema);
     }
     ownerIcons = await storage.types.icons();

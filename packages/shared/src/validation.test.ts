@@ -364,6 +364,7 @@ describe("isValidEdgeTypeIdentifier", () => {
       "about",
       "attached-to",
       "derived-from",
+      "excerpt-of",
       "in-collection",
       "in-thread",
       "parent-of",

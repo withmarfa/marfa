@@ -1,6 +1,6 @@
 # Edges
 
-An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Nine edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
+An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
 
 ## Shipped edge types
 
@@ -13,6 +13,7 @@ Every instance ships these edge types, each a row of the table below, which is w
 | `about`         | About         | Subject of      | None             | many-to-many | orphan    | Any type     | Any type                           |
 | `attached-to`   | Attached to   | Attachments     | `has-attachment` | many-to-many | orphan    | Any type     | Any type                           |
 | `derived-from`  | Derived from  | Basis for       | None             | many-to-many | orphan    | Any type     | Any type                           |
+| `excerpt-of`    | Excerpt of    | Excerpts        | None             | many-to-one  | orphan    | Any type     | Any type                           |
 | `in-collection` | In collection | Contents        | None             | many-to-many | orphan    | Any type     | Any type with the role `container` |
 | `in-folder`     | In folder     | Folder contents | None             | many-to-many | orphan    | Any type     | `system.folder`                    |
 | `in-thread`     | In thread     | Messages        | None             | many-to-one  | orphan    | Any type     | Any type                           |
@@ -944,6 +945,14 @@ If `POST /edges` names a source that already holds an outbound edge of the edge 
 
 **Tests:** `correctness/edges/edges-cardinality.test.ts › in-thread is many-to-one: source can only join one thread`, `› supersedes is one-to-one: rejects second outbound from same source`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
 
+### `edges/card-excerpt-of`
+
+If `POST /edges` names an `excerpt-of` edge from a source that already holds one, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality`.
+
+**Reason:** an excerpt is taken from one item, while an item may have many excerpts, so `excerpt-of` is `many-to-one` (`edges/card-source-held`).
+
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › is many-to-one: an item has many excerpts and an excerpt has one source`.
+
 ### `edges/card-many`
 
 When `POST /edges` names an end that already holds edges of a `many-to-many` type, the server MUST take the edge.
@@ -1152,6 +1161,22 @@ When `DELETE /items/{id}` names an item that holds an edge of a shipped type oth
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› attached-to defaults to orphan: deleting the host leaves the attachment intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`.
 
+### `edges/excerpt-of-source-binned`
+
+When `DELETE /items/{id}` names an item that is the target of an `excerpt-of` edge, the server MUST leave the item at the edge's source active.
+
+**Reason:** an excerpt, such as a highlight, carries its own text, so it stays in `GET /items` and stays readable when the item it was taken from goes to the bin.
+
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when its source is binned`.
+
+### `edges/excerpt-of-source-purged`
+
+When `POST /items/{id}/purge` names an item that is the target of an `excerpt-of` edge, the server MUST leave the item at the edge's source active.
+
+**Reason:** the purge deletes the edge with the item (`items/purge-edges`), and the excerpt, which carries its own text, stays in `GET /items`.
+
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when its source is purged`.
+
 ### `edges/orphan-delete`
 
 While an edge's type is not registered, when `DELETE /items/{id}` names an item at one end of the edge, the server MUST leave the other end of the edge active.
@@ -1230,19 +1255,19 @@ When `POST /edge-types` meets more than one of the answers this chapter gives it
 
 ### `edges/types-shipped`
 
-When a credential sends `GET /edge-types`, the server MUST list the nine shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `derived-from`, `supersedes`, `references`, `in-collection` and `in-folder`.
+When a credential sends `GET /edge-types`, the server MUST list the ten shipped edge types `about`, `parent-of`, `in-thread`, `attached-to`, `derived-from`, `excerpt-of`, `supersedes`, `references`, `in-collection` and `in-folder`.
 
 **Tests:** `compliance/edge-types.test.ts › lists the shipped edge types and a registered one`.
 
 ### `edges/types-shipped-cardinality`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread` as `many-to-one`, `supersedes` as `one-to-one` and the other six shipped types as `many-to-many`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` as `one-to-many`, `in-thread` and `excerpt-of` as `many-to-one`, `supersedes` as `one-to-one` and the other six shipped types as `many-to-many`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`, `compliance/edge-types.test.ts › core-first resolution: edge_type="about" always routes to core semantics`.
 
 ### `edges/types-shipped-cascade`
 
-When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade` and the other eight shipped types with `orphan`.
+When a credential sends `GET /edge-types`, the server MUST list `parent-of` with `cascade_on_delete` `cascade` and the other nine shipped types with `orphan`.
 
 **Tests:** `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 

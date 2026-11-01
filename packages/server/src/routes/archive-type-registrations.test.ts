@@ -119,6 +119,62 @@ describe("archive registration counts", () => {
 });
 
 describe("archives carry type registrations", () => {
+  it("exports and restores when a shipped edge type shadows a stored registration", async () => {
+    const source = await newContext();
+    const custom: EdgeTypeSchema = {
+      id: `user.archive_${uniqueSuffix()}`,
+      label: "Custom relation",
+      cardinality: "many-to-many",
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+      cascade_on_delete: "orphan",
+      property_schema: {},
+      written_at: "source",
+    };
+    const shadowed = { ...custom, id: "excerpt-of" };
+    await source.storage.edgeTypes.create(custom);
+    await source.storage.edgeTypes.create(shadowed);
+    expect(await source.storage.edgeTypes.get(shadowed.id)).toEqual(shadowed);
+
+    const note = await itemWrites(source.storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: "An excerpt" },
+    });
+    const original = await itemWrites(source.storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: "The original" },
+    });
+    const edge = await source.storage.edges.createRaw({
+      source_id: note.id,
+      target_id: original.id,
+      edge_type: "excerpt-of",
+    });
+
+    const archive = await exportArchive(source);
+    const entries = await extractArchive(archive);
+    expect(entries.get("types.ndjson")!.toString()).toBe(
+      `${JSON.stringify({ edge_type: custom })}\n`,
+    );
+    expect(JSON.parse(entries.get("manifest.json")!.toString())).toMatchObject({
+      edge_type_count: 1,
+    });
+
+    const destination = await newContext();
+    for (const target of [destination, source]) {
+      const response = await restore(target, archive);
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(await target.storage.items.get(note.id)).toEqual(note);
+      expect(await target.storage.edges.get(edge.id)).toEqual(edge);
+      expect(await target.storage.edgeTypes.get(custom.id)).toEqual(custom);
+    }
+    expect(
+      await destination.storage.edgeTypes.get(shadowed.id),
+    ).toBeUndefined();
+    expect(await source.storage.edgeTypes.get(shadowed.id)).toEqual(shadowed);
+  });
+
   it.each([false, true])(
     "restores inherited field references into an empty store (reversed: %s)",
     async (reversed) => {

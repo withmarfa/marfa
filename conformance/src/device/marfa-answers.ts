@@ -507,6 +507,9 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     reverse_name: "has-attachment",
   }),
   shipped("derived-from", "Derived from", "Basis for"),
+  shipped("excerpt-of", "Excerpt of", "Excerpts", {
+    cardinality: "many-to-one",
+  }),
   shipped("in-collection", "In collection", "Contents", {
     target_type_constraints: ["role:container"],
     flat: true,

@@ -2,7 +2,7 @@
   "id": "references",
   "label": "References",
   "reverse_label": "Referenced by",
-  "description": "Source explicitly references the target. Distinct from `about` (topical) and `derived-from` (provenance). Covers wikilink-style mentions and the highlight-on-a-book case.",
+  "description": "Source mentions the target: a link or embed in the source's text, or a system's own link from one item to another. Nothing else. Distinct from `about` (topical), `derived-from` (provenance) and `excerpt-of` (a passage taken from the target).",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],

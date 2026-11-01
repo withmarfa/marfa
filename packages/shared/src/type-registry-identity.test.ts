@@ -103,6 +103,7 @@ const CORE_EDGE_TYPE_IDENTIFIERS = [
   "about",
   "attached-to",
   "derived-from",
+  "excerpt-of",
   "in-collection",
   "in-folder",
   "in-thread",
