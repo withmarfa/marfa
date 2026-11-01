@@ -76,9 +76,6 @@ export async function namingsOf(
     storage.items.partHosts(items.map((item) => item.id)),
   );
   return new Map(
-    items.map((item) => [
-      item.id,
-      namingOf(item, hosts.get(item.id), mayRead),
-    ]),
+    items.map((item) => [item.id, namingOf(item, hosts.get(item.id), mayRead)]),
   );
 }

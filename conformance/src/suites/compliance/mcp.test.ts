@@ -443,9 +443,9 @@ describe("marfa_find", () => {
         state: "trashed",
       }),
     ) as { items: { id: string; title: string }[] };
-    expect(
-      found.items.find((row) => row.id === part.data.item.id)?.title,
-    ).toBe("Attached to Plan");
+    expect(found.items.find((row) => row.id === part.data.item.id)?.title).toBe(
+      "Attached to Plan",
+    );
   });
 
   it("names a part after its oldest host when it has more hosts than an item read carries", async () => {
