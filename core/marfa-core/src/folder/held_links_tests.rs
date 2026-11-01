@@ -103,7 +103,7 @@ fn a_link_written_before_its_target_resolves_once_the_target_is_made() {
     assert_eq!(second.created, 1, "{second:?}");
     assert!(second.flagged.is_empty(), "{second:?}");
     let (a, b) = (item_at(&folder, "A.md"), item_at(&folder, "B.md"));
-    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [b.clone()]);
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), std::slice::from_ref(&b));
     assert_eq!(edges_of(&folder, &a, crate::filter::PARENT_OF), [b]);
     assert_eq!(held(&folder, "A.md"), None);
 
@@ -127,7 +127,7 @@ fn two_new_documents_that_link_each_other_are_both_made_and_linked() {
     assert_eq!(report.created, 2, "{report:?}");
     assert!(report.flagged.is_empty(), "{report:?}");
     let (a, b) = (item_at(&folder, "A.md"), item_at(&folder, "B.md"));
-    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [b.clone()]);
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), std::slice::from_ref(&b));
     assert_eq!(edges_of(&folder, &a, crate::filter::PARENT_OF), [b]);
 }
 
