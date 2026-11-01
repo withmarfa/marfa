@@ -97,13 +97,13 @@ const TrashPreviewItemSchema = z
     takes: z
       .array(TrashPreviewEntrySchema)
       .describe(
-        `The other items you can read that a cascading edge such as \`parent-of\` would take into the trash with this item, leaves first, at most ${String(TRASH_PREVIEW_LIMIT)}.`,
+        `The other items you can read that trashing the named items would take into the trash with this item, leaves first, at most ${String(TRASH_PREVIEW_LIMIT)}: what a cascading edge such as \`parent-of\` reaches, and each comment or attachment whose hosts would all be in the trash.`,
       ),
     count: z
       .number()
       .int()
       .describe(
-        "How many items you can read that trashing this item would move to the trash, the item itself included.",
+        "How many items you can read that trashing the named items would move to the trash with this item, the item itself included.",
       ),
     truncated: z
       .literal(true)
@@ -212,7 +212,7 @@ const previewItemTrashRoute = createRoute({
   tags: ["Items"],
   summary: "Preview trashing items",
   description:
-    "Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that a cascading edge such as `parent-of` would take with it. Nothing changes.",
+    "Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that trashing the items together would take with it. This includes what a cascading edge such as `parent-of` reaches, and a comment or attachment whose hosts are all named. Nothing changes.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

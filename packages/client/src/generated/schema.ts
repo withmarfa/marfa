@@ -67,7 +67,7 @@ export interface paths {
         put?: never;
         /**
          * Preview trashing items
-         * @description Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that a cascading edge such as `parent-of` would take with it. Nothing changes.
+         * @description Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that trashing the items together would take with it. This includes what a cascading edge such as `parent-of` reaches, and a comment or attachment whose hosts are all named. Nothing changes.
          */
         post: operations["previewItemTrash"];
         delete?: never;
@@ -3410,9 +3410,9 @@ export interface components {
             type: string;
             /** @description The item's version. */
             version: number;
-            /** @description The other items you can read that a cascading edge such as `parent-of` would take into the trash with this item, leaves first, at most 100. */
+            /** @description The other items you can read that trashing the named items would take into the trash with this item, leaves first, at most 100: what a cascading edge such as `parent-of` reaches, and each comment or attachment whose hosts would all be in the trash. */
             takes: components["schemas"]["TrashPreviewEntry"][];
-            /** @description How many items you can read that trashing this item would move to the trash, the item itself included. */
+            /** @description How many items you can read that trashing the named items would move to the trash with this item, the item itself included. */
             count: number;
             /**
              * @description `true` if `takes` was cut at its limit. Absent when it lists every item.

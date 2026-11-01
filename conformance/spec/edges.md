@@ -1256,7 +1256,23 @@ When `DELETE /items/{id}`, a transition into the bin or a bulk transition into t
 
 **Reason:** a comment, a reply to it and an attached file are kept with the item they belong to, and a person who bins the item does not want them left behind in lists.
 
-**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `› takes the parts a transition into the bin takes, and brings them back on a transition out`, `› takes a part on a bulk transition into the bin and brings it back on one out`, `› treats a registered edge type that declares with-hosts as a shipped one`.
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `› takes the parts a transition into the bin takes, and brings them back on a transition out`, `› takes a part on a bulk transition into the bin and brings it back on one out`, `› takes a part two hosts share on a bulk transition into the bin that matches both`, `› treats a registered edge type that declares with-hosts as a shipped one`.
+
+### `edges/parts-trash-together`
+
+When `POST /items/trash` names several items, the server MUST judge each part's `with-hosts` targets against every named item and what each takes, so that a part whose targets are all named, taken or in the bin goes to the bin with them.
+
+**Reason:** a file attached to two items that are trashed together belongs with them, and trashing the named items one at a time in a plan judged per item would leave it out of the preview and its digest while the trash took it.
+
+**Tests:** `correctness/edges/edges-parts.test.ts › plans a part two named hosts share in the preview, its digest and the trash alike`.
+
+### `edges/parts-trash-binned-left`
+
+When a trash, a late part or a restore reaches an item that is already where it would move it, the server MUST NOT announce `item.deleted` or `item.restored` for that item or change its trash record.
+
+**Reason:** a child put in the bin on its own before its parent became a part keeps the record of its own trash, so a restore of the host leaves it where the person put it.
+
+**Tests:** `compliance/cascade-marks.test.ts › announces item.deleted and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own`.
 
 ### `edges/parts-trash-kept`
 
@@ -1348,9 +1364,9 @@ If `POST /edges` names an edge of a `with-hosts` type that would close a cycle t
 
 ### `edges/parts-preview`
 
-When `POST /items/trash-preview` names an item, the server MUST list in its `takes` each part the trash would take with its hosts.
+When `POST /items/trash-preview` names items, the server MUST list in the `takes` of each named item each part beneath it that trashing the named items together would take with its hosts.
 
-**Tests:** `correctness/edges/edges-parts.test.ts › names the parts a trash would take in its preview`.
+**Tests:** `correctness/edges/edges-parts.test.ts › names the parts a trash would take in its preview`, `› plans a part two named hosts share in the preview, its digest and the trash alike`.
 
 ### `edges/parts-hidden`
 

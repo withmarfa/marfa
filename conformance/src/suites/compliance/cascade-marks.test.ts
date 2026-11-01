@@ -1041,6 +1041,75 @@ describe("a part's frames name the host that moved it", () => {
   });
 });
 
+describe("a part announces only what moved", () => {
+  it("announces item.deleted and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own", async ({
+    signal,
+  }) => {
+    const tag = `late-part-${ctx.runId}`;
+    const host = await note("host", tag);
+    const part = await note("part", tag);
+    const moving = await note("moving child", tag);
+    const binned = await note("binned child", tag);
+    await edge(part, moving, "parent-of");
+    await edge(part, binned, "parent-of");
+    expect((await client.deleteItem(binned)).ok).toBe(true);
+    expect((await client.deleteItem(host)).ok).toBe(true);
+
+    const paths = await framesOf(
+      tag,
+      async () => {
+        await edge(part, host, "attached-to");
+        expect((await client.restoreItem(host)).ok).toBe(true);
+      },
+      signal,
+    );
+    for (const [path, events] of paths) {
+      // The witness: the rows the late part moved are announced.
+      for (const moved of [part, moving]) {
+        expect(
+          frame(events, "item.deleted", moved)?.item?.trashed_with,
+          `${path}: ${moved}`,
+        ).toBe(host);
+        expect(
+          frame(events, "item.restored", moved),
+          `${path}: ${moved}`,
+        ).toBeDefined();
+      }
+      expect(
+        frame(events, "item.deleted", binned),
+        `${path}: item.deleted`,
+      ).toBeUndefined();
+      expect(
+        frame(events, "item.restored", binned),
+        `${path}: item.restored`,
+      ).toBeUndefined();
+    }
+
+    const again = await framesOf(
+      tag,
+      async () => {
+        expect((await client.deleteItem(host)).ok).toBe(true);
+      },
+      signal,
+    );
+    for (const [path, events] of again) {
+      expect(
+        frame(events, "item.deleted", moving)?.item?.trashed_with,
+        `${path}: the moving child`,
+      ).toBe(host);
+      expect(
+        frame(events, "item.deleted", binned),
+        `${path}: the binned child on a delete`,
+      ).toBeUndefined();
+    }
+
+    const rows = await listed(tag, "trashed");
+    expect(rows.get(binned)).toBeDefined();
+    expect(rows.get(binned)).not.toHaveProperty("trashed_with");
+    expect(rows.get(binned)).not.toHaveProperty("trashed_by_cascade");
+  });
+});
+
 describe("a purge says which edges it took, a conflicted copy's link among them", () => {
   it("names the purged original on the edge.deleted of the link to its conflicted copy", async ({
     signal,

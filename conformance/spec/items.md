@@ -1196,7 +1196,7 @@ When the server refuses a delete for a live `system.connection` the key may not 
 
 ### `items/trash-preview`
 
-When `POST /items/trash-preview` names items that `POST /items/trash` would move to the bin, the server MUST answer `200` with, under `items`, each named item once in the order named, with its `id`, `type` and `version`, under `takes` each other item the key may read that its trash would move with it (`items/trash-cascade`), leaves first and at most 100 with `truncated: true` where more were left out, and under `count` how many items the key may read its trash would move, the item included.
+When `POST /items/trash-preview` names items that `POST /items/trash` would move to the bin, the server MUST answer `200` with, under `items`, each named item once in the order named, with its `id`, `type` and `version`, under `takes` each other item the key may read that trashing the named items together would move beneath it (`items/trash-cascade` and `edges/parts-trash-together`), leaves first and at most 100 with `truncated: true` where more were left out, and under `count` how many items the key may read that trash would move with it, the item included.
 
 **Reason:** an agent or a person confirms a trash against what it takes, so the preview and the trash must agree.
 
@@ -1220,7 +1220,7 @@ When the server answers `POST /items/trash-preview`, the server MUST answer unde
 
 ### `items/trash-several`
 
-When `POST /items/trash` names items, the server MUST move every named item, and every item the trash of each would take (`items/trash-cascade`), to the bin in one transaction.
+When `POST /items/trash` names items, the server MUST move every named item, and every item trashing them together would take (`items/trash-cascade` and `edges/parts-trash-together`), to the bin in one transaction.
 
 **Reason:** two named items can share an item beneath them, and trashing them one at a time would change what the second takes once the first has gone.
 

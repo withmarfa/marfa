@@ -3,6 +3,7 @@
 // are that edge's targets. Each absence here sits beside the same path
 // producing the thing.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash } from "node:crypto";
 import { MarfaClient } from "../../../client/api.js";
 import type {
   BulkActionResponse,
@@ -217,6 +218,86 @@ describe("a part goes to the bin with its hosts", () => {
     // A part with another host out of the bin is not taken.
     expect(preview.data.items[0]?.takes.map((t) => t.id)).toEqual([part]);
     expect(preview.data.count).toBe(2);
+  });
+
+  it("plans a part two named hosts share in the preview, its digest and the trash alike", async () => {
+    const tag = `parts-shared-${ctx.runId}`;
+    const first = await note(tag);
+    const second = await note(tag);
+    const part = await note(tag);
+    await edge(part, first, "attached-to");
+    await edge(part, second, "attached-to");
+
+    // The witness: either host alone takes nothing, since the other keeps
+    // the part out of the bin.
+    const alone = await client.previewItemTrash([first]);
+    expect(alone.status).toBe(200);
+    expect(alone.data.items[0]?.takes).toEqual([]);
+    expect(alone.data.count).toBe(1);
+
+    const preview = await client.previewItemTrash([first, second]);
+    expect(preview.status).toBe(200);
+    for (const item of preview.data.items) {
+      expect(
+        item.takes.map((t) => t.id),
+        item.id,
+      ).toEqual([part]);
+      expect(item.count, item.id).toBe(2);
+    }
+    expect(preview.data.count).toBe(3);
+
+    // A digest of the two hosts alone leaves the part out, so it is not the
+    // plan the trash commits.
+    const hosts = await client.bulkGet([first, second]);
+    expect(hosts.status).toBe(200);
+    const hostsOnly = createHash("sha256")
+      .update(
+        hosts.data.items
+          .map((item) => `${item.id}:${String(item.version)}`)
+          .sort()
+          .join("\n"),
+      )
+      .digest("hex");
+    expect(hostsOnly).not.toBe(preview.data.digest);
+    const refused = await client.trashItems([first, second], hostsOnly);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("trash_plan_changed");
+    expect(await stateOf(first)).toBe("active");
+
+    const sent = await client.trashItems([first, second], preview.data.digest);
+    expect(sent.status, JSON.stringify(sent.error)).toBe(200);
+    const binned = await trashed(tag);
+    expect([...binned.keys()].sort()).toEqual([first, second, part].sort());
+    expect(binned.get(part)?.trashed_by_cascade).toBe(true);
+    expect(binned.get(part)?.trashed_with).toBe(first);
+
+    await restore(second);
+    expect(await stateOf(part)).toBe("active");
+    expect(await stateOf(first)).toBe("trashed");
+  });
+
+  it("takes a part two hosts share on a bulk transition into the bin that matches both", async () => {
+    const tag = `parts-bulk-shared-${ctx.runId}`;
+    const first = await note(tag);
+    const second = await note(tag);
+    const part = await note(`${tag}-part`);
+    await edge(part, first, "attached-to");
+    await edge(part, second, "attached-to");
+
+    const started = await client.bulkAction({
+      action: "transition",
+      filter: { tags: [tag], source: ctx.source, state: "active" },
+      state: "trashed",
+    });
+    expect(started.status, JSON.stringify(started.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (started.data as { id: string }).id,
+    );
+    expect(job.status).toBe("completed");
+    expect(await stateOf(part)).toBe("trashed");
+    const marked = (await trashed(`${tag}-part`)).get(part);
+    expect(marked?.trashed_by_cascade).toBe(true);
+    expect([first, second]).toContain(marked?.trashed_with);
   });
 
   it("bins nothing when an edge is removed, even the last to a host out of the bin", async () => {
