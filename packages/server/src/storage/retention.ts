@@ -22,10 +22,10 @@ import * as clock from "../clock.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * The most rows one run of a purge removes, so a run's transaction, and the
- * write lock it holds, stay short. A run that leaves rows behind has the
- * housekeeping scheduler run it again at once (`hasBacklog`), so a backlog
- * is cleared a batch at a time and not a batch per interval.
+ * The most root rows one purge run selects. Each root can also purge its
+ * parts, so this does not bound the total rows removed. A run that leaves
+ * rows behind has the housekeeping scheduler run it again at once
+ * (`hasBacklog`).
  */
 const PURGE_BATCH = 200;
 
@@ -117,8 +117,8 @@ export class TrashPurger {
 
   /**
    * One sweep. Computes the cutoff date from the injected clock and deletes
-   * at most {@link PURGE_BATCH} trashed rows strictly older than it, with one
-   * audit.
+   * at most {@link PURGE_BATCH} trashed roots strictly older than it, plus
+   * the parts their purges take, with one audit.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.
