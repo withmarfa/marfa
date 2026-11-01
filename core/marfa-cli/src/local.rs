@@ -149,12 +149,12 @@ impl Transport for LocalTransport {
     }
     fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
         self.stream
-            .set_write_timeout(timeout.not_zero().map(|t| *t))?;
+            .set_write_timeout(timeout.for_write().not_zero().map(|t| *t))?;
         self.stream.write_all(&self.buffers.output()[..amount])?;
         Ok(())
     }
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        self.set_read_timeout(timeout.not_zero().map(|t| *t))?;
+        self.set_read_timeout(timeout.for_read().not_zero().map(|t| *t))?;
         let amount = self.stream.read(self.buffers.input_append_buf())?;
         self.buffers.input_appended(amount);
         Ok(amount > 0)
@@ -386,6 +386,7 @@ mod tests {
         NextTimeout {
             after: std::time::Duration::from_millis(20).into(),
             reason: ureq::Timeout::RecvResponse,
+            ..NextTimeout::default()
         }
     }
 
