@@ -27,6 +27,13 @@ function refusal(env: Record<string, string>): string {
 
 const STRONG = () => randomBytes(32).toString("hex");
 
+/**
+ * Settings the command line reads the same way (`core/marfa-cli/src/telemetry`),
+ * so that one shell setting means one thing to both: a value that is not
+ * `true` leaves telemetry on and refuses nothing.
+ */
+const READ_LIKE_THE_CLI = ["OTEL_SDK_DISABLED"];
+
 /** Settings whose value is free text, so a word is a value rather than a typo. */
 const FREE_TEXT = [
   "SQLITE_PATH",
@@ -107,8 +114,12 @@ describe("the settings schema", () => {
     const accepted = SETTING_NAMES.filter(
       (name) => refusal({ [name]: "banana" }) === "",
     );
-    expect(accepted.sort()).toEqual([...FREE_TEXT].sort());
-    for (const name of SETTING_NAMES.filter((n) => !FREE_TEXT.includes(n))) {
+    expect(accepted.sort()).toEqual(
+      [...FREE_TEXT, ...READ_LIKE_THE_CLI].sort(),
+    );
+    for (const name of SETTING_NAMES.filter(
+      (n) => !FREE_TEXT.includes(n) && !READ_LIKE_THE_CLI.includes(n),
+    )) {
       expect(refusal({ [name]: "banana" }), name).toMatch(
         new RegExp(`^  ${name} `, "m"),
       );
@@ -117,7 +128,10 @@ describe("the settings schema", () => {
 
   it("refuses a negative number in every numeric setting", () => {
     const numeric = SETTING_NAMES.filter(
-      (name) => refusal({ [name]: "5" }) === "" && !FREE_TEXT.includes(name),
+      (name) =>
+        refusal({ [name]: "5" }) === "" &&
+        !FREE_TEXT.includes(name) &&
+        !READ_LIKE_THE_CLI.includes(name),
     );
     // The witness: these settings take a number at all.
     expect(numeric).toContain("RATE_LIMIT_REQUESTS");
@@ -586,7 +600,7 @@ describe("OpenTelemetry settings", () => {
     });
   });
 
-  it("needs the endpoint and both PostHog settings together", () => {
+  it("needs both PostHog settings together, and no endpoint", () => {
     expect(
       refusal({
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
@@ -599,19 +613,78 @@ describe("OpenTelemetry settings", () => {
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
       }),
     ).toContain("MARFA_POSTHOG_PROJECT_TOKEN needs MARFA_POSTHOG_HOST set too");
+    const pair = {
+      MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+    };
+    expect(refusal(pair)).toBe("");
     expect(
-      refusal({
-        MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
-        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
-      }),
-    ).toContain("MARFA_POSTHOG_HOST needs OTEL_EXPORTER_OTLP_ENDPOINT set too");
-    expect(
-      refusal({
-        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
-        MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
-        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
-      }),
+      refusal({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://c:4318", ...pair }),
     ).toBe("");
+  });
+
+  describe("exception reports", () => {
+    const pair = {
+      MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+    };
+
+    it("are on with the PostHog pair alone, and traces stay off", () => {
+      const config = loadConfig(pair);
+      expect(config.exceptions).toMatchObject({
+        posthogHost: pair.MARFA_POSTHOG_HOST,
+        posthogToken: pair.MARFA_POSTHOG_PROJECT_TOKEN,
+        serviceName: "marfa-server",
+      });
+      expect(config.otel).toBeUndefined();
+      expect(loadConfig({}).exceptions).toBeUndefined();
+    });
+
+    it("are off with OTEL_SDK_DISABLED=true, and so are traces; any other value leaves both on", () => {
+      const both = { ...pair, OTEL_EXPORTER_OTLP_ENDPOINT: "http://c:4318" };
+      for (const value of ["true", " TRUE "]) {
+        const config = loadConfig({ ...both, OTEL_SDK_DISABLED: value });
+        expect(config.exceptions, value).toBeUndefined();
+        expect(config.otel, value).toBeUndefined();
+      }
+      for (const value of ["false", "0", "yes", "nonsense"]) {
+        const config = loadConfig({ ...both, OTEL_SDK_DISABLED: value });
+        expect(config.exceptions, value).toBeDefined();
+        expect(config.otel, value).toBeDefined();
+      }
+    });
+
+    it("are off for a host the token may not travel to, and traces are not", () => {
+      const withEndpoint = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://c:4318" };
+      for (const host of [
+        "not a url",
+        "ftp://posthog.example",
+        "http://posthog.example",
+        "https://user:secret@posthog.example",
+      ]) {
+        const config = loadConfig({
+          ...withEndpoint,
+          ...pair,
+          MARFA_POSTHOG_HOST: host,
+        });
+        expect(config.exceptions, host).toBeUndefined();
+        expect(config.otel, host).toBeDefined();
+        expect(config.settingWarnings, host).toEqual([
+          expect.stringContaining("MARFA_POSTHOG_HOST"),
+        ]);
+      }
+      // The witnesses: an address on this machine is used over plain http.
+      for (const host of [
+        "http://localhost:8000",
+        "http://127.0.0.1:1",
+        "http://[::1]:1",
+      ]) {
+        expect(
+          loadConfig({ ...pair, MARFA_POSTHOG_HOST: host }).exceptions,
+          host,
+        ).toBeDefined();
+      }
+    });
   });
 
   it("loads an exporting endpoint with no environment name, and has no setting for one", () => {

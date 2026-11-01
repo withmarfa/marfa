@@ -11,7 +11,11 @@ import { expect } from "vitest";
  * posts a single event to the capture path where the server posts a batch.
  */
 export interface FaultSinks {
-  /** The settings that point the server's four reports at the receiver. */
+  /**
+   * The settings that point the four reports at the receiver. They name the
+   * switch too, since a booted test server is told to send nothing unless a
+   * fixture says otherwise.
+   */
   env(): Record<string, string>;
   /** What the error webhook was sent, parsed. */
   readonly notifications: Record<string, unknown>[];
@@ -118,6 +122,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   return {
     env: () => ({
       ERROR_WEBHOOK_URL: `${origin}/errors`,
+      OTEL_SDK_DISABLED: "false",
       OTEL_EXPORTER_OTLP_ENDPOINT: origin,
       MARFA_POSTHOG_HOST: origin,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",

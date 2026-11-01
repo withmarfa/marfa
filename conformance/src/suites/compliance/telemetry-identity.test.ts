@@ -66,6 +66,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${String(address.port)}`;
   server = await bootFreshServer("telemetry-identity", {
     ERROR_WEBHOOK_URL: `${base}/errors`,
+    OTEL_SDK_DISABLED: "false",
     OTEL_EXPORTER_OTLP_ENDPOINT: base,
     MARFA_POSTHOG_HOST: base,
     MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
