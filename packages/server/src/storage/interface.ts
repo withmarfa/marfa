@@ -265,7 +265,7 @@ export interface ItemFilters {
 }
 
 /** The axis `ItemStore.stats` groups on. */
-export type ItemStatsAxis = "state" | "type";
+export type ItemStatsAxis = "state" | "type" | "source";
 
 export interface SearchFilters {
   types?: readonly string[];
@@ -970,7 +970,7 @@ export interface ItemStore {
   /**
    * Item counts for the instance, grouped on one axis.
    *
-   * `by` chooses the axis and nothing else: both groupings cover the same
+   * `by` chooses the axis and nothing else: every grouping covers the same
    * rows, the ones `filters` match, so their totals agree. That is
    * the property `routes/items-stats-by-type.test.ts` asserts, and it is
    * what catches a breakdown that quietly dropped a filter the other keeps.
@@ -1423,6 +1423,14 @@ export interface KeyStore {
    * its source revokes it here, or the source would stay taken for good.
    */
   revokeLapsedHolders(source: string): Promise<string[]>;
+  /**
+   * The label of each live key, neither revoked nor past its `expires_at`,
+   * by the source it holds as its own. A source is held as its own by at
+   * most one live key (`keys-and-oauth/own-source-unique`).
+   */
+  ownSourceLabels(): Promise<ReadonlyMap<string, string>>;
+  /** The sources the live keys hold as their own or claim. */
+  heldSources(): Promise<ReadonlySet<string>>;
   list(): Promise<StoredApiKey[]>;
   get(id: string): Promise<StoredApiKey | null>;
   validate(
@@ -2585,6 +2593,24 @@ export interface IdempotencyStore {
   cleanup(retentionHours: number): Promise<number>;
 }
 
+/** The name and mark someone set for a source; either may be unset. */
+export interface SourceNaming {
+  source: string;
+  name: string | null;
+  mark: string | null;
+}
+
+/**
+ * The names and marks set for sources. A source is written under without
+ * being registered, so a source with nothing set has no row.
+ */
+export interface SourceStore {
+  list(): Promise<SourceNaming[]>;
+  get(source: string): Promise<SourceNaming | null>;
+  /** Replaces what is set for `source`; both null removes its row. */
+  set(source: string, name: string | null, mark: string | null): Promise<void>;
+}
+
 export interface SettingsStore {
   /** Returns null when the key has not been set. */
   get(key: string): Promise<string | null>;
@@ -3504,6 +3530,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   blobs: BlobRegistry;
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
+  sources: SourceStore;
   /** Provider-table access shared by credential transactions and grant
    *  lifecycle operations. Test contexts without OAuth can omit it. */
   oauthProvider?: OauthProviderStore;

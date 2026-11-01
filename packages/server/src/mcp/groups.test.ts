@@ -137,8 +137,10 @@ describe("the MCP groups' endpoints", () => {
       expect(await toolNames(reader)).toEqual([
         "marfa_find",
         "marfa_get",
+        "marfa_name_source",
         "marfa_overview",
         "marfa_search_docs",
+        "marfa_sources",
       ]);
     } finally {
       await reader.close();

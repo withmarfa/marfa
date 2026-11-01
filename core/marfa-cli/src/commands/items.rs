@@ -130,7 +130,7 @@ pub enum ItemsCommand {
     /// Attach a file: upload its bytes, create a file item for them, and link
     /// it to the target with an `attached-to` edge.
     Attach(AttachArgs),
-    /// Item counts, by state or by type.
+    /// Item counts, by state, by type or by source.
     Stats {
         /// What to count by.
         #[arg(long)]
@@ -302,6 +302,7 @@ impl TransitionState {
 pub enum StatsBy {
     State,
     Type,
+    Source,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -803,6 +804,7 @@ pub fn stats_request(by: Option<StatsBy>) -> Request {
         by.map(|by| match by {
             StatsBy::State => "state",
             StatsBy::Type => "type",
+            StatsBy::Source => "source",
         }),
     )
 }

@@ -50,7 +50,12 @@ import {
   type CarriedRow,
   type ExportAuthority,
 } from "./export-authority.js";
-import type { Storage, ItemFilters, LoadedType } from "../storage/interface.js";
+import type {
+  Storage,
+  ItemFilters,
+  LoadedType,
+  SourceNaming,
+} from "../storage/interface.js";
 import {
   answeringFirst,
   recordedStores,
@@ -122,6 +127,10 @@ export interface ArchiveManifest {
   edge_type_count: number;
   /** The owner's icons carried in `types.ndjson`, one line each. */
   type_icon_count: number;
+  /** The source names and marks carried in `types.ndjson`, one line each:
+   *  every one for the owner, and those of the carried items' sources for a
+   *  key. */
+  source_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
   /** The blobs the archive names and does not carry, in the shape of
    *  `blobs`, and not counted in `blob_count`: those left out by
@@ -266,6 +275,7 @@ interface Selection {
   typeCount: number;
   edgeTypeCount: number;
   typeIconCount: number;
+  sourceCount: number;
 }
 
 interface BlobSelection {
@@ -378,6 +388,7 @@ async function prepareArchiveExport(
         type_count: selection.typeCount,
         edge_type_count: selection.edgeTypeCount,
         type_icon_count: selection.typeIconCount,
+        source_count: selection.sourceCount,
       } satisfies Omit<ArchiveManifest, "blobs" | "missing_blobs">);
       try {
         // `collectBlobs` checked the blob entries a page at a time.
@@ -668,6 +679,8 @@ async function collectSelection(input: {
   const registrations = new Map<string, LoadedType>();
   const edgeRegistrations = new Map<string, EdgeTypeSchema>();
   let ownerIcons: ReadonlyMap<string, string> = new Map();
+  let namedSources: SourceNaming[] = [];
+  const carriedSources = new Set<string>();
   const captureRegistrations = async () => {
     // Keep removed registrations for carried rows, and replace retained
     // definitions whenever a later page sees them. The complete selection is
@@ -682,6 +695,7 @@ async function collectSelection(input: {
       edgeRegistrations.set(schema.id, schema);
     }
     ownerIcons = await storage.types.icons();
+    namedSources = await storage.sources.list();
   };
   const captureBlobs = async (
     hashes: Set<string>,
@@ -795,6 +809,7 @@ async function collectSelection(input: {
           lending_extensions: lendingExtensions,
         });
         ids.push(item.id);
+        carriedSources.add(item.source);
         collectBlobHashes(item.properties, hashes);
         collectBlobHashes(metadata.extensions, hashes);
       }
@@ -877,6 +892,12 @@ async function collectSelection(input: {
   )) {
     typeLines.push(`${JSON.stringify({ type_icon: { type_id, icon } })}\n`);
   }
+  const sourceLines = namedSources
+    .filter((row) => reader.owner || carriedSources.has(row.source))
+    .sort((a, b) => (a.source < b.source ? -1 : a.source > b.source ? 1 : 0));
+  for (const { source, name, mark } of sourceLines) {
+    typeLines.push(`${JSON.stringify({ source: { source, name, mark } })}\n`);
+  }
   await types.append(typeLines.join(""));
 
   await Promise.all([
@@ -896,6 +917,7 @@ async function collectSelection(input: {
     typeCount,
     edgeTypeCount,
     typeIconCount: ownerIcons.size,
+    sourceCount: sourceLines.length,
   };
 }
 

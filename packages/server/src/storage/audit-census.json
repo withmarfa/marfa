@@ -384,6 +384,7 @@
     "boundary": "Audited registration units and staged type normalization nested in the restore's one audited transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
     "calls": {
       "EdgeTypeStore.create": 1,
+      "SourceStore.set": 1,
       "TypeStore.create": 1,
       "TypeStore.setIcon": 1,
       "TypeStore.update": 1,
@@ -402,6 +403,13 @@
       "runAuditedTransaction": 2,
       "writeItem": 1,
       "finalizeArchiveItem": 1
+    }
+  },
+  "routes/sources.ts": {
+    "boundary": "Audited set and clear of a source's name and mark, read and written in one transaction; the row goes when both are cleared.",
+    "calls": {
+      "SourceStore.set": 1,
+      "runAuditedTransaction": 1
     }
   },
   "routes/types.ts": {

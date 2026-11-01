@@ -80,7 +80,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "items.purge":
     "Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.",
   "keys.manage":
-    "Listing and revoking keys across the instance, and changing their metadata or narrowing access.",
+    "Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.",
   "keys.mint":
     "Minting keys within the caller's current access, and listing, changing and revoking keys within that access.",
   "schema.write":

@@ -16,7 +16,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `instance.maintain` | Running housekeeping, removing retired platform types and cancelling bulk jobs.                                                                         |
 | `instance.read`     | Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.                            |
 | `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
-| `keys.manage`       | Listing and revoking keys across the instance, and changing their metadata or narrowing access.                                                         |
+| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.           |
 | `webhooks.manage`   | Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.             |
@@ -908,6 +908,172 @@ If a key whose claim was taken away creates or upserts by natural key under that
 If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST write nothing.
 
 **Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable`.
+
+## Source names and marks
+
+Every item carries a source code that says what wrote it. A source also has a name and an optional mark, an icon ID, to be shown by. `GET /sources` lists the sources a credential can see, and `GET /source` and `PATCH /source` read and set one.
+
+### `keys-and-oauth/source-code-query`
+
+The server MUST take the source code of `GET /source` and `PATCH /source` from the `source` query parameter.
+
+**Reason:** a valid code such as `..`, or one holding `/`, `?` or `#`, would be rewritten or cut short in a path.
+
+**Tests:** `compliance/source-names.test.ts › travels in the query, so a code a path would rewrite reaches its source`.
+
+### `keys-and-oauth/source-code-length`
+
+The server MUST take a nonempty source code with no space at either end at `GET /source`, `PATCH /source` and every other door that takes one only if it is at most 200 UTF-16 code units long or is `restored:` followed by at most 200 UTF-16 code units.
+
+**Reason:** a key holds a source of at most 200 code units, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
+
+**Tests:** `compliance/source-names.test.ts › takes a code as long as a restore can make one, and refuses a longer`.
+
+### `keys-and-oauth/source-read`
+
+When a credential sends `GET /source` naming a source it can see, the server MUST answer the source's `source`, `name` and `name_from`, and its `mark` only where one is set.
+
+**Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`.
+
+### `keys-and-oauth/source-list`
+
+When a credential sends `GET /sources`, the server MUST answer every source it can see, in the shape `GET /source` answers each, ordered by code, in one page whose `next_cursor` is `null`.
+
+**Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`, `› answers source_not_found for a source the credential cannot see, and leaves it out of the list`.
+
+### `keys-and-oauth/source-name-set`
+
+Where a name is set on a source, the server MUST answer that name as the source's `name`, with `name_from` `set`.
+
+**Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`.
+
+### `keys-and-oauth/source-name-app`
+
+Where no name is set on the source an app signed in to the instance writes under, the server MUST answer the app's sign-in name as the source's `name`, with `name_from` `app`.
+
+**Tests:** `compliance/source-names.test.ts › is an app's sign-in name for the source the app writes under`.
+
+### `keys-and-oauth/source-name-key`
+
+Where no name is set on a source that is the own `source` of a key that is neither revoked nor expired, the server MUST answer that key's label as the source's `name`, with `name_from` `key`.
+
+**Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`.
+
+### `keys-and-oauth/source-name-claimed`
+
+The server MUST NOT answer as a source's `name` the label of a key that only claims the source.
+
+**Reason:** many keys can claim one source, and none of them is what the source names.
+
+**Tests:** `compliance/source-names.test.ts › takes no key's label for a claimed source`.
+
+### `keys-and-oauth/source-name-code`
+
+Where no name is set on a source, no app writes under it and no live key holds it as its own `source`, the server MUST answer its code as its `name`, with `name_from` `code`.
+
+**Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`, `› keeps a set name when its source passes to a new key, and drops the revoked key's label`.
+
+### `keys-and-oauth/source-name-kept`
+
+When the key whose own `source` a source is ends, and a new key takes the source as its own, the server MUST keep the name set on the source.
+
+**Reason:** the name belongs to the source, which outlives each key that writes under it.
+
+**Tests:** `compliance/source-names.test.ts › keeps a set name when its source passes to a new key, and drops the revoked key's label`.
+
+### `keys-and-oauth/source-label-dropped`
+
+When the key whose own `source` a source is ends, the server MUST NOT answer that key's label as the source's `name`.
+
+**Tests:** `compliance/source-names.test.ts › keeps a set name when its source passes to a new key, and drops the revoked key's label`.
+
+### `keys-and-oauth/source-name-length`
+
+If `PATCH /source` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 UTF-16 code units once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
+
+**Reason:** it is the rule a sign-in's name is held to, and an archive refuses a name that `PATCH /source` could not store, so a name measured another way would stop an export.
+
+**Tests:** `compliance/source-names.test.ts › refuses a name an archive could not carry, and keeps what was set`.
+
+### `keys-and-oauth/source-set-own`
+
+When a credential sends `PATCH /source` naming its own `source` or a source it claims, the server MUST set the name and mark the body gives.
+
+**Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
+
+### `keys-and-oauth/source-set-manage`
+
+When a credential holding `keys.manage`, or direct owner or local authority, sends `PATCH /source` naming any source, the server MUST set the name and mark the body gives.
+
+**Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
+
+### `keys-and-oauth/source-set-refused`
+
+If a credential without `keys.manage` sends `PATCH /source` naming a source that is neither its own `source` nor one it claims, then the server MUST answer `403 forbidden` with `details.required_scope` `keys.manage`.
+
+**Reason:** a source's name is what the owner reads to tell what wrote an item, so only what writes under it, or what manages keys, may change it.
+
+**Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
+
+### `keys-and-oauth/source-set-refused-unchanged`
+
+If a credential without `keys.manage` sends `PATCH /source` naming a source that is neither its own `source` nor one it claims, then the server MUST leave the source's name and mark as they were.
+
+**Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
+
+### `keys-and-oauth/source-set-omitted`
+
+When `PATCH /source` leaves `name` or `mark` out of its body, the server MUST keep that field's value.
+
+**Tests:** `compliance/source-names.test.ts › keeps a field left out, and clears one sent as null`.
+
+### `keys-and-oauth/source-set-null`
+
+When `PATCH /source` sends `name` or `mark` as `null`, the server MUST clear that field.
+
+**Tests:** `compliance/source-names.test.ts › keeps a field left out, and clears one sent as null`.
+
+### `keys-and-oauth/source-mark-name`
+
+If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST answer `400 invalid_schema` naming it in `details.errors`.
+
+**Reason:** a mark is drawn where a type's icon is, from the same pinned sets.
+
+**Tests:** `compliance/source-names.test.ts › refuses a mark outside the pinned icon sets with invalid_schema, and sets nothing`.
+
+### `keys-and-oauth/source-mark-unchanged`
+
+If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST leave the source's name and mark as they were.
+
+**Tests:** `compliance/source-names.test.ts › refuses a mark outside the pinned icon sets with invalid_schema, and sets nothing`.
+
+### `keys-and-oauth/source-list-manage`
+
+When a credential holding `keys.manage`, or direct owner or local authority, sends `GET /sources`, the server MUST answer every source the instance holds: those of its items in any state, those with a name or mark, and those its keys hold as their own or claim, whatever types the credential reads.
+
+**Reason:** `GET /source` answers any source to such a credential, so the list says the same.
+
+**Tests:** `compliance/source-names.test.ts › lists every source the instance holds to a credential with keys.manage, whatever types it reads`.
+
+### `keys-and-oauth/source-hidden`
+
+If a credential without `keys.manage` sends `GET /source` naming a source that is not its own `source`, not one it claims, and carried by no item it can read in any state, then the server MUST answer `404 source_not_found`.
+
+**Reason:** a source's code and name say what writes to the instance, which a credential that reads none of it has no reason to learn.
+
+**Tests:** `compliance/source-names.test.ts › answers source_not_found for a source the credential cannot see, and leaves it out of the list`.
+
+### `keys-and-oauth/source-hidden-unlisted`
+
+The server MUST NOT list to a credential without `keys.manage`, on `GET /sources`, a source that is not its own `source`, not one it claims, and carried by no item it can read in any state.
+
+**Tests:** `compliance/source-names.test.ts › answers source_not_found for a source the credential cannot see, and leaves it out of the list`.
+
+### `keys-and-oauth/source-audit`
+
+When `PATCH /source` succeeds, the server MUST record an audit entry with the action `source.update` and the source code as the resource.
+
+**Tests:** `compliance/source-names.test.ts › records a change to a source's name in the audit log`.
 
 ## Which keys a credential reaches
 

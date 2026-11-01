@@ -93,6 +93,19 @@ export const MIGRATIONS: readonly Migration[] = [
         'CREATE INDEX `idx_items_state_binned_at` ON `items` (`state`,CASE WHEN "trashed_at" IS NULL THEN "updated_at" ELSE "trashed_at" END,`id`);',
       ),
   },
+  {
+    to: 6,
+    changes: ["source_names"],
+    apply: (db) =>
+      db.executeMultiple(
+        "CREATE TABLE `source_names` (\n" +
+          "\t`source` text PRIMARY KEY NOT NULL,\n" +
+          "\t`name` text,\n" +
+          "\t`mark` text,\n" +
+          "\t`updated_at` text NOT NULL\n" +
+          ");",
+      ),
+  },
 ];
 
 /**

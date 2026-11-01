@@ -60,7 +60,7 @@ const TOOL_LIST_BUDGET_CHARS = 16_000;
  * What a group's endpoint may add to that. A client adds a group only when
  * the person wants its tools, so it costs only those conversations.
  */
-const GROUP_BUDGET_CHARS = 10_000;
+const GROUP_BUDGET_CHARS = 12_000;
 
 /** Tools whose annotations say they reach outside Marfa. */
 const OPEN_WORLD: readonly ToolName[] = [

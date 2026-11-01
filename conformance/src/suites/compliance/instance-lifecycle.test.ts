@@ -1114,10 +1114,11 @@ describe("starting on a database another build wrote", () => {
 /**
  * Turns a stopped database of this build into one at schema version 1, as
  * the releases before the `type_icons` table wrote it: the same tables but
- * that one and the bin-order index, with the version stamped.
+ * that one, `source_names` and the bin-order index, with the version stamped.
  */
 function asVersionOne(db: Database): void {
   db.exec("DROP TABLE type_icons");
+  db.exec("DROP TABLE source_names");
   db.exec("DROP INDEX idx_items_state_binned_at");
   db.exec("PRAGMA user_version = 1");
 }

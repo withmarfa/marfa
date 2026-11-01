@@ -25,6 +25,7 @@ import {
   archiveWriter,
 } from "./restore-archive-history.js";
 import { archiveLines, type ReadArchive } from "./restore-archive-read.js";
+import { RESTORED_SOURCE_PREFIX } from "../auth/source-codes.js";
 import {
   planArchiveTypes,
   type ArchiveTypeBaseline,
@@ -222,7 +223,7 @@ export function oversizedProperties(
 export function restoredSource(source: unknown): string | undefined {
   if (typeof source !== "string") return undefined;
   return reservedCredentialSourcePrefix(source) === "oauth:"
-    ? `restored:${source}`
+    ? `${RESTORED_SOURCE_PREFIX}${source}`
     : source;
 }
 

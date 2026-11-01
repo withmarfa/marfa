@@ -506,15 +506,17 @@ const getItemStatsRoute = createRoute({
   tags: ["Items"],
   summary: "Get item counts",
   description:
-    "Returns item counts by state or type using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.",
+    "Returns item counts by state, type or source using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.",
   security: ownerItemReadSecurity,
   middleware: readsOwnerItems,
   request: {
     query: z.object({
       by: z
-        .enum(["state", "type"])
+        .enum(["state", "type", "source"])
         .optional()
-        .describe("Grouping axis. Defaults to `state`."),
+        .describe(
+          "Grouping axis: `state`, `type` or `source`. Defaults to `state`.",
+        ),
       ...listingNarrowingKeys,
       state: z
         .string()
@@ -539,7 +541,7 @@ const getItemStatsRoute = createRoute({
         },
       },
       description:
-        "Returns an object that maps each state, or each type, to its count.",
+        "Returns an object that maps each state, type or source to its count.",
     },
     400: {
       content: {
@@ -548,7 +550,7 @@ const getItemStatsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a query parameter is unknown or invalid, or `by` is not `state` or `type`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+        "- `validation_error`: a query parameter is unknown or invalid, or `by` is not `state`, `type` or `source`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {

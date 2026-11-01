@@ -20,6 +20,7 @@ import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
 import { SqliteVersionStore } from "./version-store.js";
 import { SqliteTypeStore } from "./type-store.js";
+import { SqliteSourceStore } from "./source-store.js";
 import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobRegistry } from "./blob-registry.js";
@@ -189,6 +190,7 @@ export async function createSqliteStorage(
     blobs: guardStoreWithReadContext(blobRegistry, "blobs"),
     edges: guardStoreWithReadContext(edgeStore, "edges"),
     edgeTypes: guardStoreWithReadContext(edgeTypeStore, "edgeTypes"),
+    sources: guardStoreWithReadContext(new SqliteSourceStore(db), "sources"),
     enrichment: guardStoreWithReadContext(enrichmentStore, "enrichment"),
     // Shared provider-table access joins credential and grant transactions.
     oauthProvider: guardStoreWithReadContext(

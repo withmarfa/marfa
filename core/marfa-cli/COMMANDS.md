@@ -825,7 +825,7 @@ marfa items attach [OPTIONS] <ID> <FILE>
 
 ### marfa items stats
 
-Item counts, by state or by type.
+Item counts, by state, by type or by source.
 
 ```text
 marfa items stats [OPTIONS]
@@ -833,7 +833,7 @@ marfa items stats [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--by <BY>` | What to count by. One of `state`, `type`. |
+| `--by <BY>` | What to count by. One of `state`, `type`, `source`. |
 
 ### marfa items occurrences
 
@@ -1783,6 +1783,72 @@ Forget the key kept for this server.
 ```text
 marfa keys forget [OPTIONS]
 ```
+
+## sources
+
+Sources: the codes items carry to say what wrote them, and the name and mark each is shown by.
+
+### marfa sources
+
+```text
+marfa sources [OPTIONS] <COMMAND>
+```
+
+### marfa sources list
+
+List the sources you can see, each with the name and mark it's shown by: your own, those you claim, and those of items you can read. With keys.manage, every source in use or named.
+
+```text
+marfa sources list [OPTIONS]
+```
+
+### marfa sources get
+
+Show a source's name, where the name comes from, and its mark.
+
+```text
+marfa sources get [OPTIONS] <SOURCE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<SOURCE>` | The source code, as items carry it in `source`. |
+
+### marfa sources set
+
+Set the name or mark a source is shown by. A key can set its own source and the sources it claims; any other needs keys.manage.
+
+The mark is an Iconify icon ID from the sets a type's icon uses: `lucide`, such as `lucide:book-open`, or `simple-icons` for brand marks, such as `simple-icons:github`.
+
+```text
+marfa sources set [OPTIONS] <SOURCE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<SOURCE>` | The source code, as items carry it in `source`. |
+
+| Option | Description |
+| --- | --- |
+| `--name <NAME>` | The name to show, such as `GitHub`. |
+| `--mark <MARK>` | The icon ID to show, such as `simple-icons:github`. |
+
+### marfa sources clear
+
+Clear a source's name or mark, so the name falls back to the app's sign-in name, the key's label or the code. Needs the same access as `set`.
+
+```text
+marfa sources clear [OPTIONS] <SOURCE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<SOURCE>` | The source code, as items carry it in `source`. |
+
+| Option | Description |
+| --- | --- |
+| `--name` | Clear the name. |
+| `--mark` | Clear the mark. |
 
 ## config
 

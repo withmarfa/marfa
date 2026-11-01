@@ -111,9 +111,18 @@ export const READ_TOOLS = ["marfa_find", "marfa_get", "marfa_overview"];
 export const SCHEMA_TOOLS = [
   "marfa_bulk_save",
   "marfa_move_items",
+  "marfa_name_source",
   "marfa_save_type",
   "marfa_save_view",
   "marfa_search_docs",
+  "marfa_sources",
+];
+
+/** The tools `/mcp/schema` adds for every credential. */
+export const EVERY_CREDENTIAL_SCHEMA_TOOLS = [
+  "marfa_name_source",
+  "marfa_search_docs",
+  "marfa_sources",
 ];
 
 /** The tools `/mcp/admin` adds for a credential that may use each. */
