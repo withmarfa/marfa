@@ -293,7 +293,7 @@ export interface OwnerPasskey {
   id: string;
   name: string | null;
   createdAt: Date;
-  /** When it last signed the owner in or confirmed a sign-in, or `null` if it has not. */
+  /** When it last signed the owner in or confirmed a sign-in, or `null` if no use is recorded. */
   lastUsedAt: Date | null;
 }
 

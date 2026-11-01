@@ -1,6 +1,6 @@
 # Credential persistence boundaries
 
-This integration targets Better Auth, Passkey, and OAuth Provider 1.7.7. The provider's [adapter guide](https://www.better-auth.com/docs/guides/create-a-db-adapter) requires a real transaction callback for transactional behavior. The [Drizzle adapter](https://www.better-auth.com/docs/adapters/drizzle) remains responsible for model mapping and SQL. Marfa wraps that adapter and gives it the transaction-aware Drizzle handle used by its own stores.
+This integration targets Better Auth, Passkey, and OAuth Provider 1.7.14. The provider's [adapter guide](https://www.better-auth.com/docs/guides/create-a-db-adapter) requires a real transaction callback for transactional behavior. The [Drizzle adapter](https://www.better-auth.com/docs/adapters/drizzle) remains responsible for model mapping and SQL. Marfa wraps that adapter and gives it the transaction-aware Drizzle handle used by its own stores.
 
 Owner passkey inventory, rename, and removal use the facade's credential adapter directly, with no browser cookie minted for local authority. Rename and removal check the durable owner and credential row under the same writer as the adapter mutation and audit. The provider's list, delete, and update HTTP paths are fenced; browser registration and authentication keep their guarded WebAuthn ceremonies. A passkey's last use, a field Marfa adds to the provider's passkey model, is written into the counter update a successful authentication makes, so it commits or rolls back with that sign-in's session.
 

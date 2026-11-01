@@ -1504,7 +1504,7 @@ describe("every command holds the server to the contract", () => {
         command: "owner passkeys rename",
         args: PRIVATE_SOCKET_TABLE["owner passkeys rename"]!(),
         path: `PATCH /owner/passkeys/${ID}`,
-        body: { id: ID, name: "Studio", created_at: WHEN },
+        body: { id: ID, name: "Studio", created_at: WHEN, last_used_at: null },
       },
       {
         command: "owner passkeys remove",

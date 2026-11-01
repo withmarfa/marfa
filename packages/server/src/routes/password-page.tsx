@@ -33,7 +33,7 @@ export interface PasskeyView {
   name: string | null;
   /** When it was added. */
   added: Date;
-  /** When it last signed in or confirmed a sign-in, or `null` if it has not. */
+  /** When it last signed in or confirmed a sign-in, or `null` if no use is recorded. */
   lastUsed: Date | null;
 }
 
