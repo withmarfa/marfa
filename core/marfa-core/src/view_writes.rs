@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::http::{Answer, Method, Outgoing};
 use crate::wire::WireItemWithMetadata;
-use crate::{Core, CoreError, Result, ViewRow, catch_up, reach, store};
+use crate::{Core, CoreError, Result, ViewRow, catch_up};
 
 impl Core {
     /// Sends settings to the view door at once, never to the queue. Retrying
@@ -51,22 +51,14 @@ impl Core {
     /// `NotFound`; replaying an accepted delete with its key succeeds.
     pub fn delete_view(&self, id: &str, idempotency_key: Option<&str>) -> Result<()> {
         self.lock.refuse_unless_writer()?;
-        let generation = reach::generation(&*self.conn()?)?;
-        self.send_to_view_door(
-            Method::Delete,
-            vec!["views".into(), id.into()],
-            String::new(),
-            idempotency_key,
-        )?;
-        let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
-        // A hydration while the request was in flight may have replaced the
-        // copy; the accepted write says nothing about that replacement.
-        if reach::generation(&tx)? == generation {
-            store::purge_item(&tx, id)?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.purge_sent(id, || {
+            self.send_to_view_door(
+                Method::Delete,
+                vec!["views".into(), id.into()],
+                String::new(),
+                idempotency_key,
+            )
+        })
     }
 
     fn send_to_view_door(

@@ -1142,6 +1142,30 @@ When an event says a pinned row was purged, a device MUST take the pin off.
 
 **Tests:** `device/catch-up.test.ts › takes the pin off a purged row`.
 
+### `device/deleted-stays-gone`
+
+While this device holds the server's acceptance of a purge or a view's delete that it sent, and has neither read the event of that removal nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the row.
+
+**Reason:** the event of a change made before the removal can still be ahead of the cursor when the answer arrives, and applied as it stands it puts the removed row back, since nothing is left in the copy to compare its version with. The removal's own event ends the rule, so a row made later under the same id still enters, and a fill from the first page reads what the server holds. A device whose answer was lost never took the row out, so it has nothing to keep out.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps the row out through an older event read after the purge`, `› shows a row made again under the id once the purge's event is read`.
+
+### `device/deleted-row-edges-stay-gone`
+
+While a device keeps a row out under `device/deleted-stays-gone`, a device MUST NOT apply an event that adds or changes an edge at either end of the row.
+
+**Reason:** the server deletes those edges with the row, and an older event for one of them would draw an edge to a row the copy no longer holds.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps out an older event for an edge at either end of the row`.
+
+### `device/deleted-edge-stays-gone`
+
+While this device holds the server's acceptance of an edge delete that it sent, or its refusal because it holds no such edge, and has neither read the event of that delete nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the edge.
+
+**Reason:** as for a row, an older event still ahead of the cursor would put the deleted edge back. A refusal because the edge is already gone means another delete took it, and that delete's event ends the rule as this one's would.
+
+**Tests:** `device/deleted-stays-gone.test.ts › keeps the edge out through an older event read after the delete was answered`, `› shows an edge made again under the id once the delete's event is read`.
+
 ### `device/catch-up-never-held`
 
 When an event names a row that is not pinned, that the copy does not hold and that the slice does not take, a device MUST NOT add the row.
@@ -6094,6 +6118,30 @@ If the file named for an embed text is not attached to the item named, then a de
 
 **Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, and references it beside the attachment`.
 
+### `device/embed-table-pipe`
+
+When an embed in a body, `![[name\|size]]`, sits inside a table cell, including a table in a quote or a callout, a device MUST read each `\|` in the embed as `|` before reading its name.
+
+**Reason:** a table cell cannot hold a bare `|`, so an editor writes the size of a picture there as `![[t.png\|200]]`, which Obsidian shows as the file `t.png`. The text as written is what the embed is recorded and answered as.
+
+**Tests:** `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `device/embed-path-markdown-escape`
+
+When an embed names a path, `![alt](path)`, a device MUST read the path in this order: first a backslash followed by an ASCII punctuation character as that character, then cut the path at the first `?` or `#`, then each percent escape as its byte.
+
+**Reason:** an editor escapes an underscore in a file name, so `![](my\_pic.png)` shows `my_pic.png`. A path is a URL, so an escaped `?` or `#` is literal in the destination and still starts a query or a fragment: `![](a\?b.png?x=1)` names `a`. A file whose name holds `#` or `?` is written `a%23b.png` or `a%3Fb.png`, which the percent step reads after the cut. Percent escapes come last, so `%5C` stays a backslash that escapes nothing, and `![](my%5C_pic.png)` names `my\_pic.png`. A `![[name]]` embed is no path and is not unescaped, as Obsidian does not.
+
+**Tests:** `device/body-edges-live.test.ts › ends an embed path at an escaped question mark or hash and keeps a percent-encoded one in the name`, `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `device/embed-path-other-backslash`
+
+When an embed names a path and a backslash in it is followed by anything but an ASCII punctuation character, a device MUST read the backslash as part of the path.
+
+**Reason:** `![](a\b.png)` names `a\b.png`, as the Markdown rule for an escape leaves it.
+
+**Tests:** `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`.
+
 ### `device/attach-title`
 
 When a file is attached to an item under no title its caller gave, a device MUST title the file item with the first of its name, `name 2.ext`, `name 3.ext` that no other attachment of the item answers to.
@@ -6186,9 +6234,9 @@ A device MUST read a link's name, heading and alias from the text as written, co
 
 ### `device/link-backslash`
 
-A device MUST read a backslash in a link, or before its brackets, as part of the text.
+A device MUST read a backslash in a link, or before its brackets, as part of the text, except that `device/embed-table-pipe` reads `\|` in an embed in a table cell as `|`.
 
-**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike.
+**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike. The one escape is the pipe of an embed's size in a table cell, which a table needs.
 
 **Tests:** `device/link-parts.test.ts › keeps a backslash as part of the text`.
 

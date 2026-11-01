@@ -3587,6 +3587,50 @@ mod tests {
     }
 
     #[test]
+    fn an_embed_with_an_escaped_path_or_a_table_size_is_bound_to_its_attached_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "");
+        let mut files = Vec::new();
+        for name in ["my_pic.png", "t.png"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"not really a png").unwrap();
+            files.push(
+                core.attach(&host, &path, &Attachment::default())
+                    .unwrap()
+                    .item
+                    .item_id
+                    .unwrap(),
+            );
+        }
+        let body = "![](my\\_pic.png)\n\n| h | h |\n| - | - |\n| a | ![[t.png\\|200]] |";
+        edit(&core, &host, serde_json::json!({ "body": body }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            files
+                .iter()
+                .map(|id| BodyTarget::Item { id: id.clone() })
+                .collect::<Vec<_>>(),
+            "an embed was not bound to its file"
+        );
+        let mut held = held_out(&core, &host, LINK_EDGE);
+        held.sort();
+        files.sort();
+        assert_eq!(held, files, "an embed made no references edge");
+        // Witness: the same names outside a table or an escape bind nothing.
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": "![[t.png\\|200]] ![](my\\x_pic.png)" }),
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Pending],
+            "the unescaped pipe outside a table read as a name with a file type"
+        );
+    }
+
+    #[test]
     fn an_embed_text_names_its_file_alone_or_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let core = copy(&dir);
