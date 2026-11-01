@@ -69,7 +69,8 @@ interface Linked {
  *  three ways in its body and once in a frontmatter line. `joining` runs
  *  before the push, so another folder can join and hear the creates; it is
  *  given a second folder row, scripted before the item doors, whose read
- *  would answer for any id. */
+ *  would answer for any id. `text` is what `Host.md` holds, `HOST` unless
+ *  given. */
 async function linked(
   label: string,
   update?: (
@@ -77,6 +78,7 @@ async function linked(
     sent: Parameters<FolderDoor["update"]>[1],
   ) => ReturnType<FolderDoor["update"]> | undefined,
   joining?: (owner: FolderHarness, other: FolderRow) => Promise<void>,
+  text = HOST,
 ): Promise<Linked> {
   const edges = new EdgeDoor();
   harness = await folderHarness(label, {
@@ -99,15 +101,20 @@ async function linked(
   });
   await joining?.(harness, other);
   put(harness, "Old.md", "---\ntitle: Old\n---\nThe plan.\n\n## Steps\n");
-  put(harness, "Host.md", HOST);
+  put(harness, "Host.md", text);
   const pushed = await harness.folder.push();
   expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
   const old = idIn(harness, "Old.md")!;
   const host = idIn(harness, "Host.md")!;
   expect(heldEdges(edges)).toEqual(
-    [`${host} about ${old}`, `${host} references ${old}`].sort(),
+    (text === HOST
+      ? [`${host} about ${old}`, `${host} references ${old}`]
+      : [`${host} references ${old}`]
+    ).sort(),
   );
-  expect(bodyOf(harness, "Host.md")).toBe(BODY);
+  expect(bodyOf(harness, "Host.md")).toBe(
+    text.slice(text.indexOf("---\n", 4) + 4),
+  );
   return { door: door!, edges, held, old, host };
 }
 
@@ -267,6 +274,52 @@ describe("a body link to a retitled item", () => {
     await settled(harness!);
   });
 
+  it.each([
+    ["a code span", "It`s"],
+    ["a comment", "Old <!-- note"],
+  ] as const)(
+    "names the item by its id where its new title would open %s over the text after the link",
+    async (_, title) => {
+      const made = await linked(`retitled-reparsed-${title.length}`);
+      retitleElsewhere(made, made.old, title);
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const id = made.old;
+      const rewritten = BODY.replace(
+        "See [[Old]], [[Old|the plan]] and [[Old#Steps]].",
+        `See [[${id}|Old]], [[${id}|the plan]] and [[${id}#Steps|Old]].`,
+      );
+      expect(bodyOf(harness!, "Host.md")).toBe(rewritten);
+      expect(made.held.get(made.host)?.properties.body).toBe(rewritten);
+      // The links name the item still, so its edge stands.
+      expect(heldEdges(made.edges)).toContain(
+        `${made.host} references ${made.old}`,
+      );
+      await settled(harness!);
+    },
+  );
+
+  it("leaves a document alone where a link by id would sit in a table row", async () => {
+    const table = [
+      "---",
+      "title: Host",
+      "---",
+      "| Note | Link |",
+      "| --- | --- |",
+      "| One | [[Old]] |",
+      "",
+    ].join("\n");
+    const made = await linked("retitled-table", undefined, undefined, table);
+    put(harness!, "Other.md", "---\ntitle: New\n---\nAnother note.\n");
+    expect((await harness!.folder.push()).ok).toBe(true);
+    retitleElsewhere(made, made.old, "New");
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(pushed.ok && pushed.value.pull?.relinked).toBe(0);
+    expect(read(harness!, "Host.md")).toContain("| One | [[Old]] |");
+    expect(rewrites(harness!, made.host)).toEqual([]);
+  });
+
   it("keeps naming the item when another takes its old title", async () => {
     const made = await linked("retitled-old-name-taken");
     retitleElsewhere(made, made.old, "New");
@@ -338,5 +391,58 @@ describe("a body link to a retitled item", () => {
     ).toEqual([]);
     await settled(second!);
     await settled(harness!);
+  });
+
+  it("lands an edit the person made behind a rewrite another machine beat", async () => {
+    const made = await linked(
+      "retitled-edit-behind",
+      undefined,
+      async (owner) => {
+        second = await folderHarness("retitled-edit-behind-b", {
+          sharing: { server: owner.server, key: "another-mac-key" },
+          folder: owner.settings,
+        });
+      },
+    );
+    expect((await caughtUp(second!)).ok).toBe(true);
+    expect((await second!.folder.push()).ok).toBe(true);
+    retitleElsewhere(made, made.old, "New");
+    expect((await caughtUp(harness!)).ok).toBe(true);
+    expect((await caughtUp(second!)).ok).toBe(true);
+    expect(bodyOf(second!, "Host.md")).toBe(REWRITTEN);
+    // The other machine's rewrite lands first.
+    expect((await harness!.folder.push()).ok).toBe(true);
+    // The person writes behind this machine's rewrite before it is sent.
+    put(second!, "Host.md", `${read(second!, "Host.md")}A thought.\n`);
+    const scanned = await second!.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    const queued = await second!.folder.device().queue();
+    expect(
+      queued.ok &&
+        queued.value.filter(
+          (write) =>
+            write.kind === "update_item" && write.item_id === made.host,
+        ).length,
+      "the person's edit is not queued behind this machine's rewrite",
+    ).toBe(2);
+    const pushed = await second!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const again = await second!.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(made.held.get(made.host)?.properties.body).toBe(
+      `${REWRITTEN}A thought.\n`,
+    );
+    expect(bodyOf(second!, "Host.md")).toBe(`${REWRITTEN}A thought.\n`);
+    const queue = await second!.folder.device().queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    expect(
+      queue.value.filter((write) => write.verdict === "refused"),
+      "the person's edit was refused for a rewrite they never made",
+    ).toEqual([]);
+    expect(queue.value.filter((write) => write.answered_at === null)).toEqual(
+      [],
+    );
+    await settled(second!);
   });
 });
