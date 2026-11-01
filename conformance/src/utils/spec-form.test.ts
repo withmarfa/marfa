@@ -18,6 +18,7 @@ import {
   readChapter,
   readChapters,
   type Statement,
+  UNCITED_TESTS,
 } from "./spec-statements.js";
 
 /** The rules, each with the sentence a failure reports. */
@@ -37,7 +38,7 @@ const RULES = {
   earsForm:
     "a rule opens as one of the EARS patterns does and its subject is the server, a device or the CLI",
   testsShape:
-    "a Tests paragraph holds fixture citations ending in a period, exactly the words waiting on and an issue number, or the word none and a reason, and never two of these",
+    "a Tests paragraph holds fixture citations ending in a period, exactly the words waiting on and an issue number, or none with the issue that closed it and a reason, and never two of these",
   noServerTests: "a statement never names the server's own tests",
   noNumberedRefs:
     "a chapter refers to a statement by its ID, never by a bare number in parentheses",
@@ -63,9 +64,6 @@ const EARS = new RegExp(
 const CITATION =
   "`(?:(?:correctness|compliance|device|sync|cli|backup)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
 const CITATIONS = new RegExp(`^${CITATION}(?:, ${CITATION})*\\.$`);
-const WAITING = /^waiting on #\d+\.$/;
-// A rule judged not worth a fixture, with the reason no fixture asserts it.
-const NONE = /^none: [^`]+\.$/;
 
 function empty(): Record<Rule, string[]> {
   return Object.fromEntries(
@@ -126,7 +124,7 @@ function violations(name: string, text: string): Record<Rule, string[]> {
       const spans = tests.match(/`[^`]+`/g) ?? [];
       const cited =
         CITATIONS.test(tests) && citationsIn(tests).length === spans.length;
-      if (!cited && !WAITING.test(tests) && !NONE.test(tests))
+      if (!cited && !UNCITED_TESTS.test(tests))
         found.testsShape.push(where(id));
     }
 
@@ -228,7 +226,7 @@ describe("the form check sees what it is for", () => {
     "",
     "The CLI MUST warn.",
     "",
-    "**Tests:** none: no runner has the storage, and a fixture was judged not worth building.",
+    "**Tests:** none, closed in #3: no runner has the storage, and a fixture was judged not worth building.",
     "",
   ].join("\n");
 
@@ -336,7 +334,13 @@ describe("the form check sees what it is for", () => {
     "",
     "The server MUST answer.",
     "",
-    "**Tests:** none: `compliance/a.test.ts › one`.",
+    "**Tests:** none, closed in #3: `compliance/a.test.ts › one`.",
+    "",
+    "### `sample/none-without-issue`",
+    "",
+    "The server MUST answer.",
+    "",
+    "**Tests:** none: no runner has the storage.",
     "",
     "### `sample/server-test`",
     "",
@@ -464,6 +468,7 @@ describe("the form check sees what it is for", () => {
         s("no-period"),
         s("orphan-shorthand"),
         s("none-and-cited"),
+        s("none-without-issue"),
       ],
       noServerTests: [s("server-test")],
       noNumberedRefs: [at("REFS")],
