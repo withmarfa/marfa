@@ -272,7 +272,9 @@ impl Answer {
     /// limit, a failing server, or one naming no contract (`Http::refused`).
     pub fn is_environmental(&self) -> bool {
         !self.is_success()
-            && (!self.contract_named || matches!(self.status, 408 | 425 | 429 | 500..=599))
+            && (!self.contract_named
+                || self.status == 429
+                || crate::error::environmental_status(self.status))
     }
 
     /// Another instance at the address refused the write without applying

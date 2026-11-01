@@ -327,7 +327,7 @@ impl Folders {
             }));
             let error = match watched {
                 Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
-                Err(fault) => Some(CoreError::Invalid(format!(
+                Err(fault) => Some(CoreError::Fault(format!(
                     "the watch stopped on a fault: {}",
                     said(fault.as_ref())
                 ))),

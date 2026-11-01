@@ -485,7 +485,7 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
     let ran = catch_unwind(AssertUnwindSafe(|| dispatcher.serve()));
     let mut farewells = std::mem::take(&mut dispatcher.farewells);
     if let Err(fault) = ran {
-        let error = CoreError::Invalid(format!(
+        let error = CoreError::Fault(format!(
             "the watch stopped on a fault in the core: {}",
             crate::fault_said(fault.as_ref())
         ));
@@ -694,12 +694,17 @@ impl Dispatcher<'_> {
                         )
                         .map(|_| ()),
                     Source::Saves => {
+                        // A fixture's stand-in for a fault in the core.
+                        #[cfg(debug_assertions)]
+                        if crate::fault::named("watch-source-panics").is_some() {
+                            panic!("the watch's source was made to panic");
+                        }
                         read_saves(&|| core.data_version(), &flag, pace, &told);
                         Ok(())
                     }
                 }))
                 .unwrap_or_else(|fault| {
-                    Err(CoreError::Invalid(format!(
+                    Err(CoreError::Fault(format!(
                         "the watch's source stopped on a fault in the core: {}",
                         crate::fault_said(fault.as_ref())
                     )))
@@ -829,7 +834,7 @@ impl Dispatcher<'_> {
             Err(fault) => {
                 self.farewells.push((
                     Arc::clone(&slot.listener),
-                    Some(CoreError::Invalid(format!(
+                    Some(CoreError::Fault(format!(
                         "a watch listener stopped on a fault: {}",
                         crate::fault_said(fault.as_ref())
                     ))),
@@ -938,7 +943,7 @@ impl Dispatcher<'_> {
         }
         self.halted = true;
         self.fail(result.err().unwrap_or_else(|| {
-            CoreError::Invalid("the watch's source ended though no one asked it to".into())
+            CoreError::Fault("the watch's source ended though no one asked it to".into())
         }));
     }
 }

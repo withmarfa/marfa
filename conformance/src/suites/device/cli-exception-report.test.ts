@@ -38,9 +38,16 @@ async function store(): Promise<string> {
   return path;
 }
 
-/** A command the server fails: it answers 500, which is a fault. */
+/**
+ * A command whose answer is a fault: a 405, which no request of the command
+ * line's should meet.
+ */
 const failing = () => {
-  server.answer("GET", "/items/broken", refusal(500, "internal", "broken"));
+  server.answer(
+    "GET",
+    "/items/broken",
+    refusal(405, "method_not_allowed", "broken"),
+  );
   return ["--json", "items", "get", "broken"];
 };
 
@@ -61,19 +68,19 @@ const succeeding = (path: string) => [
 describe("the command line reports a fault to error tracking", () => {
   it("sends one exception and no trace when only the error tracking settings are set", async () => {
     const ran = await cli(trackingOnly()).run(failing());
-    expect(ran.code, ran.stderr).toBe(3);
+    expect(ran.code, ran.stderr).toBe(1);
     const sent = sinks.sentExceptions();
     expect(sent).toHaveLength(1);
     expect(sent[0]!.properties).toMatchObject({
       command: "items get",
-      exit_code: 3,
+      exit_code: 1,
       error_code: "server",
     });
     expect(sinks.traces).toEqual([]);
 
     // The witness: with an endpoint named as well, the same run sends both.
     const both = await cli(sinks.env()).run(failing());
-    expect(both.code, both.stderr).toBe(3);
+    expect(both.code, both.stderr).toBe(1);
     expect(sinks.sentExceptions()).toHaveLength(2);
     expect(sinks.traces).toHaveLength(1);
   });
@@ -83,7 +90,7 @@ describe("the command line reports a fault to error tracking", () => {
       ...trackingOnly(),
       OTEL_EXPORTER_OTLP_ENDPOINT: "not a url",
     }).run(failing());
-    expect(ran.code, ran.stderr).toBe(3);
+    expect(ran.code, ran.stderr).toBe(1);
     expect(sinks.sentExceptions()).toHaveLength(1);
     expect(sinks.traces).toEqual([]);
   });
@@ -94,7 +101,7 @@ describe("the command line reports a fault to error tracking", () => {
       { ...trackingOnly(), OTEL_SDK_DISABLED: "true" },
     ]) {
       const ran = await cli(env).run(failing());
-      expect(ran.code, ran.stderr).toBe(3);
+      expect(ran.code, ran.stderr).toBe(1);
     }
     expect(sinks.sentExceptions()).toEqual([]);
     expect(sinks.traces).toEqual([]);
@@ -108,11 +115,28 @@ describe("the command line reports a fault to error tracking", () => {
     const ran = await cli(trackingOnly()).run(refused());
     expect(ran.code, ran.stderr).toBe(1);
     expect(ran.stderr).toContain('"not_found"');
+
+    // The server failing, which it reports itself, and an answer that asks
+    // for the request again are the environment's.
+    for (const [status, code] of [
+      [503, "write_contention"],
+      [507, "insufficient_storage"],
+      [425, "too_early"],
+    ] as const) {
+      server.answer("GET", "/items/busy", refusal(status, code, "busy"));
+      const busy = await cli(trackingOnly()).run([
+        "--json",
+        "items",
+        "get",
+        "busy",
+      ]);
+      expect(busy.code, `${status}: ${busy.stderr}`).toBe(3);
+    }
     expect(sinks.sentExceptions()).toEqual([]);
 
-    // The witness: the same run, with the server failing, is reported.
+    // The witness: the same run, with an answer that is a fault, is reported.
     const failed = await cli(trackingOnly()).run(failing());
-    expect(failed.code, failed.stderr).toBe(3);
+    expect(failed.code, failed.stderr).toBe(1);
     expect(sinks.sentExceptions()).toHaveLength(1);
   });
 

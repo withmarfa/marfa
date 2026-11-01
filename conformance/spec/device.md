@@ -6926,15 +6926,15 @@ When neither `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` nor `OTEL_EXPORTER_OTLP_ENDPOI
 
 When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, and a command ends in a fault, the CLI MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
 
-**Reason:** An agent host that removes the `OTEL_` settings must not also silence the report of a fault, and an endpoint that cannot be used is the trace's trouble alone. A fault is a panic, an internal error, an answer from the server with a `5xx` status or with a status no refusal is named for, or an answer that cannot be read.
+**Reason:** An agent host that removes the `OTEL_` settings must not also silence the report of a fault, and an endpoint that cannot be used is the trace's trouble alone. A fault is what the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`; the local store failing for a reason of its own; an answer that cannot be read; or an answer status that the command line should never cause and that no refusal is named for, such as `405` or `415`.
 
 **Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`, `› still sends the exception when the OTLP endpoint is not an address`.
 
 ### `device/cli-exception-refusal-quiet`
 
-When a command ends in a refusal by design, the CLI MUST NOT send an exception report.
+When a command ends in a refusal by design or in a failure of the server or the environment, the CLI MUST NOT send an exception report.
 
-**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer that names a refusal, a usage error, a missing credential, a missing docs page, or an environment that failed (offline, a timeout, a rate limit). It tells error tracking nothing about Marfa, and reporting it would bury the faults.
+**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer that names a refusal, a usage error, a missing credential or a missing docs page. A failure of the environment is one a retry can clear: offline, a timeout, a rate limit, a `408` or `425` answer, or full local storage. A `5xx` answer is the server's own failure, which the server reports itself, including a `503` `write_contention` or `stream_capacity_exhausted` and a `507` `insufficient_storage`. None tells error tracking about a fault in the command line or the core, and reporting them would bury the faults.
 
 **Tests:** `device/cli-exception-report.test.ts › sends no exception when the command ends in a refusal by design`.
 

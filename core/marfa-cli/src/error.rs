@@ -268,10 +268,10 @@ impl Exit {
                 "the command line or the profile file was wrong, or named no store or server"
             }
             Exit::Environment => {
-                "the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
+                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
             }
             Exit::Local => {
-                "the working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system)"
+                "the working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"
             }
             Exit::Credential => {
                 "there is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one"
@@ -343,10 +343,13 @@ pub(crate) fn refused_code(status: u16) -> &'static str {
     }
 }
 
-/// A status that is the server's fault: a `5xx`, or one that `refused_code`
-/// gives no name but `server`. A `408` is a timeout, which is the environment's.
+/// An answer status the client should never cause, nor meet unrecognised,
+/// that is not the server's own failure: a `405` or a `415`. A status
+/// `refused_code` names is a refusal by design, and one
+/// `marfa_core::environmental_status` takes in (a `408`, a `425` or any `5xx`)
+/// is the environment's, and the server reports its own failures.
 fn unexpected_status(status: u16) -> bool {
-    status != 408 && (status >= 500 || refused_code(status) == "server")
+    refused_code(status) == "server" && !marfa_core::environmental_status(status)
 }
 
 /// Every name `refused_code` answers.
@@ -414,7 +417,8 @@ impl CliError {
                 | CoreError::WrongSchema { .. }
                 | CoreError::UnsentDiffers { .. }
                 | CoreError::CopyExpired { .. }
-                | CoreError::WrongServer { .. } => Exit::Local,
+                | CoreError::WrongServer { .. }
+                | CoreError::Fault(_) => Exit::Local,
             },
             CliError::Io(_)
             | CliError::Watch(_)
@@ -434,7 +438,7 @@ impl CliError {
                 401 if code == "setup_proof_invalid" => Exit::Refused,
                 401 => Exit::Credential,
                 429 => Exit::Environment,
-                500.. => Exit::Environment,
+                status if marfa_core::environmental_status(*status) => Exit::Environment,
                 _ => Exit::Refused,
             },
             CliError::Usage(_)
@@ -452,21 +456,27 @@ impl CliError {
         }
     }
 
-    /// Whether this is a fault, to be reported to error tracking, and not an
-    /// answer given by design (a refusal, a usage error, a missing
-    /// credential) or an environment that failed (offline, a timeout, a
-    /// gateway or a full local disk). A fault is the server answering with a `5xx` or with a status no
-    /// refusal is named for, an answer that cannot be read, or the local
-    /// store failing for a reason of its own.
+    /// Whether this is a fault, to be reported to error tracking: what the
+    /// command line or the core itself got wrong, and nothing the server or
+    /// the environment did. A fault is a panic the core caught, the local
+    /// store failing for a reason of its own, an answer that cannot be read,
+    /// or an answer status the client should never cause (`unexpected_status`).
+    /// Never a refusal by design (a named `4xx`, a usage error, a missing
+    /// credential) nor anything `CoreError::is_environmental` counts (offline,
+    /// a timeout, a `408`, a `425`, any `5xx`, a full disk). A panic of the
+    /// command line's own is reported by `telemetry::Run::panicked`.
     pub fn is_fault(&self) -> bool {
         match self {
             CliError::CatchUp { error, .. } => error.is_fault(),
             CliError::Core(CoreError::RenewalFailed(cause)) => {
                 CliError::from(*cause.clone()).is_fault()
             }
-            CliError::Core(CoreError::Server { status, .. }) => unexpected_status(*status),
-            CliError::Core(CoreError::Decoding(_) | CoreError::Store(_)) => true,
-            CliError::Refused { status, .. } => unexpected_status(*status),
+            CliError::Core(CoreError::Server { status, .. }) | CliError::Refused { status, .. } => {
+                unexpected_status(*status)
+            }
+            CliError::Core(CoreError::Fault(_) | CoreError::Decoding(_) | CoreError::Store(_)) => {
+                true
+            }
             _ => false,
         }
     }
@@ -1106,6 +1116,58 @@ mod tests {
         assert_eq!(refused(502).exit(), Exit::Environment);
         for status in [400, 403, 404, 409, 413, 422] {
             assert_eq!(refused(status).exit(), Exit::Refused, "{status}");
+        }
+    }
+
+    #[test]
+    fn a_fault_is_what_the_cli_or_the_core_got_wrong_and_never_the_server_or_the_environment() {
+        let answered = |status| {
+            CliError::Core(CoreError::Server {
+                status,
+                code: "code".into(),
+                message: String::new(),
+                details: None,
+            })
+        };
+        for status in [405, 415] {
+            assert!(refused(status).is_fault(), "{status}");
+            assert!(answered(status).is_fault(), "{status}");
+        }
+        for status in [
+            400, 401, 403, 404, 408, 409, 413, 422, 425, 429, 500, 502, 503, 507,
+        ] {
+            assert!(!refused(status).is_fault(), "{status}");
+            assert!(!answered(status).is_fault(), "{status}");
+        }
+        for status in [408, 425, 503, 507] {
+            assert_eq!(refused(status).exit(), Exit::Environment, "{status}");
+        }
+        for core in [
+            CoreError::Fault("a panic".into()),
+            CoreError::Store("a constraint".into()),
+            CoreError::Decoding("not JSON".into()),
+        ] {
+            assert!(CliError::Core(core.clone()).is_fault(), "{core:?}");
+            let renewed = CliError::Core(CoreError::RenewalFailed(Box::new(core.clone())));
+            assert!(renewed.is_fault(), "{core:?}");
+            let caught = CliError::CatchUp {
+                error: Box::new(CliError::Core(core.clone())),
+                catalog_changed: false,
+            };
+            assert!(caught.is_fault(), "{core:?}");
+        }
+        for not in [
+            CliError::Core(CoreError::Invalid("bad input".into())),
+            CliError::Core(CoreError::Network("offline".into())),
+            CliError::Core(CoreError::StorageFull("full".into())),
+            CliError::Core(CoreError::Canceled),
+            CliError::Usage("wrong".into()),
+            CliError::NoCredential {
+                origin: "https://example.com".into(),
+                profile: None,
+            },
+        ] {
+            assert!(!not.is_fault(), "{not:?}");
         }
     }
 }

@@ -378,7 +378,9 @@ fn await_end(
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(CliError::Watch("the watch ended in a fault".into()));
+                return Err(CliError::Core(CoreError::Fault(
+                    "the watch ended in a fault".into(),
+                )));
             }
         }
     }
@@ -844,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn a_watch_that_ends_gives_its_own_result_and_a_fault_is_a_watch_error() {
+    fn a_watch_that_ends_gives_its_own_result_and_a_thread_that_died_is_a_fault() {
         let (done, ended) = mpsc::channel();
         done.send(Err(CliError::Watch("stopped".into()))).unwrap();
         let result = await_end(&ended, || true, Duration::from_secs(60));
@@ -852,6 +854,6 @@ mod tests {
         let (done, ended) = mpsc::channel::<Result<(), CliError>>();
         drop(done);
         let result = await_end(&ended, || false, Duration::from_secs(60));
-        assert!(matches!(result, Err(CliError::Watch(_))));
+        assert!(matches!(result, Err(CliError::Core(CoreError::Fault(_)))));
     }
 }

@@ -1485,6 +1485,11 @@ pub enum MarfaError {
     Invalid {
         message: String,
     },
+    /// The core panicked, or a listener it called did, and it caught the
+    /// panic. A fault in the core, never the caller's input.
+    Fault {
+        message: String,
+    },
 }
 
 impl MarfaError {
@@ -1521,7 +1526,8 @@ impl MarfaError {
             | MarfaError::ContractMismatch { message, .. }
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
-            | MarfaError::Invalid { message } => message,
+            | MarfaError::Invalid { message }
+            | MarfaError::Fault { message } => message,
         }
     }
 }
@@ -1566,6 +1572,7 @@ impl MarfaError {
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
+            MarfaError::Fault { .. } => marfa_core::CoreErrorKind::Fault,
         };
         kind.code().to_string()
     }
@@ -1680,6 +1687,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
             E::Invalid(_) => MarfaError::Invalid { message },
+            E::Fault(_) => MarfaError::Fault { message },
         }
     }
 }
@@ -3194,6 +3202,7 @@ mod tests {
                 write_sent: false,
             },
             E::Invalid(text()),
+            E::Fault(text()),
             E::Canceled,
         ];
         for error in &all {
@@ -3579,6 +3588,7 @@ mod tests {
                 "ContractMismatch",
             ),
             (E::Invalid(text()).into(), "Invalid"),
+            (E::Fault(text()).into(), "Fault"),
             (
                 E::Unnamed {
                     origin: text(),

@@ -34,7 +34,7 @@ use crate::error::CliError;
 use crate::interrupt::INTERRUPTED;
 
 use export::{Exporter, Sink};
-use posthog::Cause;
+use posthog::Fault;
 use settings::{Identity, Reading, Settings};
 
 /// One run of one command.
@@ -173,46 +173,37 @@ impl Run {
     /// command has said or will exit with.
     pub fn finish(self, status: u8, error: Option<&CliError>) {
         let failure = failed(status, error);
-        let fault = error.is_some_and(CliError::is_fault);
-        self.end(
-            status,
-            failure,
-            fault,
-            error.map_or(Cause::Exit, Cause::Error),
-        );
+        let fault = error.filter(|error| error.is_fault()).map(Fault::Error);
+        self.end(status, failure, error.map(CliError::code), fault);
     }
 
     /// Ends a run whose command panicked, which leaves the process with the
     /// status Rust gives a panic. The panic's message and location are not
     /// reported: either can carry content.
     pub fn panicked(self) {
-        self.end(PANICKED, true, true, Cause::Panic);
+        self.end(PANICKED, true, Some("panic"), Some(Fault::Panic));
     }
 
-    fn end(self, status: u8, failure: bool, fault: bool, cause: Cause) {
+    /// `code` names the error the trace records a failure by, where there is
+    /// one; only a `fault` is reported to PostHog.
+    fn end(self, status: u8, failure: bool, code: Option<&str>, fault: Option<Fault>) {
         // Sent beside the trace's last send, not after it, so that the two
         // together wait no longer than one timeout.
         let exception = self
             .exceptions
-            .filter(|_| fault)
-            .and_then(|reporter| reporter.report(status, cause));
+            .zip(fault)
+            .and_then(|(reporter, fault)| reporter.report(status, fault));
         if let Some(live) = self.live {
             live.root.record("exit_code", u64::from(status));
             if failure {
-                match cause {
-                    Cause::Error(error) => tracing::error!(
+                match code {
+                    Some(code) => tracing::error!(
                         parent: &live.root,
-                        code = error.code(),
+                        code,
                         exit_code = u64::from(status),
                         "the command failed"
                     ),
-                    Cause::Panic => tracing::error!(
-                        parent: &live.root,
-                        code = "panic",
-                        exit_code = u64::from(status),
-                        "the command failed"
-                    ),
-                    Cause::Exit => tracing::error!(
+                    None => tracing::error!(
                         parent: &live.root,
                         exit_code = u64::from(status),
                         "the command failed"

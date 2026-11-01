@@ -34,10 +34,13 @@ enum Reply {
     /// Takes the connection and the request and says nothing.
     Silence,
     Redirect,
-    /// A Marfa server that fails: a 500 on its own contract, saying this.
+    /// A Marfa server answering a status no request of the CLI's should meet,
+    /// a 405 on its own contract, saying this: a fault.
     Fault(&'static str),
     /// A Marfa server refusing as it should: this status on its own contract.
     Refusal(u16),
+    /// A Marfa server answering this status and code on its own contract.
+    Coded(u16, &'static str),
 }
 
 /// What a Marfa server answers with `status`: its contract and an error.
@@ -90,8 +93,9 @@ impl Collector {
                                 "HTTP/1.1 {status} X\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
                             )
                         }
-                        Reply::Fault(message) => marfa_answer(500, "internal", message),
+                        Reply::Fault(message) => marfa_answer(405, "method_not_allowed", message),
                         Reply::Refusal(status) => marfa_answer(status, "refused", "no"),
+                        Reply::Coded(status, code) => marfa_answer(status, code, "no"),
                         Reply::Redirect => format!(
                             "HTTP/1.1 307 X\r\nLocation: {redirect}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                         ),
@@ -198,7 +202,7 @@ fn closed_port() -> String {
     format!("http://{}", listener.local_addr().unwrap())
 }
 
-/// A Marfa server that answers every request with a 500, for the whole run.
+/// A Marfa server that answers every request with a 405, for the whole run.
 fn faulty() -> &'static str {
     static SERVER: std::sync::OnceLock<Collector> = std::sync::OnceLock::new();
     &SERVER
@@ -206,7 +210,8 @@ fn faulty() -> &'static str {
         .url
 }
 
-/// The command a fault ends: it asks the server, and the server fails.
+/// The command a fault ends: it asks the server, and the answer is one the
+/// CLI should never meet.
 const FAULT: [&str; 4] = ["--json", "items", "get", "an-id"];
 
 /// A command with a server that fails and a key that is no one's, so that
@@ -1032,7 +1037,7 @@ fn a_failing_command_sends_one_exception_with_its_codes_a_fixed_sentence_and_no_
     let posthog = Collector::open(Reply::Answer(200));
     let env = exceptions_to(&collector, &posthog);
     let ran = run(&env, &FAULT);
-    assert_eq!(ran.code, 3, "{}", ran.stderr);
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
 
     let posts = posthog.received();
     assert_eq!(posts.len(), 1, "one failed run is one post");
@@ -1052,14 +1057,14 @@ fn a_failing_command_sends_one_exception_with_its_codes_a_fixed_sentence_and_no_
     assert_eq!(properties["$geoip_disable"], true);
     assert_eq!(properties["command"], "items get");
     assert_eq!(properties["error_code"], "server");
-    assert_eq!(properties["exit_code"], 3);
+    assert_eq!(properties["exit_code"], 1);
     assert_eq!(properties["service.name"], "marfa-cli");
     assert_eq!(properties["$exception_level"], "error");
     let exception = &properties["$exception_list"][0];
     assert_eq!(exception["type"], "server");
     assert_eq!(
         exception["value"],
-        "the server failed to complete the request"
+        "the server answered with a status this build does not expect"
     );
     assert_eq!(exception["mechanism"]["handled"], true);
     assert!(
@@ -1136,7 +1141,7 @@ fn a_resource_attribute_list_with_a_bad_pair_names_nothing_and_the_run_is_unchan
         "deployment.environment=rehearsal,broken",
     ));
     let ran = run(&env, &FAULT);
-    assert_eq!(ran.code, 3, "{}", ran.stderr);
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
     let trace: Value = serde_json::from_str(&collector.received()[0].body).unwrap();
     assert!(
         attribute(
@@ -1152,7 +1157,7 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
     let collector = Collector::open(Reply::Answer(200));
     let posthog = Collector::open(Reply::Answer(200));
     let store = store();
-    // A server that fails, and says the secret in its message.
+    // A server whose answer is a fault, and says the secret in its message.
     let broken = Collector::open(Reply::Fault(SECRET));
     let hostport = broken.url.trim_start_matches("http://");
     let address = format!("http://user:{SECRET}@{hostport}/path?token={SECRET}");
@@ -1200,7 +1205,7 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
             SECRET,
         ],
     );
-    assert_eq!(create.code, 3, "{}", create.stderr);
+    assert_eq!(create.code, 1, "{}", create.stderr);
     let watch = run(&env, &["folders", "watch", folder.to_str().unwrap()]);
     assert_eq!(watch.code, 1, "{}", watch.stderr);
     // A panic whose message carries content.
@@ -1229,7 +1234,7 @@ fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posth
         .iter()
         .map(|event| event["properties"]["exit_code"].as_i64().unwrap())
         .collect();
-    assert_eq!(codes, [3, 101]);
+    assert_eq!(codes, [1, 101]);
     for post in &posts {
         for planted in [
             SECRET,
@@ -1634,9 +1639,31 @@ fn a_refusal_by_design_sends_nothing_and_a_fault_sends_one() {
     assert_eq!(ran.code, 3, "{}", ran.stderr);
     assert!(ran.stderr.contains("\"network\""), "{}", ran.stderr);
 
+    // Nor does the server failing, which it reports itself, nor an answer
+    // that asks for the request again.
+    for (status, code) in [
+        (500, "internal"),
+        (503, "write_contention"),
+        (503, "stream_capacity_exhausted"),
+        (507, "insufficient_storage"),
+        (425, "too_early"),
+        (408, "request_timeout"),
+    ] {
+        let server = Collector::open(Reply::Coded(status, code));
+        let mut failing = env.clone();
+        failing.push(("MARFA_API_URL", server.url.as_str()));
+        let ran = run(&failing, &ask);
+        assert_eq!(ran.code, 3, "{status} {code}: {}", ran.stderr);
+        assert!(
+            !server.received().is_empty(),
+            "{status}: the server was asked"
+        );
+    }
+
     assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-    // The witness: the same settings send for a server that fails.
-    assert_eq!(run(&env, &ask).code, 3);
+    // The witness: the same settings send for an answer the CLI should never
+    // meet.
+    assert_eq!(run(&env, &ask).code, 1);
     assert_eq!(posthog.events().len(), 1);
     let sent = &posthog.events()[0]["properties"];
     assert_eq!(sent["error_code"], "server");
@@ -1687,7 +1714,7 @@ fn a_run_that_did_not_fail_sends_nothing() {
 
     assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
     // The witness: the same settings send for a run that failed.
-    assert_eq!(run(&env, &FAULT).code, 3);
+    assert_eq!(run(&env, &FAULT).code, 1);
     assert_eq!(posthog.events().len(), 1);
 }
 
@@ -1765,6 +1792,59 @@ fn a_panic_sends_one_event_of_a_fixed_type_and_the_exit_and_message_are_unchange
     assert_eq!(word(&root["events"][0], "code"), "panic");
     assert!(!collector.received()[0].body.contains(SECRET));
     assert!(!posthog.received()[0].body.contains(SECRET));
+}
+
+#[test]
+fn a_panic_the_core_caught_in_a_watch_sends_one_event_as_a_fault() {
+    let store = store();
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let mut env = exceptions_to(&collector, &posthog);
+    env.push(("MARFA_TEST_FAULT", "watch-source-panics"));
+    let ran = run(
+        &env,
+        &[
+            "--json",
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "changes",
+            "--for",
+            "20",
+        ],
+    );
+    // The core caught it and the watch ended, long before its 20 seconds.
+    assert_eq!(ran.code, 4, "{}", ran.stderr);
+    assert!(ran.took < Duration::from_secs(15), "{:?}", ran.took);
+    assert!(ran.stderr.contains("\"fault\""), "{}", ran.stderr);
+
+    let events = posthog.events();
+    assert_eq!(events.len(), 1, "one caught fault is one report");
+    let properties = &events[0]["properties"];
+    assert_eq!(properties["command"], "device changes");
+    assert_eq!(properties["error_code"], "fault");
+    assert_eq!(properties["exit_code"], 4);
+    let exception = &properties["$exception_list"][0];
+    assert_eq!(exception["type"], "fault");
+    assert_eq!(exception["value"], "the core stopped on an internal fault");
+    assert!(!posthog.received()[0].body.contains("made to panic"));
+
+    // The witness: without the fault, the same watch ends at its stop and
+    // sends nothing.
+    let quiet = run(
+        &exceptions_to(&collector, &posthog),
+        &[
+            "--json",
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "changes",
+            "--for",
+            "1",
+        ],
+    );
+    assert_eq!(quiet.code, 0, "{}", quiet.stderr);
+    assert_eq!(posthog.events().len(), 1);
 }
 
 #[test]
@@ -1896,7 +1976,7 @@ fn a_test_run_in_a_shell_with_telemetry_settings_sends_nothing_from_a_failing_co
     let collector = Collector::open(Reply::Answer(200));
     let posthog = Collector::open(Reply::Answer(200));
     let bare = failing_command_in_a_shell_with_telemetry(&collector, &posthog, false);
-    assert_eq!(bare.code, 3, "{}", bare.stderr);
+    assert_eq!(bare.code, 1, "{}", bare.stderr);
     assert!(!collector.spans().is_empty(), "the trace was sent");
     assert_eq!(posthog.events().len(), 1, "the exception was sent");
 
@@ -1904,7 +1984,7 @@ fn a_test_run_in_a_shell_with_telemetry_settings_sends_nothing_from_a_failing_co
     let collector = Collector::open(Reply::Answer(200));
     let posthog = Collector::open(Reply::Answer(200));
     let ran = failing_command_in_a_shell_with_telemetry(&collector, &posthog, true);
-    assert_eq!(ran.code, 3, "{}", ran.stderr);
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(ran.stderr.contains("\"server\""), "{}", ran.stderr);
     assert_eq!(collector.connections.load(Ordering::SeqCst), 0);
     assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);

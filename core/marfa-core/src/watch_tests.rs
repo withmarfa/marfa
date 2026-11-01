@@ -358,7 +358,7 @@ fn a_listener_that_faults_is_removed_and_the_others_go_on() {
     faulting.wait_for_end();
     assert!(matches!(
         faulting.ended.lock().unwrap().first(),
-        Some(Some(CoreError::Invalid(_)))
+        Some(Some(CoreError::Fault(_)))
     ));
     assert_eq!(steady.ids(), ["n1", "n2"]);
 }
@@ -934,7 +934,7 @@ fn a_watch_started_after_a_fault_in_the_dispatcher_works_and_a_catch_up_is_not_h
         heard.wait_for_end();
         assert!(matches!(
             heard.ended.lock().unwrap().first(),
-            Some(Some(CoreError::Invalid(_)))
+            Some(Some(CoreError::Fault(_)))
         ));
     }
     let again = listener();

@@ -8,7 +8,7 @@
 
 use marfa_core::CoreError;
 
-use crate::error::{CliError, Exit, refused_code};
+use crate::error::{CliError, refused_code};
 
 pub fn error(error: &CliError) -> &'static str {
     match error {
@@ -62,7 +62,7 @@ fn refused(code: &str) -> &'static str {
         "conflict" => "the server refused the request as in conflict with what it holds",
         "too_large" => "the server refused the request as too large",
         "rate_limited" => "the server rate limited the request",
-        _ => "the server failed to complete the request",
+        _ => "the server answered with a status this build does not expect",
     }
 }
 
@@ -76,7 +76,7 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::Validation { .. } => "the server rejected the request as invalid",
         CoreError::UnknownType { .. } => "the server does not know the type that was named",
         CoreError::RateLimited { .. } => "the server rate limited the request",
-        CoreError::Server { .. } => "the server failed to complete the request",
+        CoreError::Server { .. } => "the server answered with a status this build does not expect",
         CoreError::Io(_) => "reading or writing a file or a stream failed",
         CoreError::Network(_) => "the server could not be reached, or did not answer in time",
         CoreError::Unnamed { .. } => "the answer did not come from a Marfa server",
@@ -111,22 +111,12 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::Canceled => "the operation was stopped before it finished",
         CoreError::FirstSyncWaiting => "a folder's first sync waits for confirmation",
         CoreError::Invalid(_) => "a value was not accepted",
+        CoreError::Fault(_) => "the core stopped on an internal fault",
     }
 }
 
 pub fn panic() -> &'static str {
     "the command stopped on an internal fault"
-}
-
-/// For a run that failed with an exit status and no error to describe, as a
-/// drain does after printing its report.
-pub fn exit(status: u8) -> &'static str {
-    Exit::ALL
-        .iter()
-        .find(|exit| **exit as u8 == status)
-        .map_or("the command ended with a failure status", |exit| {
-            exit.meaning()
-        })
 }
 
 #[cfg(test)]
@@ -183,12 +173,5 @@ mod tests {
             }),
             core_error(&network)
         );
-    }
-
-    #[test]
-    fn an_exit_with_no_error_is_described_by_what_the_exit_means() {
-        assert_eq!(exit(3), Exit::Environment.meaning());
-        assert_eq!(exit(5), Exit::Credential.meaning());
-        assert_eq!(exit(99), "the command ended with a failure status");
     }
 }

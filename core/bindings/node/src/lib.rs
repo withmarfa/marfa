@@ -1493,7 +1493,8 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Store(message)
         | E::StorageFull(message)
         | E::NoKeychain(message)
-        | E::Invalid(message) => message.clone(),
+        | E::Invalid(message)
+        | E::Fault(message) => message.clone(),
         E::Unnamed { .. }
         | E::Redirected { .. }
         | E::SignedOut { .. }
@@ -1612,7 +1613,8 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::ReadingHandle
         | E::FirstSyncWaiting
         | E::Canceled
-        | E::Invalid(_) => Vec::new(),
+        | E::Invalid(_)
+        | E::Fault(_) => Vec::new(),
     };
     (format!("{code}: {detail}"), fields)
 }

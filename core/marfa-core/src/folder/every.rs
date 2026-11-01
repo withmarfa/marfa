@@ -98,10 +98,9 @@ impl Unwatched {
     }
 
     fn fault() -> Unwatched {
-        Unwatched {
-            code: "watch".into(),
-            message: "the watch of this folder ended in a fault".into(),
-        }
+        Unwatched::of(&CoreError::Fault(
+            "the watch of this folder ended in a fault".into(),
+        ))
     }
 }
 
@@ -1573,7 +1572,7 @@ mod tests {
         machine.opens("/b", vec![Ok(Goes::Panics), Ok(Goes::Lasts)]);
         let listing = listed(&["/a", "/b"]);
         supervised(&machine, &listing, |machine| {
-            count(machine, "unwatched /b watch") == 1
+            count(machine, "unwatched /b fault") == 1
                 && count(machine, "watching /b") == 2
                 && count(machine, "watching /a") == 1
         })
