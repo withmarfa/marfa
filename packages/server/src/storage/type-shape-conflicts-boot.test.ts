@@ -48,7 +48,7 @@ const conflictLines = () =>
   logSpy.mock.calls.filter(([level, message]) => {
     return (
       level === "warn" &&
-      String(message).includes("declare fields in a shape a type above them")
+      message.includes("declare fields in a shape a type above them")
     );
   });
 

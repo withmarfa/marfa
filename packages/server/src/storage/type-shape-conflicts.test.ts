@@ -91,7 +91,7 @@ describe("a type that cannot be compared", () => {
     reportTypeShapeConflicts();
 
     const skipped = logSpy.mock.calls.filter(([, message]) =>
-      String(message).includes("could not be checked"),
+      message.includes("could not be checked"),
     );
     expect(skipped).toHaveLength(2);
     expect(skipped[0]?.[2]).toEqual({
@@ -100,7 +100,7 @@ describe("a type that cannot be compared", () => {
       effect: "the type is left out of the conflict check",
     });
     const reportLine = logSpy.mock.calls.find(([, message]) =>
-      String(message).includes("declare fields in a shape"),
+      message.includes("declare fields in a shape"),
     );
     expect(reportLine?.[2]).toMatchObject({
       conflicts: [{ type: "boot.issue", field: "assignees" }],

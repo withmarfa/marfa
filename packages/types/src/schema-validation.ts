@@ -918,14 +918,12 @@ const SHAPE_ATTRIBUTES = [
  * without their prose, so two lists of entries are the same exactly when they
  * accept the same entries.
  */
-function entryMembersKey(
-  members: Readonly<Record<string, EntryMember>> | undefined,
-): string {
+function entryMembersKey(members: unknown): string {
   if (members === undefined) return "";
   if (typeof members !== "object" || members === null)
     return `\0${JSON.stringify(members)}`;
   return JSON.stringify(
-    Object.entries(members)
+    Object.entries(members as Record<string, EntryMember>)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([name, member]) => {
         const rest = { ...member };
