@@ -5284,6 +5284,29 @@ pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreErr
     )
 }
 
+/// Every write that waits on `id` stops waiting on it.
+pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    for row in read_writes(
+        conn,
+        "WHERE EXISTS (SELECT 1 FROM json_each(queue.depends_on) AS named WHERE named.value = ?1)",
+        [id],
+    )? {
+        let still: Vec<&String> = row.depends_on.iter().filter(|held| *held != id).collect();
+        conn.execute(
+            "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
+            params![
+                row.id,
+                if still.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&still)?)
+                }
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 /// Also refuses each of `held`, unsent, and puts the copy back as it was
 /// beneath each. The caller has read their rows back already.
 pub fn withdraw(

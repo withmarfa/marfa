@@ -14,6 +14,14 @@ const BODY: &str = "See [[Old]], [[Old|the plan]] and [[Old#Steps]].\n\n`[[Old]]
 /// A synced folder holding `Old` and a note whose body links to it three
 /// ways, both written out by a pull.
 fn linked_folder() -> (ScannedDir, Folder) {
+    let (dir, folder) = linked_folder_with(&[(HOST, "Host.md", BODY)]);
+    assert_eq!(read(&dir, "Host.md").matches("[[Old").count(), 4);
+    (dir, folder)
+}
+
+/// A synced folder holding `Old` and each of `hosts`, an id, a path and a
+/// body that links to `Old`, all written out by a pull.
+fn linked_folder_with(hosts: &[(&str, &str, &str)]) -> (ScannedDir, Folder) {
     let (dir, folder) = scanned_folder();
     {
         let conn = folder.core.conn().unwrap();
@@ -26,21 +34,20 @@ fn linked_folder() -> (ScannedDir, Folder) {
         let at = "2026-01-01T00:00:00Z";
         store::put_server_item(&conn, &testing::note(TARGET, "Old", "", at), None, &catalog)
             .unwrap();
-        store::put_server_item(
-            &conn,
-            &testing::note(HOST, "Host", BODY, at),
-            None,
-            &catalog,
-        )
-        .unwrap();
-        store::put_server_edge(
-            &conn,
-            &testing::wire_edge("references-old", HOST, TARGET, LINK_EDGE),
-        )
-        .unwrap();
         // Placed already, so the pull queues no placement of its own.
         let folder_id = "01a00000-0000-7000-8000-000000000001";
-        for (id, path) in [(TARGET, "Old.md"), (HOST, "Host.md")] {
+        let mut placed = vec![(TARGET, "Old.md")];
+        for (id, path, body) in hosts {
+            store::put_server_item(&conn, &testing::note(id, "Host", body, at), None, &catalog)
+                .unwrap();
+            store::put_server_edge(
+                &conn,
+                &testing::wire_edge(&format!("references-{id}"), id, TARGET, LINK_EDGE),
+            )
+            .unwrap();
+            placed.push((id, path));
+        }
+        for (id, path) in placed {
             let mut edge =
                 testing::wire_edge(&format!("placed-{id}"), id, folder_id, PLACEMENT_EDGE);
             edge.properties.insert("path".into(), path.into());
@@ -50,8 +57,7 @@ fn linked_folder() -> (ScannedDir, Folder) {
     drop(folder);
     let folder = Folder::open(dir.path(), None).unwrap();
     let pulled = folder.pull().unwrap();
-    assert_eq!(pulled.written, 2, "{pulled:?}");
-    assert_eq!(read(&dir, "Host.md").matches("[[Old").count(), 4);
+    assert_eq!(pulled.written, hosts.len() + 1, "{pulled:?}");
     (dir, folder)
 }
 
@@ -184,4 +190,111 @@ fn a_retitle_this_copy_has_not_heard_the_server_take_rewrites_nothing() {
     let pulled = folder.pull().unwrap();
     assert_eq!(pulled.relinked, 0, "{pulled:?}");
     assert_eq!(body_of(&read(&dir, "Host.md")), BODY);
+}
+
+/// A namesake titled `New`, so a link to the retitled item names it by id.
+fn add_namesake(folder: &Folder) {
+    let conn = folder.core.conn().unwrap();
+    let catalog = Catalog::load(&conn).unwrap();
+    store::put_server_item(
+        &conn,
+        &testing::note(NAMESAKE, "New", "", "2026-01-01T00:00:00Z"),
+        None,
+        &catalog,
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_title_that_would_turn_text_after_the_link_into_code_or_a_comment_names_the_item_by_its_id() {
+    for (at, title) in [(2, "It`s"), (3, "Before <!-- after")] {
+        let body = "See [[Old]] and `x` here.\n\nThen <!-- a --> stays.\n";
+        let (dir, folder) = linked_folder_with(&[(HOST, "Host.md", body)]);
+        retitle(&folder, TARGET, title, at);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.relinked, 1, "{title}: {pulled:?}");
+        assert_eq!(
+            body_of(&read(&dir, "Host.md")),
+            body.replace("[[Old]]", &format!("[[{TARGET}|Old]]")),
+            "{title}"
+        );
+        // The link still names the item, so the scan keeps its edge.
+        let scanned = folder.scan().unwrap();
+        assert_eq!(scanned.updated, 0, "{title}: {scanned:?}");
+        assert!(!read(&dir, "Host.md").contains("references"), "{title}");
+    }
+}
+
+#[test]
+fn a_link_by_id_in_a_table_row_the_reader_cannot_take_apart_leaves_the_document_alone() {
+    let body = "| Note | Link |\n| --- | --- |\n| One | [[Old]] |\n";
+    let (dir, folder) = linked_folder_with(&[(HOST, "Host.md", body)]);
+    add_namesake(&folder);
+    folder.pull().unwrap();
+    retitle(&folder, TARGET, "New", 2);
+    let pulled = folder.pull().unwrap();
+    assert_eq!(pulled.relinked, 0, "{pulled:?}");
+    assert_eq!(body_of(&read(&dir, "Host.md")), body);
+    assert!(updates(&folder, HOST).is_empty());
+}
+
+#[test]
+fn a_document_that_fails_leaves_the_others_and_the_pull_going() {
+    const SECOND: &str = "01a00000-0000-7000-8000-000000024374";
+    let body = "See [[Old]].\n";
+    let (dir, folder) = linked_folder_with(&[(HOST, "Host.md", body), (SECOND, "Second.md", body)]);
+    retitle(&folder, TARGET, "New", 2);
+    let _failing = crate::fault::fail_on_this_thread(&format!("folder-relink/{HOST}"));
+    let pulled = folder.pull().unwrap();
+    assert_eq!((pulled.relinked, pulled.unrelinked), (1, 1), "{pulled:?}");
+    assert_eq!(body_of(&read(&dir, "Host.md")), body);
+    assert_eq!(body_of(&read(&dir, "Second.md")), "See [[New]].\n");
+    drop(_failing);
+    let again = folder.pull().unwrap();
+    assert_eq!((again.relinked, again.unrelinked), (1, 0), "{again:?}");
+    assert_eq!(body_of(&read(&dir, "Host.md")), "See [[New]].\n");
+}
+
+#[test]
+fn a_refusal_is_forgotten_once_a_rewrite_lands_or_the_document_leaves_the_copy() {
+    let (_dir, folder) = linked_folder();
+    let refused = format!("{}{HOST}", "folder_relink_refused/");
+    let gone = format!("{}{NAMESAKE}", "folder_relink_refused/");
+    {
+        let conn = folder.core.conn().unwrap();
+        store::meta_set(&conn, &refused, "0").unwrap();
+        store::meta_set(&conn, &gone, "1").unwrap();
+    }
+    retitle(&folder, TARGET, "New", 2);
+    assert_eq!(folder.pull().unwrap().relinked, 1);
+    let meta = |key: &str| store::meta_get(&folder.core.conn().unwrap(), key).unwrap();
+    assert_eq!(
+        meta(&gone),
+        None,
+        "a refusal of a document the copy never held stayed"
+    );
+    assert_eq!(meta(&refused).as_deref(), Some("0"));
+    let id = store::queued_writes(&folder.core.conn().unwrap())
+        .unwrap()
+        .into_iter()
+        .find(|write| write.item_id.as_deref() == Some(HOST))
+        .unwrap()
+        .id;
+    store::record_verdict(
+        &folder.core.conn().unwrap(),
+        &id,
+        &store::Answered {
+            verdict: crate::model::Verdict::Accepted,
+            reason: None,
+            answer: None,
+            conflicted_copy_id: None,
+        },
+    )
+    .unwrap();
+    folder.pull().unwrap();
+    assert_eq!(
+        meta(&refused),
+        None,
+        "the refusal outlived the rewrite that landed"
+    );
 }

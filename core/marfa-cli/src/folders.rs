@@ -1082,6 +1082,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.relinked,
             "document(s) whose links were rewritten to follow a retitled item",
         ),
+        (
+            report.unrelinked,
+            "document(s) whose links to a retitled item could not be rewritten, tried again next time",
+        ),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)

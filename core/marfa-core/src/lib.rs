@@ -1655,6 +1655,34 @@ impl Core {
         Ok(true)
     }
 
+    /// `withdraw` for a write the device made on its own, which no one is
+    /// asked about: it alone leaves the queue, and every write that waited
+    /// on it goes on as if it had never been queued, never refused for it.
+    /// The row is read back first; the check that it is still as read and
+    /// its taking out are one transaction.
+    pub(crate) fn withdraw_alone(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+            return Ok(false);
+        };
+        if !row.withdrawable() {
+            return Ok(false);
+        }
+        let read = drain::read_back(self, &row)?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        if store::queued_write(&tx, id)?.as_ref() != Some(&row) {
+            return Ok(false);
+        }
+        store::stop_waiting_on(&tx, id)?;
+        drain::withdraw_read_backs(&tx, &row, &[], &[read])?;
+        if let Some(item) = row.item_id.as_deref() {
+            store::refollow(&tx, item, id)?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub(crate) fn rebase_on_held(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;

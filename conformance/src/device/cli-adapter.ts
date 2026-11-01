@@ -1366,6 +1366,9 @@ export interface PullReport {
   /** Documents whose body links were rewritten to follow a retitled item
    *  (`folders/body-link-retitled`). */
   relinked: number;
+  /** Documents whose links to a retitled item were left as they were
+   *  because of an error, tried again by the next pull. */
+  unrelinked: number;
   /** File items whose bytes could not be had, so no file was written (`folders/blob-absent`). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */

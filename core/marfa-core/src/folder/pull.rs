@@ -165,6 +165,9 @@ pub struct PullReport {
     /// retitled since they were written. Each rewrite is queued, not yet
     /// answered.
     pub relinked: usize,
+    /// Documents whose links to a retitled item the pull left as they were
+    /// because of an error, which the next pull tries again.
+    pub unrelinked: usize,
     pub settings: SettingsFileReport,
     pub flagged: Vec<Flagged>,
     pub uncarried: Vec<Uncarried>,
@@ -195,6 +198,7 @@ impl PullReport {
         self.taken += other.taken;
         self.let_go += other.let_go;
         self.relinked += other.relinked;
+        self.unrelinked += other.unrelinked;
     }
 
     fn not_written(&mut self, why: NotWritten, item: &str, path: &str, reason: impl Into<String>) {
