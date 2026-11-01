@@ -2302,7 +2302,7 @@ If a document's body, with its links renamed to the items' titles for `folders/b
 
 If a document's body, with its links renamed to the items' IDs for `folders/body-link-retitled-id`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST NOT rewrite the document's links.
 
-**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID in a table row carries its alias behind `\|`, as Obsidian writes it, so the bar does not end the cell. A device that reads `\|` as part of the link's name would read that link as naming nothing, so the document keeps its old links until it can.
+**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID carries its alias behind a bar, which in a table row, a table in a blockquote or callout included, would end the cell, so such a document keeps its old links.
 
 **Tests:** `device/folders-retitled-links.test.ts › leaves a document alone where a link by id would sit in a table row`.
 

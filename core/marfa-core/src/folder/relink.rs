@@ -357,11 +357,9 @@ fn relinked(body: &str, renamed: &HashMap<String, Rename>) -> Option<String> {
 
 /// `body` with the name of each link whose text is a key of `renamed`
 /// replaced, its heading and alias kept. A link by id keeps the name it
-/// showed as its alias, behind a `\|` in a table row, as Obsidian writes it,
-/// so the bar does not end the cell. Links in code, comments and embeds are
-/// not links, and are left as they are.
+/// showed as its alias. Links in code, comments and embeds are not links,
+/// and are left as they are.
 fn rewritten(body: &str, renamed: &HashMap<String, Rename>) -> String {
-    let rows = table_rows(body);
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for link in text::link_parts(body) {
         let Some(rename) = renamed.get(&link.target) else {
@@ -376,13 +374,7 @@ fn rewritten(body: &str, renamed: &HashMap<String, Rename>) -> String {
                 if link.alias.is_none() {
                     // The end of the text inside the brackets.
                     let inner = byte_at(body, link.end) - "]]".len();
-                    let line = body[..inner].matches('\n').count();
-                    let bar = if rows.get(line).copied().unwrap_or(false) {
-                        "\\|"
-                    } else {
-                        "|"
-                    };
-                    edits.push((inner, inner, format!("{bar}{}", link.name.text.trim())));
+                    edits.push((inner, inner, format!("|{}", link.name.text.trim())));
                 }
             }
         }
@@ -433,7 +425,11 @@ fn reads_as_meant(old: &str, new: &str, renamed: &HashMap<String, Rename>) -> bo
 /// Whether each line of `text` is a row of a table: a line with a `|`
 /// followed by a delimiter row, and each line after it up to a blank one.
 fn table_rows(text: &str) -> Vec<bool> {
-    let lines: Vec<&str> = text.split('\n').collect();
+    // A table in a blockquote or callout is read without its `>` markers.
+    let lines: Vec<&str> = text
+        .split('\n')
+        .map(|line| line.trim_start().trim_start_matches(['>', ' ', '\t']))
+        .collect();
     let delimiter = |line: &str| {
         let line = line.trim();
         line.contains('|')
@@ -590,18 +586,20 @@ mod tests {
     }
 
     #[test]
-    fn a_link_by_id_in_a_table_row_escapes_its_bar() {
+    fn a_link_by_id_in_a_table_row_or_quoted_table_is_left_alone() {
         let body = "| Note | Link |\n| --- | --- |\n| One | [[Old]] |\n\n[[Old]] outside\n";
         let renamed = by_id(&["Old"]);
         assert_eq!(
             rewritten(body, &renamed),
             format!(
-                "| Note | Link |\n| --- | --- |\n| One | [[{ID}\\|Old]] |\n\n[[{ID}|Old]] outside\n"
+                "| Note | Link |\n| --- | --- |\n| One | [[{ID}|Old]] |\n\n[[{ID}|Old]] outside\n"
             )
         );
-        // The folder's reader takes `\|` for part of the name, so the link
-        // would name nothing it meant, and the document is left alone.
+        // The alias's bar would end the cell, so the document is left alone,
+        // in a table under a blockquote or callout too.
         assert_eq!(relinked(body, &renamed), None);
+        let quoted = "> [!note]\n> | Note | Link |\n> | --- | --- |\n> | One | [[Old]] |\n";
+        assert_eq!(relinked(quoted, &renamed), None);
         // The witness: the same link outside a table is rewritten.
         let outside = "[[Old]] outside\n";
         assert_eq!(
@@ -628,5 +626,9 @@ mod tests {
             [false, false, true, true, true, false, false, false]
         );
         assert_eq!(cells("| a \\| b | c |\n| --- | --- |\n"), [(0, 3), (1, 3)]);
+        assert_eq!(
+            table_rows("> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n"),
+            [true, true, true, false]
+        );
     }
 }
