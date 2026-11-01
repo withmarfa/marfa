@@ -1078,6 +1078,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.ended,
             "placement(s) ended, for files that left the folder for good",
         ),
+        (
+            report.relinked,
+            "document(s) whose links now name a retitled item by its new title",
+        ),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
