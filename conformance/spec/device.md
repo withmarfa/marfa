@@ -1534,6 +1534,14 @@ When an edit asks to clear the `occurred_at` of an item whose create waits unsen
 
 **Tests:** `device/item-fields-live.test.ts › clears the own time of an item whose create still waits to the server's creation time`.
 
+### `device/edit-occurred-at-clear-unsent-landed`
+
+When a create that names a natural key and whose `occurred_at` `device/edit-occurred-at-clear-unsent` left out is answered with an item whose `occurred_at` differs from its `created_at`, and no later edit of the item named an `occurred_at`, a device MUST queue an edit that sets the item's `occurred_at` to its `created_at`.
+
+**Reason:** a create naming a natural key that a held item already has is applied to that item (`queue-and-verdicts/landed-accepted-moves`), and a create naming no `occurred_at` leaves the held item's own time as it was, so the person's clear would be lost. A create with no natural key is placed at its own creation time.
+
+**Tests:** `device/item-fields-live.test.ts › clears the own time of a keyed create that lands on a row the server holds`, `› sends the time set after a clear on a keyed create that lands on a held row`.
+
 ### `device/edit-occurred-at-exclusive`
 
 If an edit both names an `occurred_at` and asks to clear it, then a device MUST refuse it before it is queued.

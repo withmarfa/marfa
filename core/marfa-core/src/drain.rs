@@ -2640,6 +2640,11 @@ fn settle_success(
     // The receipt can rename a pin, but the fresh response was checked against
     // the exact pre-adoption pin set while this transaction held the writer.
     apply_read_back_unchecked(&tx, &read)?;
+    if row.kind == WriteKind::CreateItem
+        && let Some(parsed) = &item
+    {
+        send_owed_time_clear(&tx, row, &parsed.item, verdict)?;
+    }
     // Everything the receipt settles is settled; an unread answer leaves only
     // the read owed, for the pass after the copy is built again.
     if !matches!(read, ReadBack::Unread) {
@@ -2667,6 +2672,42 @@ fn settle_success(
         }
     }
     Ok(settled)
+}
+
+/// The person cleared the time of an item whose keyed create had not been
+/// sent, so the create named none. When it lands on a row the server holds,
+/// that row keeps its own time, so the clear is sent as the edit it would
+/// have been online: the row's creation time.
+fn send_owed_time_clear(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    answered: &WireItem,
+    verdict: Verdict,
+) -> Result<()> {
+    let key = crate::cleared_time_key(&row.id);
+    if store::meta_get(conn, &key)?.is_none() {
+        return Ok(());
+    }
+    store::meta_delete(conn, &key)?;
+    if !matches!(verdict, Verdict::Accepted | Verdict::Merged)
+        || answered.occurred_at == answered.created_at
+    {
+        return Ok(());
+    }
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    crate::queue_update(
+        conn,
+        &catalog,
+        &answered.id,
+        &crate::model::Edit {
+            base_version: Some(answered.version),
+            clear_occurred_at: true,
+            ..Default::default()
+        },
+        &[],
+        crate::Based::AsRead,
+    )?;
+    Ok(())
 }
 
 /// Given to an edit or delete of an edge a create was shown with that the
@@ -5471,6 +5512,159 @@ mod tests {
                 "server".to_string()
             )]
         );
+    }
+
+    /// A keyed create the person cleared the time of while it waited, drained
+    /// onto a row the server holds with the time `held_time`. Returns every
+    /// body the server was sent and then the queue still holds, in order.
+    fn cleared_create_lands(
+        keyed: bool,
+        clear: bool,
+        later: Option<&str>,
+        held_time: &str,
+    ) -> Vec<serde_json::Value> {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let made = core
+            .create_item(&crate::model::Draft {
+                r#type: "core.note".into(),
+                source: Some("test".into()),
+                source_id: keyed.then(|| "key".to_string()),
+                occurred_at: Some("2020-01-01T00:00:00Z".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let local = made.item_id.clone().unwrap();
+        let edit = |edit: crate::model::Edit| {
+            let version = core.get(&local).unwrap().unwrap().version;
+            core.update_item(
+                &local,
+                &crate::model::Edit {
+                    base_version: Some(version),
+                    ..edit
+                },
+            )
+            .unwrap();
+        };
+        if clear {
+            edit(crate::model::Edit {
+                clear_occurred_at: true,
+                ..Default::default()
+            });
+        }
+        if let Some(time) = later {
+            edit(crate::model::Edit {
+                occurred_at: Some(time.into()),
+                ..Default::default()
+            });
+        }
+        let mut item = serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
+            "item.created",
+            "server",
+            "core.note",
+            2,
+        ))
+        .unwrap()["item"]
+            .clone();
+        item["created_at"] = "2026-01-01T00:00:00.000Z".into();
+        item["occurred_at"] = held_time.into();
+        let answer = serde_json::json!({ "item": item, "acknowledged": false }).to_string();
+        server.on("/items", vec![crate::scripted::json(200, &answer)]);
+        server.on(
+            "/items/server",
+            vec![
+                crate::scripted::certified(crate::scripted::json(
+                    200,
+                    &serde_json::json!({"item": item, "metadata": {"tags": []}, "listed": true, "acknowledged": false})
+                        .to_string(),
+                ));
+                3
+            ],
+        );
+        core.drain().unwrap();
+        let sent = |path: &str| -> Vec<serde_json::Value> {
+            server
+                .seen(path)
+                .iter()
+                .filter(|seen| !seen.body.is_empty())
+                .map(|seen| serde_json::from_slice(&seen.body).unwrap())
+                .collect()
+        };
+        let queued = core
+            .queue()
+            .unwrap()
+            .iter()
+            .map(|write| {
+                serde_json::from_str(&store::payload_of(&core.conn().unwrap(), &write.id).unwrap())
+                    .unwrap()
+            })
+            .collect();
+        [sent("/items"), sent("/items/server"), queued].concat()
+    }
+
+    /// The times the bodies name, in order.
+    fn times(bodies: &[serde_json::Value]) -> Vec<String> {
+        bodies
+            .iter()
+            .filter_map(|body| body["occurred_at"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn a_cleared_time_on_a_keyed_create_that_lands_on_a_held_row_is_sent_as_the_clear() {
+        let sent = cleared_create_lands(true, true, None, "2020-01-01T00:00:00.000Z");
+        assert_eq!(times(&sent), ["2026-01-01T00:00:00.000Z"], "{sent:?}");
+        assert!(sent[0].get("occurred_at").is_none(), "{sent:?}");
+    }
+
+    #[test]
+    fn a_keyed_create_whose_time_was_not_cleared_leaves_the_held_rows_time_alone() {
+        // The witness: the same landing without the clear queues no edit, and
+        // the one that clears does.
+        let sent = cleared_create_lands(true, false, None, "2020-01-01T00:00:00.000Z");
+        assert!(
+            times(&sent)
+                .iter()
+                .all(|time| time == "2020-01-01T00:00:00Z"),
+            "{sent:?}"
+        );
+        assert!(!times(&sent).is_empty(), "{sent:?}");
+    }
+
+    #[test]
+    fn a_cleared_time_that_lands_on_a_row_already_at_its_creation_time_sends_no_edit() {
+        let sent = cleared_create_lands(true, true, None, "2026-01-01T00:00:00.000Z");
+        assert!(times(&sent).is_empty(), "{sent:?}");
+    }
+
+    #[test]
+    fn a_time_set_after_the_clear_is_sent_and_no_clear_follows_it() {
+        let sent = cleared_create_lands(
+            true,
+            true,
+            Some("2024-01-01T00:00:00Z"),
+            "2020-01-01T00:00:00.000Z",
+        );
+        let times: Vec<_> = sent
+            .iter()
+            .filter_map(|body| body.get("occurred_at"))
+            .collect();
+        assert!(
+            !times.contains(&&serde_json::json!("2026-01-01T00:00:00.000Z")),
+            "{sent:?}"
+        );
+        assert!(
+            times.iter().any(|time| time
+                .as_str()
+                .is_some_and(|time| time.starts_with("2024-01-01"))),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn an_unkeyed_create_cleared_while_unsent_sends_no_follow_up_edit() {
+        let sent = cleared_create_lands(false, true, None, "2020-01-01T00:00:00.000Z");
+        assert!(times(&sent).is_empty(), "{sent:?}");
     }
 
     #[test]
