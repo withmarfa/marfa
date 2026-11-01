@@ -24,7 +24,7 @@ import {
   ErrorCode,
   MarfaError,
   edgeTypeFromStored,
-  isCoreEdgeType,
+  unshadowedEdgeTypeRegistrations,
 } from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
@@ -589,15 +589,15 @@ function transactionConnections(
             throw new Error("Stored registry schema is unavailable");
         }
         const loaded = toLoadedTypes(rows);
-        const edges = (
-          await reader.execute("SELECT schema FROM edge_types")
-        ).rows
-          .map((row) => {
-            if (typeof row.schema !== "string")
-              throw new Error("Stored edge registry schema is unavailable");
-            return edgeTypeFromStored(row.schema);
-          })
-          .filter((schema) => !isCoreEdgeType(schema.id));
+        const edges = unshadowedEdgeTypeRegistrations(
+          (await reader.execute("SELECT schema FROM edge_types")).rows.map(
+            (row) => {
+              if (typeof row.schema !== "string")
+                throw new Error("Stored edge registry schema is unavailable");
+              return edgeTypeFromStored(row.schema);
+            },
+          ),
+        );
         await reader.execute("COMMIT");
         reading = false;
         return {

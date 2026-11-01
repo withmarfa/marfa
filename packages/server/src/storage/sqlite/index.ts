@@ -55,7 +55,7 @@ import {
 import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
 import { sqliteStoredValueCounts } from "./stored-value-counts.js";
 import {
-  isCoreEdgeType,
+  unshadowedEdgeTypeRegistrations,
   edgeNameCollisions,
   shippedPlatformTypes,
 } from "@withmarfa/shared";
@@ -116,7 +116,7 @@ export async function createSqliteStorage(
     custom: initialTypes
       .filter((row) => row.origin !== "platform")
       .map((row) => row.schema),
-    edges: loadedEdgeTypes.filter((schema) => !isCoreEdgeType(schema.id)),
+    edges: unshadowedEdgeTypeRegistrations(loadedEdgeTypes),
   });
 
   // Awaited rather than fire-and-forget: the platform vocabulary is seeded
@@ -170,7 +170,7 @@ export async function createSqliteStorage(
     custom: loadedTypes
       .filter((row) => row.origin !== "platform")
       .map((row) => row.schema),
-    edges: loadedEdgeTypes.filter((schema) => !isCoreEdgeType(schema.id)),
+    edges: unshadowedEdgeTypeRegistrations(loadedEdgeTypes),
   });
   reportEdgeNameCollisions(edgeNameCollisions());
 

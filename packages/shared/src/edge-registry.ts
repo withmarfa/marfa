@@ -134,8 +134,15 @@ export function edgeNameCollisions(): Record<string, string[]> {
 export function listEdgeTypes(): EdgeTypeSchema[] {
   return [
     ..._coreRegistry.values(),
-    ...[..._customRegistry.values()].filter((e) => !isCoreEdgeType(e.id)),
+    ...unshadowedEdgeTypeRegistrations(_customRegistry.values()),
   ];
+}
+
+/** Stored registrations whose identifiers are not held by shipped types. */
+export function unshadowedEdgeTypeRegistrations(
+  schemas: Iterable<EdgeTypeSchema>,
+): EdgeTypeSchema[] {
+  return [...schemas].filter((schema) => !isCoreEdgeType(schema.id));
 }
 
 // ---------------------------------------------------------------------------
