@@ -3993,6 +3993,8 @@ export interface components {
         /** @description A type in the list of types: its own definition, with the roles it declares and the roles it plays. */
         ListedType: components["schemas"]["TypeDefinition"] & {
             provenance: components["schemas"]["TypeProvenance"] & unknown;
+            /** @description The fields this type declares in another shape than a type above it. Present only while there are some, and it clears once the type declares the shape above. Items of the type stay readable. */
+            conflicts?: components["schemas"]["TypeConflict"][];
             /** @description The structural roles the type declares itself, without those it only inherits. Empty if it declares none. */
             own_roles: components["schemas"]["TypeRole"][];
         };
@@ -4080,6 +4082,19 @@ export interface components {
             maximum?: number;
         } & {
             [key: string]: unknown;
+        };
+        /** @description A field this type declares in a shape a type above it declares differently. */
+        TypeConflict: {
+            /** @description The name of the field the type declares. */
+            field: string;
+            /** @description The first part of the field's shape that differs, such as `type`. */
+            attribute: string;
+            /** @description The ID of the type above this one that declares the field. */
+            inherited_from: string;
+            /** @description What the types above give the field, such as `type "string"`. */
+            inherited: string;
+            /** @description What this type declares, such as `type "number"`. */
+            declared: string;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         TypeDefinition: {

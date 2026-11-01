@@ -37,9 +37,11 @@ import {
   mergeFieldDefinition,
   statusFieldName,
   statusGroupOf,
+  storedShapeConflicts,
 } from "@withmarfa/types";
 import type {
   DisplayHints,
+  InheritedShapeConflict,
   EntryMember,
   FieldDefinition,
   FieldFormat,
@@ -468,6 +470,18 @@ export function registerTypeSchema(schema: TypeSchema): void {
 
 export function unregisterTypeSchema(id: string): void {
   removeRegistryType(id);
+}
+
+/**
+ * The fields of a registered type that the chain above it declares in another
+ * shape, by the rule a registration is held to (`types/child-shape`). Empty
+ * for an unknown type.
+ */
+export function inheritedShapeConflicts(
+  typeId: string,
+): InheritedShapeConflict[] {
+  const schema = resolveSchema(typeId);
+  return schema ? storedShapeConflicts(schema, resolveSchema) : [];
 }
 
 /** Every type that reaches `rootId` through declared parents, never `rootId`. */

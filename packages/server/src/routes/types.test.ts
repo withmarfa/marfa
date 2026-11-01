@@ -177,6 +177,94 @@ describe("GET /types", () => {
   });
 });
 
+describe("GET /types — a type that conflicts with the types above it", () => {
+  interface Listed {
+    id: string;
+    conflicts?: { field: string; attribute: string }[];
+  }
+  const listed = async (id: string): Promise<Listed> => {
+    const res = await request(ctx.app, "GET", "/types", {
+      key: ctx.workingKey,
+    });
+    const types = ((await res.json()) as { data: Listed[] }).data;
+    return types.find((t) => t.id === id)!;
+  };
+
+  it("names the field, lists the items, and clears once the type declares the shape above", async () => {
+    const register = (id: string, body: object) =>
+      request(ctx.app, "POST", "/types", {
+        key: ctx.workingKey,
+        body: { id, version: 1, ...body },
+      });
+    expect(
+      (
+        await register("drift.parent", {
+          fields: { title: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await register("drift.child", {
+          parent: "drift.parent",
+          fields: { label: { type: "number" } },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await register("drift.agrees", {
+          parent: "drift.parent",
+          fields: { note: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const item = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "drift.child", properties: { label: 3 } },
+    });
+    expect(item.status).toBe(201);
+
+    // The witness: before the type above gains the field, nothing conflicts.
+    expect((await listed("drift.child")).conflicts).toBeUndefined();
+
+    // What an upgrade does: the type above gains a field the stored type
+    // below it already declares in another shape.
+    registerTypeSchema({
+      id: "drift.parent",
+      version: 2,
+      fields: { title: { type: "string" }, label: { type: "string" } },
+    });
+    const child = await listed("drift.child");
+    expect(child.conflicts).toEqual([
+      {
+        field: "label",
+        attribute: "type",
+        inherited_from: "drift.parent",
+        inherited: 'type "string"',
+        declared: 'type "number"',
+      },
+    ]);
+    expect((await listed("drift.agrees")).conflicts).toBeUndefined();
+
+    const items = await request(ctx.app, "GET", "/items?type=drift.child", {
+      key: ctx.workingKey,
+    });
+    expect(((await items.json()) as { data: unknown[] }).data).toHaveLength(1);
+
+    const replaced = await request(ctx.app, "PUT", "/types/drift.child", {
+      key: ctx.workingKey,
+      body: {
+        version: 2,
+        parent: "drift.parent",
+        fields: { label: { type: "string" } },
+      },
+    });
+    expect(replaced.status).toBe(200);
+    expect((await listed("drift.child")).conflicts).toBeUndefined();
+  });
+});
+
 // The shipped set spans two families and both are equally immutable: they
 // come from codegen, so editing one would change what the identifier means
 // for every deployment and for items already written against it. Naming a

@@ -991,6 +991,59 @@ function describeShapeConflict(
   return null;
 }
 
+/** A field a type declares in a shape the chain above it declares differently. */
+export interface InheritedShapeConflict {
+  field: string;
+  /** The part of the shape that differs, such as `items_type`. */
+  attribute: string;
+  /** The type above, in the chain, whose declaration the field disagrees with. */
+  owner: string;
+  /** What the chain above gives the field. */
+  inherited: string;
+  /** What the type declares. */
+  declared: string;
+}
+
+function inheritedShapeConflicts(
+  own: Iterable<[string, FieldDefinition]>,
+  ancestorFields: ReadonlyMap<
+    string,
+    { owner: string; definition: FieldDefinition }
+  >,
+): InheritedShapeConflict[] {
+  const found: InheritedShapeConflict[] = [];
+  for (const [field, definition] of own) {
+    const ancestor = ancestorFields.get(field);
+    if (!ancestor) continue;
+    const conflict = describeShapeConflict(definition, ancestor.definition);
+    if (!conflict) continue;
+    found.push({
+      field,
+      attribute: conflict.attribute,
+      owner: ancestor.owner,
+      inherited: conflict.expected,
+      declared: conflict.actual,
+    });
+  }
+  return found;
+}
+
+/**
+ * The fields of an already-registered type that the chain above it declares
+ * in another shape: the check a registration runs, applied to a type as it is
+ * stored, which a later change to a type above it can leave in conflict.
+ */
+export function storedShapeConflicts(
+  schema: TypeSchema,
+  resolveSchema: (typeId: string) => TypeSchema | undefined,
+): InheritedShapeConflict[] {
+  if (!schema.parent) return [];
+  return inheritedShapeConflicts(
+    Object.entries(schema.fields),
+    collectAncestorFields(schema.parent, { resolveSchema }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The validator
 // ---------------------------------------------------------------------------
@@ -1195,26 +1248,25 @@ export function validateTypeSchema(
   }
 
   if (fields && !ctx.deferRegistryChecks) {
+    const own: [string, FieldDefinition][] = [];
     for (const [name, def] of Object.entries(fields)) {
-      const ancestor = ancestorFields.get(name);
-      if (!ancestor) continue;
       const raw = asRecord(def);
       if (!raw) continue;
-      const normalized = normalizeFieldDefinition(raw, {
-        required: requiredNames.has(name),
-      });
-      const conflict = describeShapeConflict(normalized, ancestor.definition);
-      if (conflict) {
-        errors.push(
-          issue({
-            field: `fields.${name}.${conflict.attribute}`,
-            code: "inheritance_violation",
-            expected: `${conflict.expected}, inherited from "${ancestor.owner}"`,
-            actual: conflict.actual,
-            hint: `A child type may sharpen an inherited field's description or tighten it to required, but not change its shape. Rename the property, or change "${ancestor.owner}" instead.`,
-          }),
-        );
-      }
+      own.push([
+        name,
+        normalizeFieldDefinition(raw, { required: requiredNames.has(name) }),
+      ]);
+    }
+    for (const conflict of inheritedShapeConflicts(own, ancestorFields)) {
+      errors.push(
+        issue({
+          field: `fields.${conflict.field}.${conflict.attribute}`,
+          code: "inheritance_violation",
+          expected: `${conflict.inherited}, inherited from "${conflict.owner}"`,
+          actual: conflict.declared,
+          hint: `A child type may sharpen an inherited field's description or tighten it to required, but not change its shape. Rename the property, or change "${conflict.owner}" instead.`,
+        }),
+      );
     }
   }
 
