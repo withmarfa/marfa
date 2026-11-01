@@ -423,8 +423,9 @@ impl Cache {
     }
 
     /// `trim`, answering why where the cache cannot be read. Called under
-    /// `hold`, with `kept` read under it. An attachment made before it
-    /// returns can lose its bytes, which a fetch of kept files brings back.
+    /// `hold`, with `kept` read under it. Spares only the `attachments`
+    /// given, so a caller that lets go of the connection before this
+    /// returns can lose the bytes of an attachment made meanwhile.
     pub(crate) fn try_trim(
         &self,
         kept: &HashSet<String>,
