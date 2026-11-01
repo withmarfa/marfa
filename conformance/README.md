@@ -210,8 +210,9 @@ A booted server stops by itself, with the process that supervises it, when its
 state directory or its working directory no longer exists, and when no request
 has reached it for 30 minutes. The supervisor checks every 30 seconds, sends the
 server's process group `SIGTERM` as `down` does, and `SIGKILL` 20 seconds later
-if the group is still there. These two environment variables of the process that
-runs `up` (not `--env` settings, which the server reads) change the limits:
+if the group is still there. These two environment variables change the limits.
+Set them in the environment of the process that runs `up`, or pass them with
+`--env`, since the supervisor starts with the server's environment:
 
 | Variable                      | Default   | Meaning                                                   |
 | ----------------------------- | --------- | --------------------------------------------------------- |

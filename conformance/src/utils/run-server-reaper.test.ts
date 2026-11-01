@@ -137,7 +137,7 @@ describe("a supervised server nobody will stop", () => {
     expect(await bothGone(booted, 15_000)).toBe(true);
   });
 
-  it("is not stopped by lines that are not requests", async () => {
+  it("is not kept running by lines that are not requests", async () => {
     const booted = await boot({ CONFORMANCE_SERVER_IDLE_MS: "1500" });
     const log = join(booted.state, "server.log");
     const timer = setInterval(
