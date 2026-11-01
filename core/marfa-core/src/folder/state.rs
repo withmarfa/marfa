@@ -61,7 +61,7 @@ pub struct Writes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_title: Option<DeferredTitle>,
     /// When a file held `edges` is judged again while it is unchanged;
-    /// `None` where no judgment since this field was added recorded it.
+    /// `None` where no judgment recorded it, which is judged at the next scan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejudge: Option<Rejudge>,
     /// The file's names whose lookup the server refused, folded, each with
