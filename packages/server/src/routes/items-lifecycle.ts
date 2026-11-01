@@ -212,7 +212,7 @@ const previewItemTrashRoute = createRoute({
   tags: ["Items"],
   summary: "Preview trashing items",
   description:
-    "Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that trashing the items together would take with it. This includes what a cascading edge such as `parent-of` reaches, and a comment or attachment whose hosts are all named. Nothing changes.",
+    "Returns what `POST /items/trash` would move to the trash for the same `ids`: each item and every item you can read that a cascading edge such as `parent-of` reaches, or comment or attachment whose hosts would all be in the trash. Nothing changes.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
