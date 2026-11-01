@@ -158,6 +158,16 @@ export function withHostsEdgeTypes(): string[] {
     .map((schema) => schema.id);
 }
 
+/** The shipped edge type that links an excerpt to the item it was taken
+ *  from. */
+const EXCERPT_OF = "excerpt-of";
+
+/** Every edge type whose target names a source with no title of its own
+ *  (`types/item-name-part`): each that makes parts, and `excerpt-of`. */
+export function namingEdgeTypes(): string[] {
+  return [...withHostsEdgeTypes(), EXCERPT_OF];
+}
+
 // ---------------------------------------------------------------------------
 // Constraint resolution (inheritance-aware)
 // ---------------------------------------------------------------------------

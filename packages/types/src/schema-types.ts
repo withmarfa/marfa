@@ -179,14 +179,21 @@ export interface RetentionPolicy {
  * Declarative hints for generic renderers that consume items of this type
  * without type-specific code. Readers consult these first, then fall back in
  * the order `types/item-name-fields` fixes: `title_field`, `title`, `name`,
- * `body_field`, `body`, `text`, `filename`, `url`, `address`. A row none of
- * them names is `Untitled` (`types/item-name-empty`), never its type id.
+ * `body_field`, `body`, `text`, `filename`, `url`, `address`, the three body
+ * properties left out where `name_from_body` is false. A row none of them
+ * names is `Untitled` (`types/item-name-empty`), never its type id.
  */
 export interface DisplayHints {
   /** Field that carries this type's canonical display title. */
   title_field?: string;
   /** Field that carries this type's canonical body text. */
   body_field?: string;
+  /**
+   * False where an item's body is not its name, such as a highlight's
+   * passage: an item with no title is then named after what it comes from,
+   * or `Untitled`, never by a line of its body.
+   */
+  name_from_body?: boolean;
   /**
    * Iconify ID of the icon that stands for this type, `<set>:<name>`, from a
    * set in `ICON_SETS`.

@@ -1071,12 +1071,12 @@
   {
    "id": "core.highlight",
    "label": "Highlight",
-   "description": "A user's engagement with content — the highlighted passage plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`; the moment of highlighting is the item's own `occurred_at`.",
+   "description": "A user's engagement with content — the highlighted passage, its body, plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`, and names the highlight, which has no title of its own; the moment of highlighting is the item's own `occurred_at`.",
    "version": 0,
    "fields": {
     "text": {
      "type": "string",
-     "description": "The highlighted passage",
+     "description": "The highlighted passage, as Markdown",
      "required": true
     },
     "note": {
@@ -1117,8 +1117,8 @@
     }
    },
    "display_hints": {
-    "title_field": "text",
-    "body_field": "note",
+    "body_field": "text",
+    "name_from_body": false,
     "icon": "lucide:highlighter"
    },
    "merge_policy": {
@@ -2569,9 +2569,9 @@
   },
   {
    "id": "excerpt-of",
-   "label": "Excerpt of",
+   "label": "Excerpt from",
    "reverse_label": "Excerpts",
-   "description": "Source is a highlight, quote or clip taken from the target. Each excerpt is taken from one item; an item can have many excerpts. The excerpt carries its own text, stays in lists and stays when its source is binned or purged (orphan). Use it for a passage taken from an item, `about` for a topical link and `references` for a mention in text.",
+   "description": "Source is a highlight, quote or clip taken from the target. Each excerpt is taken from one item; an item can have many excerpts. An excerpt with no title of its own is named after the target, such as \"Excerpt from Thinking, Fast and Slow\". The excerpt carries its own text, stays in lists and stays when its source is binned or purged (orphan). Use it for a passage taken from an item, `about` for a topical link and `references` for a mention in text.",
    "cardinality": "many-to-one",
    "source_type_constraints": [
     "*"

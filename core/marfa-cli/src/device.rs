@@ -1930,6 +1930,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                                 lines.push(format!("  {name} field {value}"));
                             }
                         }
+                        if !held.name_from_body {
+                            lines.push("  not named by its body".into());
+                        }
                         lines.extend(held.fields.iter().map(field_line));
                         lines.join("\n")
                     })

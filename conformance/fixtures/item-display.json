@@ -70,6 +70,39 @@
           "type": "string"
         }
       }
+    },
+    {
+      "id": "user.excerpt",
+      "fields": {
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "display_hints": {
+        "body_field": "content",
+        "name_from_body": false
+      }
+    },
+    {
+      "id": "user.excerpt.inherits",
+      "parent": "user.excerpt",
+      "fields": {
+        "extra": {
+          "type": "string"
+        }
+      }
     }
   ],
   "cases": [
@@ -416,6 +449,47 @@
       "properties": {},
       "name": null,
       "preview": null
+    },
+    {
+      "description": "names a highlight by no line of its passage, which is its preview",
+      "type": "core.highlight",
+      "properties": {
+        "text": "A *passage* worth keeping\nand its second line",
+        "note": "Why it matters"
+      },
+      "name": null,
+      "preview": "A passage worth keeping and its second line"
+    },
+    {
+      "description": "names an item whose type's body does not name it by its title, and previews every line of its body",
+      "type": "user.excerpt",
+      "properties": {
+        "title": "Kept",
+        "content": "First line\nsecond"
+      },
+      "name": "Kept",
+      "preview": "First line second"
+    },
+    {
+      "description": "names an item whose inherited hint says its body does not name it by none of its body, body or text",
+      "type": "user.excerpt.inherits",
+      "properties": {
+        "content": "First line",
+        "body": "Body line",
+        "text": "Text line"
+      },
+      "name": null,
+      "preview": "First line"
+    },
+    {
+      "description": "names an item whose type's body does not name it by its url after its body properties",
+      "type": "user.excerpt",
+      "properties": {
+        "content": "First line",
+        "url": "https://example.test/"
+      },
+      "name": "https://example.test/",
+      "preview": "First line"
     }
   ],
   "parts": [
@@ -565,6 +639,44 @@
       },
       "name": "Comment on \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026",
       "preview": "Noted"
+    },
+    {
+      "description": "a highlight, named after the item it is an excerpt of, its preview its whole passage",
+      "host": {
+        "type": "core.media.book",
+        "properties": {
+          "title": "Thinking, Fast and Slow"
+        }
+      },
+      "edge_type": "excerpt-of",
+      "part": {
+        "type": "core.highlight",
+        "properties": {
+          "text": "A *passage* worth keeping\nand its second line",
+          "note": "Why it matters"
+        }
+      },
+      "name": "Excerpt from Thinking, Fast and Slow",
+      "preview": "A passage worth keeping and its second line"
+    },
+    {
+      "description": "an excerpt with a title of its own keeps it",
+      "host": {
+        "type": "core.media.book",
+        "properties": {
+          "title": "Thinking, Fast and Slow"
+        }
+      },
+      "edge_type": "excerpt-of",
+      "part": {
+        "type": "user.excerpt",
+        "properties": {
+          "title": "On fast thinking",
+          "content": "A passage"
+        }
+      },
+      "name": "On fast thinking",
+      "preview": "A passage"
     }
   ]
 }

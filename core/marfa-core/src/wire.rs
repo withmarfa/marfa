@@ -94,6 +94,8 @@ pub struct WireDisplayHints {
     #[serde(default)]
     pub body_field: Option<String>,
     #[serde(default)]
+    pub name_from_body: Option<bool>,
+    #[serde(default)]
     pub icon: Option<String>,
 }
 

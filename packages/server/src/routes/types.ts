@@ -307,6 +307,12 @@ const DisplayHintsSchema = z
       .describe(
         "The field that holds an item's body for display. The field holds Markdown.",
       ),
+    name_from_body: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`.",
+      ),
     icon: z
       .string()
       .optional()
@@ -315,13 +321,13 @@ const DisplayHintsSchema = z
       ),
   })
   .describe(
-    "How clients show a type and its items: the fields that hold an item's title and body, and the type's icon. Each hint comes from the nearest type that sets it.",
+    "How clients show a type and its items: the fields that hold an item's title and body, whether the body names an item, and the type's icon. Each hint comes from the nearest type that sets it.",
   )
   .openapi("DisplayHints");
 
 const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
 const DISPLAY_HINTS =
-  "How clients show the type and its items: the title field, the body field and the icon.";
+  "How clients show the type and its items: the title field, the body field, whether the body names an item, and the icon.";
 const VERSION_POLICY = "How long Marfa keeps the versions of the type's items.";
 const RETENTION_POLICY =
   "How long Marfa keeps the type's items in the feed tier.";
@@ -741,7 +747,12 @@ function withOwnerIcon<T extends TypeSchema>(
   return { ...schema, display_hints: { ...schema.display_hints, icon } };
 }
 
-const DISPLAY_HINT_KEYS = ["title_field", "body_field", "icon"] as const;
+const DISPLAY_HINT_KEYS = [
+  "title_field",
+  "body_field",
+  "name_from_body",
+  "icon",
+] as const;
 
 /**
  * The type as it reads, which is what a caller that reads a type and writes
@@ -840,7 +851,7 @@ function withoutReadBackHints<T extends TypeSchema>(
   if (submitted === undefined) return schema;
   const read = readSchema?.display_hints;
   const ownerIcon = owned.get(stored.id);
-  const hints: Record<string, string> = {};
+  const hints: Record<string, string | boolean> = {};
   for (const key of DISPLAY_HINT_KEYS) {
     const value = submitted[key];
     if (value === undefined) continue;

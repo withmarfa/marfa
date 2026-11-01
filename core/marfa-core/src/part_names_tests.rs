@@ -1,6 +1,7 @@
-//! A part's name in a working copy: "<edge label> <host name>" from the host
-//! of its oldest `with-hosts` edge that the copy holds out of the bin, as
-//! the server names it (`types/item-name-part`, `device/item-name-part`).
+//! A part's or an excerpt's name in a working copy: "<edge label> <host
+//! name>" from the target of its oldest `with-hosts` or `excerpt-of` edge
+//! that the copy holds out of the bin, as the server names it
+//! (`types/item-name-part`, `device/item-name-part`).
 
 use serde_json::{Map, Value, json};
 
@@ -148,6 +149,44 @@ fn names_a_part_by_its_body_when_no_host_is_held_out_of_the_bin() {
         name(&core, "comment").as_deref(),
         Some("Comment on Fix login bug")
     );
+}
+
+#[test]
+fn names_a_highlight_after_its_source_and_never_by_its_passage() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    let book = json!({ "title": "Thinking, Fast and Slow" });
+    put(
+        &core,
+        &row("book", "core.media.book", "active", book.clone()),
+    );
+    put(
+        &core,
+        &row(
+            "highlight",
+            "core.highlight",
+            "active",
+            json!({ "text": "A passage\nworth keeping", "note": "Mine" }),
+        ),
+    );
+    assert_eq!(
+        shown(&core, "highlight"),
+        ItemDisplay {
+            name: None,
+            preview: Some("A passage worth keeping".into()),
+        }
+    );
+    edge(&core, "e4", "highlight", "book", "excerpt-of", AT);
+    assert_eq!(
+        shown(&core, "highlight"),
+        ItemDisplay {
+            name: Some("Excerpt from Thinking, Fast and Slow".into()),
+            preview: Some("A passage worth keeping".into()),
+        }
+    );
+    // A source in the bin names nothing, and the passage still does not.
+    put(&core, &row("book", "core.media.book", "trashed", book));
+    assert_eq!(name(&core, "highlight"), None);
 }
 
 #[test]

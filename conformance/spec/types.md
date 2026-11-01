@@ -21,7 +21,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 | `core.file.image`    | core   | `core.file`   | `blob_ref`, `mime_type`        | Photos, screenshots, diagrams. Inherits all core.file fields.                                                                                                                                                                                                                                                            |
 | `core.file.video`    | core   | `core.file`   | `blob_ref`, `mime_type`        | Video files. Inherits all core.file fields.                                                                                                                                                                                                                                                                              |
 | `core.file.webpage`  | core   | `core.file`   | `blob_ref`, `mime_type`        | An HTML page held as a file, such as a report an agent wrote. Inherits all core.file fields.                                                                                                                                                                                                                             |
-| `core.highlight`     | core   | None          | `text`                         | A user's engagement with content: the highlighted passage plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`; the moment of highlighting is the item's own `occurred_at`.                                                                                              |
+| `core.highlight`     | core   | None          | `text`                         | A user's engagement with content: the highlighted passage, its body, plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`, and names the highlight, which has no title of its own; the moment of highlighting is the item's own `occurred_at`.                           |
 | `core.media`         | core   | None          | `title`                        | Content produced by someone that the user engages with: a film, podcast, book, article, song, show.                                                                                                                                                                                                                      |
 | `core.media.album`   | core   | `core.media`  | `title`                        | An album. Inherits all core.media fields.                                                                                                                                                                                                                                                                                |
 | `core.media.article` | core   | `core.media`  | `title`                        | An article. Inherits all core.media fields.                                                                                                                                                                                                                                                                              |
@@ -238,7 +238,7 @@ When `GET /types` lists a type, the server MUST answer the `version_policy`, `me
 
 ### `types/read-display-hint`
 
-When a credential sends `GET /types/{id}` for a registered type, the server MUST answer each of `display_hints.title_field`, `display_hints.body_field` and `display_hints.icon` from the nearest type, the type itself first and then its ancestors in turn, that sets that hint.
+When a credential sends `GET /types/{id}` for a registered type, the server MUST answer each of `display_hints.title_field`, `display_hints.body_field`, `display_hints.name_from_body` and `display_hints.icon` from the nearest type, the type itself first and then its ancestors in turn, that sets that hint.
 
 **Reason:** a type that names only a body hint still shows its parent's title, and a subtype that names only an icon keeps both of its parent's other hints, so a reader never has to guess which hints a type sets for itself (`device/catalog-type-read`).
 
@@ -442,9 +442,9 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, a `maxLength` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, or a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, a `maxLength` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, or a `display_hints` `name_from_body` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
 
-**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`.
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`, `› refuses a name_from_body that is not true or false with invalid_schema, naming the member`.
 
 ### `types/unknown-key`
 
@@ -1370,6 +1370,14 @@ The server MUST ship `core.highlight` requiring `text`, taking `note`, `color`, 
 
 **Tests:** `compliance/highlight.test.ts › creates with only the required text property`, `› rejects a highlight missing the required text property`, `› roundtrips all optional properties`, `› accepts an optional note alongside text`, `› accepts each locator_type variant`, `› the moment the highlight was made is the system occurred_at`, `› has no highlighted_at property on item or properties`.
 
+### `types/highlight-display`
+
+The server MUST ship `core.highlight` with `display_hints.body_field` `text`, `display_hints.name_from_body` `false` and no `display_hints.title_field`.
+
+**Reason:** a highlight's passage is what an app shows as its body, and never its name, however short. A highlight has no title of its own, so it is named after the item it is an excerpt of (`types/item-name-part`).
+
+**Tests:** `compliance/highlight.test.ts › shows its passage as its body and has no title field`.
+
 ### `types/entity`
 
 The server MUST ship `core.entity` requiring `name`, with `core.entity.person` and `core.entity.place` under it adding fields of their own.
@@ -1672,19 +1680,19 @@ In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminat
 
 ### `types/item-name-fields`
 
-When computing the name of an item that `types/item-name-part` does not name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, whose value is a string that produces nonblank text by `types/item-name-markdown` and `types/item-name-text`.
+When computing the name of an item that `types/item-name-part` does not name, the server MUST use the first property among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order, leaving out effective `display_hints.body_field`, `body` and `text` where its effective `display_hints.name_from_body` is `false`, whose value is a string that produces nonblank text by `types/item-name-markdown` and `types/item-name-text`.
 
-**Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
+**Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename. A highlight's passage is its body but never its name, however short, so `core.highlight` sets `name_from_body` to `false` and a highlight whose source cannot name it is `Untitled`.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`, `› names a highlight after the item it is an excerpt of, and never by its passage`.
 
 ### `types/item-name-part`
 
-When computing the name of an item that is the source of an edge of a `with-hosts` type and whose effective `display_hints.title_field`, `title` and `name` produce no nonblank text, the server MUST name it `<label> <host name>`, by `types/item-name-text`, from the edge type's `label` and the name by `types/item-name-fields` and `types/item-name-empty` of the target of the oldest such edge, by `created_at` and then `id`, whose target is out of the bin and of a type the credential may read.
+When computing the name of an item that is the source of an edge of a `with-hosts` type or of `excerpt-of` and whose effective `display_hints.title_field`, `title` and `name` produce no nonblank text, the server MUST name it `<label> <host name>`, by `types/item-name-text`, from the edge type's `label` and the name by `types/item-name-fields` and `types/item-name-empty` of the target of the oldest such edge, by `created_at` and then `id`, whose target is out of the bin and of a type the credential may read.
 
-**Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. With no such host, its own fields name it. A device names a part by the same rule (`device/item-name-part`).
+**Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. An excerpt has no title of its own either, so a highlight is "Excerpt from Thinking, Fast and Slow" rather than its passage, and several highlights may share that name. With no such target, its own fields name it. A device names a part by the same rule (`device/item-name-part`).
 
-**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `› names every shared part case as a device does`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
+**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `› names every shared part case as a device does`, `› names a highlight after the item it is an excerpt of, and never by its passage`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
 
 ### `types/item-name-text`
 

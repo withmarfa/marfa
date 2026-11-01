@@ -16,6 +16,16 @@ afterAll(async () => {
 });
 
 describe("core.highlight property-level", () => {
+  it("shows its passage as its body and has no title field", async () => {
+    const r = await client.getType("core.highlight");
+    expect(r.ok).toBe(true);
+    expect(r.data.display_hints).toEqual({
+      body_field: "text",
+      name_from_body: false,
+      icon: "lucide:highlighter",
+    });
+  });
+
   it("creates with only the required text property", async () => {
     const r = await client.createItem({
       type: "core.highlight",

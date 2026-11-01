@@ -1414,10 +1414,12 @@ export function validateTypeSchema(
   }
   const hints = asRecord(obj.display_hints);
   if (hints) {
-    const dh: { title_field?: string; body_field?: string; icon?: string } = {};
+    const dh: DisplayHints = {};
     if (typeof hints.title_field === "string")
       dh.title_field = hints.title_field;
     if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
+    if (typeof hints.name_from_body === "boolean")
+      dh.name_from_body = hints.name_from_body;
     if (typeof hints.icon === "string") dh.icon = hints.icon;
     if (Object.keys(dh).length > 0) schema.display_hints = dh;
   }
@@ -1803,6 +1805,19 @@ function validateDisplayHints(
   if (hints.icon !== undefined) {
     const refused = iconNameIssue(hints.icon, "display_hints.icon");
     if (refused) errors.push(refused);
+  }
+  if (
+    hints.name_from_body !== undefined &&
+    typeof hints.name_from_body !== "boolean"
+  ) {
+    errors.push(
+      issue({
+        field: "display_hints.name_from_body",
+        expected: "true or false",
+        actual: describe(hints.name_from_body),
+        hint: "Set name_from_body to false where an item's body is not its name, or omit it.",
+      }),
+    );
   }
   for (const hintKey of ["title_field", "body_field"] as const) {
     const value = hints[hintKey];
@@ -2886,6 +2901,7 @@ export const DISPLAY_HINTS_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     title_field: true,
     body_field: true,
+    name_from_body: true,
     icon: true,
   } satisfies Record<keyof DisplayHints, true>),
 );

@@ -305,7 +305,7 @@ async function summary(storage: Storage, row: Item): Promise<ItemSummary> {
     version: row.version,
     name: nameOf(
       row,
-      (await storage.items.partHosts([row.id])).get(row.id),
+      (await storage.items.namingHosts([row.id])).get(row.id),
       () => true,
     ),
     source: row.source,

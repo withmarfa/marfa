@@ -3638,6 +3638,9 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
                 if let Some(body) = &declared.body_field {
                     block.insert("body_field".into(), Value::String(body.clone()));
                 }
+                if let Some(named) = declared.name_from_body {
+                    block.insert("name_from_body".into(), Value::Bool(named));
+                }
                 if let Some(icon) = &declared.icon {
                     block.insert("icon".into(), Value::String(icon.clone()));
                 }
@@ -3691,18 +3694,19 @@ pub fn type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> 
     rows_of(conn, "SELECT id, json FROM types ORDER BY id")
 }
 
-/// The host a part is named after (`types/item-name-part`).
-pub(crate) struct PartHost {
+/// The item a part or an excerpt is named after (`types/item-name-part`).
+pub(crate) struct NamingHost {
     /// The label of the edge's type.
     pub label: String,
     pub r#type: String,
     pub properties: Map<String, Value>,
 }
 
-/// The target of the oldest edge of a `with-hosts` type that `id` draws, by
-/// `created_at` and then id, among the targets the copy holds out of the
-/// bin. The mode is read from the held catalog, so a registered type counts.
-pub(crate) fn part_host(conn: &Connection, id: &str) -> Result<Option<PartHost>, CoreError> {
+/// The target of the oldest edge of a `with-hosts` type or of `excerpt-of`
+/// that `id` draws, by `created_at` and then id, among the targets the copy
+/// holds out of the bin. The mode is read from the held catalog, so a
+/// registered type counts.
+pub(crate) fn naming_host(conn: &Connection, id: &str) -> Result<Option<NamingHost>, CoreError> {
     let found: Option<(String, String, String)> = conn
         .prepare_cached(
             "SELECT t.json, h.type, h.properties
@@ -3710,8 +3714,9 @@ pub(crate) fn part_host(conn: &Connection, id: &str) -> Result<Option<PartHost>,
                JOIN edge_types t ON t.id = e.edge_type
                JOIN items h ON h.id = e.target_id
               WHERE e.source_id = ?1
-                AND CASE WHEN json_valid(t.json)
-                    THEN json_extract(t.json, '$.cascade_on_delete') END = 'with-hosts'
+                AND (e.edge_type = 'excerpt-of'
+                     OR CASE WHEN json_valid(t.json)
+                        THEN json_extract(t.json, '$.cascade_on_delete') END = 'with-hosts')
                 AND h.state <> 'trashed'
               ORDER BY e.created_at, e.id
               LIMIT 1",
@@ -3727,7 +3732,7 @@ pub(crate) fn part_host(conn: &Connection, id: &str) -> Result<Option<PartHost>,
     // A host whose stored properties cannot be read is named as one with
     // none, as the server names it.
     let properties = serde_json::from_str(&properties).unwrap_or_default();
-    Ok(Some(PartHost {
+    Ok(Some(NamingHost {
         label,
         r#type,
         properties,
@@ -6514,6 +6519,7 @@ pub(crate) mod testing {
             display_hints: Some(WireDisplayHints {
                 title_field: title_field.map(str::to_string),
                 body_field: None,
+                name_from_body: None,
                 icon: None,
             }),
             rest: Map::new(),

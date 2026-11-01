@@ -916,13 +916,17 @@
             "type": "string",
             "description": "The field that holds an item's body for display. The field holds Markdown."
           },
+          "name_from_body": {
+            "type": "boolean",
+            "description": "Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`."
+          },
           "icon": {
             "type": "string",
             "description": "The type's icon, as an Iconify ID, `<set>:<name>`, from a pinned version of `lucide` or `simple-icons`, such as `lucide:calendar-days`. On a type read back, the owner's own choice replaces the author's."
           }
         },
         "additionalProperties": {},
-        "description": "How clients show a type and its items: the fields that hold an item's title and body, and the type's icon. Each hint comes from the nearest type that sets it."
+        "description": "How clients show a type and its items: the fields that hold an item's title and body, whether the body names an item, and the type's icon. Each hint comes from the nearest type that sets it."
       },
       "VersionPolicy": {
         "type": "object",
@@ -4581,7 +4585,7 @@
                 "$ref": "#/components/schemas/DisplayHints"
               },
               {
-                "description": "How clients show the type and its items: the title field, the body field and the icon."
+                "description": "How clients show the type and its items: the title field, the body field, whether the body names an item, and the icon."
               }
             ]
           },
@@ -4910,7 +4914,7 @@
                 "$ref": "#/components/schemas/DisplayHints"
               },
               {
-                "description": "How clients show the type and its items: the title field, the body field and the icon."
+                "description": "How clients show the type and its items: the title field, the body field, whether the body names an item, and the icon."
               }
             ]
           },
@@ -5152,7 +5156,7 @@
                 "$ref": "#/components/schemas/DisplayHints"
               },
               {
-                "description": "How clients show the type and its items: the title field, the body field and the icon."
+                "description": "How clients show the type and its items: the title field, the body field, whether the body names an item, and the icon."
               }
             ]
           },

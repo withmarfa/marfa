@@ -2601,12 +2601,14 @@ export interface components {
             /** @description The item's type identifier at this version. */
             type: string;
         };
-        /** @description How clients show a type and its items: the fields that hold an item's title and body, and the type's icon. Each hint comes from the nearest type that sets it. */
+        /** @description How clients show a type and its items: the fields that hold an item's title and body, whether the body names an item, and the type's icon. Each hint comes from the nearest type that sets it. */
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
             /** @description The field that holds an item's body for display. The field holds Markdown. */
             body_field?: string;
+            /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
+            name_from_body?: boolean;
             /** @description The type's icon, as an Iconify ID, `<set>:<name>`, from a pinned version of `lucide` or `simple-icons`, such as `lucide:calendar-days`. On a type read back, the owner's own choice replaces the author's. */
             icon?: string;
         } & {

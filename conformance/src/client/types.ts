@@ -181,6 +181,7 @@ export interface TypeSchema {
   display_hints?: {
     title_field?: string;
     body_field?: string;
+    name_from_body?: boolean;
     /** An Iconify icon ID, `<set>:<name>`, from a set the instance pins. */
     icon?: string;
   };

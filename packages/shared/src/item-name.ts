@@ -30,13 +30,19 @@ function named(
 ): Named | undefined {
   // Whether the field holds Markdown (`types/item-name-markdown`); a field
   // listed twice is read as it is first listed.
+  const body: [string | undefined, boolean][] =
+    hints?.name_from_body === false
+      ? []
+      : [
+          [hints?.body_field, true],
+          ["body", true],
+          ["text", true],
+        ];
   const fields: [string | undefined, boolean][] = [
     [hints?.title_field, false],
     ["title", false],
     ["name", false],
-    [hints?.body_field, true],
-    ["body", true],
-    ["text", true],
+    ...body,
     ["filename", false],
     ["url", false],
     ["address", false],
