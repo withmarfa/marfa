@@ -161,8 +161,9 @@ pub struct PullReport {
     pub taken: usize,
     pub elsewhere: usize,
     pub let_go: usize,
-    /// Documents whose body the pull rewrote, to name by its new title an
-    /// item retitled since a link in it was written.
+    /// Documents whose body the pull rewrote so their links follow an item
+    /// retitled since they were written. Each rewrite is queued, not yet
+    /// answered.
     pub relinked: usize,
     pub settings: SettingsFileReport,
     pub flagged: Vec<Flagged>,

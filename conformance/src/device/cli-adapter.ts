@@ -1363,8 +1363,8 @@ export interface PullReport {
   /** Placements deleted because their file left the folder for good
    *  (`folders/placement-end-count`). */
   ended: number;
-  /** Documents whose body links were rewritten to name a retitled item by
-   *  its new title (`folders/body-link-retitled`). */
+  /** Documents whose body links were rewritten to follow a retitled item
+   *  (`folders/body-link-retitled`). */
   relinked: number;
   /** File items whose bytes could not be had, so no file was written (`folders/blob-absent`). */
   absent: number;

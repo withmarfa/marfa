@@ -1080,7 +1080,7 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         ),
         (
             report.relinked,
-            "document(s) whose links now name a retitled item by its new title",
+            "document(s) whose links were rewritten to follow a retitled item",
         ),
     ]
     .into_iter()
