@@ -201,11 +201,8 @@ export async function deriveDimensions(
   if (typeof format.duration === "number" && Number.isFinite(format.duration)) {
     values.duration = format.duration;
   }
-  // Present for the EBML containers (WebM, Matroska) and absent for
-  // ISO-BMFF (MP4, QuickTime): the parser reads those only as far as their
-  // audio, so a video track's pixel dimensions are not there to take. An
-  // MP4 therefore yields its duration and no size, which is recorded rather
-  // than papered over.
+  // Absent for an audio-only file, whose duration is then all there is to
+  // take; the sweeper records the size as still missing.
   const video = format.trackInfo.find((track) => track.video)?.video;
   if (typeof video?.pixelWidth === "number") values.width = video.pixelWidth;
   if (typeof video?.pixelHeight === "number") values.height = video.pixelHeight;

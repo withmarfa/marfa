@@ -3,11 +3,7 @@
  *
  * These pin what the two libraries actually do rather than what their
  * READMEs promise, because the gap between those is the whole reason the
- * sweeper records a reason instead of assuming coverage. The MP4 case in
- * particular asserts an absence: the media parser reads ISO-BMFF only as
- * far as its audio, so a QuickTime-family video gives up its duration and
- * not its size. Somebody will eventually want that gap closed, and this is
- * where they will find out it is still open.
+ * sweeper records a reason instead of assuming coverage.
  */
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
@@ -63,18 +59,16 @@ describe("deriveDimensions", () => {
     expect(outcome.values.duration).toBeGreaterThan(0.5);
   });
 
-  it("reads an mp4's duration and not its size", async () => {
-    // The measured gap, asserted rather than described. Closing it means a
-    // second video reader, not a new option on this one.
+  it("reads an mp4's duration and size", async () => {
     const outcome = await deriveDimensions(
       await fixture("sample.mp4"),
       "video/mp4",
     );
     expect(outcome.kind).toBe("dimensions");
     if (outcome.kind !== "dimensions") return;
+    expect(outcome.values.width).toBe(160);
+    expect(outcome.values.height).toBe(120);
     expect(outcome.values.duration).toBeGreaterThan(0.5);
-    expect(outcome.values.width).toBeUndefined();
-    expect(outcome.values.height).toBeUndefined();
   });
 
   it("reports an image format it cannot read rather than throwing", async () => {

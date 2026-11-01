@@ -714,13 +714,31 @@ describe("dimensions", () => {
     expect(Number(props.duration)).toBeGreaterThan(0.5);
   });
 
-  it("writes an mp4's duration and records the size it could not read", async () => {
-    // A partial derivation is a write and a record, not a failure. The row
-    // says what is still missing, which is the data a later decision about
-    // a second video reader has to rest on.
+  it("derives an mp4's width, height and duration", async () => {
     const id = await createFileItem(
       await seedBlob(await fixture("sample.mp4"), "video/mp4"),
       "video/mp4",
+      "core.file.video",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const props = await readItem(id);
+    expect(props.width).toBe(160);
+    expect(props.height).toBe(120);
+    expect(Number(props.duration)).toBeGreaterThan(0.5);
+  });
+
+  it("writes a video item's duration and records the size an audio-only file could not give", async () => {
+    // A partial derivation is a write and a record, not a failure. The row
+    // says what is still missing.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.mp3"), "audio/mpeg"),
+      "audio/mpeg",
       "core.file.video",
     );
 
