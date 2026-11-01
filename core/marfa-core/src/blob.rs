@@ -419,17 +419,28 @@ impl Cache {
         attachments: &HashSet<String>,
         budget: impl FnOnce(u64) -> Option<u64>,
     ) -> u64 {
+        self.try_trim(kept, attachments, budget).unwrap_or(0)
+    }
+
+    /// `trim`, answering why where the cache cannot be read. Called under
+    /// `hold`, with `kept` read under it. Spares only the `attachments`
+    /// given, so a caller that lets go of the connection before this
+    /// returns can lose the bytes of an attachment made meanwhile.
+    pub(crate) fn try_trim(
+        &self,
+        kept: &HashSet<String>,
+        attachments: &HashSet<String>,
+        budget: impl FnOnce(u64) -> Option<u64>,
+    ) -> std::result::Result<u64, String> {
         let reading = self.readers();
-        let Ok(found) = self.scan() else {
-            return 0;
-        };
+        let found = self.scan()?;
         let found: Vec<Held> = found
             .into_iter()
             .filter(|entry| !attachment_entry(attachments, &entry.path))
             .collect();
         let mut total: u64 = found.iter().map(|held| held.size).sum();
         let Some(most) = budget(total) else {
-            return 0;
+            return Ok(0);
         };
         let mut held = Vec::new();
         // Each lock stays until its file is unlinked.
@@ -470,7 +481,7 @@ impl Cache {
                 taken += entry.size;
             }
         }
-        taken
+        Ok(taken)
     }
 
     /// Locks a partial file as a fetch does, if no fetch holds it. Nothing

@@ -3124,6 +3124,20 @@ impl MarfaCore {
             .map_err(|error| failure(env, error))
     }
 
+    /// Removes every file the cache holds that can be fetched again and
+    /// answers the bytes it took, leaving the budget as it was. Keeps the
+    /// files of attachments, queued uploads and reads in progress, and the
+    /// part of a file a fetch is writing. Takes nothing and fails where the
+    /// cache, the queue or the attachments cannot be read. Refused to a
+    /// reading handle.
+    #[napi]
+    pub fn remove_fetched_files(&self, env: Env) -> Result<i64> {
+        self.inner
+            .remove_fetched_files()
+            .map(count)
+            .map_err(|error| failure(env, error))
+    }
+
     /// Fetches the bytes of every file attached to an item the copy holds
     /// that the cache does not hold whole, smallest first, and answers what
     /// it fetched and the attachments after it, resuming the part of one an

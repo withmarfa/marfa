@@ -170,6 +170,55 @@ test("a blob is kept from every trim until its promise resolves", async () => {
   }
 });
 
+test("fetched files are removed through the module, keeping an unsent upload and the budget", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-file-cache-"));
+  try {
+    const path = join(dir, "copy.sqlite");
+    const core = MarfaCore.open(path);
+    const budget = { kind: FileBudgetKind.KeepAll };
+    core.setFileBudget(budget);
+    const fetched = "fetched once";
+    const blobs = `${path}.blobs`;
+    mkdirSync(blobs, { recursive: true });
+    const held = join(blobs, createHash("sha256").update(fetched).digest("hex"));
+    writeFileSync(held, fetched);
+    const source = join(dir, "unsent.txt");
+    writeFileSync(source, "not yet sent");
+    await core.putBlob(source, "text/plain");
+    const unsent = join(
+      blobs,
+      createHash("sha256").update("not yet sent").digest("hex"),
+    );
+
+    assert.equal(core.removeFetchedFiles(), Buffer.byteLength(fetched));
+    assert.equal(existsSync(held), false);
+    assert.equal(
+      readFileSync(unsent, "utf8"),
+      "not yet sent",
+      "the only copy of an unsent upload was removed",
+    );
+    assert.deepEqual(core.fileCache().setting, budget);
+    assert.equal(core.removeFetchedFiles(), 0);
+
+    writeFileSync(held, fetched);
+    chmodSync(blobs, 0o000);
+    try {
+      assert.throws(() => core.removeFetchedFiles(), { code: "store" });
+    } finally {
+      chmodSync(blobs, 0o755);
+    }
+    assert.equal(existsSync(held), true);
+    assert.equal(core.removeFetchedFiles(), Buffer.byteLength(fetched));
+
+    const reader = MarfaCore.openReader(path);
+    assert.throws(() => reader.removeFetchedFiles(), {
+      code: "reading_handle",
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("attachments are reported and fetched through the module, and kept through a trim", async (t) => {
   const server = await scripted([]);
   t.after(server.close);
