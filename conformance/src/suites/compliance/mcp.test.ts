@@ -354,6 +354,52 @@ describe("marfa_find", () => {
       await reader.close();
     }
   });
+
+  it("names a part after its oldest host when it has more hosts than an item read carries", async () => {
+    const tag = `mcp-many-hosts-${ctx.runId}`;
+    const reader = await connectMcp(apiUrl, apiKey);
+    try {
+      const made = async (
+        properties: Record<string, unknown>,
+        tags: string[],
+      ) => {
+        const r = await client.createItem({
+          type: "core.note",
+          properties,
+          tags,
+        });
+        expect(r.status, JSON.stringify(r.error)).toBe(201);
+        trackItem(ctx, r.data.item.id);
+        return r.data.item.id;
+      };
+      const part = await made({ body: "Shared file" }, [tag]);
+      // One more host than the 50 edges a block of `item.edges` carries.
+      for (let at = 0; at <= 50; at += 1) {
+        const host = await made({ title: `Host ${String(at)}` }, [
+          `${tag}-host`,
+        ]);
+        const r = await client.createEdge({
+          source_id: part,
+          target_id: host,
+          edge_type: "attached-to",
+        });
+        expect(r.status, JSON.stringify(r.error)).toBe(201);
+        trackEdge(ctx, r.data.edge.id);
+      }
+
+      const found = toolResult(
+        await callTool(reader, "marfa_find", {
+          type: "core.note",
+          tags: [tag],
+        }),
+      ) as { items: { id: string; title: string }[] };
+      expect(found.items.find((row) => row.id === part)?.title).toBe(
+        "Attached to Host 0",
+      );
+    } finally {
+      await reader.close();
+    }
+  });
 });
 
 describe("marfa_get", () => {

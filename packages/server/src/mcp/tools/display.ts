@@ -50,8 +50,9 @@ const byAge = (a: Edge, b: Edge): number =>
  * may read: a part with no nonblank title-like field is named
  * "<edge label> <host name>" after the host of its oldest edge whose type
  * deletes `with-hosts`, among the hosts out of the trash the caller may
- * read. A part in the trash keeps its own name. Only the first page of each edge type an item carries inline is
- * read, so a part with more hosts than that may be named after a later one.
+ * read. A part in the trash keeps its own name. The API answers no computed
+ * name to a credential, so this follows `types/item-name-part` from what
+ * the caller may read, every page of each `with-hosts` edge type included.
  */
 export async function itemNamesOf(
   ctx: ToolContext,
@@ -100,11 +101,28 @@ export async function itemNamesOf(
     );
     if (!looked.ok) return names;
     for (const item of looked.data.items) {
-      const edges = Object.entries(item.edges ?? {})
-        .filter(([type]) => labels.has(type))
-        .flatMap(([, block]) => block.data)
-        .sort(byAge);
-      if (edges.length > 0) hostEdges.set(item.id, edges);
+      const edges: Edge[] = [];
+      for (const [type, block] of Object.entries(item.edges ?? {})) {
+        if (!labels.has(type)) continue;
+        edges.push(...block.data);
+        // A block carries only the newest edges, and the oldest names the
+        // part, so the rest are read from the listing it continues.
+        let cursor = block.next_cursor;
+        while (cursor !== null) {
+          const page = await ctx.api.answer(
+            ctx.api.client.GET("/items/{id}/edges", {
+              params: {
+                path: { id: item.id },
+                query: { edge_type: type, limit: 500, cursor },
+              },
+            }),
+          );
+          if (!page.ok) return names;
+          edges.push(...page.data.data);
+          cursor = page.data.next_cursor;
+        }
+      }
+      if (edges.length > 0) hostEdges.set(item.id, edges.sort(byAge));
     }
   }
   const hostIds = [

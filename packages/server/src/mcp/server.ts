@@ -44,9 +44,25 @@ export const SERVER_INSTRUCTIONS = [
 /** Which API operations each tool calls, for the drift test. */
 export const TOOL_OPERATIONS = {
   marfa_overview: ["getOverview", "getType"],
-  marfa_find: ["searchItems", "listItems", "listViewItems"],
+  marfa_find: [
+    "searchItems",
+    "listItems",
+    "listViewItems",
+    "getType",
+    "listEdgeTypes",
+    "bulkGetItems",
+    "listItemEdges",
+  ],
   marfa_get: ["bulkGetItems", "getItem", "getBlobUrl"],
-  marfa_create: ["createItem", "uploadBlob", "createEdge"],
+  marfa_create: [
+    "createItem",
+    "uploadBlob",
+    "createEdge",
+    "getType",
+    "listEdgeTypes",
+    "bulkGetItems",
+    "listItemEdges",
+  ],
   marfa_update: [
     "getItem",
     "updateItem",
@@ -58,7 +74,14 @@ export const TOOL_OPERATIONS = {
     "transitionItem",
     "restoreItem",
   ],
-  marfa_delete: ["previewItemTrash", "bulkGetItems", "trashItems"],
+  marfa_delete: [
+    "previewItemTrash",
+    "bulkGetItems",
+    "trashItems",
+    "getType",
+    "listEdgeTypes",
+    "listItemEdges",
+  ],
   marfa_save_type: ["registerType", "listTypes", "replaceType"],
   marfa_save_view: ["createView", "updateView"],
   marfa_move_items: ["moveType", "getBulkActionJob"],
