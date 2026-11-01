@@ -1125,6 +1125,52 @@ describe("embeds", () => {
     ).toEqual([]);
   });
 
+  it("ends an embed path at an escaped question mark or hash and keeps a percent-encoded one in the name", async () => {
+    const dir = scratch();
+    const marked = `q#h-${ctx.runId}.png`;
+    const bare = `q-${ctx.runId}.png`;
+    writeFileSync(join(dir, marked), `marked ${ctx.runId}`);
+    writeFileSync(join(dir, bare), `bare ${ctx.runId}`);
+    const markedFile = value(await device.addFile(join(dir, marked)))[1];
+    const bareFile = value(await device.addFile(join(dir, bare)))[1];
+    for (const file of [markedFile, bareFile]) trackItem(ctx, file.item_id!);
+    await drained(device);
+    // `%23` is a `#` in the name; `\#` is still a URL's fragment mark.
+    const encoded = await note(
+      device,
+      named("Percent hash host"),
+      `![](q%23h-${ctx.runId}.png)`,
+    );
+    await drained(device);
+    expect(
+      await referencesFrom(encoded.id),
+      "a percent-encoded # was read as a fragment",
+    ).toEqual([markedFile.item_id!]);
+    for (const [label, text] of [
+      ["an escaped #", `![](q-${ctx.runId}.png\\#frag)`],
+      ["an escaped ?", `![](q-${ctx.runId}.png\\?x=1)`],
+      ["a bare #", `![](q-${ctx.runId}.png#frag)`],
+    ] as const) {
+      const host = await note(device, named(`Fragment host ${label}`), text);
+      await drained(device);
+      expect(
+        await referencesFrom(host.id),
+        `${label} stayed in the path`,
+      ).toEqual([bareFile.item_id!]);
+    }
+    // The mark ends the path wherever it is, so what follows it names nothing.
+    const cut = await note(
+      device,
+      named("Cut at escaped mark host"),
+      `![](q\\#h-${ctx.runId}.png)`,
+    );
+    await drained(device);
+    expect(
+      await referencesFrom(cut.id),
+      "an escaped # was kept in the path",
+    ).toEqual([]);
+  });
+
   it("embeds an attached file by the text the attach answers, and references it beside the attachment", async () => {
     const dir = scratch();
     const name = `pasted-${ctx.runId}.png`;

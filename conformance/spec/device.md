@@ -6096,7 +6096,7 @@ If the file named for an embed text is not attached to the item named, then a de
 
 ### `device/embed-table-pipe`
 
-When an embed in a body, `![[name\|size]]`, sits inside a table cell, including a table in a quote or a callout, a device MUST read the name as the text before the first `|` after reading each `\|` in the embed as `|`.
+When an embed in a body, `![[name\|size]]`, sits inside a table cell, including a table in a quote or a callout, a device MUST read each `\|` in the embed as `|` before reading its name.
 
 **Reason:** a table cell cannot hold a bare `|`, so an editor writes the size of a picture there as `![[t.png\|200]]`, which Obsidian shows as the file `t.png`. The text as written is what the embed is recorded and answered as.
 
@@ -6104,11 +6104,11 @@ When an embed in a body, `![[name\|size]]`, sits inside a table cell, including 
 
 ### `device/embed-path-markdown-escape`
 
-When an embed names a path, `![alt](path)`, a device MUST read a backslash followed by an ASCII punctuation character in the path as that character, and read each percent escape as its byte, in one pass.
+When an embed names a path, `![alt](path)`, a device MUST read the path in this order: first a backslash followed by an ASCII punctuation character as that character, then cut the path at the first `?` or `#`, then each percent escape as its byte.
 
-**Reason:** an editor escapes an underscore in a file name, so `![](my\_pic.png)` shows `my_pic.png`. One pass keeps `%5C` a backslash that escapes nothing, so `![](my%5C_pic.png)` names `my\_pic.png`. A `![[name]]` embed is no path and is not unescaped, as Obsidian does not.
+**Reason:** an editor escapes an underscore in a file name, so `![](my\_pic.png)` shows `my_pic.png`. A path is a URL, so an escaped `?` or `#` is literal in the destination and still starts a query or a fragment: `![](a\?b.png?x=1)` names `a`. A file whose name holds `#` or `?` is written `a%23b.png` or `a%3Fb.png`, which the percent step reads after the cut. Percent escapes come last, so `%5C` stays a backslash that escapes nothing, and `![](my%5C_pic.png)` names `my\_pic.png`. A `![[name]]` embed is no path and is not unescaped, as Obsidian does not.
 
-**Tests:** `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+**Tests:** `device/body-edges-live.test.ts › ends an embed path at an escaped question mark or hash and keeps a percent-encoded one in the name`, `device/body-edges-live.test.ts › binds an embed with a size in a table cell, and one with a Markdown escape in its path, to its file`, `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
 ### `device/embed-path-other-backslash`
 

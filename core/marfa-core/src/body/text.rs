@@ -277,7 +277,7 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
                     let inner = &body[bracket.inner.clone()];
                     let in_cell = inner.contains("\\|")
                         && table_cells
-                            .get_or_insert_with(|| table_cells_of(&text))
+                            .get_or_insert_with(|| table_cells_of(body))
                             .iter()
                             .any(|cell| cell.contains(&bracket.whole.start));
                     let name = if in_cell {
@@ -328,7 +328,9 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
 }
 
 /// The byte ranges of the table cells in `text`, in a quote or a callout too.
-/// A table is no part of how code is found, so this is a pass of its own.
+/// Read from the raw body: a blanked code span would change what a header
+/// row says and so whether a table is one. `![[` is never found in code, so
+/// a table in a fenced block adds no embed.
 fn table_cells_of(text: &str) -> Vec<Range<usize>> {
     pulldown_cmark::Parser::new_ext(text, pulldown_cmark::Options::ENABLE_TABLES)
         .into_offset_iter()
@@ -485,32 +487,43 @@ fn is_address(destination: &str) -> bool {
             .all(|glyph| glyph.is_ascii_alphanumeric() || matches!(glyph, '+' | '.' | '-'))
 }
 
-/// The file a destination names: a backslash before ASCII punctuation is
-/// that character (CommonMark's escape), a percent escape is its byte, and an
-/// unescaped `?` or `#` ends the path. One pass, so `%5C` is a backslash
-/// and no escape.
+/// The file a destination names, read in CommonMark's order: a backslash
+/// before ASCII punctuation is that character, then the first `?` or `#`
+/// ends the path (an escaped one is literal in the destination, which is
+/// still a URL), then each percent escape is its byte. `%5C` and `%23` so
+/// stay a backslash and a `#` in the name.
 fn local(destination: &str) -> String {
     let bytes = destination.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut unescaped = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
-        match bytes[at] {
-            b'?' | b'#' => break,
-            b'\\' if bytes.get(at + 1).is_some_and(u8::is_ascii_punctuation) => {
-                decoded.push(bytes[at + 1]);
-                at += 2;
-            }
-            b'%' if let Some(byte) = destination
-                .get(at + 1..at + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok()) =>
-            {
-                decoded.push(byte);
-                at += 3;
-            }
-            byte => {
-                decoded.push(byte);
-                at += 1;
-            }
+        if bytes[at] == b'\\' && bytes.get(at + 1).is_some_and(u8::is_ascii_punctuation) {
+            unescaped.push(bytes[at + 1]);
+            at += 2;
+        } else {
+            unescaped.push(bytes[at]);
+            at += 1;
+        }
+    }
+    let end = unescaped
+        .iter()
+        .position(|byte| matches!(byte, b'?' | b'#'))
+        .unwrap_or(unescaped.len());
+    let path = &unescaped[..end];
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut at = 0;
+    while at < path.len() {
+        let byte = (path[at] == b'%')
+            .then(|| path.get(at + 1..at + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(byte) = byte {
+            decoded.push(byte);
+            at += 3;
+        } else {
+            decoded.push(path[at]);
+            at += 1;
         }
     }
     String::from_utf8_lossy(&decoded).into_owned()
@@ -808,6 +821,9 @@ mod tests {
             embeds("![[t.png\\|200]]"),
             vec![named("![[t.png\\|200]]", "t.png\\")]
         );
+        // A code span in the header row does not stop the table being one.
+        let coded = "| `a|b` | h |\n| - | - | - |\n| a | ![[t.png\\|200]] | c |";
+        assert_eq!(embeds(coded), vec![named("![[t.png\\|200]]", "t.png")]);
     }
 
     #[test]
@@ -823,8 +839,13 @@ mod tests {
         assert_eq!(path("![](my\\_pic one.png)"), "my_pic one.png");
         assert_eq!(path("![](a\\b.png)"), "a\\b.png");
         assert_eq!(path("![](my%5C_pic.png)"), "my\\_pic.png");
-        assert_eq!(path("![](a\\%41.png)"), "a%41.png");
-        assert_eq!(path("![](a\\#b.png#frag)"), "a#b.png");
+        assert_eq!(path("![](a\\%41.png)"), "aA.png");
+        // An escaped `?` or `#` is literal in the destination, which is still
+        // a URL, so it ends the path; a percent escape of either stays.
+        assert_eq!(path("![](a\\#b.png#frag)"), "a");
+        assert_eq!(path("![](a\\?b.png?x=1)"), "a");
+        assert_eq!(path("![](a%23b.png#frag)"), "a#b.png");
+        assert_eq!(path("![](a%3Fb.png?x=1)"), "a?b.png");
         assert_eq!(
             embeds("![[my\\_pic.png]]"),
             vec![named("![[my\\_pic.png]]", "my\\_pic.png")],
