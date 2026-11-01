@@ -183,7 +183,7 @@ fn count(value: usize) -> u64 {
 fn problem_of(flag: &str) -> Option<Code> {
     match flag {
         "removal" | "query" | "gone" => None,
-        "refused" => Some(Code::Refused),
+        "refused" | "default_edge_refused" => Some(Code::Refused),
         "credential_refused" => Some(Code::CredentialRefused),
         "encoding" | "unreadable" => Some(Code::Unreadable),
         _ => Some(Code::HeldFile),

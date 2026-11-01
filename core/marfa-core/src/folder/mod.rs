@@ -240,6 +240,9 @@ pub struct Unsure {
     pub reason: String,
 }
 
+/// The flag of a file whose folder default edge was refused.
+pub const DEFAULT_EDGE_REFUSED: &str = "default_edge_refused";
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Flagged {
     pub path: String,
@@ -270,6 +273,16 @@ pub fn merged_flagged<'a>(
 }
 
 impl Flagged {
+    /// A folder default edge refused: the file itself is sent and in step.
+    pub fn default_edge_refused(path: &str, reason: impl Into<String>) -> Flagged {
+        Flagged {
+            path: path.to_string(),
+            flag: DEFAULT_EDGE_REFUSED,
+            reason: reason.into(),
+            item: None,
+        }
+    }
+
     fn of(path: &str, held: &str) -> Flagged {
         let (flag, reason) = if let Some(reason) = held.strip_prefix(state::UNREADABLE) {
             (
@@ -5983,6 +5996,15 @@ mod tests {
             .count()
     }
 
+    fn flagged_at<'a>(report: &'a ScanReport, path: &str, flag: &str) -> Vec<&'a str> {
+        report
+            .flagged
+            .iter()
+            .filter(|flagged| flagged.path == path && flagged.flag == flag)
+            .map(|flagged| flagged.reason.as_str())
+            .collect()
+    }
+
     fn refused_at<'a>(report: &'a ScanReport, path: &str) -> Vec<&'a str> {
         report
             .flagged
@@ -6004,9 +6026,10 @@ mod tests {
         let report = folder.scan().unwrap();
         assert_eq!(report.created, 2, "{report:?}");
         for path in ["a.md", "archive.bin"] {
-            let refused = refused_at(&report, path);
+            let refused = flagged_at(&report, path, "default_edge_refused");
             assert_eq!(refused.len(), 1, "{path}: {report:?}");
             assert!(refused[0].contains("item_not_found"), "{refused:?}");
+            assert!(refused_at(&report, path).is_empty(), "{report:?}");
             let bound = state::bound_at(&folder.core.conn().unwrap(), path)
                 .unwrap()
                 .unwrap_or_else(|| panic!("{path} is not bound"));
@@ -6029,8 +6052,15 @@ mod tests {
         let again = folder.scan().unwrap();
         assert_eq!(again.created, 1, "{again:?}");
         assert_eq!(queued_kinds(&folder, WriteKind::CreateItem), 3);
-        assert_eq!(refused_at(&again, "b.md").len(), 1, "{again:?}");
-        assert!(refused_at(&again, "a.md").is_empty(), "{again:?}");
+        assert_eq!(
+            flagged_at(&again, "b.md", "default_edge_refused").len(),
+            1,
+            "{again:?}"
+        );
+        assert!(
+            flagged_at(&again, "a.md", "default_edge_refused").is_empty(),
+            "{again:?}"
+        );
     }
 
     const FOLDER_ID: &str = "01a00000-0000-7000-8000-000000000001";
@@ -6123,7 +6153,11 @@ mod tests {
                     "a file item has no line to write: {refused:?}"
                 );
                 let status = status_of_file(&folder, path);
-                assert_eq!(status.flag, Some("refused"), "{path}: {status:?}");
+                assert_eq!(
+                    status.flag,
+                    Some("default_edge_refused"),
+                    "{path}: {status:?}"
+                );
                 assert_eq!(status.reason.as_deref(), Some(refused[0].reason.as_str()));
             }
             // The witness: the file that wrote its own line holds nothing.
@@ -6187,7 +6221,10 @@ mod tests {
         let held = default_refusals(&folder, "a.md");
         assert_eq!(held.len(), 1, "{held:?}");
         assert!(held[0].reason.contains("validation_error"), "{held:?}");
-        assert_eq!(status_of_file(&folder, "a.md").flag, Some("refused"));
+        assert_eq!(
+            status_of_file(&folder, "a.md").flag,
+            Some("default_edge_refused")
+        );
         // Its bytes are the file's own: a pull is not kept from them.
         let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
             .unwrap()
@@ -6364,7 +6401,10 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
         folder.scan().unwrap();
         let item = item_of(&folder, "a.md");
-        assert_eq!(status_of_file(&folder, "a.md").flag, Some("refused"));
+        assert_eq!(
+            status_of_file(&folder, "a.md").flag,
+            Some("default_edge_refused")
+        );
         // The create has gone; an edit of the item has reached the limit.
         folder
             .core

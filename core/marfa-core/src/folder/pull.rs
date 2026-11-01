@@ -702,13 +702,30 @@ impl Folder {
                         .held
                         .as_deref()
                         .map(|held| Flagged::of(&bound.path, held));
-                    let refused = bound.writes.refused.last().map(|refused| Flagged {
-                        path: bound.path.clone(),
-                        flag: "refused",
-                        reason: refused.reason.clone(),
-                        item: None,
-                    });
-                    held.into_iter().chain(refused)
+                    let refused = bound
+                        .writes
+                        .refused
+                        .iter()
+                        .rev()
+                        .find(|refused| {
+                            !matches!(refused.change, state::Change::DefaultEdge { .. })
+                        })
+                        .map(|refused| Flagged {
+                            path: bound.path.clone(),
+                            flag: "refused",
+                            reason: refused.reason.clone(),
+                            item: None,
+                        });
+                    let default = bound
+                        .writes
+                        .refused
+                        .iter()
+                        .rev()
+                        .find(|refused| matches!(refused.change, state::Change::DefaultEdge { .. }))
+                        .map(|refused| {
+                            Flagged::default_edge_refused(&bound.path, refused.reason.clone())
+                        });
+                    held.into_iter().chain(refused).chain(default)
                 })
                 .collect::<Vec<_>>()
         });

@@ -930,6 +930,10 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                     .unwrap_or_default();
                 format!("{} is not written{item}: {}", file.path, file.reason)
             }
+            marfa_core::folder::DEFAULT_EDGE_REFUSED => format!(
+                "{} is sent, but a default edge of the folder was not applied: {}",
+                file.path, file.reason
+            ),
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason
@@ -1319,9 +1323,19 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         .iter()
         .filter(|file| file.flag == "behind")
         .count();
-    let held = report.flagged.len() - behind;
+    let defaulted = report
+        .flagged
+        .iter()
+        .filter(|file| file.flag == marfa_core::folder::DEFAULT_EDGE_REFUSED)
+        .count();
+    let held = report.flagged.len() - behind - defaulted;
     if held > 0 {
         line.push_str(&format!("; {held} held, not sent"));
+    }
+    if defaulted > 0 {
+        line.push_str(&format!(
+            "; {defaulted} default edge(s) of the folder not applied, the file sent"
+        ));
     }
     if behind > 0 {
         line.push_str(&format!("; {behind} behind: own-field lines not sent"));
@@ -1522,11 +1536,55 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_does_not_count_a_refused_default_edge_as_a_file_held() {
+        let mut report = marfa_core::ScanReport::default();
+        report
+            .flagged
+            .push(marfa_core::folder::Flagged::default_edge_refused(
+                "a.md", "why",
+            ));
+        let said = describe_scan(&report);
+        assert!(!said.contains("held, not sent"), "{said}");
+        assert!(
+            said.contains("1 default edge(s) of the folder not applied, the file sent"),
+            "{said}"
+        );
+        report.flagged.push(marfa_core::folder::Flagged {
+            path: "b.md".into(),
+            flag: "refused",
+            reason: "x".into(),
+            item: None,
+        });
+        assert!(describe_scan(&report).contains("1 held, not sent"));
+    }
+
+    #[test]
+    fn a_refused_default_edge_is_said_to_be_sent_and_its_edge_not_applied() {
+        let lines = flagged_lines(&[marfa_core::folder::Flagged::default_edge_refused(
+            "a.md",
+            "edge_type_unknown (the folder's default shelved-in edge to b was not applied; write that line in the file to apply it)",
+        )]);
+        assert_eq!(
+            lines,
+            vec![
+                "a.md is sent, but a default edge of the folder was not applied: edge_type_unknown (the folder's default shelved-in edge to b was not applied; write that line in the file to apply it)"
+            ]
+        );
+        let held = flagged_lines(&[marfa_core::folder::Flagged {
+            path: "b.md".into(),
+            flag: "refused",
+            reason: "x".into(),
+            item: None,
+        }]);
+        assert!(held[0].contains("held, not sent"), "{held:?}");
+    }
+
+    #[test]
     fn a_file_in_step_that_carries_a_refusal_or_a_warning_is_listed_with_it() {
         let mut refused = file(
             "a.md",
             "in_step",
-            "refused",
+            "default_edge_refused",
             "edge_type_unknown (the folder's default shelved-in edge to b was not applied)",
         );
         let mut near = file("b.md", "in_step", "refused", "");
