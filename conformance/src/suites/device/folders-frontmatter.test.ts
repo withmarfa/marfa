@@ -28,6 +28,7 @@ import {
   wireEdge,
   wireItem,
   SCRIPTED_TYPES,
+  typeCatalog,
   wireType,
 } from "../../device/marfa-answers.js";
 import { acceptUploads, folderHarness, hashOf, scriptBlob } from "./harness.js";
@@ -132,6 +133,8 @@ async function edgeHarness(
     beforeAdd?: (server: ScriptedServer) => void;
     /** The tags each item carries, by id. */
     tags?: Record<string, string[]>;
+    /** What `GET /types` answers, the scripted types unless named. */
+    catalog?: Answer;
   } = {},
 ): Promise<{ harness: FolderHarness; door: EdgeDoor }> {
   const whole = (type: string) =>
@@ -149,12 +152,27 @@ async function edgeHarness(
     confirm: options.confirm,
     hydrate: options.hydrate,
     beforeAdd: options.beforeAdd,
+    catalog: options.catalog,
   });
   const door = new EdgeDoor();
   for (const edge of edges) door.hold(edge);
   scriptFolderWrites(made, { edges: door, door: options.door });
   return { harness: made, door };
 }
+
+/**
+ * A registered type whose title is kept in a property other than `title`
+ * and whose body is another, for the fixtures that follow a type's display
+ * hints rather than the fixed names.
+ */
+const PASSAGE_TYPE = wireType("user.passage", {
+  titleField: "text",
+  bodyField: "note",
+  fields: {
+    text: { type: "string", description: "The passage", required: true },
+    note: { type: "string", description: "A note on the passage" },
+  },
+});
 
 describe("edges in frontmatter", () => {
   const project = "01a00000-0000-7000-8000-00000000e101";
@@ -1234,18 +1252,19 @@ describe("edges in frontmatter", () => {
   });
 
   it("matches a title only in the property its type keeps it in", async () => {
-    const highlight = "01a00000-0000-7000-8000-00000000e10f";
+    const passage = "01a00000-0000-7000-8000-00000000e10f";
     const made = await edgeHarness(
       "folder-edge-title-field",
       [
         titled(beta, "Solo"),
         {
-          id: highlight,
-          type: "core.highlight",
+          id: passage,
+          type: "user.passage",
           properties: { text: "a passage", title: "Solo", note: "n" },
         },
       ],
       [],
+      { catalog: typeCatalog([PASSAGE_TYPE]) },
     );
     harness = made.harness;
     put(harness, "New.md", '---\nabout: "[[Solo]]"\n---\nwhich\n');
@@ -5009,9 +5028,10 @@ describe("what frontmatter says", () => {
 
   it("takes body and title from the type's display hints", async () => {
     const event = "01a00000-0000-7000-8000-0000000013d1";
-    const highlight = "01a00000-0000-7000-8000-0000000013d2";
+    const passage = "01a00000-0000-7000-8000-0000000013d2";
     harness = await folderHarness("folder-display-hints", {
-      settings: { query: { types: ["core.event", "core.highlight"] } },
+      settings: { query: { types: ["core.event", "user.passage"] } },
+      catalog: typeCatalog([PASSAGE_TYPE]),
       rows: {
         "core.event": [
           {
@@ -5026,11 +5046,11 @@ describe("what frontmatter says", () => {
             },
           },
         ],
-        "core.highlight": [
+        "user.passage": [
           {
             item: {
-              id: highlight,
-              type: "core.highlight",
+              id: passage,
+              type: "user.passage",
               properties: {
                 text: "A line worth keeping",
                 note: "Why it matters.\n",
@@ -5049,7 +5069,7 @@ describe("what frontmatter says", () => {
     expect(launch).not.toMatch(/^description:/m);
     expect(
       read(harness, "A line worth keeping.md"),
-      "a highlight's file was not named by its text or its body was not its note",
+      "a passage's file was not named by its text or its body was not its note",
     ).toMatch(/\n---\nWhy it matters\.\n$/);
 
     put(
@@ -5060,7 +5080,7 @@ describe("what frontmatter says", () => {
     put(
       harness,
       "Quote.md",
-      "---\ntype: core.highlight\n---\nWorth a second read.\n",
+      "---\ntype: user.passage\n---\nWorth a second read.\n",
     );
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -5077,7 +5097,7 @@ describe("what frontmatter says", () => {
           title: "Party",
         },
       ],
-      ["core.highlight", { note: "Worth a second read.\n", text: "Quote" }],
+      ["user.passage", { note: "Worth a second read.\n", text: "Quote" }],
     ]);
   });
 
@@ -5087,16 +5107,17 @@ describe("what frontmatter says", () => {
     // sets it (`types/read-display-hint`), and so does the folder
     // (`device/catalog-type-read`).
     harness = await folderHarness("folder-partial-hints", {
-      settings: { query: { types: ["user.quote"] } },
+      settings: { query: { types: ["user.quote", "user.passage"] } },
       catalog: {
         kind: "json",
         status: 200,
         body: {
           data: [
             ...SCRIPTED_TYPES,
+            PASSAGE_TYPE,
             {
               id: "user.quote",
-              parent: "core.highlight",
+              parent: "user.passage",
               label: "quote",
               version: 0,
               fields: { comment: { type: "string" } },
@@ -5111,14 +5132,14 @@ describe("what frontmatter says", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
     put(harness, "Saying.md", "---\ntype: user.quote\n---\nWorth it.\n");
     // The witness: the parent's own hints still name its title.
-    put(harness, "Line.md", "---\ntype: core.highlight\n---\nKept.\n");
+    put(harness, "Line.md", "---\ntype: user.passage\n---\nKept.\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
       sentCreates(harness).map((sent) => [sent.type, sent.properties]),
       "a subtype naming only its body did not take its title field from its parent's hints, as the server's read of the type does",
     ).toEqual([
-      ["core.highlight", { note: "Kept.\n", text: "Line" }],
+      ["user.passage", { note: "Kept.\n", text: "Line" }],
       ["user.quote", { comment: "Worth it.\n", text: "Saying" }],
     ]);
   });

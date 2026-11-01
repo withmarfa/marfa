@@ -2407,6 +2407,7 @@ describe("the scripted answers match the server's", () => {
             "row.id",
             "row.display_hints.title_field",
             "row.display_hints.body_field",
+            "row.display_hints.name_from_body",
           ],
           shape: ["row.label", "row.fields"],
           // The deployment's field schema, not the protocol's, as for

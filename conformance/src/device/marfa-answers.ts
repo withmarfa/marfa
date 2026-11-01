@@ -137,8 +137,12 @@ export function wireType(
   id: string,
   options: {
     parent?: string;
-    titleField?: string;
+    /** The title field the type declares, `title` unless named; `null` where
+     *  it declares none. */
+    titleField?: string | null;
     bodyField?: string;
+    /** Absent where the type does not declare it. */
+    nameFromBody?: boolean;
     /** The icon ID the type declares; absent where it declares none. */
     icon?: string;
     /** The plural the type declares; absent where it declares none, as the
@@ -170,10 +174,15 @@ export function wireType(
     // `core.entity.person` has none, so a scripted default is a hint a
     // device could read and not find.
     display_hints: {
-      title_field: options.titleField ?? "title",
+      ...(options.titleField === null
+        ? {}
+        : { title_field: options.titleField ?? "title" }),
       ...(options.bodyField === undefined
         ? {}
         : { body_field: options.bodyField }),
+      ...(options.nameFromBody === undefined
+        ? {}
+        : { name_from_body: options.nameFromBody }),
       ...(options.icon === undefined ? {} : { icon: options.icon }),
     },
     merge_policy: options.mergePolicy ?? {
@@ -297,15 +306,16 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
       default: "last_writer_wins",
     },
   }),
-  // A title kept in a property other than `title`, as `core.highlight`'s is.
+  // No title of its own, and a body that does not name it.
   wireType("core.highlight", {
-    titleField: "text",
-    bodyField: "note",
+    titleField: null,
+    bodyField: "text",
+    nameFromBody: false,
     icon: "lucide:highlighter",
     fields: {
       text: {
         type: "string",
-        description: "The highlighted passage",
+        description: "The highlighted passage, as Markdown",
         required: true,
       },
       note: { type: "string", description: "User annotation on the highlight" },
@@ -521,7 +531,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     cascade_on_delete: "with-hosts",
   }),
   shipped("derived-from", "Derived from", "Basis for"),
-  shipped("excerpt-of", "Excerpt of", "Excerpts", {
+  shipped("excerpt-of", "Excerpt from", "Excerpts", {
     cardinality: "many-to-one",
   }),
   shipped("in-collection", "In collection", "Contents", {
