@@ -1006,4 +1006,65 @@ describe("read_only_types", () => {
     expect((await declare(owner.key)).status).toBe(200);
     expect(await readOnly(note)).toBe(false);
   });
+
+  describe("an idempotent replay", () => {
+    const create = (key: string, idempotencyKey: string) =>
+      request(ctx.app, "POST", "/items", {
+        key,
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: { type: "core.note", properties: { body: idempotencyKey } },
+      });
+    const answered = async (res: Response) => {
+      expect([200, 201]).toContain(res.status);
+      return {
+        replayed: res.headers.get("Idempotency-Replayed") === "true",
+        item: (await json<{ item: { id: string; read_only?: boolean } }>(res))
+          .item,
+      };
+    };
+
+    it("answers read_only as registrations stand at the replay", async () => {
+      const mine = await mintKey("read-only-replay");
+      expect((await declare(mine.key, ["core.note"])).status).toBe(201);
+      const first = await answered(await create(mine.key, "replay-declared"));
+      expect(first).toMatchObject({ replayed: false });
+      expect(first.item.read_only).toBe(true);
+
+      expect((await declare(mine.key)).status).toBe(200);
+      const again = await answered(await create(mine.key, "replay-declared"));
+      expect(again.replayed).toBe(true);
+      expect(again.item.id).toBe(first.item.id);
+      expect(again.item.read_only).toBe(false);
+    });
+
+    it("gives read_only to a kept answer that has none", async () => {
+      const mine = await mintKey("read-only-replay-kept");
+      expect((await declare(mine.key, ["core.note"])).status).toBe(201);
+      const first = await answered(await create(mine.key, "replay-kept"));
+      const storage = ctx.storage as unknown as {
+        __sqliteAll: (sql: string) => Promise<{ id: string; body: string }[]>;
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      };
+      const kept = (
+        await storage.__sqliteAll(
+          "SELECT id, response_body AS body FROM idempotency_records WHERE idempotency_key = 'replay-kept'",
+        )
+      ).at(0);
+      if (kept === undefined) throw new Error("no kept answer");
+      const body = JSON.parse(kept.body) as {
+        item: Record<string, unknown>;
+      };
+      expect(body.item.read_only).toBe(true);
+      delete body.item.read_only;
+      await storage.__sqliteRun(
+        "UPDATE idempotency_records SET response_body = ? WHERE id = ?",
+        [JSON.stringify(body), kept.id],
+      );
+
+      const again = await answered(await create(mine.key, "replay-kept"));
+      expect(again.replayed).toBe(true);
+      expect(again.item.id).toBe(first.item.id);
+      expect(again.item.read_only).toBe(true);
+    });
+  });
 });
