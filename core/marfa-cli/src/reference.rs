@@ -21,12 +21,12 @@ const REGENERATE: &str = "MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin m
 /// holds the two together.
 const TELEMETRY: &str = "## Telemetry
 
-A command sends one trace to an OpenTelemetry collector when the environment names one, and nothing when it does not. The settings are the standard OpenTelemetry variables, and two for PostHog.
+A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. A failed command can also send one exception to PostHog, which needs no collector (below). The settings are the standard OpenTelemetry variables, and two for PostHog.
 
 | Variable | Description |
 | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base address, `http` or `https`. The trace is posted to `v1/traces` under it. Setting it turns telemetry on. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The address the trace is posted to, used as written. It also turns telemetry on, and takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base address, `http` or `https`. The trace is posted to `v1/traces` under it. Setting it turns traces on. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The address the trace is posted to, used as written. It also turns traces on, and takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`. |
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers to send, as comma-separated `key=value` pairs with percent-encoded values. The traces variable overrides the other for a header both name. |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
