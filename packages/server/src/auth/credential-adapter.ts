@@ -318,6 +318,21 @@ export function withCredentialAudit<
           args = { ...args, data: { ...args.data, sessionId: null } };
         }
         if (
+          operation === "update" &&
+          args.model === "passkey" &&
+          request?.path === "/passkey/verify-authentication" &&
+          args.update &&
+          "counter" in args.update
+        ) {
+          // The provider advances the counter only after the assertion and
+          // `afterVerification` pass, in the phase that creates the session,
+          // so the time rolls back with a sign-in that fails after it.
+          args = {
+            ...args,
+            update: { ...args.update, lastUsedAt: clock.now() },
+          };
+        }
+        if (
           ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"].includes(
             args.model,
           )

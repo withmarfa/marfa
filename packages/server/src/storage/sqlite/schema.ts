@@ -1258,6 +1258,7 @@ export const auth_passkey = sqliteTable(
     transports: text("transports"),
     createdAt: integer("created_at", { mode: "timestamp" }),
     aaguid: text("aaguid"),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
   },
   (table) => [
     index("idx_auth_passkey_user_id").on(table.userId),

@@ -6,6 +6,7 @@
  * it: `POST /auth/change-password`, the passkey registration door and
  * `PATCH` and `DELETE /owner/passkeys/{id}`.
  */
+import { agoWords } from "../pages/key-time.js";
 import { renderDocument } from "../pages/render.js";
 import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 import {
@@ -32,12 +33,16 @@ export interface PasskeyView {
   name: string | null;
   /** When it was added. */
   added: Date;
+  /** When it last signed in or confirmed a sign-in, or `null` if it has not. */
+  lastUsed: Date | null;
 }
 
 export interface PasswordPageParams {
   nonce: string;
   instanceName: string;
   passkeys: readonly PasskeyView[];
+  /** The time the page measures "3 days ago" from. */
+  now: number;
   /** What the Add dialog starts with: this browser and system, not already used. */
   suggestedName: string;
   /** Passkeys cannot work at the address Marfa is open at. */
@@ -306,7 +311,10 @@ export function PasswordPage(props: PasswordPageParams) {
                   title={passkey.name ?? UNNAMED}
                   description={
                     <>
-                      Added <LocalDate at={passkey.added} />
+                      Added <LocalDate at={passkey.added} />.{" "}
+                      {passkey.lastUsed === null
+                        ? "Never used."
+                        : `Last used ${agoWords(passkey.lastUsed.getTime(), props.now)}.`}
                     </>
                   }
                   buttons={

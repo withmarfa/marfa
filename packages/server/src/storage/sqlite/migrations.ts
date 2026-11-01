@@ -119,7 +119,42 @@ export const MIGRATIONS: readonly Migration[] = [
           ");",
       ),
   },
+  { to: 8, changes: [], apply: passkeyLastUse },
 ];
+
+const PASSKEY_COLUMNS =
+  "`id`, `name`, `public_key`, `user_id`, `credential_id`, `counter`, " +
+  "`device_type`, `backed_up`, `transports`, `created_at`, `aaguid`";
+
+/**
+ * Gives each passkey a `last_used_at`, empty for every passkey already
+ * registered: no use was kept before, and the time it was added is not one.
+ */
+export async function passkeyLastUse(db: Writer): Promise<void> {
+  await db.executeMultiple(
+    `CREATE TABLE \`auth_passkey_was\` AS SELECT ${PASSKEY_COLUMNS} FROM \`auth_passkey\` ORDER BY rowid;\n` +
+      "DROP TABLE `auth_passkey`;\n" +
+      "CREATE TABLE `auth_passkey` (\n" +
+      "\t`id` text PRIMARY KEY NOT NULL,\n" +
+      "\t`name` text,\n" +
+      "\t`public_key` text NOT NULL,\n" +
+      "\t`user_id` text NOT NULL,\n" +
+      "\t`credential_id` text NOT NULL,\n" +
+      "\t`counter` integer NOT NULL,\n" +
+      "\t`device_type` text NOT NULL,\n" +
+      "\t`backed_up` integer NOT NULL,\n" +
+      "\t`transports` text,\n" +
+      "\t`created_at` integer,\n" +
+      "\t`aaguid` text,\n" +
+      "\t`last_used_at` integer,\n" +
+      "\tFOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade\n" +
+      ");\n" +
+      `INSERT INTO \`auth_passkey\` (${PASSKEY_COLUMNS}) SELECT ${PASSKEY_COLUMNS} FROM \`auth_passkey_was\`;\n` +
+      "DROP TABLE `auth_passkey_was`;\n" +
+      "CREATE INDEX `idx_auth_passkey_user_id` ON `auth_passkey` (`user_id`);\n" +
+      "CREATE INDEX `idx_auth_passkey_credential_id` ON `auth_passkey` (`credential_id`);",
+  );
+}
 
 /**
  * Stores every type icon as an Iconify ID, `<set>:<name>`. A bare name, held

@@ -383,6 +383,14 @@ describe("POST /auth/confirm with a passkey", () => {
     const stale = c.owner.cookie;
     await ageSessionTo(c, 6);
     expect((await rename(c, stale)).status).toBe(403);
+    const lastUsed = async (cookie: string) => {
+      const list = await request(c.app, "GET", "/owner/passkeys", {
+        headers: { origin: ORIGIN, cookie },
+      });
+      return ((await list.json()) as { data: { last_used_at: unknown }[] })
+        .data[0]?.last_used_at;
+    };
+    expect(await lastUsed(stale)).toBeNull();
 
     const asked = await challenge(c, stale);
     const confirmed = await confirm(
@@ -392,6 +400,7 @@ describe("POST /auth/confirm with a passkey", () => {
     );
     expect(confirmed.status).toBe(200);
     const fresh = cookiesOf(confirmed);
+    expect(await lastUsed(fresh)).toEqual(expect.any(String));
     expect((await rename(c, fresh)).status).toBe(200);
     expect(
       (

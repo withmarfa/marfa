@@ -157,6 +157,52 @@ it("signs with cryptographic credentials, consumes challenges, and removes only 
   ).toBe(200);
 });
 
+it("records when a passkey last signed in, only for that passkey and only when the sign-in succeeds", async () => {
+  const ctx = await signedOwner(),
+    used = testAuthenticator(),
+    idle = testAuthenticator();
+  await ctx.register(used, "Used");
+  await ctx.register(idle, "Idle");
+  expect(await lastUsed(ctx)).toEqual({ Used: null, Idle: null });
+
+  const refusedChallenge = await ctx.options("authenticate");
+  const forged = used.authentication(refusedChallenge.body.challenge, origin);
+  forged.response.signature = Buffer.alloc(64).toString("base64url");
+  const refused = await ctx.post(
+    "/auth/passkey/verify-authentication",
+    { response: forged },
+    refusedChallenge.cookie,
+  );
+  expect(refused.status).toBeGreaterThanOrEqual(400);
+  expect(await lastUsed(ctx)).toEqual({ Used: null, Idle: null });
+
+  const from = Math.floor(Date.now() / 1000) * 1000;
+  const challenge = await ctx.options("authenticate");
+  const login = await ctx.post(
+    "/auth/passkey/verify-authentication",
+    { response: used.authentication(challenge.body.challenge, origin) },
+    challenge.cookie,
+  );
+  expect(login.status).toBe(200);
+  const after = await lastUsed(ctx);
+  expect(after.Idle).toBeNull();
+  const at = Date.parse(String(after.Used));
+  expect(at).toBeGreaterThanOrEqual(from);
+  expect(at).toBeLessThanOrEqual(Date.now());
+});
+
+/** Each passkey's `last_used_at`, by name, as the owner's list returns it. */
+async function lastUsed(ctx: Awaited<ReturnType<typeof signedOwner>>) {
+  const list = await ctx.app.request(origin + "/owner/passkeys", {
+    headers: { origin, cookie: ctx.ownerCookie },
+  });
+  expect(list.status).toBe(200);
+  const { data } = (await list.json()) as {
+    data: { name: string; last_used_at: string | null }[];
+  };
+  return Object.fromEntries(data.map((row) => [row.name, row.last_used_at]));
+}
+
 it("refuses wrong signatures and missing user verification without producing a session", async () => {
   const ctx = await signedOwner(),
     device = testAuthenticator();
@@ -311,6 +357,7 @@ it("rolls back the session and counter when its audit cannot commit", async () =
   expect(cookies(failed)).not.toContain("session_token");
   spy.mockRestore();
   expect(await ctx.auth.listBrowserSessions(session.user.id)).toHaveLength(1);
+  expect(await lastUsed(ctx)).toEqual({ Owner: null });
   const retry = await ctx.post(
     "/auth/passkey/verify-authentication",
     { response },
@@ -318,6 +365,7 @@ it("rolls back the session and counter when its audit cannot commit", async () =
   );
   expect(retry.status).toBe(200);
   expect(await ctx.auth.listBrowserSessions(session.user.id)).toHaveLength(2);
+  expect((await lastUsed(ctx)).Owner).toEqual(expect.any(String));
 });
 
 import { sql } from "drizzle-orm";

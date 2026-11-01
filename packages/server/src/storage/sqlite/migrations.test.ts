@@ -24,6 +24,7 @@ import {
   SCHEMA_VERSION,
   UNSTAMPED_VERSIONS,
   migrateInPlace,
+  passkeyLastUse,
   replayedShape,
   type Migration,
 } from "./migrations.js";
@@ -159,17 +160,26 @@ async function contents(path: string): Promise<unknown> {
   }
 }
 
-/** The rows of every table at schema version 1, for the tables both hold. */
+/**
+ * The rows of every table at schema version 1, for the tables both hold, in
+ * the columns version 1 declares: a column a later version adds is not a row
+ * the owner had.
+ */
 async function rowsOf(
   path: string,
   tables: readonly string[],
 ): Promise<unknown> {
+  const { reader } = await replayedShape(1);
   const client = createClient({ url: `file:${path}` });
   try {
     const out: Record<string, unknown> = {};
     for (const table of tables) {
+      const declared = await reader.execute(`PRAGMA table_info(\`${table}\`)`);
+      const columns = declared.rows
+        .map((row) => `\`${String(row.name)}\``)
+        .join(", ");
       const rows = await client.execute(
-        `SELECT * FROM \`${table}\` ORDER BY rowid`,
+        `SELECT ${columns} FROM \`${table}\` ORDER BY rowid`,
       );
       out[table] = rows.rows.map((r) => ({ ...r }));
     }
@@ -191,6 +201,18 @@ function backups(path: string): string[] {
 async function open(path: string, hooks = {}): Promise<void> {
   const connection = await createConnection(path, hooks);
   await connection.close();
+}
+
+/** A table's statement and its indexes' as `schema-1.sql` makes them. */
+function baselineTable(name: string): string {
+  const table = new RegExp(
+    `CREATE TABLE IF NOT EXISTS \`${name}\` \\([\\s\\S]*?\\n\\);`,
+  ).exec(BASELINE_SQL)?.[0];
+  if (table === undefined) throw new Error(`no ${name} table`);
+  const indexes = BASELINE_SQL.split("\n").filter((line) =>
+    new RegExp(`^CREATE (UNIQUE )?INDEX .* ON \`${name}\` `).test(line),
+  );
+  return [table, ...indexes].join("\n");
 }
 
 async function versionOneTables(): Promise<string[]> {
@@ -790,9 +812,9 @@ describe("starting on a database at schema version 3", () => {
 describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
     // Schema versions 3 and 4 changed rows and not tables, version 5 adds
-    // one index and versions 6 and 7 one table each, so an unstamped file of
-    // this shape without them is at version 2: every build since stamps what
-    // it writes.
+    // one index, versions 6 and 7 one table each and version 8 one column,
+    // so an unstamped file of this shape without them is at version 2: every
+    // build since stamps what it writes.
     expect(Math.max(...UNSTAMPED_VERSIONS)).toBe(2);
     const path = scratch();
     const client = createClient({ url: `file:${path}` });
@@ -800,6 +822,8 @@ describe("starting on an unstamped database", () => {
     await client.executeMultiple(CREATE_FTS);
     await client.execute("DROP INDEX idx_items_state_binned_at");
     await client.execute("DROP TABLE source_names");
+    await client.execute("DROP TABLE auth_passkey");
+    await client.executeMultiple(baselineTable("auth_passkey"));
     await fill(client);
     await client.execute("DROP TABLE trash_with_hosts");
     client.close();
@@ -825,6 +849,39 @@ describe("starting on an unstamped database", () => {
     expect(backups(path)).toHaveLength(1);
     expect(backups(path)[0]).toContain(
       `-schema-2-to-${String(SCHEMA_VERSION)}-`,
+    );
+  });
+});
+
+describe("starting on a database from before a passkey's last use was kept", () => {
+  it("keeps every passkey and reads each as never used, not as when it was added", async () => {
+    const path = scratch();
+    const step = MIGRATIONS.find((m) => m.apply === passkeyLastUse);
+    if (step === undefined) throw new Error("no passkey last-use step");
+    const client = createClient({ url: `file:${path}` });
+    await client.executeMultiple(BASELINE_SQL);
+    for (const migration of MIGRATIONS) {
+      if (migration.to >= step.to) break;
+      await migration.apply(client);
+    }
+    await fill(client);
+    await client.execute("UPDATE auth_passkey SET created_at = 1790000000");
+    await client.execute(`PRAGMA user_version = ${String(step.to - 1)}`);
+    const before = await client.execute(
+      "SELECT * FROM auth_passkey ORDER BY id",
+    );
+    client.close();
+    expect(before.rows).toHaveLength(2);
+
+    await open(path);
+
+    const check = createClient({ url: `file:${path}` });
+    const version = await check.execute("PRAGMA user_version");
+    const after = await check.execute("SELECT * FROM auth_passkey ORDER BY id");
+    check.close();
+    expect(version.rows[0]?.user_version).toBe(SCHEMA_VERSION);
+    expect(after.rows.map((row) => ({ ...row }))).toEqual(
+      before.rows.map((row) => ({ ...row, last_used_at: null })),
     );
   });
 });

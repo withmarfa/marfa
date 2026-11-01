@@ -10,7 +10,7 @@ When the owner submits a valid WebAuthn registration with user verification from
 
 ### `authentication/passkey-list`
 
-When the owner or private local process lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, and UTC `created_at`, oldest first, with `next_cursor: null`.
+When the owner or private local process lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, UTC `created_at` and nullable UTC `last_used_at`, oldest first, with `next_cursor: null`.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
@@ -19,6 +19,18 @@ When the owner or private local process lists `GET /owner/passkeys`, the server 
 When a registered owner passkey verifies a fresh challenge for the configured origin and relying party with user verification, the server MUST issue an owner browser session.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
+
+### `authentication/passkey-last-used`
+
+When a registered owner passkey signs the owner in, the server MUST set that passkey's `last_used_at` to the time of the sign-in.
+
+**Tests:** `compliance/passkeys.test.ts › records the last use of only the passkey that signed in, and only when it signed in`.
+
+### `authentication/passkey-last-used-refused`
+
+If a passkey assertion is refused, then the server MUST leave the `last_used_at` of every passkey unchanged.
+
+**Tests:** `compliance/passkeys.test.ts › records the last use of only the passkey that signed in, and only when it signed in`.
 
 ### `authentication/passkey-refused`
 

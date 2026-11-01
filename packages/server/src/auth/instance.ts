@@ -293,6 +293,8 @@ export interface OwnerPasskey {
   id: string;
   name: string | null;
   createdAt: Date;
+  /** When it last signed the owner in or confirmed a sign-in, or `null` if it has not. */
+  lastUsedAt: Date | null;
 }
 
 /** What proves a signed-in owner is still at the browser. */
@@ -1137,6 +1139,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     id: row.id,
     name: row.name ?? null,
     createdAt: row.createdAt,
+    lastUsedAt: row.lastUsedAt ?? null,
   });
   const listOwnerPasskeys = async (userId: string): Promise<OwnerPasskey[]> => {
     const ctx = await credentialContext();

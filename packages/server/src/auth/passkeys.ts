@@ -85,6 +85,16 @@ export function buildPasskeyPlugin(
   });
   return {
     ...plugin,
+    // Set by the credential adapter with the counter a sign-in advances.
+    schema: {
+      passkey: {
+        ...plugin.schema.passkey,
+        fields: {
+          ...plugin.schema.passkey.fields,
+          lastUsedAt: { type: "date", required: false, input: false },
+        },
+      },
+    },
     hooks: {
       before: [
         {

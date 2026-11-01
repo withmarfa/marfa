@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS `auth_passkey` (
 	`transports` text,
 	`created_at` integer,
 	`aaguid` text,
+	`last_used_at` integer,
 	FOREIGN KEY (`user_id`) REFERENCES `auth_user`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
