@@ -237,9 +237,10 @@ pub(crate) fn render_link(target: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Embed {
-    /// `![[name]]`, the name before any `|` or `#`.
+    /// `![[name]]`, the name before any `|` or `#`, with `\|` read as `|` in
+    /// a table cell.
     Named { raw: String, name: String },
-    /// `![alt](path)`, the path decoded and without its query or fragment.
+    /// `![alt](path)`, the path as `local` reads it.
     Path { raw: String, path: String },
     /// `![alt](a b.png)`: a raw space, which ends a Markdown path, so what
     /// the parentheses hold is kept whole to say so.
