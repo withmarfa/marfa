@@ -94,7 +94,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 - **Tests** names each fixture that asserts the rule, as `` `<project>/<file>.test.ts › <test title>` ``. A citation that continues the same file is written `` `› <test title>` ``.
 - **A cited fixture asserts what the rule says:** the same status, the same code, the same field, the same bound. `src/utils/spec-citations.test.ts` fails when a cited file or title does not exist.
 - **A rule no fixture can assert yet** says `**Tests:** waiting on #<issue>.`, naming the open issue that makes it testable.
-- **A rule judged not worth a fixture** says `**Tests:** none: <why no fixture can assert it>.` Use it only when a fixture would need conditions CI cannot provide and August has judged building them not worth it, such as a signed-in iCloud account.
+- **A rule judged not worth a fixture** says `**Tests:** none: <why no fixture can assert it>.` Use it only when a fixture would need conditions CI cannot provide, such as a signed-in iCloud account, and the issue asking for that fixture was closed as not worth building.
 - **Never the server's own tests.** A rule never cites tests under `packages/server/src`. The contract judges any server, so only fixtures that reach a server from outside prove it.
 
 ## IDs

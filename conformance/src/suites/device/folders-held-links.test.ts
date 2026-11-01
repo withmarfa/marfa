@@ -19,8 +19,8 @@ import {
 // A document is created whatever its links name, and a link held because
 // its name matched no item, or more than one, is resolved again once the
 // working copy changes (`folders/create-before-links`,
-// `folders/edge-held-retried`, `folders/edge-held-cleared`,
-// `folders/edge-held-never-guessed`).
+// `folders/edge-held-retried`, `folders/edge-held-quiet`,
+// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`).
 
 let folder: FolderHarness | undefined;
 afterEach(async () => {
