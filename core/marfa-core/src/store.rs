@@ -2321,6 +2321,18 @@ pub(crate) fn cleared_time_key(create: &str) -> String {
     format!("cleared_time/{create}")
 }
 
+/// Forgets the clear of `item_id`'s time that the answer of any of its
+/// creates still owes, whether or not that create has been answered.
+pub(crate) fn forget_owed_time_clears(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM main.meta
+          WHERE key IN (SELECT 'cleared_time/' || id FROM queue
+                         WHERE item_id = ?1 AND kind = ?2)",
+        params![item_id, WriteKind::CreateItem.as_str()],
+    )?;
+    Ok(())
+}
+
 /// The tier a keyed create naming none was given by the copy's slice, which
 /// the drain sends only where the server holds no row under its key.
 pub fn choose_tier(conn: &Connection, id: &str, tier: Tier) -> Result<(), CoreError> {

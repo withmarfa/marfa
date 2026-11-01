@@ -2691,9 +2691,9 @@ fn settle_success(
 /// clear is queued as the edit it would have been once the row was known:
 /// the row's creation time. Answers whether it queued one.
 ///
-/// Never fails the settle it belongs to: the create's verdict stands
-/// whatever this edit meets, and an error here would keep the receipt and
-/// end every later pass at the same create.
+/// An edit of this row the copy refuses is dropped with the clear, since the
+/// same edit would be refused at every later pass. Any other error fails the
+/// settle, which keeps the receipt and the clear for the next drain.
 fn queue_owed_time_clear(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
@@ -2717,6 +2717,10 @@ fn queue_owed_time_clear(
     };
     let catalog = crate::catalog::Catalog::load(conn)?;
     let queued = store::catalog_scope(conn, |conn| {
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "owed-time-clear") {
+            return Err(CoreError::StorageFull("database or disk is full".into()));
+        }
         crate::queue_update(
             conn,
             &catalog,
@@ -2732,10 +2736,17 @@ fn queue_owed_time_clear(
     });
     match queued {
         Ok(_) => Ok(true),
-        Err(error) => {
+        Err(
+            error @ (CoreError::NotFound { .. }
+            | CoreError::Forbidden { .. }
+            | CoreError::Validation { .. }
+            | CoreError::UnknownType { .. }
+            | CoreError::Invalid(_)),
+        ) => {
             telemetry::degraded!(&error);
             Ok(false)
         }
+        Err(error) => Err(error),
     }
 }
 
@@ -5570,8 +5581,14 @@ mod tests {
         held_time: &'a str,
         /// The state the read of the answered row finds it in.
         state: &'a str,
-        /// The status the server refuses the create with, where it does.
+        /// The status the server refuses the create with, where it does. A
+        /// 409 names the answered row as the one holding the natural key.
         refused: Option<u16>,
+        /// Whether a drain before the person's later time sends the create,
+        /// has it answered, and meets a gateway's failure reading its row.
+        unread_answer: bool,
+        /// Whether the store is full as the clear the answer owes is queued.
+        full_at_clear: bool,
     }
 
     impl Default for Landing<'_> {
@@ -5583,6 +5600,8 @@ mod tests {
                 held_time: "2020-01-01T00:00:00.000Z",
                 state: "active",
                 refused: None,
+                unread_answer: false,
+                full_at_clear: false,
             }
         }
     }
@@ -5598,8 +5617,12 @@ mod tests {
         queued: Vec<serde_json::Value>,
         /// Whether the copy still keeps the create's clear for its answer.
         marked: bool,
+        /// The edits of the item the queue reports refused.
+        refused_edits: usize,
         /// Whether a second drain after it succeeds.
         again: Result<DrainReport>,
+        /// The bodies of the edits that second drain sent.
+        edits_again: Vec<serde_json::Value>,
     }
 
     const LANDED_CREATED_AT: &str = "2026-01-01T00:00:00.000Z";
@@ -5643,12 +5666,6 @@ mod tests {
             assert!(!store::unsent(&core.conn().unwrap(), &made.id).unwrap());
             clear();
         }
-        if let Some(time) = landing.later {
-            edit(crate::model::Edit {
-                occurred_at: Some(time.into()),
-                ..Default::default()
-            });
-        }
         let mut item = serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
             "item.created",
             "server",
@@ -5663,6 +5680,10 @@ mod tests {
         server.on(
             "/items",
             vec![match landing.refused {
+                Some(409) => crate::scripted::json(
+                    409,
+                    r#"{"error":{"code":"version_conflict","message":"scripted"},"current":{"id":"server"}}"#,
+                ),
                 Some(status) => crate::scripted::refusal(status, "validation_error"),
                 None => crate::scripted::json(200, &answer),
             }],
@@ -5676,15 +5697,36 @@ mod tests {
         );
         let mut read = item.clone();
         read["state"] = landing.state.into();
-        server.on(
-            "/items/server",
-            vec![crate::scripted::certified(crate::scripted::json(
-                200,
-                &serde_json::json!({"item": read, "metadata": {"tags": []}, "listed": true, "acknowledged": false})
-                    .to_string(),
-            ))],
-        );
-        let drained = core.drain();
+        let read = crate::scripted::certified(crate::scripted::json(
+            200,
+            &serde_json::json!({"item": read, "metadata": {"tags": []}, "listed": true, "acknowledged": false})
+                .to_string(),
+        ));
+        if landing.unread_answer {
+            server.on(
+                "/items/server",
+                vec![crate::scripted::unnamed(502, "bad_gateway")],
+            );
+            core.drain().unwrap();
+            assert!(
+                store::meta_get(&core.conn().unwrap(), &receipt_key(&made.id))
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        if let Some(time) = landing.later {
+            edit(crate::model::Edit {
+                occurred_at: Some(time.into()),
+                ..Default::default()
+            });
+        }
+        server.on("/items/server", vec![read]);
+        let drained = {
+            let _full = landing
+                .full_at_clear
+                .then(|| crate::fault::fail_on_this_thread("owed-time-clear"));
+            core.drain()
+        };
         let sent = |path: &str| -> Vec<serde_json::Value> {
             server
                 .seen(path)
@@ -5706,14 +5748,26 @@ mod tests {
         let marked = store::meta_get(&core.conn().unwrap(), &store::cleared_time_key(&made.id))
             .unwrap()
             .is_some();
+        let refused_edits = core
+            .queue()
+            .unwrap()
+            .iter()
+            .filter(|write| {
+                write.kind == WriteKind::UpdateItem && write.verdict == Some(Verdict::Refused)
+            })
+            .count();
         let (creates, edits) = (sent("/items"), sent("/items/server"));
+        let again = core.drain();
+        let edits_again = sent("/items/server").split_off(edits.len());
         Landed {
             creates,
             edits,
             drained,
             queued,
             marked,
-            again: core.drain(),
+            refused_edits,
+            again,
+            edits_again,
         }
     }
 
@@ -5820,6 +5874,85 @@ mod tests {
             landed.edits
         );
         assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_time_set_after_a_clear_whose_create_answer_went_unread_is_the_only_time_sent() {
+        let landed = cleared_create_lands(Landing {
+            clear: Clear::InFlight,
+            unread_answer: true,
+            later: Some("2024-01-01T00:00:00Z"),
+            ..Default::default()
+        });
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        assert_eq!(
+            times(&landed.edits),
+            ["2024-01-01T00:00:00Z"],
+            "{:?}",
+            landed.edits
+        );
+        assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_time_cleared_while_its_create_answer_went_unread_is_still_sent() {
+        // The witness for the test above: with no later time, the clear the
+        // unread answer carries is sent.
+        let landed = cleared_create_lands(Landing {
+            clear: Clear::InFlight,
+            unread_answer: true,
+            ..Default::default()
+        });
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        assert_eq!(
+            times(&landed.edits),
+            [LANDED_CREATED_AT],
+            "{:?}",
+            landed.edits
+        );
+        assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_time_cleared_on_a_keyed_create_refused_onto_another_row_is_refused_with_its_edits() {
+        for clear in [Clear::Unsent, Clear::InFlight] {
+            let landed = cleared_create_lands(Landing {
+                clear,
+                refused: Some(409),
+                ..Default::default()
+            });
+            assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+            // Made against this device's row, the clear is never sent to the
+            // row another device made (`queue-and-verdicts/landed-takes-refused`).
+            assert!(landed.edits.is_empty(), "{:?}", landed.edits);
+            assert_eq!(landed.refused_edits, 1);
+            assert!(landed.queued.is_empty(), "{:?}", landed.queued);
+            assert!(!landed.marked);
+        }
+    }
+
+    #[test]
+    fn a_full_store_while_queueing_an_owed_clear_keeps_the_clear_for_the_next_drain() {
+        let landed = cleared_create_lands(Landing {
+            full_at_clear: true,
+            ..Default::default()
+        });
+        assert!(
+            matches!(landed.drained, Err(CoreError::StorageFull(_))),
+            "{:?}",
+            landed.drained
+        );
+        assert!(landed.edits.is_empty(), "{:?}", landed.edits);
+        assert!(landed.marked);
+        // The next drain, with room again, replays the kept answer and sends
+        // the clear.
+        assert!(landed.again.is_ok(), "{:?}", landed.again);
+        assert_eq!(
+            times(&landed.edits_again),
+            [LANDED_CREATED_AT],
+            "{:?}",
+            landed.edits_again
+        );
     }
 
     #[test]

@@ -3758,11 +3758,10 @@ fn queue_update(
         }
     }
     // A new time sent in an edit is the person's last word on it, so a clear
-    // the create's answer would have to carry out is no longer owed.
+    // the create's answer would have to carry out is no longer owed. A create
+    // already answered still owes it while its answer waits to be read.
     if edit.occurred_at.is_some() {
-        for create in &waiting {
-            store::meta_delete(tx, &store::cleared_time_key(create))?;
-        }
+        store::forget_owed_time_clears(tx, id)?;
     }
     if let Some(create) = &sent_create {
         store::meta_set(tx, &store::cleared_time_key(create), "1")?;
