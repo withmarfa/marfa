@@ -15,6 +15,12 @@ export const DEFAULT_UPLOAD_IDLE_TIMEOUT_MS = 60_000;
  * the sender, so a slow disk never ends an upload.
  *
  * Call it once the caller is admitted, because it lifts the deadline.
+ *
+ * **A body cut short is an error, never an end.** Node 22 hands over an
+ * already-closed body, which reads as empty and whole, when the connection
+ * ended before the first read; Node 24 and later throw `aborted` there. So an
+ * end without the whole request parsed is raised as the abort it is, and the
+ * error handler logs it as a client that left rather than as a bad body.
  */
 export function uploadBody(
   c: Context<AppEnv>,
@@ -24,14 +30,16 @@ export function uploadBody(
   if (!body) return null;
   const env = c.env as { incoming?: IncomingMessage } | undefined;
   if (env?.incoming) liftRequestDeadline(env.incoming);
-  return Readable.from(arriving(body.getReader(), idleTimeoutMs), {
-    objectMode: false,
-  });
+  return Readable.from(
+    arriving(body.getReader(), idleTimeoutMs, env?.incoming),
+    { objectMode: false },
+  );
 }
 
 async function* arriving(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   idleTimeoutMs: number,
+  incoming: IncomingMessage | undefined,
 ): AsyncGenerator<Uint8Array> {
   try {
     for (;;) {
@@ -50,10 +58,21 @@ async function* arriving(
           `No bytes arrived for ${String(idleTimeoutMs / 1000)} seconds`,
         );
       }
-      if (next.done) return;
+      if (next.done) {
+        if (incoming && !incoming.complete) throw cutShort(incoming);
+        return;
+      }
       yield next.value;
     }
   } finally {
     await reader.cancel().catch(() => undefined);
   }
+}
+
+/** The error Node ends a request stream with when its connection ends first. */
+function cutShort(incoming: IncomingMessage): Error {
+  return (
+    incoming.errored ??
+    Object.assign(new Error("aborted"), { code: "ECONNRESET" })
+  );
 }
