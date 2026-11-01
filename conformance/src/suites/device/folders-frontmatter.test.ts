@@ -2311,7 +2311,9 @@ describe("embedded files", () => {
     expect(
       heldEdges(edges),
       "the line did not attach the file, or the embed did not reference it",
-    ).toEqual([`${note} references ${pic}`, `${pic} attached-to ${note}`].sort());
+    ).toEqual(
+      [`${note} references ${pic}`, `${pic} attached-to ${note}`].sort(),
+    );
     expect(
       frontOf(harness, "Note.md"),
       "the pull dropped the line, so the next read of the file would take the attachment away",
@@ -2359,9 +2361,13 @@ describe("embedded files", () => {
         db.prepare(
           "UPDATE folder_files SET links = '[]', edge_lines = ? WHERE path = 'Note.md'",
         ).run(
-          JSON.stringify([{ edge_type: "attached-to", end: "target", other: pic }]),
+          JSON.stringify([
+            { edge_type: "attached-to", end: "target", other: pic },
+          ]),
         );
-        db.prepare("DELETE FROM meta WHERE key = 'folder_embeds_references'").run();
+        db.prepare(
+          "DELETE FROM meta WHERE key = 'folder_embeds_references'",
+        ).run();
       } finally {
         db.close();
       }
