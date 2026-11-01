@@ -6996,8 +6996,10 @@ mod tests {
 
     #[test]
     fn an_embed_taken_out_leaves_its_attachment_written_as_a_line() {
-        let (dir, folder) =
-            scanned_folder_with(serde_json::json!({ "query": { "types": ["core.note"] } }), None);
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            None,
+        );
         std::fs::write(dir.path().join("photo.png"), [7, 7, 5]).unwrap();
         std::fs::write(
             dir.path().join("a.md"),
@@ -7025,7 +7027,10 @@ mod tests {
                 .any(|edge| edge.edge_type == edge_type && edge.target_id == to)
         };
         assert!(!held(LINK_EDGE, &a, &file), "the embed's reference stayed");
-        assert!(held(ATTACHMENT_EDGE, &file, &a), "the attachment went with the embed");
+        assert!(
+            held(ATTACHMENT_EDGE, &file, &a),
+            "the attachment went with the embed"
+        );
         folder.pull().unwrap();
         let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
         assert!(

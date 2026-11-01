@@ -3408,8 +3408,8 @@ mod tests {
             [(WriteKind::CreateEdge, host.clone(), file.clone())],
             "the embed queued no edge from the item to the file"
         );
-        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
-        assert_eq!(held_in(&core, &host, ATTACHMENT_EDGE), [file.clone()]);
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.as_str()]);
+        assert_eq!(held_in(&core, &host, ATTACHMENT_EDGE), [file.as_str()]);
         edit(
             &core,
             &host,
@@ -3437,7 +3437,7 @@ mod tests {
             serde_json::json!({ "body": "![[photo.png]]" }),
         );
         // The witness: the embed made its reference.
-        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.as_str()]);
         edit(&core, &host, serde_json::json!({ "body": "text alone" }));
         assert_eq!(
             edge_writes(&core).pop().unwrap(),
@@ -3470,7 +3470,7 @@ mod tests {
             .unwrap();
         core.delete_edge(&attachment.id).unwrap();
         assert!(held_in(&core, &host, ATTACHMENT_EDGE).is_empty());
-        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.as_str()]);
         edit(
             &core,
             &host,
@@ -3478,7 +3478,7 @@ mod tests {
         );
         assert_eq!(
             held_out(&core, &host, LINK_EDGE),
-            [file.clone()],
+            [file.as_str()],
             "an edit elsewhere in the body took the embed's reference"
         );
         assert_eq!(
@@ -3499,7 +3499,7 @@ mod tests {
             serde_json::json!({ "body": format!("![[photo.png]] [[{file}]]") }),
         );
         let made = edge_writes(&core).len();
-        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.as_str()]);
         edit(
             &core,
             &host,
@@ -3539,10 +3539,10 @@ mod tests {
             [(WriteKind::CreateEdge, host.clone(), file.clone())],
             "the embed's reference was not added"
         );
-        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.clone()]);
+        assert_eq!(held_out(&core, &host, LINK_EDGE), [file.as_str()]);
         assert_eq!(
             held_in(&core, &host, ATTACHMENT_EDGE),
-            [file.clone()],
+            [file.as_str()],
             "the attachment went"
         );
         assert_eq!(
