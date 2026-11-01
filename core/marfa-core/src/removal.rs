@@ -1,3 +1,5 @@
+use rusqlite::TransactionBehavior;
+
 use crate::model::Subject;
 use crate::{Core, Result, reach, store};
 
@@ -6,10 +8,15 @@ impl Core {
     /// accepted takes the row out and keeps it out until that event is read
     /// (`device/deleted-stays-gone`).
     pub(crate) fn purge_sent<T>(&self, id: &str, send: impl FnOnce() -> Result<T>) -> Result<()> {
+        // One transaction: a hydration starting between the two would take
+        // the mark away and leave a generation the purge then trusts.
         let generation = {
-            let conn = self.conn()?;
-            store::removal_sent(&conn, Subject::Item, id)?;
-            reach::generation(&conn)?
+            let mut conn = self.conn()?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            store::removal_sent(&tx, Subject::Item, id)?;
+            let generation = reach::generation(&tx)?;
+            tx.commit()?;
+            generation
         };
         let sent = send();
         let mut conn = self.conn()?;
