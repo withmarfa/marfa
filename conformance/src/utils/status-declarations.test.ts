@@ -123,6 +123,21 @@ describe("the status checker", () => {
     expect(formatUndeclared(report)).toContain("type_not_permitted");
   });
 
+  it("holds no status for a request its client closed before an answer", () => {
+    const dropped = logLine({
+      method: "GET",
+      path: "/items/019d1234-5678-7abc-8def-1234567890ab",
+      route: "/items/{id}",
+      status: 499,
+    });
+    const report = reportStatuses(
+      parseRequestLines([OBSERVED_200, dropped, OBSERVED_403].join("\n")),
+      documentDeclaring([200, 401, 404, 429]),
+    );
+
+    expect(report.undeclared.map((entry) => entry.status)).toEqual([403]);
+  });
+
   it("catches a code a declared status answered and does not list, and passes once it lists it", () => {
     const log = parseRequestLines([OBSERVED_200, OBSERVED_403].join("\n"));
     const missing = reportStatuses(
