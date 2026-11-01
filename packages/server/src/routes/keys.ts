@@ -25,6 +25,7 @@ import {
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import { keysInReach } from "../auth/key-reach.js";
+import { KEY_SOURCE_MAX } from "../auth/source-codes.js";
 import {
   hashApiKey,
   isReservedCredentialSource,
@@ -121,7 +122,7 @@ const SourcesSchema = z
   .array(
     maxStringLength(
       z.string().trim().min(1, "a claimed source is not empty"),
-      200,
+      KEY_SOURCE_MAX,
     ),
   )
   .max(
@@ -217,7 +218,7 @@ const createKeyRoute = createRoute({
             // reads it as no source at all and a repeated create collides.
             source: maxStringLength(
               z.string().trim().min(1, "source is required"),
-              200,
+              KEY_SOURCE_MAX,
             ).describe(
               "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later.",
             ),

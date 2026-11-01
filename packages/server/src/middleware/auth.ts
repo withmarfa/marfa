@@ -34,6 +34,7 @@ import {
   SIGN_IN_AGAIN_MESSAGE,
 } from "../pages/recent-sign-in.js";
 import * as clock from "../clock.js";
+import { RESTORED_SOURCE_PREFIX } from "../auth/source-codes.js";
 
 // ---------------------------------------------------------------------------
 // Hono environment type (shared across all routes)
@@ -527,7 +528,7 @@ export function authMiddleware(storage: Storage, salt: string) {
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   OAUTH_SOURCE_PREFIX,
-  "restored:",
+  RESTORED_SOURCE_PREFIX,
 ] as const;
 
 export function reservedCredentialSourcePrefix(

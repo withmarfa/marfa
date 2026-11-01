@@ -154,6 +154,72 @@ describe("source names in an archive", () => {
     });
   });
 
+  it("exports names for an app's source and for the restored code it maps to, and keeps the restored code's own line on restore", async () => {
+    const source = await newContext();
+    expect(
+      (await ownerPatch(source, "oauth:app:person", { name: "From the app" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await ownerPatch(source, "restored:oauth:app:person", {
+          name: "Already restored",
+        })
+      ).status,
+    ).toBe(200);
+    const archive = await ownerExport(source);
+    const entries = await extractArchive(archive);
+    const typeLines = entries
+      .get("types.ndjson")!
+      .toString()
+      .trim()
+      .split("\n");
+    const reversed = await repack(entries, {
+      "types.ndjson": `${[...typeLines].reverse().join("\n")}\n`,
+    });
+
+    for (const body of [archive, reversed]) {
+      const target = await newContext();
+      const restored = await restore(target, body);
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      expect(await restored.json()).toMatchObject({
+        sources_added: 1,
+        sources_skipped: 1,
+        sources_skipped_reasons: { duplicate_code: 1 },
+      });
+      expect(
+        (await target.storage.sources.get("restored:oauth:app:person"))?.name,
+      ).toBe("Already restored");
+      expect(await target.storage.sources.get("oauth:app:person")).toBeNull();
+    }
+  });
+
+  it("exports and restores an app's source of the longest length, and exports its restored code again", async () => {
+    const code = `oauth:${"c".repeat(194)}`;
+    expect(code).toHaveLength(200);
+    const source = await newContext();
+    expect((await ownerPatch(source, code, { name: "Long app" })).status).toBe(
+      200,
+    );
+    const target = await newContext();
+    const restored = await restore(target, await ownerExport(source));
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    const held = `restored:${code}`;
+    expect(held).toHaveLength(209);
+    expect((await target.storage.sources.get(held))?.name).toBe("Long app");
+    const read = await target.ownerRequest(
+      `/source?source=${encodeURIComponent(held)}`,
+    );
+    expect(read.status, await read.clone().text()).toBe(200);
+    const again = await target.ownerRequest("/export?format=archive");
+    expect(again.status, await again.clone().text()).toBe(200);
+    const next = await newContext();
+    expect(
+      (await restore(next, Buffer.from(await again.arrayBuffer()))).status,
+    ).toBe(200);
+    expect((await next.storage.sources.get(held))?.name).toBe("Long app");
+  });
+
   it("skips and counts a mark outside the pinned sets", async () => {
     const archive = await ownerExport(await namedInstance());
     const entries = await extractArchive(archive);

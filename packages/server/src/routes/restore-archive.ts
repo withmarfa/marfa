@@ -198,7 +198,7 @@ const restoreArchiveRoute = createRoute({
             sources_skipped_reasons: z
               .record(z.string(), z.number())
               .describe(
-                "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins.",
+                "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins.",
               ),
           }),
         },

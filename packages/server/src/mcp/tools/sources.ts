@@ -1,12 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
+import { SIGN_IN_NAME_MAX } from "../../auth/sign-in-names.js";
+import { SOURCE_CODE_MAX } from "../../auth/source-codes.js";
 import type { ToolContext } from "../context.js";
 import { ANSWER_BUDGET_CHARS, fail, fitList, ok, refused } from "../results.js";
 
 const sourceCode = z
   .string()
   .min(1)
-  .max(200)
+  .max(SOURCE_CODE_MAX)
   .describe("A source code, such as `github`.");
 
 const sourceShape = z.looseObject({ source: z.string(), name: z.string() });
@@ -56,7 +58,7 @@ export function registerNameSource(server: McpServer, ctx: ToolContext): void {
         name: z
           .string()
           .min(1)
-          .max(200)
+          .max(SIGN_IN_NAME_MAX)
           .nullable()
           .optional()
           .describe("Such as `GitHub`."),

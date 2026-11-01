@@ -40,6 +40,7 @@ import {
 import { assertParentChain } from "./_parent-chain.js";
 import { usableSignInName } from "../auth/sign-in-names.js";
 import { restoredSource } from "./restore-archive-rows.js";
+import { isSourceCode } from "../auth/source-codes.js";
 
 export interface ArchiveTypeEntry {
   type?: unknown;
@@ -230,9 +231,15 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   edgeTypes: EdgeTypeSchema[];
   typeIcons: ArchiveTypeIcon[];
   sources: ArchiveSourceNaming[];
+  sourcesSharingCode: number;
 } {
   const types: PendingType[] = [];
-  const sources = new Map<string, ArchiveSourceNaming>();
+  const sources = new Map<
+    string,
+    { naming: ArchiveSourceNaming; own: boolean }
+  >();
+  const sourceLinesRead = new Set<string>();
+  let sourcesSharingCode = 0;
   const edgeTypes: EdgeTypeSchema[] = [];
   const typeIcons = new Map<string, string | undefined>();
   const edgeNamesTaken = new Map<string, string>();
@@ -353,14 +360,25 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     }
 
     if (entry.source !== undefined) {
-      const naming = archiveSourceNaming(entry.source);
-      if (sources.has(naming.source)) {
+      const { naming, line } = archiveSourceNaming(entry.source);
+      if (sourceLinesRead.has(line)) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
-          `Archive carries more than one name for source "${naming.source}"`,
+          `Archive carries more than one name for source "${line}"`,
         );
       }
-      sources.set(naming.source, naming);
+      sourceLinesRead.add(line);
+      // An app's code and the restored code it maps to can both be named, and
+      // land on one code. The line that already carries the restored code
+      // keeps it, whichever comes first, and the other is skipped.
+      const own = line === naming.source;
+      const held = sources.get(naming.source);
+      if (held === undefined) {
+        sources.set(naming.source, { naming, own });
+      } else {
+        sourcesSharingCode += 1;
+        if (own) sources.set(naming.source, { naming, own });
+      }
       continue;
     }
 
@@ -383,7 +401,8 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
     types,
     edgeTypes,
     typeIcons: [...typeIcons].map(([typeId, icon]) => ({ typeId, icon })),
-    sources: [...sources.values()],
+    sources: [...sources.values()].map(({ naming }) => naming),
+    sourcesSharingCode,
   };
 }
 
@@ -393,15 +412,18 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
  * that names nothing. A string mark outside the pinned sets is a line from a
  * build that pins others, and is skipped.
  */
-function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
+function archiveSourceNaming(line: unknown): {
+  naming: ArchiveSourceNaming;
+  line: string;
+} {
   const raw: { source?: unknown; name?: unknown; mark?: unknown } | null =
     typeof line === "object" ? line : null;
   const code = raw?.source;
+  const restored = restoredSource(code);
   if (
-    typeof code !== "string" ||
-    code.length === 0 ||
-    code.length > 200 ||
-    code !== code.trim()
+    !isSourceCode(code) ||
+    restored === undefined ||
+    !isSourceCode(restored)
   ) {
     throw new MarfaError(
       ErrorCode.INVALID_SCHEMA,
@@ -435,9 +457,12 @@ function archiveSourceNaming(line: unknown): ArchiveSourceNaming {
     );
   }
   return {
-    source: restoredSource(code) ?? code,
-    name,
-    mark: refused ? undefined : (mark as string | null),
+    naming: {
+      source: restored,
+      name,
+      mark: refused ? undefined : (mark as string | null),
+    },
+    line: code,
   };
 }
 
@@ -476,7 +501,8 @@ export async function planArchiveTypes(
   storage: ArchiveTypeBaseline,
   entries: ArchiveTypeEntry[],
 ): Promise<ArchiveTypePlan> {
-  const { types, edgeTypes, typeIcons, sources } = parseTypeEntries(entries);
+  const { types, edgeTypes, typeIcons, sources, sourcesSharingCode } =
+    parseTypeEntries(entries);
 
   // What is registered is a question about this database,
   // not about the in-memory registry: the registry is process state
@@ -554,6 +580,9 @@ export async function planArchiveTypes(
   );
   const sourcesToWrite: ArchiveSourceNaming[] = [];
   const sourcesSkippedReasons: Record<string, number> = {};
+  if (sourcesSharingCode > 0) {
+    sourcesSkippedReasons.duplicate_code = sourcesSharingCode;
+  }
   for (const entry of sources) {
     if (entry.mark === undefined) {
       sourcesSkippedReasons.unknown_mark =
