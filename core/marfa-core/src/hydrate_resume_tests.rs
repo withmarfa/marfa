@@ -157,6 +157,41 @@ fn the_rest(server: &Scripted, events: Vec<String>, live: &str) {
     );
 }
 
+/// A server that answers a `limit` above 200 with 200 rows still fills a
+/// copy, because the fill follows `next_cursor` and never counts on a full
+/// page.
+#[test]
+fn a_hydration_fills_from_a_server_that_answers_fewer_rows_than_it_asked() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    store::replace_catalog(&core.conn().unwrap(), &crate::builtin::catalog().unwrap()).unwrap();
+    let ids: Vec<String> = (0..450).map(|at| format!("n{at:03}")).collect();
+    let rows = |from: usize, to: usize| -> Vec<&str> {
+        ids[from..to].iter().map(String::as_str).collect()
+    };
+    server.on(
+        "/items",
+        vec![
+            page(&rows(0, 200), Some("2")),
+            page(&rows(200, 400), Some("3")),
+            page(&rows(400, 450), None),
+        ],
+    );
+    server.on("/events", vec![head("10"), replay(vec![], "10")]);
+
+    let report = hydrate(&core, SliceTier::Library).unwrap();
+
+    assert_eq!(report.pages, 3);
+    assert_eq!(held(&core).len(), 450);
+    let asked = server.seen("/items");
+    assert_eq!(asked.len(), 3);
+    assert!(
+        asked.iter().all(|seen| seen.query.contains("limit=500")),
+        "{asked:?}"
+    );
+    assert!(asked[1].query.contains("cursor=2"), "{}", asked[1].query);
+}
+
 #[test]
 fn an_interrupted_hydration_reads_only_the_pages_it_had_not_reached() {
     let server = Scripted::start();
