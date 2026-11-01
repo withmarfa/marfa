@@ -472,7 +472,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     });
   });
 
-  it("loads and sends nothing with no endpoint set", async () => {
+  it("loads and sends nothing with neither the endpoint nor the PostHog settings", async () => {
     const boot = await bootInstrumentation(ctx, {});
 
     const response = await appThatFails().request("/explode");

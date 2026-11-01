@@ -108,8 +108,8 @@ describe("the server's exception reports", () => {
     "are all that a host the token may not travel to stops: traces and logs still go",
     async () => {
       // The unusable host is the local receiver's own address with a user
-      // name in it, so a report sent to it anyway would arrive where the
-      // fixture can see it.
+      // name in it; the witness is the same address without one, which
+      // receives the report.
       const log = await faultAndStop(
         await boot((receiver) => {
           const host = new URL(receiver.MARFA_POSTHOG_HOST!);

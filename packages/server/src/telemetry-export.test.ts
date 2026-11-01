@@ -562,7 +562,7 @@ async function bootRecordingLoads(
   return loaded;
 }
 
-describe("the telemetry SDK is loaded only when the endpoint is set", () => {
+describe("the telemetry SDK is loaded only when a pipeline is set", () => {
   let collector: StubCollector;
 
   beforeEach(async () => {
@@ -587,7 +587,7 @@ describe("the telemetry SDK is loaded only when the endpoint is set", () => {
     expect(loaded.sort()).toEqual([...TELEMETRY_MODULES].sort());
   });
 
-  it("loads none of them, and sends nothing, when it is absent", async () => {
+  it("loads none of them, and sends nothing, with neither the endpoint nor the PostHog settings", async () => {
     const loaded = await bootRecordingLoads({});
     expect(loaded).toEqual([]);
     expect(globalThis.__marfaOtelShutdown).toBeUndefined();
