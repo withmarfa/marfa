@@ -115,3 +115,68 @@ pub(crate) fn read_as(embed: &Embed) -> Option<(&str, bool)> {
         Embed::Spaced { .. } => None,
     }
 }
+
+/// A file item and the names an embed may call it by, folded: its title,
+/// and the file name of each path it sits at.
+pub(crate) struct Candidate {
+    pub id: String,
+    pub paths: Vec<String>,
+    pub names: Vec<String>,
+}
+
+pub(crate) enum Pick {
+    One(String),
+    Many,
+    None,
+}
+
+/// The candidate an embed names: by a path, the one placed where the path
+/// leads from where the host is placed; else, as by a name, the one whose
+/// title or file name is the embed's file name, as a folder's pull reads it.
+pub(crate) fn pick(
+    candidates: &[Candidate],
+    host_paths: &[String],
+    name: &str,
+    by_name: bool,
+) -> Pick {
+    let one = |found: Vec<&Candidate>| match found.as_slice() {
+        [] => Pick::None,
+        [one] => Pick::One(one.id.clone()),
+        _ => Pick::Many,
+    };
+    if !by_name {
+        for host in host_paths {
+            if let Some(at) = joined(host, name) {
+                let placed: Vec<&Candidate> = candidates
+                    .iter()
+                    .filter(|held| held.paths.iter().any(|path| same(path, &at)))
+                    .collect();
+                if !placed.is_empty() {
+                    return one(placed);
+                }
+            }
+        }
+    }
+    let wanted = folded(name_of(name.trim()));
+    one(candidates
+        .iter()
+        .filter(|held| held.names.contains(&wanted))
+        .collect())
+}
+
+/// The file the host's own edges say an embed names
+/// (`device/embed-attached-first`): one attached to the host, and only where
+/// none answers, one the host references, so an attach's embed names the
+/// file it attached whatever else shares its name.
+pub(crate) fn held(
+    attached: &[Candidate],
+    referenced: &[Candidate],
+    host_paths: &[String],
+    name: &str,
+    by_name: bool,
+) -> Pick {
+    match pick(attached, host_paths, name, by_name) {
+        Pick::None => pick(referenced, host_paths, name, by_name),
+        picked => picked,
+    }
+}

@@ -1255,6 +1255,7 @@ mod tests {
             blob: None,
             written_hash: None,
             links: Vec::new(),
+            embeds: Vec::new(),
             lines: Vec::new(),
             edit_line: None,
             held: None,

@@ -558,7 +558,7 @@ pub enum ItemsCommand {
         item: Option<String>,
     },
     /// The text that embeds a file item in an item's body, which reads back
-    /// as the file's `attached-to` edge to the item.
+    /// as the item's `references` edge to the file.
     Embed {
         /// The item whose body the embed goes in.
         id: String,

@@ -5,10 +5,11 @@ use serde_json::Value;
 
 use super::lists::Lists;
 use super::placement::{cleaned, path_of};
-use super::{Flagged, Folder, bytes_of, fields, pull, state};
+use super::{Flagged, Folder, LINK_EDGE, bytes_of, fields, pull, state};
 use crate::Result;
 use crate::body::embed::{
-    answers, carries_frontmatter, dir_of, file_like, is_note, joined, named, read_as,
+    Candidate, Pick, answers, carries_frontmatter, dir_of, file_like, held, is_note, joined, named,
+    read_as,
 };
 use crate::body::text::{self, Embed};
 use crate::catalog::Catalog;
@@ -117,13 +118,6 @@ pub(super) struct Shown {
     pub target: Target,
 }
 
-/// A host's attachment that is a file, and the names it goes by here.
-struct Attachment {
-    id: String,
-    path: Option<String>,
-    names: Vec<String>,
-}
-
 /// Where each file a document here embeds or has attached is written, and
 /// what was reported.
 #[derive(Default)]
@@ -155,22 +149,52 @@ impl Folder {
         Ok(paths)
     }
 
-    fn attachments(&self, host: &str, catalog: &Catalog) -> Result<Vec<Attachment>> {
-        let mut found: Vec<Attachment> = Vec::new();
-        for edge in self.core.edges_to(host)? {
-            if edge.edge_type != ATTACHMENT_EDGE
-                || found.iter().any(|held| held.id == edge.source_id)
-            {
+    /// The files an embed in the host's body can name: those attached to it,
+    /// then those it references and has not attached, as an embed's own edge
+    /// is a reference.
+    fn embeddable(
+        &self,
+        host: &str,
+        catalog: &Catalog,
+    ) -> Result<(Vec<Candidate>, Vec<Candidate>)> {
+        let attached: Vec<String> = self
+            .core
+            .edges_to(host)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
+            .map(|edge| edge.source_id)
+            .collect();
+        let referenced: Vec<String> = self
+            .core
+            .edges_from(host)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == LINK_EDGE && !attached.contains(&edge.target_id))
+            .map(|edge| edge.target_id)
+            .collect();
+        Ok((
+            self.candidates(attached, catalog)?,
+            self.candidates(referenced, catalog)?,
+        ))
+    }
+
+    /// Each of `ids` that is a file, once, with the names it goes by here.
+    fn candidates(&self, ids: Vec<String>, catalog: &Catalog) -> Result<Vec<Candidate>> {
+        let mut found: Vec<Candidate> = Vec::new();
+        for id in ids {
+            if found.iter().any(|held| held.id == id) {
                 continue;
             }
-            let Some(item) = self.core.get(&edge.source_id)? else {
+            let Some(item) = self.core.get(&id)? else {
                 continue;
             };
             if bytes_of(&item, catalog).is_none() {
                 continue;
             }
-            let path = state::bound_to_item(&*self.core.conn()?, &item.id)?.map(|bound| bound.path);
-            let mut names: Vec<String> = path.iter().map(|path| folded(name_of(path))).collect();
+            let paths: Vec<String> = state::bound_to_item(&*self.core.conn()?, &item.id)?
+                .map(|bound| bound.path)
+                .into_iter()
+                .collect();
+            let mut names: Vec<String> = paths.iter().map(|path| folded(name_of(path))).collect();
             if let Some(title) = item
                 .properties
                 .get(fields::title_field(catalog, &item.r#type))
@@ -178,17 +202,18 @@ impl Folder {
             {
                 names.push(folded(title.trim()));
             }
-            found.push(Attachment {
+            found.push(Candidate {
                 id: item.id,
-                path,
+                paths,
                 names,
             });
         }
         Ok(found)
     }
 
-    /// The embeds of files in an item's body, each read as the attachment
-    /// bound at its path, or else the one whose file name or title is its name.
+    /// The embeds of files in an item's body, each read as the file its path
+    /// or name gives among the item's attachments, and only where none
+    /// answers among the files it references.
     pub(super) fn shown_in(
         &self,
         host: &Item,
@@ -203,16 +228,17 @@ impl Folder {
         if embeds.is_empty() {
             return Ok(Vec::new());
         }
-        let attachments = self.attachments(&host.id, catalog)?;
-        let by_name = |name: &str| {
-            let wanted = folded(name_of(name));
-            let mut matching = attachments
-                .iter()
-                .filter(|held| held.names.contains(&wanted));
-            match (matching.next(), matching.next()) {
-                (Some(one), None) => Some(one.id.clone()),
-                _ => None,
-            }
+        let (attached, referenced) = self.embeddable(&host.id, catalog)?;
+        let host_paths = [host_path.to_string()];
+        let read = |name: &str, by_name: bool| match held(
+            &attached,
+            &referenced,
+            &host_paths,
+            name,
+            by_name,
+        ) {
+            Pick::One(id) => Some(id),
+            Pick::Many | Pick::None => None,
         };
         let mut shown = Vec::new();
         for embed in &embeds {
@@ -233,18 +259,11 @@ impl Folder {
                 continue;
             }
             let (item, target) = if named {
-                (by_name(name), Target::Named(name.to_string()))
+                (read(name, true), Target::Named(name.to_string()))
             } else {
                 match joined(host_path, name) {
                     None => (None, Target::Outside),
-                    Some(at) => (
-                        attachments
-                            .iter()
-                            .find(|held| held.path.as_deref().is_some_and(|path| same(path, &at)))
-                            .map(|held| held.id.clone())
-                            .or_else(|| by_name(&at)),
-                        Target::At(at),
-                    ),
+                    Some(at) => (read(name, false), Target::At(at)),
                 }
             };
             if item.is_some() || target == Target::Outside || file_like(name) {

@@ -350,7 +350,7 @@ impl Folder {
         self.bind_scanned(
             file,
             &item_id,
-            Vec::new(),
+            Default::default(),
             Vec::new(),
             Kept {
                 writes,
@@ -404,7 +404,7 @@ impl Folder {
             blob: file.source.as_deref().map(crate::blob::name_of),
             ..Kept::default()
         };
-        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), kept)
+        self.bind_scanned(file, &item_id, Default::default(), Vec::new(), kept)
     }
 
     /// The defaults' edges for a new item. A `parent-of` default names the
@@ -805,13 +805,19 @@ impl Folder {
             // The file's edge work decides these.
             state::Change::Edge { .. } => true,
         });
-        let (links, lines) = bound
-            .map(|bound| (bound.links.clone(), bound.lines.clone()))
+        let (links, embeds, lines) = bound
+            .map(|bound| {
+                (
+                    bound.links.clone(),
+                    bound.embeds.clone(),
+                    bound.lines.clone(),
+                )
+            })
             .unwrap_or_default();
         self.bind_scanned(
             file,
             item_id,
-            links,
+            (links, embeds),
             lines,
             Kept {
                 edit_line: bound.and_then(|bound| bound.edit_line),
@@ -1044,7 +1050,7 @@ impl Folder {
             },
             ..Kept::default()
         };
-        self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), kept)?;
+        self.bind_scanned(file, &held.id, Default::default(), Vec::new(), kept)?;
         Ok(queued)
     }
 
@@ -1052,7 +1058,7 @@ impl Folder {
         &self,
         file: &Scanned,
         item_id: &str,
-        links: Vec<String>,
+        (links, embeds): (Vec<String>, Vec<String>),
         lines: Vec<state::Line>,
         kept: Kept,
     ) -> Result<()> {
@@ -1074,6 +1080,7 @@ impl Folder {
                 blob: kept.blob,
                 written_hash: None,
                 links,
+                embeds,
                 lines,
                 edit_line: kept.edit_line,
                 held: kept.held,

@@ -600,13 +600,17 @@ describe("body links and attachment presentation", () => {
       "- ordinary ![](live.png)\n\n- list code:\n\n  ```\n  ![](fenced.png)\n  ```\n\nOutside the list.\n\n    ![](indented.png)\n\n> ```\n> ![](quoted.png)\n> ```\n";
     put("Host.md", read("Host.md").replace("body\n", body));
     expect((await scan()).embeds).toEqual([]);
-    const attached = (await queue()).filter(
-      (write) => write.kind === "create_edge" && write.target_id === id(1),
+    const files = names.map((_, at) => id(at + 2));
+    const referenced = (await queue()).filter(
+      (write) =>
+        write.kind === "create_edge" &&
+        write.item_id === id(1) &&
+        files.includes(String(write.target_id)),
     );
-    expect(attached.map((write) => write.item_id)).toEqual([id(2)]);
+    expect(referenced.map((write) => write.target_id)).toEqual([id(2)]);
   });
 
-  it("removes a redundant attachment line when the host body already embeds its file", async () => {
+  it("keeps an attachment line for a file the query holds when the host body also embeds it", async () => {
     const bytes = Buffer.from("image\n");
     const image: WireItemOptions = {
       id: id(2),
@@ -623,15 +627,20 @@ describe("body links and attachment presentation", () => {
           target_id: id(1),
           edge_type: "attached-to",
         },
+        {
+          id: id(102),
+          source_id: id(1),
+          target_id: id(2),
+          edge_type: "references",
+        },
       ],
       { query: { types: ["core.note", "core.file"] } },
     );
     scriptBlob(folder!.server, bytes);
     await pull();
-    put(
-      "Host.md",
-      read("Host.md").replace("---\n", '---\nhas-attachment: "[[pic.png]]"\n'),
-    );
+    // The embed only references a file the query holds, so the line is
+    // what attaches it, and the pull writes it beside the embed.
+    expect(read("Host.md")).toContain('has-attachment:\n  - "[[pic.png]]"');
     await scan();
     frames.push(
       copyItemEvent(
@@ -647,10 +656,16 @@ describe("body links and attachment presentation", () => {
     expect((await folder!.folder.device().catchUp()).ok).toBe(true);
     await pull();
     expect(read("Host.md")).toContain("changed");
-    expect(read("Host.md")).not.toContain("has-attachment:");
+    expect(read("Host.md")).toContain('has-attachment:\n  - "[[pic.png]]"');
     expect(
       (await queue()).filter(
-        (write) => write.kind === "create_edge" && write.target_id === id(1),
+        (write) =>
+          (write.kind === "delete_edge" &&
+            [id(101), id(102)].includes(String(write.edge_id))) ||
+          (write.kind === "create_edge" &&
+            ["attached-to", "references"].includes(
+              String((write.body as { edge_type?: unknown } | null)?.edge_type),
+            )),
       ),
     ).toEqual([]);
   });

@@ -222,6 +222,7 @@ mod tests {
             presentation: None,
             blob: None,
             links: Vec::new(),
+            embeds: Vec::new(),
             lines: Vec::new(),
             edit_line: None,
             held: None,

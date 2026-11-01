@@ -1076,7 +1076,7 @@ When an unbound non-document file has no type held by a folder’s query and no 
 
 When a document in a folder embeds a file outside the folder’s query, or a file outside the query is attached to the document, a device MUST admit that file as the document’s attachment.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`, `› is written beside its document, and its has-attachment line reads back as the same edge`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `› references an embedded file, and attaches it only where the query does not hold it`, `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`, `› is written beside its document, and its has-attachment line reads back as the same edge`.
 
 ### `folders/document-outside-search`
 
@@ -2132,7 +2132,7 @@ When a Markdown body links to another item, a device MUST create a `references` 
 
 ### `folders/body-edge-not-repeated`
 
-When a Markdown body already represents an edge as a link or embed, a device MUST NOT repeat it as a frontmatter edge line.
+When a Markdown body already represents a `references` edge as a link or an embed, or an `attached-to` edge as an embed of a file the folder's query does not hold, a device MUST NOT repeat it as a frontmatter edge line.
 
 **Tests:** `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`, `device/folders-frontmatter.test.ts › lists under has-attachment only what the body does not embed`, `device/folders-frontmatter.test.ts › resolves body links by title and nested filename without repeating references on pull`.
 
@@ -2192,25 +2192,75 @@ While a body link is unresolved, a device MUST retain the document's existing re
 
 ### `folders/embed-edge`
 
-When a Markdown body embeds a local file, a device MUST create an `attached-to` edge from the file item to the document item.
+When a Markdown body embeds a local file, a device MUST create a `references` edge from the document item to the file item.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`.
+**Reason:** the embed is how the body says which file it shows, as a link says which item it names. Showing a file is not owning it, so an edit to the body never decides whether a file goes to the bin with its document.
+
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `› references an embedded file, and attaches it only where the query does not hold it`.
+
+### `folders/embed-edge-outside`
+
+When a Markdown body comes to embed a local file the folder's query does not hold, a device MUST create an `attached-to` edge from the file item to the document item, whether or not a link in the body already names the file.
+
+**Reason:** a file outside the query is in the folder only as a document's part (`folders/embedded-outside-search`), and a folder of notes keeps its pictures beside them. A file the query holds is the folder's own, and only its `has-attachment` line attaches it. An embed already in the body when its attachment is taken away elsewhere does not attach the file again. A link to the file is no embed of it, so the folder keeps a document's embeds apart from its links in its record of the document.
+
+**Tests:** `device/folders-frontmatter.test.ts › references an embedded file, and attaches it only where the query does not hold it`, `› sends an embedded file with its file`.
+
+### `folders/embed-attachment-line-kept`
+
+While a document's body embeds a file the folder's query holds and that file is attached to the document, a device MUST render the attachment in the document's `has-attachment` line.
+
+**Reason:** the embed makes only a reference to such a file, so the line is what says the file is part of the document, and a file without it would read back as taking the attachment away.
+
+**Tests:** `device/folders-frontmatter.test.ts › keeps a has-attachment line for a file the query holds and the body embeds`, `device/folders-contract-extra-c.test.ts › keeps an attachment line for a file the query holds when the host body also embeds it`.
 
 ### `folders/embed-edge-removal`
 
-When a document removes an embed, a device MUST delete that attachment edge.
+When a document removes an embed, a device MUST delete that embed's `references` edge.
 
-**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`, `device/folders-frontmatter.test.ts › removes the edge of an embed taken out between two scans before a push`.
+**Tests:** `device/folders-frontmatter.test.ts › removes only the reference when the embed is taken out`, `device/folders-frontmatter.test.ts › removes the reference of an embed taken out between two scans before a push`.
+
+### `folders/embed-removal-keeps-attachment`
+
+When a document removes an embed, a device MUST NOT delete the embedded file's `attached-to` edge to the document.
+
+**Reason:** whether the file is part of the document is the attachment's to say, not the body's, so the file stays attached and a `has-attachment` line shows it (`folders/attachment-line`).
+
+**Tests:** `device/folders-frontmatter.test.ts › removes only the reference when the embed is taken out`, `› removes the reference of an embed taken out between two scans before a push`, `› sends an embedded file with its file`.
+
+### `folders/embed-rederived`
+
+When a folder has not read its files since its device came to read an embed as a `references` edge, a device MUST read every document in the folder that embeds a file again once, at the next scan, whether or not the file changed.
+
+**Reason:** an embed once made the file's `attached-to` edge instead, and the folder's record of each document says so. A folder added afresh reads its documents again too: its first pull records each document it writes as read, and a body written under the earlier rule has no reference until it is read. Reading once brings each document to this rule, and the folder reads no unchanged document again after it.
+
+**Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`, `› references the files a document already embeds when the folder is added afresh`.
+
+### `folders/embed-rederived-attachment`
+
+When a folder reads a document again for `folders/embed-rederived`, a device MUST delete each `attached-to` edge from a file item to the document item where the folder's query holds the file, the document's body embeds the file, the document has no `has-attachment` line naming the file, and the folder's record of the document names the edge.
+
+**Reason:** under `folders/embed-edge-outside` an embed attaches only a file outside the query, so a file the query holds that only an embed attached was never the document's part. The earlier rule recorded such an edge as the document's own, whoever made it, so no record tells an edge the embed made from one a person or an app made: the read corrects every such edge once. It deletes only the edge, and both items stay.
+
+**Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`.
+
+### `folders/embed-rederived-outside-kept`
+
+When a folder reads a document again for `folders/embed-rederived`, a device MUST NOT delete the `attached-to` edge that an embed made to a file the folder's query does not hold.
+
+**Reason:** the embed still attaches such a file (`folders/embed-edge-outside`).
+
+**Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`.
 
 ### `folders/embed-file-kept`
 
 When a document removes an embed, or a `has-attachment` line, a device MUST retain the attached file on disk.
 
-**Tests:** `device/folders-frontmatter.test.ts › removes the edge when the embed is taken out`, `› lists under has-attachment only what the body does not embed`.
+**Tests:** `device/folders-frontmatter.test.ts › removes only the reference when the embed is taken out`, `› lists under has-attachment only what the body does not embed`.
 
 ### `folders/embed-markdown-only`
 
-When a raw-text document contains embed syntax, a device MUST NOT create an attachment edge for that syntax.
+When a raw-text document contains embed syntax, a device MUST NOT create an edge for that syntax.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders-frontmatter.test.ts › writes no file a .txt file's text embeds`.
 
@@ -2296,7 +2346,7 @@ When an embed determines a file's path, a device MUST update that file's `in-fol
 
 ### `folders/embed-renamed`
 
-When an embedded file is renamed so its old link no longer names it, a device MUST preserve the file's item and attachment edge at its new name.
+When an embedded file is renamed so its old link no longer names it, a device MUST preserve the file's item and its `references` and `attached-to` edges at its new name.
 
 **Tests:** `device/folders-frontmatter.test.ts › follows an embedded file renamed away from its link, and says the link names nothing`.
 
@@ -2350,9 +2400,9 @@ When one attachment is embedded at different paths, a device MUST report each em
 
 ### `folders/embed-unresolved-keeps-edges`
 
-While an embed names a missing file or has an invalid raw-space path, a device MUST retain the document's existing attachment edges.
+While an embed names a missing file or has an invalid raw-space path, a device MUST retain the document's existing `references` edges.
 
-**Tests:** `device/folders-frontmatter.test.ts › removes no attachment while an embed names nothing, and removes it once none does`.
+**Tests:** `device/folders-frontmatter.test.ts › removes no reference while an embed names nothing, and removes it once none does`.
 
 ### `folders/embed-unreadable-target`
 
@@ -2392,9 +2442,9 @@ When an embed occurs in an ordinary Markdown list paragraph, a device MUST resol
 
 ### `folders/embed-duplicate-line`
 
-When a pull rewrites a document whose body embeds an attachment also named in its `has-attachment` line, a device MUST omit that duplicate attachment from the line.
+When a pull rewrites a document whose body embeds an attachment the folder's query does not hold, also named in its `has-attachment` line, a device MUST omit that duplicate attachment from the line.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › removes a redundant attachment line when the host body already embeds its file`.
+**Tests:** `device/folders-frontmatter.test.ts › lists under has-attachment only what the body does not embed`, `› sends an embedded file with its file`.
 
 ### `folders/embed-upload-size`
 
@@ -2414,7 +2464,7 @@ When a pull writes a document that a readable active or archived file item is at
 
 While a document's attachment is written beside the document and the body embeds it nowhere, a device MUST render the attachment in the document's `has-attachment` line.
 
-**Tests:** `device/folders-frontmatter.test.ts › is written beside its document, and its has-attachment line reads back as the same edge`, `› reports an embed pointing outside the folder`.
+**Tests:** `device/folders-frontmatter.test.ts › is written beside its document, and its has-attachment line reads back as the same edge`, `› reports an embed pointing outside the folder`, `› removes only the reference when the embed is taken out`.
 
 ### `folders/attachment-name`
 

@@ -1004,7 +1004,7 @@ describe("links", () => {
 });
 
 describe("embeds", () => {
-  it("makes an embed of an image and of a video, by name and by path, the file's attached-to edge", async () => {
+  it("makes an embed of an image and of a video, by name and by path, a references edge to the file", async () => {
     const dir = scratch();
     mkdirSync(join(dir, "media"));
     const photoName = `photo-${ctx.runId}.png`;
@@ -1025,9 +1025,13 @@ describe("embeds", () => {
       "an embed of a note was read as a file",
     ).toEqual([{ state: "pending" }, { state: "pending" }]);
     await drained(device);
-    expect(await attachedTo(host.id)).toEqual(
+    expect(await referencesFrom(host.id)).toEqual(
       [photo.item_id!, clip.item_id!].sort(),
     );
+    expect(
+      await attachedTo(host.id),
+      "an embed attached its file to the note",
+    ).toEqual([]);
     const embeds = value(await device.bodyLinks(host.id)).embeds;
     expect(embeds.map((embed) => [embed.text, embed.target])).toEqual([
       [`![[${photoName}]]`, { state: "item", id: photo.item_id! }],
@@ -1044,16 +1048,16 @@ describe("embeds", () => {
       (write) => write.kind === "delete_edge",
     );
     expect(deletes.map((write) => [write.item_id, write.target_id])).toEqual([
-      [photo.item_id!, host.id],
+      [host.id, photo.item_id!],
     ]);
     await drained(device);
-    expect(await attachedTo(host.id)).toEqual([clip.item_id!]);
+    expect(await referencesFrom(host.id)).toEqual([clip.item_id!]);
     const kept = await client.getItem(photo.item_id!);
     expect(kept.ok, "taking the embed out took the file item").toBe(true);
     expect(kept.data.item.type).toBe("core.file.image");
   });
 
-  it("embeds an attached file by the text the attach answers, with no second edge", async () => {
+  it("embeds an attached file by the text the attach answers, and references it beside the attachment", async () => {
     const dir = scratch();
     const name = `pasted-${ctx.runId}.png`;
     writeFileSync(join(dir, name), `pasted ${ctx.runId}`);
@@ -1073,14 +1077,35 @@ describe("embeds", () => {
     ).toEqual(texts);
     const before = (await unsent(device)).length;
     await setBody(device, host.id, texts.join("\n"));
-    const after = await unsent(device);
-    expect(after.length, "the embed made a second edge").toBe(before + 1);
-    expect(after.at(-1)?.kind).toBe("update_item");
+    const after = (await unsent(device)).slice(before);
+    expect(
+      after.map((write) => [write.kind, write.item_id, write.target_id]),
+      "an embed made an edge other than its reference",
+    ).toEqual([
+      ["update_item", host.id, null],
+      ...files.map((file) => ["create_edge", host.id, file]),
+    ]);
     expect(targets(value(await device.bodyLinks(host.id)).embeds)).toEqual(
       files.map((id) => ({ state: "item", id })),
     );
     await drained(device);
     expect(await attachedTo(host.id)).toEqual([...files].sort());
+    expect(await referencesFrom(host.id)).toEqual([...files].sort());
+
+    // Taking an embed out takes its reference, and the file stays attached.
+    await setBody(device, host.id, texts[1]!);
+    expect(
+      (await unsent(device))
+        .filter((write) => write.kind === "delete_edge")
+        .map((write) => [write.item_id, write.target_id]),
+      "taking the embed out deleted more than its reference",
+    ).toEqual([[host.id, files[0]!]]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([files[1]!]);
+    expect(
+      await attachedTo(host.id),
+      "taking the embed out took the file's attachment",
+    ).toEqual([...files].sort());
     const refused = await device.embedText(host.id, host.id);
     expect(refused.ok, "a note was given embed text").toBe(false);
     if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
@@ -1130,9 +1155,12 @@ describe("embeds", () => {
     await drained(device);
     await setBody(device, host.id, `![[${name}]]`);
     expect(
-      (await unsent(device)).map((write) => write.kind),
+      (await unsent(device)).map((write) => [write.kind, write.target_id]),
       "the embed made an edge to another file of the name",
-    ).toEqual(["update_item"]);
+    ).toEqual([
+      ["update_item", null],
+      ["create_edge", attached.item.item_id!],
+    ]);
     expect(targets(value(await device.bodyLinks(host.id)).embeds)).toEqual([
       { state: "item", id: attached.item.item_id! },
     ]);
@@ -1177,6 +1205,53 @@ describe("between writers", () => {
     expect(targets(value(await other.bodyLinks(host.id)).links)).toEqual([
       { state: "item", id: target },
     ]);
+  });
+
+  it("adds each embed's reference once on each copy, keeps the attachment an earlier embed made, and settles two copies' references as one", async () => {
+    // As the earlier rule left it: the embed made the file's attached-to
+    // edge alone.
+    const dir = scratch();
+    const name = `earlier-${ctx.runId}.png`;
+    writeFileSync(join(dir, name), `earlier ${ctx.runId}`);
+    const file = value(await device.addFile(join(dir, name)))[1].item_id!;
+    trackItem(ctx, file);
+    await drained(device);
+    const host = await remoteNote(named("Earlier embed host"));
+    await writtenElsewhere(host, `![[${name}]]`);
+    const attachment = await client.createEdge({
+      source_id: file,
+      target_id: host,
+      edge_type: "attached-to",
+    });
+    expect(attachment.ok, JSON.stringify(attachment.error)).toBe(true);
+    expect(
+      await referencesFrom(host),
+      "the earlier state already holds the reference",
+    ).toEqual([]);
+
+    const [first, second] = [await copy(), await copy()];
+    await drained(first);
+    const report = await drained(second);
+    expect(
+      report.verdicts.find((verdict) => verdict.kind === "create_edge")
+        ?.verdict,
+      "the second copy did not read the body again, so the one edge below says nothing about two",
+    ).toBe("refused");
+    expect(
+      value(await second.queue()).filter(
+        (write) => write.kind === "create_edge",
+      ),
+      "a duplicate reference stayed in the queue to discard",
+    ).toEqual([]);
+    expect(await referencesFrom(host)).toEqual([file]);
+    expect(
+      await attachedTo(host),
+      "reading the body again took the attachment away",
+    ).toEqual([file]);
+
+    // Once: the next drain reads no body again.
+    await drained(first);
+    expect(await unsent(first)).toEqual([]);
   });
 
   it("sends no edge write whose body lost to another device's, and keeps the edge the kept body names", async () => {

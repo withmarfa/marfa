@@ -24,12 +24,15 @@ pub(super) struct EdgeWork {
     pub links: Vec<String>,
     pub front: Map<String, Value>,
     pub had_links: Vec<String>,
+    pub had_embeds: Vec<String>,
     pub had_lines: Vec<Line>,
     pub embeds: Vec<(String, Target)>,
 }
 
 pub(super) struct Outcome {
     pub links: Vec<String>,
+    /// The file items the body's embeds name, kept apart from `links`.
+    pub embedded: Vec<String>,
     pub lines: Vec<Line>,
     pub held: Option<String>,
     /// The lines whose edge write the copy refused, as the server would have,
@@ -189,6 +192,9 @@ impl Folder {
 
     /// The lines an item's file carries, a typed target kept as typed while
     /// it still names its item, since a rewrite must not move a person's text.
+    /// `body_links` are the items the body links to or embeds;
+    /// `embedded_outside` the files it embeds that the query does not hold,
+    /// which the embed attaches.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lines_for(
         &self,
@@ -197,7 +203,7 @@ impl Folder {
         catalog: &Catalog,
         names: &Names,
         typed: Option<&Map<String, Value>>,
-        (body_links, body_embeds): (&[String], &[String]),
+        (body_links, embedded_outside): (&[String], &[String]),
         recorded: &[Line],
     ) -> Result<Written> {
         let mut grouped: BTreeMap<String, (bool, Vec<String>)> = BTreeMap::new();
@@ -216,16 +222,14 @@ impl Folder {
             if edge.edge_type == LINK_EDGE && end == End::Source && body_links.contains(&other) {
                 continue;
             }
-            // The body shows it, so no line repeats it; the record still does.
+            // The body's embed attaches a file the query does not hold, so
+            // no line repeats it, and the record does not name it: taking the
+            // embed out leaves the attachment, which a line then shows. A file
+            // the query holds is attached only by its line.
             if edge.edge_type == ATTACHMENT_EDGE
                 && end == End::Target
-                && body_embeds.contains(&other)
+                && embedded_outside.contains(&other)
             {
-                written.push(Line {
-                    edge_type: edge.edge_type.clone(),
-                    end,
-                    other,
-                });
                 continue;
             }
             let Some(name) = def.name_at(end) else {
@@ -392,10 +396,10 @@ impl Folder {
             }
         }
 
-        // An embed of a file is its item's `attached-to` edge to this one; one
-        // naming no file here stands removals down, as a link does, and says so.
-        let mut attached: Vec<String> = Vec::new();
-        let mut embeds_resolved = true;
+        // An embed of a file is a `references` edge to its item, as a link
+        // is; one naming no file here stands removals down, as a link does,
+        // and says so.
+        let mut embedded: Vec<String> = Vec::new();
         let mut embed_reasons: Vec<String> = Vec::new();
         for (raw, target) in &work.embeds {
             let item = match target {
@@ -403,15 +407,34 @@ impl Folder {
                 _ => None,
             };
             match (item, target) {
-                (Some(Some(id)), _) if !attached.contains(&id) => attached.push(id),
+                (Some(Some(id)), _) if !embedded.contains(&id) => embedded.push(id),
                 (Some(_), _) => {}
                 (None, Target::Outside) => embed_reasons.push(embeds::reason(raw, target)),
                 (None, _) => {
-                    embeds_resolved = false;
+                    links_resolved = false;
                     embed_reasons.push(embeds::reason(raw, target));
                 }
             }
         }
+        embedded.retain(|id| id != item_id);
+        // A file the body newly embeds that the query does not hold is the
+        // document's own (`folders/embedded-outside-search`), so the embed
+        // attaches it too. Only an embed new to the body does, whether or not
+        // a link already named the file: an attachment taken away elsewhere
+        // stays away while the embed stays.
+        let attach: Vec<String> = {
+            let new: Vec<String> = embedded
+                .iter()
+                .filter(|id| !work.had_embeds.contains(id))
+                .cloned()
+                .collect();
+            if removals.is_some() || new.is_empty() {
+                Vec::new()
+            } else {
+                let held = self.core.held_among(&self.settings()?, &new)?;
+                new.into_iter().filter(|id| !held.contains(id)).collect()
+            }
+        };
 
         let mut groups: BTreeMap<(String, End), Group<'_>> = BTreeMap::new();
         for (key, value) in &work.front {
@@ -447,10 +470,14 @@ impl Folder {
             .map(|line| (line.edge_type.clone(), line.end))
             .collect();
         let mut wanted_keys = recorded_keys;
-        if !work.links.is_empty() || !work.had_links.is_empty() {
+        if !work.links.is_empty()
+            || !work.had_links.is_empty()
+            || !work.embeds.is_empty()
+            || !work.had_embeds.is_empty()
+        {
             wanted_keys.insert((LINK_EDGE.to_string(), End::Source));
         }
-        if !work.embeds.is_empty() {
+        if !attach.is_empty() {
             wanted_keys.insert((ATTACHMENT_EDGE.to_string(), End::Target));
         }
         for (edge_type, end) in wanted_keys {
@@ -517,34 +544,27 @@ impl Folder {
                     // links among them.
                     links_resolved = false;
                     named.retain(|id| work.had_links.contains(id));
+                    embedded.retain(|id| work.had_embeds.contains(id));
                 }
                 continue;
             };
             let mut wanted: Vec<String> = desired.clone();
             let mut had: Vec<String> = recorded.clone();
             if links_group {
-                for id in &named {
+                for id in named.iter().chain(&embedded) {
                     if !wanted.contains(id) {
                         wanted.push(id.clone());
                     }
                 }
-                had.extend(work.had_links.iter().cloned());
+                had.extend(work.had_links.iter().chain(&work.had_embeds).cloned());
             }
-            // The body's embeds and the line say the same edge; the record
-            // holds both, so taking either out removes it.
+            // An embed's attachment is made, never recorded as a line, so
+            // taking the embed out leaves it.
             let mut shown = desired;
             if embeds_group {
-                for id in &attached {
+                for id in &attach {
                     if !wanted.contains(id) {
                         wanted.push(id.clone());
-                        shown.push(id.clone());
-                    }
-                }
-                if !embeds_resolved {
-                    for id in &recorded {
-                        if !shown.contains(id) {
-                            shown.push(id.clone());
-                        }
                     }
                 }
             }
@@ -553,7 +573,7 @@ impl Folder {
             // An edge the file never carried arrived from elsewhere and is
             // not yet written; a link or an embed that names nothing looks
             // like one gone.
-            let may_remove = (!links_group || links_resolved) && (!embeds_group || embeds_resolved);
+            let may_remove = !links_group || links_resolved;
             let mut removes: Vec<&Edge> = current
                 .iter()
                 .copied()
@@ -658,17 +678,18 @@ impl Folder {
             }));
         }
 
-        let links = if links_resolved {
-            named
-        } else {
-            let mut kept = named;
-            for id in &work.had_links {
-                if !kept.contains(id) {
-                    kept.push(id.clone());
+        let kept = |mut found: Vec<String>, had: &[String]| {
+            if !links_resolved {
+                for id in had {
+                    if !found.contains(id) {
+                        found.push(id.clone());
+                    }
                 }
             }
-            kept
+            found
         };
+        let links = kept(named, &work.had_links);
+        let embedded = kept(embedded, &work.had_embeds);
         lines.sort();
         let held = (!reasons.is_empty()).then(|| {
             let prefix = if waiting {
@@ -680,6 +701,7 @@ impl Folder {
         });
         Ok(Outcome {
             links,
+            embedded,
             lines,
             held,
             refused,

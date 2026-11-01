@@ -812,22 +812,23 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("items", "capture_latitude REAL"),
     ("items", "capture_longitude REAL"),
     ("items", "trashed_at TEXT"),
+    ("folder_files", "embeds TEXT"),
 ];
 
 /// The columns, from `ADDED_COLUMNS`, that the store's `table` lacks, where
-/// its statement `held` is this build's `built` less some of those at its
-/// end. `None` for any other statement.
+/// its statement `held` is this build's `built` less some of those at the
+/// end of its column list, before any table options such as `WITHOUT ROWID`.
+/// `None` for any other statement.
 fn columns_to_add(table: &str, held: &str, built: &str) -> Option<Vec<&'static str>> {
     let added: Vec<&'static str> = ADDED_COLUMNS
         .iter()
         .filter(|(name, _)| *name == table)
         .map(|(_, column)| *column)
         .collect();
-    let mut shorter = built.to_string();
+    let (mut shorter, options) = built.split_at(built.rfind(')')?);
     for at in (0..added.len()).rev() {
-        let end = format!(",{})", statement(added[at]));
-        shorter = format!("{})", shorter.strip_suffix(&end)?);
-        if shorter == held {
+        shorter = shorter.strip_suffix(&format!(",{}", statement(added[at])))?;
+        if format!("{shorter}{options}") == held {
             return Some(added[at..].to_vec());
         }
     }
@@ -9162,6 +9163,34 @@ mod tests {
         }
     }
 
+    /// A table made `WITHOUT ROWID` gains a column at its end as one made
+    /// without that does.
+    #[test]
+    fn a_folder_record_made_before_its_embeds_opens_and_gains_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            conn.execute_batch(
+                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at)
+                 VALUES ('a.md', 'n1', 'h', '[]', '[]', '2026-01-01T00:00:00Z');
+                 ALTER TABLE folder_files DROP COLUMN embeds",
+            )
+            .unwrap();
+        }
+        let conn = open(&path).unwrap();
+        let held = held_shape(&conn).unwrap();
+        assert_eq!(held["folder_files"], built_shape().unwrap()["folder_files"]);
+        let embeds: Option<String> = conn
+            .query_row(
+                "SELECT embeds FROM folder_files WHERE path = 'a.md'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(embeds, None);
+    }
+
     #[test]
     fn two_programs_opening_one_old_store_at_once_both_succeed() {
         let dir = tempfile::tempdir().unwrap();
@@ -9240,15 +9269,13 @@ mod tests {
                 .map(|(_, column)| *column)
                 .collect();
             let made = &built[table];
-            let mut earliest = made.clone();
+            let (mut earliest, options) = made.split_at(made.rfind(')').unwrap());
             for column in added.iter().rev() {
-                earliest = format!(
-                    "{})",
-                    earliest
-                        .strip_suffix(&format!(",{})", statement(column)))
-                        .unwrap_or_else(|| panic!("{column} does not end {table}"))
-                );
+                earliest = earliest
+                    .strip_suffix(&format!(",{}", statement(column)))
+                    .unwrap_or_else(|| panic!("{column} does not end {table}"));
             }
+            let earliest = format!("{earliest}{options}");
             assert_eq!(columns_to_add(table, &earliest, made), Some(added));
         }
     }
@@ -9267,7 +9294,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "cfe99004d75c5457",
+            "85d53350e6c6415a",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride
