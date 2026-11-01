@@ -335,6 +335,7 @@ impl Folder {
                 id,
                 save: 1,
                 line: None,
+                default: false,
             });
         }
         // Before the links, so a link naming a default's target adds no
@@ -345,7 +346,8 @@ impl Folder {
             settings,
             Some((&document.front, edge_types)),
             flagged,
-        )?;
+        )?
+        .add_to(&mut writes);
         self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(
             file,
@@ -397,63 +399,15 @@ impl Folder {
             )?,
             &file.key,
         )?;
-        self.queue_default_edges(&file.key, &item_id, settings, None, flagged)?;
-        self.place(&item_id, &file.key, withheld)?;
-        let kept = Kept {
+        let mut kept = Kept {
             bytes: true,
             blob: file.source.as_deref().map(crate::blob::name_of),
             ..Kept::default()
         };
+        self.queue_default_edges(&file.key, &item_id, settings, None, flagged)?
+            .add_to(&mut kept.writes);
+        self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(file, &item_id, Default::default(), Vec::new(), kept)
-    }
-
-    /// The defaults' edges for a new item. A `parent-of` default names the
-    /// parent, as the child's file writes it, so a new file lands beneath
-    /// what the query follows. A type the file's own frontmatter writes a
-    /// line for is no blank. One the copy refuses, as the server would, flags
-    /// the file at `path` and leaves the rest queued.
-    fn queue_default_edges(
-        &self,
-        path: &str,
-        item_id: &str,
-        settings: &Settings,
-        front: Option<(&Map<String, Value>, &EdgeTypes)>,
-        flagged: &mut Vec<Flagged>,
-    ) -> Result<()> {
-        for (edge_type, targets) in &settings.defaults.edges {
-            let end = if edge_type == crate::filter::PARENT_OF {
-                crate::catalog::End::Target
-            } else {
-                crate::catalog::End::Source
-            };
-            if let Some((front, types)) = front
-                && let Some(name) = types.get(edge_type).and_then(|def| def.name_at(end))
-                && front.contains_key(name)
-            {
-                continue;
-            }
-            for target in targets {
-                let (source_id, target_id) = match end {
-                    crate::catalog::End::Target => (target.clone(), item_id.to_string()),
-                    crate::catalog::End::Source => (item_id.to_string(), target.clone()),
-                };
-                match self.core.create_edge(&crate::model::EdgeDraft {
-                    source_id,
-                    target_id,
-                    edge_type: edge_type.clone(),
-                    ..Default::default()
-                }) {
-                    Err(error) if local_admission_refusal(&error) => flagged.push(Flagged::of(
-                        path,
-                        &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),
-                    )),
-                    other => {
-                        other?;
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Whole only where the file's version line is the copy's. `retitle` is
@@ -741,11 +695,14 @@ impl Folder {
                             let mut kept = bound.clone();
                             kept.lines.retain(|line| !removed.contains(line));
                             kept.writes.save = save;
-                            kept.writes.queued.extend(
-                                queued
-                                    .drain(..)
-                                    .map(|(id, line)| state::Queued { id, save, line }),
-                            );
+                            kept.writes
+                                .queued
+                                .extend(queued.drain(..).map(|(id, line)| state::Queued {
+                                    id,
+                                    save,
+                                    line,
+                                    default: false,
+                                }));
                             kept
                         });
                         return self
@@ -785,11 +742,14 @@ impl Folder {
                 other => queued.extend(other?.map(|id| (id, None))),
             }
         }
-        writes.queued.extend(
-            queued
-                .into_iter()
-                .map(|(id, line)| state::Queued { id, save, line }),
-        );
+        writes
+            .queued
+            .extend(queued.into_iter().map(|(id, line)| state::Queued {
+                id,
+                save,
+                line,
+                default: false,
+            }));
         // A refused change the file no longer carries holds it no longer.
         let agrees = unchanged
             && changes.r#type.is_none()
@@ -803,7 +763,7 @@ impl Folder {
             }
             state::Change::State(state) => own.state.is_none_or(|shown| shown == *state),
             // The file's edge work decides these.
-            state::Change::Edge { .. } => true,
+            state::Change::Edge { .. } | state::Change::DefaultEdge { .. } => true,
         });
         let (links, embeds, lines) = bound
             .map(|bound| {
@@ -1040,7 +1000,7 @@ impl Folder {
         } else {
             false
         };
-        let kept = Kept {
+        let mut kept = Kept {
             writes: bound.writes.clone(),
             bytes: true,
             blob: if bound.content_hash == file.hash {
@@ -1050,6 +1010,8 @@ impl Folder {
             },
             ..Kept::default()
         };
+        // Counted, as a document's is, so a refusal of an earlier save reads as stale.
+        kept.writes.save += i64::from(bound.content_hash != file.hash);
         self.bind_scanned(file, &held.id, Default::default(), Vec::new(), kept)?;
         Ok(queued)
     }

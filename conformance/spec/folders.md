@@ -690,6 +690,36 @@ When a new document or file item has no line for an edge type named by the defau
 
 **Tests:** `device/folders.test.ts › fills a new file's blanks from its defaults, never an edit's`.
 
+### `folders/default-edge-refused-held`
+
+If the device or the server refuses an edge that the defaults ask for on a new document or file item, then a device MUST show that file as refused in the folder's status, with a reason that names the edge type and the other item and says that writing that line in the file applies it.
+
+**Reason:** a default edge is written in no line of the file, so without a record against the file the refusal appears only in the report of the scan that made it, and the file reads as in step. The refusal holds no other file, and a pull still writes the item's changes into the file, since the file holds nothing the person made.
+
+**Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
+
+### `folders/default-edge-retried`
+
+While a file holds a default edge that the device refused and the defaults still name it, a device MUST judge the edge again at each scan and, where the device would now take it, queue the edge and clear the refusal.
+
+**Reason:** what the device refused the edge for, such as the edge type's endpoint constraints or the state of the other item, can change on another machine while the file stays as it was.
+
+**Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`.
+
+### `folders/default-edge-server-kept`
+
+While a file holds a default edge that the server refused, a device MUST NOT send that edge again before a later save of the file.
+
+**Reason:** the server's answer to the same write does not change by itself, so asking at each scan would repeat a refusal without end. A later save sends it once more, and a new refusal is held the same way.
+
+**Tests:** `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`.
+
+### `folders/default-edge-cleared`
+
+When a default edge's write is accepted, the file writes a line of the edge's type, the defaults stop naming the edge, or the file's item is gone or in the bin, a device MUST clear the file's refusal of that default edge.
+
+**Tests:** `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`, `device/folders-default-refused.test.ts › keeps a default the server refused, sends it again only after the file changes, and applies it once it is accepted`, `device/folders-default-refused.test.ts › clears when the person writes the line, and when the defaults stop naming the edge`.
+
 ### `folders/default-edit-unchanged`
 
 When a bound file is edited, a device MUST NOT fill its omitted values from the folder defaults.

@@ -141,9 +141,21 @@ pub struct Queued {
     /// refusal takes back only its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<i64>,
+    /// A default edge of the folder's settings, which no line of the file asks for.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default: bool,
 }
 
 impl Bound {
+    /// Whether the file holds a change the person made that was refused. A
+    /// refused default edge holds none: the file is as the server has it.
+    pub fn holds_refusal(&self) -> bool {
+        self.writes
+            .refused
+            .iter()
+            .any(|refused| !matches!(refused.change, Change::DefaultEdge { .. }))
+    }
+
     /// Whether a file item's file was last agreed at `blob`; `None` where the
     /// binding names no blob to tell by.
     pub fn agreed_blob(&self, blob: &str) -> Option<bool> {
@@ -181,6 +193,11 @@ pub enum Change {
         line: Line,
         shown: bool,
     },
+    /// An edge the folder's defaults ask for, refused. No line in the file
+    /// names it, so a line-based clean-up never judges it.
+    DefaultEdge {
+        line: Line,
+    },
 }
 
 impl Change {
@@ -191,7 +208,10 @@ impl Change {
                 Change::AddTag(tag) | Change::RemoveTag(tag),
                 Change::AddTag(was) | Change::RemoveTag(was),
             ) => tag == was,
-            (Change::Edge { line, .. }, Change::Edge { line: was, .. }) => line == was,
+            (Change::Edge { line, .. }, Change::Edge { line: was, .. })
+            | (Change::DefaultEdge { line, .. }, Change::DefaultEdge { line: was, .. }) => {
+                line == was
+            }
             _ => false,
         }
     }

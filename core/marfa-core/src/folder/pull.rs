@@ -475,7 +475,7 @@ impl Folder {
             // mend, so the file stays as they wrote it.
             if bound
                 .as_ref()
-                .is_some_and(|bound| bound.held.is_some() || !bound.writes.refused.is_empty())
+                .is_some_and(|bound| bound.held.is_some() || bound.holds_refusal())
             {
                 continue;
             }

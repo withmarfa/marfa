@@ -1,3 +1,4 @@
+mod default_edges;
 pub mod document;
 pub mod edge_types;
 mod elsewhere;
@@ -1892,6 +1893,7 @@ impl Folder {
                     },
                     _ => continue,
                 };
+                let change = default_edges::as_default(change, &bound, at);
                 // Left for the next drain that is not stopped to make the edge it asks for.
                 if moved.is_some() && gone_before_its_move(row) {
                     continue;
@@ -1918,12 +1920,15 @@ impl Folder {
                             }
                         }
                         let refused = state::Refused {
+                            reason: default_edges::reason_of(
+                                &change,
+                                match message {
+                                    Some(message) => format!("{code}: {message}"),
+                                    None => code,
+                                },
+                            ),
                             change,
                             save,
-                            reason: match message {
-                                Some(message) => format!("{code}: {message}"),
-                                None => code,
-                            },
                         };
                         if !bound.writes.refused.contains(&refused) {
                             bound.writes.refused.push(refused);
@@ -6020,6 +6025,212 @@ mod tests {
         assert_eq!(queued_kinds(&folder, WriteKind::CreateItem), 3);
         assert_eq!(refused_at(&again, "b.md").len(), 1, "{again:?}");
         assert!(refused_at(&again, "a.md").is_empty(), "{again:?}");
+    }
+
+    const FOLDER_ID: &str = "01a00000-0000-7000-8000-000000000001";
+
+    fn default_refusals(folder: &Folder, path: &str) -> Vec<state::Refused> {
+        state::bound_at(&folder.core.conn().unwrap(), path)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} is not bound"))
+            .writes
+            .refused
+            .into_iter()
+            .filter(|refused| matches!(refused.change, state::Change::DefaultEdge { .. }))
+            .collect()
+    }
+
+    fn status_of_file(folder: &Folder, path: &str) -> status::FileStatus {
+        folder
+            .status()
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.path == path)
+            .unwrap_or_else(|| panic!("no status for {path}"))
+    }
+
+    fn put_shelf(folder: &Folder, state: &str) {
+        crate::store::upsert_item(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_item(
+                BINNED_SHELF,
+                "core.collection",
+                state,
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": BINNED_SHELF }),
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+    }
+
+    fn edges_to(folder: &Folder, target: &str) -> usize {
+        folder
+            .core
+            .queue()
+            .unwrap()
+            .iter()
+            .filter(|row| {
+                row.kind == WriteKind::CreateEdge && row.target_id.as_deref() == Some(target)
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_default_edge_the_copy_refuses_stays_in_status_and_is_made_once_it_can_be() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        std::fs::write(dir.path().join("archive.bin"), [0x80_u8, 0x81, 0x82]).unwrap();
+        // A file that writes its own line is no blank, so it is refused nothing.
+        std::fs::write(
+            dir.path().join("own.md"),
+            format!("---\nin-collection: \"[[{SHELF}]]\"\n---\nown\n"),
+        )
+        .unwrap();
+        assert_eq!(folder.scan().unwrap().created, 3);
+
+        let before: Vec<Vec<u8>> = ["a.md", "archive.bin"]
+            .map(|path| std::fs::read(dir.path().join(path)).unwrap())
+            .into();
+        for _ in 0..2 {
+            for path in ["a.md", "archive.bin"] {
+                let refused = default_refusals(&folder, path);
+                assert_eq!(refused.len(), 1, "{path}: {refused:?}");
+                assert!(
+                    refused[0].reason.contains("item_not_found")
+                        && refused[0].reason.contains("in-collection")
+                        && refused[0].reason.contains(BINNED_SHELF)
+                        && refused[0].reason.contains("write that line in the file"),
+                    "{refused:?}"
+                );
+                let status = status_of_file(&folder, path);
+                assert_eq!(status.flag, Some("refused"), "{path}: {status:?}");
+                assert_eq!(status.reason.as_deref(), Some(refused[0].reason.as_str()));
+            }
+            // The witness: the file that wrote its own line holds nothing.
+            assert!(default_refusals(&folder, "own.md").is_empty());
+            assert_eq!(status_of_file(&folder, "own.md").flag, None);
+            // Still binned, so the scan only judges it again.
+            folder.scan().unwrap();
+        }
+        assert_eq!(edges_to(&folder, BINNED_SHELF), 0);
+
+        // Restored, the edge is made with no change to either file.
+        put_shelf(&folder, "active");
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, BINNED_SHELF), 2);
+        for path in ["a.md", "archive.bin"] {
+            assert!(default_refusals(&folder, path).is_empty(), "{path}");
+            assert_eq!(status_of_file(&folder, path).flag, None, "{path}");
+        }
+        let after: Vec<Vec<u8>> = ["a.md", "archive.bin"]
+            .map(|path| std::fs::read(dir.path().join(path)).unwrap())
+            .into();
+        assert_eq!(before, after);
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, BINNED_SHELF), 2);
+    }
+
+    #[test]
+    fn a_default_edge_refused_by_the_server_is_sent_again_only_after_the_file_changes() {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [SHELF] } }
+        }));
+        std::fs::write(dir.path().join("a.md"), "a note\n").unwrap();
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, SHELF), 1);
+        let refuse = |folder: &Folder| {
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE queue SET verdict = 'refused', reason = 'validation_error' WHERE kind = 'create_edge' AND verdict IS NULL",
+                    [],
+                )
+                .unwrap();
+            folder.hold_refused().unwrap();
+        };
+        refuse(&folder);
+        let held = default_refusals(&folder, "a.md");
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert!(held[0].reason.contains("validation_error"), "{held:?}");
+        assert_eq!(status_of_file(&folder, "a.md").flag, Some("refused"));
+        // Its bytes are the file's own: a pull is not kept from them.
+        let bound = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap();
+        assert!(!bound.holds_refusal());
+
+        // Nothing changed: the same refusal is not sent again.
+        for _ in 0..3 {
+            folder.scan().unwrap();
+        }
+        assert_eq!(edges_to(&folder, SHELF), 1);
+        assert_eq!(default_refusals(&folder, "a.md").len(), 1);
+
+        // Edited, it is sent once more, and held again if refused again.
+        std::fs::write(dir.path().join("a.md"), "a note, edited\n").unwrap();
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, SHELF), 2);
+        assert!(default_refusals(&folder, "a.md").is_empty());
+        refuse(&folder);
+        assert_eq!(default_refusals(&folder, "a.md").len(), 1);
+        folder.scan().unwrap();
+        folder.scan().unwrap();
+        assert_eq!(edges_to(&folder, SHELF), 2);
+    }
+
+    #[test]
+    fn a_refused_default_edge_is_cleared_by_a_line_in_the_file_or_by_defaults_that_stop_naming_it()
+    {
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": {},
+            "defaults": { "edges": { "in-collection": [BINNED_SHELF] } }
+        }));
+        for name in ["line.md", "settings.md"] {
+            std::fs::write(dir.path().join(name), "a note\n").unwrap();
+        }
+        folder.scan().unwrap();
+        for name in ["line.md", "settings.md"] {
+            assert_eq!(default_refusals(&folder, name).len(), 1, "{name}");
+        }
+
+        // The person writes the line themselves.
+        std::fs::write(
+            dir.path().join("line.md"),
+            format!("---\nin-collection: \"[[{SHELF}]]\"\n---\na note\n"),
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        assert!(default_refusals(&folder, "line.md").is_empty());
+        assert_eq!(default_refusals(&folder, "settings.md").len(), 1);
+
+        // The defaults stop naming it.
+        crate::store::upsert_item(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_item(
+                FOLDER_ID,
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "query": {}, "defaults": { "edges": { "in-collection": [SHELF] } } }),
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        folder.scan().unwrap();
+        assert!(default_refusals(&folder, "settings.md").is_empty());
+        assert_eq!(status_of_file(&folder, "settings.md").flag, None);
+        // The witness for both: nothing was made for the binned shelf.
+        assert_eq!(edges_to(&folder, BINNED_SHELF), 0);
     }
 
     #[test]
