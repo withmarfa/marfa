@@ -31,10 +31,10 @@ import { TEST_OWNER } from "../../utils/target.js";
  * with nothing holding the job (`instance/long-job-health`).
  *
  * **The witness is an order the target records.** Each case holds the job at
- * an early point and arms a second hold at a later step, dozens of the job's
- * turns further on. A `release` fault clears the first hold as the target
- * admits `GET /health`, so the request is already in the server when the job
- * resumes, and the fault records which holds had a caller waiting when that
+ * an early point and arms a second hold near its last step, so the job takes
+ * dozens of turns between the two. A `release` fault clears the first hold
+ * as the target admits `GET /health`, so the request is already in the
+ * server when the job resumes, and the fault records which holds had a caller waiting when that
  * request answered. The server runs each database statement synchronously,
  * so a job that does not hand the process to other requests between its
  * steps runs from the first hold to the second before `/health` can finish
@@ -96,22 +96,30 @@ async function heldWhenHealthAnswered(job: {
   /** Starts the job, and answers what checks its outcome once it may finish. */
   begin: () => Promise<() => Promise<void>>;
 }): Promise<string[]> {
-  const release = `release:${job.start.slice("hold:".length)}`;
-  await server.setFault(job.start);
-  await server.setFault(job.later);
-  const finish = await job.begin();
-  await server.waitForHold(job.start);
-  await health();
-  await server.setFault(release);
-  await health();
-  const recorded = (await server.faults()).find(
-    (fault) => fault.name === release,
-  );
-  expect(recorded?.fired, `${release} released the job`).toBe(1);
-  expect(recorded?.held_when_answered, "/health answered").toBeDefined();
-  await server.waitForHold(nameOf(job.later));
-  await server.clearFault();
-  await finish();
+  const release = `release:${nameOf(job.start).slice("hold:".length)}`;
+  let finish: (() => Promise<void>) | undefined;
+  let recorded: Awaited<ReturnType<FreshServer["faults"]>>[number] | undefined;
+  let finished = false;
+  try {
+    await server.setFault(job.start);
+    await server.setFault(job.later);
+    finish = await job.begin();
+    await server.waitForHold(nameOf(job.start));
+    await health();
+    await server.setFault(release);
+    await health();
+    recorded = (await server.faults()).find((fault) => fault.name === release);
+    expect(recorded?.fired, `${release} released the job`).toBe(1);
+    expect(recorded?.held_when_answered, "/health answered").toBeDefined();
+    await server.waitForHold(nameOf(job.later));
+    await server.clearFault();
+    await finish();
+    finished = true;
+  } finally {
+    // A failed case leaves no hold armed for the next, and its job ends.
+    await server.clearFault();
+    if (!finished && finish !== undefined) await finish().catch(() => {});
+  }
   return recorded?.held_when_answered ?? [];
 }
 
@@ -165,7 +173,7 @@ describe("GET /health while a long job runs", () => {
     // One item on the first page and sixteen on each after it.
     const held = await heldWhenHealthAnswered({
       start: "hold:read-hydration",
-      later: "hold:export-page=100",
+      later: "hold:export-page=240",
       begin: async () => {
         const exporting = fetch(`${server.apiUrl}/export`, {
           headers: { authorization: `Bearer ${server.workingKey}` },
@@ -190,7 +198,7 @@ describe("GET /health while a long job runs", () => {
     // Twenty-five items a page.
     const held = await heldWhenHealthAnswered({
       start: "hold:read-hydration",
-      later: "hold:export-page=100",
+      later: "hold:export-page=150",
       begin: async () => {
         const exporting = working().exportArchive();
         return async () => {
@@ -201,11 +209,11 @@ describe("GET /health while a long job runs", () => {
     expect(held).toEqual([]);
   }, 600_000);
 
-  it("is answered between placing an archive restore's blobs and committing its rows", async () => {
-    // The restore places the archive's blob before it writes a row, and
-    // waits with every row written before it commits.
+  it("is answered between the first and the last row of an archive restore", async () => {
+    // The job waits before the first row, once the blob is placed, and
+    // again with every row written, before it commits.
     const held = await heldWhenHealthAnswered({
-      start: "hold:blob-write",
+      start: "hold:restore:item=1",
       later: "hold:restore:before-commit",
       begin: async () => {
         const source = `${TAG}-restore-${uuidv7()}`;
@@ -233,7 +241,7 @@ describe("GET /health while a long job runs", () => {
     // A hundred items a chunk.
     const held = await heldWhenHealthAnswered({
       start: HOLD.claimed,
-      later: `${HOLD.betweenChunks}=10`,
+      later: `${HOLD.betweenChunks}=38`,
       begin: async () => {
         const id = await queue(working(), {
           action: "update_properties",
@@ -350,8 +358,8 @@ describe("GET /health while a long job runs", () => {
 
     const held = await heldWhenHealthAnswered({
       start: `hold:housekeeping:${job}`,
-      // Each grant's retirement is a write of its own, after a turn.
-      later: `hold:write=${action}@30`,
+      // Each grant's retirement is a write of its own, after a turn: the last.
+      later: `hold:write=${action}@60`,
       begin: async () => {
         // The move makes the job due, and the scheduler may start it before
         // this request does: either run waits at the hold.

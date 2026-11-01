@@ -84,6 +84,7 @@ export const POINTS: {
     { name: "housekeeping:<job>", arg: "none" },
     { name: "version-thinning:item", arg: "none" },
     { name: "blob-orphans:purge", arg: "none" },
+    { name: "restore:item", arg: "every-or-nth" },
     { name: "restore:before-commit", arg: "none" },
     { name: "stream-open", arg: "none" },
     { name: "stream-head", arg: "none" },
