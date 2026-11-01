@@ -27,6 +27,13 @@ const PasskeySchema = z
       .string()
       .describe("When the passkey was registered, in UTC.")
       .openapi({ example: "2026-10-03T09:30:00.000Z" }),
+    last_used_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When the passkey last signed the owner in, in UTC, to the second, or `null` if no use is recorded.",
+      )
+      .openapi({ example: "2026-10-05T14:12:08.000Z" }),
   })
   .describe("An owner's registered passkey, without credential material.")
   .openapi("OwnerPasskey");
@@ -146,6 +153,7 @@ function wire(row: OwnerPasskey) {
     id: row.id,
     name: row.name,
     created_at: row.createdAt.toISOString(),
+    last_used_at: row.lastUsedAt?.toISOString() ?? null,
   };
 }
 export function ownerPasskeyRoutes(storage: Storage, auth: MarfaAuth) {

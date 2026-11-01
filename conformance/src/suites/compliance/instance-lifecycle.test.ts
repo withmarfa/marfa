@@ -31,7 +31,10 @@ import {
   type RefusedBoot,
   type ServerExit,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  passkeysBeforeLastUse,
+  withInstanceDatabase,
+} from "../../utils/instance-database.js";
 import {
   listened,
   refusalText,
@@ -1114,14 +1117,15 @@ describe("starting on a database another build wrote", () => {
 /**
  * Turns a stopped database of this build into one at schema version 1, as
  * the releases before the `type_icons` table wrote it: the same tables but
- * that one, `source_names`, `trash_with_hosts` and the bin-order index, with
- * the version stamped.
+ * that one, `source_names`, `trash_with_hosts`, the bin-order index and a
+ * passkey's last use, with the version stamped.
  */
 function asVersionOne(db: Database): void {
   db.exec("DROP TABLE type_icons");
   db.exec("DROP TABLE source_names");
   db.exec("DROP TABLE trash_with_hosts");
   db.exec("DROP INDEX idx_items_state_binned_at");
+  passkeysBeforeLastUse(db);
   db.exec("PRAGMA user_version = 1");
 }
 

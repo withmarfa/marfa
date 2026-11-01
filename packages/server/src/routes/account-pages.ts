@@ -10,6 +10,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { requireOwnerSession } from "../auth/instance-claim.js";
 import { browserSignInName } from "../auth/sign-in-names.js";
+import * as clock from "../clock.js";
 import { readInstanceName } from "../instance-name.js";
 import type { Storage } from "../storage/interface.js";
 import { CONSOLE_PAGES } from "./console.js";
@@ -148,7 +149,9 @@ export function accountPages(storage: Storage, auth: MarfaAuth) {
           id: passkey.id,
           name: passkey.name,
           added: passkey.createdAt,
+          lastUsed: passkey.lastUsedAt,
         })),
+        now: clock.nowMs(),
         suggestedName: suggestedPasskeyName(
           c.req.header("user-agent") ?? null,
           passkeys.map((passkey) => passkey.name),

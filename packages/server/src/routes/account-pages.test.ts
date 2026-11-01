@@ -26,6 +26,7 @@ const password = (
     nonce: "abc123",
     instanceName: "Marfa",
     passkeys,
+    now: Date.parse("2026-10-12T12:00:00.000Z"),
     suggestedName: more.suggestedName ?? "Safari on macOS",
     addressProblem: more.addressProblem ?? false,
   });
@@ -35,8 +36,14 @@ const TWO = [
     id: "pk-one",
     name: "Safari on macOS",
     added: new Date("2026-10-03T09:30:00.000Z"),
+    lastUsed: new Date("2026-10-09T08:00:00.000Z"),
   },
-  { id: "pk-two", name: null, added: new Date("2026-10-09T23:45:00.000Z") },
+  {
+    id: "pk-two",
+    name: null,
+    added: new Date("2026-10-09T23:45:00.000Z"),
+    lastUsed: null,
+  },
 ];
 
 describe("the Profile page", () => {
@@ -161,7 +168,12 @@ describe("the Password and passkeys page", () => {
       expect(
         out.match(new RegExp(`data-passkey-id="${id}"`, "g")),
       ).toHaveLength(2);
-    expect(text).not.toMatch(/last used/i);
+  });
+
+  it("says when each passkey was last used, and that none is recorded for the other", () => {
+    const text = visibleText(password(TWO));
+    expect(text).toContain("Last used 3 days ago");
+    expect(text).toContain("No use recorded");
   });
 
   it("writes each date as a time element, with the UTC date for a browser that cannot localize it", () => {
@@ -189,8 +201,8 @@ describe("the Password and passkeys page", () => {
 
   it("escapes a passkey's name and keeps a long one from breaking the page", () => {
     const out = password([
-      { id: "pk-one", name: HOSTILE, added: new Date(0) },
-      { id: "pk-two", name: LONG_UNBROKEN, added: new Date(0) },
+      { id: "pk-one", name: HOSTILE, added: new Date(0), lastUsed: null },
+      { id: "pk-two", name: LONG_UNBROKEN, added: new Date(0), lastUsed: null },
     ]);
     expect(out).not.toContain("<script>window.__injected");
     expect(out).not.toContain("<b>bold</b>");

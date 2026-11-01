@@ -605,6 +605,7 @@ describe("the instance from the terminal", () => {
       id: string;
       name: string | null;
       created_at: string;
+      last_used_at: string | null;
     }
     try {
       const listed = await local.json<{ data: Passkey[]; next_cursor: null }>([
@@ -614,7 +615,12 @@ describe("the instance from the terminal", () => {
       ]);
       expect(listed.next_cursor).toBeNull();
       const held = listed.data.find((row) => row.id === id);
-      expect(held).toEqual({ id, name, created_at: expect.any(String) });
+      expect(held).toEqual({
+        id,
+        name,
+        created_at: expect.any(String),
+        last_used_at: null,
+      });
       const plain = await local.run(["owner", "passkeys", "list"]);
       expect(plain.code).toBe(0);
       expect(plain.stdout).toContain(

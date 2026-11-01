@@ -198,6 +198,7 @@ describe("owner passkeys", () => {
     expect(Object.keys(renamed.body).sort()).toEqual([
       "created_at",
       "id",
+      "last_used_at",
       "name",
     ]);
     for (const name of [
@@ -411,6 +412,63 @@ describe("owner passkeys", () => {
     expect((await signIn(first, 3)).status).toBe(200);
     expect((await post("/auth/sign-in/email", owner)).status).toBe(429);
   });
+  it("records the last use of only the passkey that signed in, and only when it signed in", async () => {
+    const used = testAuthenticator(),
+      idle = testAuthenticator();
+    const usedId = (await register(used, "Used")).id;
+    const idleId = (await register(idle, "Idle")).id;
+    const lastUsed = async () => {
+      const list = await fetch(server.url + "/owner/passkeys", {
+        headers: { origin: server.url, cookie: ownerCookie },
+      });
+      expect(list.status).toBe(200);
+      const { data } = (await list.json()) as {
+        data: { id: string; last_used_at: string | null }[];
+      };
+      return Object.fromEntries(
+        data
+          .filter((row) => row.id === usedId || row.id === idleId)
+          .map((row) => [
+            row.id === usedId ? "used" : "idle",
+            row.last_used_at,
+          ]),
+      );
+    };
+    expect(await lastUsed()).toEqual({ used: null, idle: null });
+
+    const challenge = await options("authenticate");
+    const forged = testAuthenticator().authentication(
+      challenge.body.challenge,
+      server.url,
+      1,
+      new URL(server.url).hostname,
+    );
+    forged.id = forged.rawId = used.id;
+    const refused = await post(
+      "/auth/passkey/verify-authentication",
+      { response: forged },
+      challenge.cookie,
+    );
+    expect(refused.status).toBe(401);
+    expect(await lastUsed()).toEqual({ used: null, idle: null });
+
+    const from = Math.floor(Date.now() / 1000) * 1000;
+    expect((await signIn(used, 1)).status).toBe(200);
+    const after = await lastUsed();
+    expect(after.idle).toBeNull();
+    const at = Date.parse(String(after.used));
+    expect(at).toBeGreaterThanOrEqual(from);
+    expect(at).toBeLessThanOrEqual(Date.now());
+
+    for (const id of [usedId, idleId])
+      expect(
+        (
+          await controlRequest(server.controlSocket, "/owner/passkeys/" + id, {
+            method: "DELETE",
+          })
+        ).status,
+      ).toBe(200);
+  });
   it(
     "preserves individual removal and other passkeys across restart",
     async () => {
@@ -448,6 +506,7 @@ describe("owner passkeys", () => {
             id: secondId,
             name: "Persistent second",
             created_at: expect.any(String),
+            last_used_at: expect.any(String),
           },
         ],
         next_cursor: null,

@@ -5909,6 +5909,11 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
+            /**
+             * @description When the passkey last signed the owner in, in UTC, to the second, or `null` if no use is recorded.
+             * @example 2026-10-05T14:12:08.000Z
+             */
+            last_used_at: string | null;
         };
         /** @description An error response. */
         PasskeyNotFoundRefusal: {

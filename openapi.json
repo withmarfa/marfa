@@ -9180,12 +9180,21 @@
             "type": "string",
             "description": "When the passkey was registered, in UTC.",
             "example": "2026-10-03T09:30:00.000Z"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the passkey last signed the owner in, in UTC, to the second, or `null` if no use is recorded.",
+            "example": "2026-10-05T14:12:08.000Z"
           }
         },
         "required": [
           "id",
           "name",
-          "created_at"
+          "created_at",
+          "last_used_at"
         ],
         "description": "An owner's registered passkey, without credential material."
       },

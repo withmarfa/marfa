@@ -79,7 +79,14 @@ it("lists safe unnamed credentials, renames and removes through browser and loca
     next_cursor: null;
   };
   expect(body).toEqual({
-    data: [{ id: row.id, name: null, created_at: expect.any(String) }],
+    data: [
+      {
+        id: row.id,
+        name: null,
+        created_at: expect.any(String),
+        last_used_at: null,
+      },
+    ],
     next_cursor: null,
   });
   const rename = await ctx.request(`/owner/passkeys/${row.id}`, "PATCH", {
