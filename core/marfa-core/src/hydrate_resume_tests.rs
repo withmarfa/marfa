@@ -157,8 +157,8 @@ fn the_rest(server: &Scripted, events: Vec<String>, live: &str) {
     );
 }
 
-/// A server that answers a `limit` above 200 with 200 rows still fills a
-/// copy, because the fill follows `next_cursor` and never counts on a full
+/// A server that answers fewer rows than the `limit` it was sent still fills
+/// a copy, because the fill follows `next_cursor` and never counts on a full
 /// page.
 #[test]
 fn a_hydration_fills_from_a_server_that_answers_fewer_rows_than_it_asked() {
