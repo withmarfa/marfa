@@ -1144,9 +1144,9 @@ When an event says a pinned row was purged, a device MUST take the pin off.
 
 ### `device/deleted-stays-gone`
 
-While the server has accepted a purge or a view's delete that this device sent, and the device has neither read the event of that removal nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the row.
+While this device holds the server's acceptance of a purge or a view's delete that it sent, and has neither read the event of that removal nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the row.
 
-**Reason:** the event of a change made before the removal can still be ahead of the cursor when the answer arrives, and applied as it stands it puts the removed row back, since nothing is left in the copy to compare its version with. The removal's own event ends the rule, so a row made later under the same id still enters, and a fill from the first page reads what the server holds.
+**Reason:** the event of a change made before the removal can still be ahead of the cursor when the answer arrives, and applied as it stands it puts the removed row back, since nothing is left in the copy to compare its version with. The removal's own event ends the rule, so a row made later under the same id still enters, and a fill from the first page reads what the server holds. A device whose answer was lost never took the row out, so it has nothing to keep out.
 
 **Tests:** `device/deleted-stays-gone.test.ts › keeps the row out through an older event read after the purge`, `› shows a row made again under the id once the purge's event is read`.
 
@@ -1160,7 +1160,7 @@ While a device keeps a row out under `device/deleted-stays-gone`, a device MUST 
 
 ### `device/deleted-edge-stays-gone`
 
-While the server has accepted an edge delete that this device sent, or refused it because it holds no such edge, and the device has neither read the event of that delete nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the edge.
+While this device holds the server's acceptance of an edge delete that it sent, or its refusal because it holds no such edge, and has neither read the event of that delete nor filled the copy again from the first page, a device MUST NOT apply an event that adds or changes the edge.
 
 **Reason:** as for a row, an older event still ahead of the cursor would put the deleted edge back. A refusal because the edge is already gone means another delete took it, and that delete's event ends the rule as this one's would.
 
