@@ -1409,6 +1409,35 @@ impl Catalog {
         )
     }
 
+    /// The name and preview of the item `id`, a part named after its host
+    /// where `types/item-name-part` names it: the copy holds a host out of
+    /// the bin, which it takes as readable, and the item's own title-like
+    /// fields hold no text. A host with no name is `Untitled`, as the
+    /// server names it (`types/item-name-empty`).
+    pub(crate) fn display_held(
+        &self,
+        conn: &Connection,
+        id: &str,
+        type_id: &str,
+        properties: &Map<String, Value>,
+    ) -> Result<ItemDisplay, CoreError> {
+        if crate::display::title_name(properties, self.title_field(type_id)).is_none()
+            && let Some(host) = store::part_host(conn, id)?
+        {
+            let host_name = self
+                .display(&host.r#type, &host.properties)
+                .name
+                .unwrap_or_else(|| "Untitled".into());
+            return Ok(crate::display::part_display(
+                properties,
+                self.body_field(type_id),
+                &host.label,
+                &host_name,
+            ));
+        }
+        Ok(self.display(type_id, properties))
+    }
+
     /// `shown`, naming why the properties are empty where the read kept a
     /// row whose stored properties it could not read.
     pub fn shown_unreadable(&self, item: &Item, unreadable: &Unreadable) -> Shown {

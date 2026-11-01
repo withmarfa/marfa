@@ -38,6 +38,8 @@ mod js;
 mod lock;
 mod model;
 mod names;
+#[cfg(test)]
+mod part_names_tests;
 mod priority;
 mod query;
 mod reach;
@@ -3146,12 +3148,19 @@ impl Core {
     /// display hints in the catalog the copy holds; read from the copy
     /// alone. A type the catalog does not hold has no hints, so its items
     /// are named by the fallback fields.
-    pub fn item_displays(&self, items: &[(&str, &Map<String, Value>)]) -> Result<Vec<ItemDisplay>> {
-        let catalog = catalog::Catalog::load(&*self.conn()?)?;
-        Ok(items
+    pub fn item_displays(
+        &self,
+        items: &[(Option<&str>, &str, &Map<String, Value>)],
+    ) -> Result<Vec<ItemDisplay>> {
+        let conn = self.conn()?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        items
             .iter()
-            .map(|(item_type, properties)| catalog.display(item_type, properties))
-            .collect())
+            .map(|(id, item_type, properties)| match id {
+                Some(id) => catalog.display_held(&conn, id, item_type, properties),
+                None => Ok(catalog.display(item_type, properties)),
+            })
+            .collect()
     }
 
     /// Every edge type the copy holds, by id, read from the copy alone.

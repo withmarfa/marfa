@@ -673,7 +673,7 @@ export class BindingDevice {
 
   /** Each item's name and preview text, in order, by the copy's catalog alone. */
   itemDisplays(
-    items: { type: string; properties: Record<string, unknown> }[],
+    items: { type: string; properties: Record<string, unknown>; id?: string }[],
   ): Call<BindingItemDisplay[]> {
     return this.call("itemDisplays", items);
   }

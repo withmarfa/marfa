@@ -3663,6 +3663,49 @@ pub fn type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> 
 }
 
 /// Each edge type as `(id, json)`, by id.
+/// The host a part is named after (`types/item-name-part`).
+pub(crate) struct PartHost {
+    /// The label of the edge's type.
+    pub label: String,
+    pub r#type: String,
+    pub properties: Map<String, Value>,
+}
+
+/// The target of the oldest edge of a `with-hosts` type that `id` draws, by
+/// `created_at` and then id, among the targets the copy holds out of the
+/// bin. The mode is read from the held catalog, so a registered type counts.
+pub(crate) fn part_host(conn: &Connection, id: &str) -> Result<Option<PartHost>, CoreError> {
+    let found: Option<(String, String, String)> = conn
+        .prepare_cached(
+            "SELECT t.json, h.type, h.properties
+               FROM edges e
+               JOIN edge_types t ON t.id = e.edge_type
+               JOIN items h ON h.id = e.target_id
+              WHERE e.source_id = ?1
+                AND CASE WHEN json_valid(t.json)
+                    THEN json_extract(t.json, '$.cascade_on_delete') END = 'with-hosts'
+                AND h.state <> 'trashed'
+              ORDER BY e.created_at, e.id
+              LIMIT 1",
+        )?
+        .query_row([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .optional()?;
+    let Some((edge_type, r#type, properties)) = found else {
+        return Ok(None);
+    };
+    let label = serde_json::from_str::<crate::wire::WireEdgeType>(&edge_type)
+        .map_err(|error| CoreError::Store(format!("a held edge type: {error}")))?
+        .label();
+    // A host whose stored properties cannot be read is named as one with
+    // none, as the server names it.
+    let properties = serde_json::from_str(&properties).unwrap_or_default();
+    Ok(Some(PartHost {
+        label,
+        r#type,
+        properties,
+    }))
+}
+
 pub fn edge_type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
     rows_of(conn, "SELECT id, json FROM edge_types ORDER BY id")
 }

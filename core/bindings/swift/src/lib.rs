@@ -116,11 +116,14 @@ pub struct Item {
     pub unreadable_properties: Option<String>,
 }
 
-/// An item to name and preview: its type and properties.
+/// An item to name and preview: its type and properties, and its id where
+/// the copy may hold it, so a part is named after its host.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemDisplayInput {
     pub r#type: String,
     pub properties: JsonObject,
+    #[uniffi(default = None)]
+    pub id: Option<String>,
 }
 
 /// How a device shows an item: its name and a line of preview text, each
@@ -2601,18 +2604,20 @@ impl Core {
     }
 
     /// The name and preview text of each item, in order, by the copy's
-    /// catalog alone. An unknown type is named by the fallback fields.
+    /// catalog alone. An unknown type is named by the fallback fields. An
+    /// item given with its id is named after its host where it is a part
+    /// the copy holds a host for.
     pub fn item_displays(
         &self,
         items: Vec<ItemDisplayInput>,
     ) -> Result<Vec<ItemDisplay>, MarfaError> {
         let items = items
             .into_iter()
-            .map(|item| Ok((item.r#type, item.properties.into_map()?)))
+            .map(|item| Ok((item.id, item.r#type, item.properties.into_map()?)))
             .collect::<Result<Vec<_>, MarfaError>>()?;
         let items: Vec<_> = items
             .iter()
-            .map(|(item_type, properties)| (item_type.as_str(), properties))
+            .map(|(id, item_type, properties)| (id.as_deref(), item_type.as_str(), properties))
             .collect();
         Ok(self
             .inner
@@ -3912,6 +3917,7 @@ mod tests {
         let item = |r#type: &str, properties: JsonObject| ItemDisplayInput {
             r#type: r#type.into(),
             properties,
+            id: None,
         };
         let shown = core
             .item_displays(vec![
