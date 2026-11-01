@@ -4,7 +4,7 @@ import type {
   ReadableSpan,
   Span,
   SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import * as clock from "../clock.js";
 
 /**

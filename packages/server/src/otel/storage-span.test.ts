@@ -1,11 +1,12 @@
-import { SpanKind, trace } from "@opentelemetry/api";
+import { SpanKind, context, trace } from "@opentelemetry/api";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
+  TracerProvider,
   type ReadableSpan,
-} from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+} from "@opentelemetry/sdk-trace";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InStatement } from "@libsql/client";
 import {
@@ -49,14 +50,15 @@ vi.mock("@libsql/client", async (importOriginal) => {
 const CANARY = "canary-content-6b3f0d92";
 
 const exporter = new InMemorySpanExporter();
-const provider = new NodeTracerProvider({
+const provider = new TracerProvider({
   // The same order the server registers them in: redact, then export.
   spanProcessors: [
     new PiiRedactionSpanProcessor(),
-    new SimpleSpanProcessor(exporter),
+    new SimpleSpanProcessor({ exporter }),
   ],
 });
-provider.register();
+context.setGlobalContextManager(new AsyncLocalStorageContextManager());
+trace.setGlobalTracerProvider(provider);
 
 afterEach(() => {
   exporter.reset();
@@ -65,6 +67,7 @@ afterEach(() => {
 afterAll(async () => {
   await provider.shutdown();
   trace.disable();
+  context.disable();
 });
 
 function inRequest<T>(run: () => Promise<T>): Promise<T> {

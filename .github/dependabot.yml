@@ -64,6 +64,12 @@ updates:
       - dependency-name: "@libsql/client"
         versions:
           - "0.18.x"
+      # From 1.64, a form post answered with a 204 leaves Playwright waiting
+      # for a navigation that never ends, which stalls the next action in the
+      # approval page's browser test that stubs a decision that way.
+      - dependency-name: "playwright-core"
+        versions:
+          - ">=1.64.0"
       # Two esbuild advisories that no published version can satisfy, both
       # reached only through a parent that pins the vulnerable line.
       #

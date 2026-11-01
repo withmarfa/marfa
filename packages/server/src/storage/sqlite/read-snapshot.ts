@@ -136,6 +136,8 @@ export function readSnapshotRunner(captureRead: CaptureRead) {
             );
           return results;
         },
+        // Implementing the interface includes its deprecated no-argument overload.
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
         transaction: refuse,
         executeMultiple: refuse,
         migrate: refuse,

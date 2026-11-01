@@ -23,7 +23,7 @@
   "devDependencies": {
     "@iconify-json/lucide": "1.2.149",
     "@iconify-json/simple-icons": "1.2.101",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"

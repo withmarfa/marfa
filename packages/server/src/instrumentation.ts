@@ -166,16 +166,20 @@ async function start(): Promise<void> {
 
   // ---- Traces ----
   const [
-    { NodeTracerProvider },
-    { AlwaysOnSampler, BatchSpanProcessor },
+    { AlwaysOnSampler, BatchSpanProcessor, TracerProvider },
+    { AsyncLocalStorageContextManager },
+    { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator },
+    { context, propagation, trace },
     { OTLPTraceExporter },
     { registerInstrumentations },
     { HttpInstrumentation },
     { PiiRedactionSpanProcessor, PiiRedactionLogRecordProcessor },
     { BATCH_QUEUE_SIZE, ErrorBucketFilterSpanProcessor },
   ] = await Promise.all([
-    import("@opentelemetry/sdk-trace-node"),
-    import("@opentelemetry/sdk-trace-base"),
+    import("@opentelemetry/sdk-trace"),
+    import("@opentelemetry/context-async-hooks"),
+    import("@opentelemetry/core"),
+    import("@opentelemetry/api"),
     import("@opentelemetry/exporter-trace-otlp-http"),
     import("@opentelemetry/instrumentation"),
     import("@opentelemetry/instrumentation-http"),
@@ -183,7 +187,7 @@ async function start(): Promise<void> {
     import("./otel/error-aware-sampler.js"),
   ]);
 
-  const tracerProvider = new NodeTracerProvider({
+  const tracerProvider = new TracerProvider({
     resource,
     sampler: new AlwaysOnSampler(),
     spanProcessors: [
@@ -191,20 +195,32 @@ async function start(): Promise<void> {
       // span passes through both, the storage spans among them.
       new PiiRedactionSpanProcessor(),
       new ErrorBucketFilterSpanProcessor(
-        new BatchSpanProcessor(
-          realTimeExporter(
+        new BatchSpanProcessor({
+          exporter: realTimeExporter(
             new OTLPTraceExporter({
               url: tracesEndpoint,
               headers: otel.tracesHeaders,
             }),
           ),
-          { maxQueueSize: BATCH_QUEUE_SIZE },
-        ),
+          maxQueueSize: BATCH_QUEUE_SIZE,
+        }),
         sampleRatio,
       ),
     ],
   });
-  tracerProvider.register();
+  // The tracer provider holds neither a context manager nor a propagator,
+  // so a span finds its parent and an inbound trace header is read only
+  // through the two registered here.
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager());
+  propagation.setGlobalPropagator(
+    new CompositePropagator({
+      propagators: [
+        new W3CTraceContextPropagator(),
+        new W3CBaggagePropagator(),
+      ],
+    }),
+  );
+  trace.setGlobalTracerProvider(tracerProvider);
   registerInstrumentations({
     instrumentations: [
       // PII discipline: never lift request/response headers onto span

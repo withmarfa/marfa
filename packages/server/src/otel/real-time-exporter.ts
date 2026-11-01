@@ -1,4 +1,4 @@
-import type { SpanExporter } from "@opentelemetry/sdk-trace-base";
+import type { SpanExporter } from "@opentelemetry/sdk-trace";
 import * as clock from "../clock.js";
 
 interface Exporter<T> {

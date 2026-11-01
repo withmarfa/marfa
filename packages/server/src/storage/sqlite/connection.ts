@@ -350,6 +350,8 @@ function waitingForTheLock(url: string): {
         }),
       ),
     migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
+    // Implementing the interface includes its deprecated no-argument overload.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     transaction: (mode: TransactionMode = "write") =>
       untilNotBusy(() => transactions.begin(mode)),
     executeMultiple: (sql) =>
