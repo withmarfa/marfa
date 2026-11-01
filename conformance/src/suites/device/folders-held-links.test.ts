@@ -116,6 +116,35 @@ function lookups(): number {
   ).length;
 }
 
+/** Writes `first`, pushes, then writes `then` and pushes again: A.md
+ *  links B.md in its body, and B.md names A.md as its parent. */
+async function twoPasses(first: "A.md" | "B.md", then: "A.md" | "B.md") {
+  await seed();
+  const text = {
+    "A.md": "See [[B]].\n",
+    // A child naming a parent not yet created.
+    "B.md": '---\nchild-of: "[[A]]"\n---\nB\n',
+  };
+  put(first, text[first]);
+  const held = await push();
+  expect(held.created, "a document was held back for its link").toBe(1);
+  expect(held.flagged.map((file) => [file.path, file.flag])).toEqual([
+    [first, "edges"],
+  ]);
+
+  put(then, text[then]);
+  const resolved = await push();
+  expect(resolved.created).toBe(1);
+  expect(resolved.flagged).toEqual([]);
+  const [a, b] = [created("A"), created("B")];
+  expect(edges()).toEqual(
+    [`create ${a} parent-of ${b}`, `create ${a} references ${b}`].sort(),
+  );
+  for (const path of ["A.md", "B.md"]) {
+    expect((await fileAt(path)).status, path).not.toBe("held");
+  }
+}
+
 describe("links held until their target exists", () => {
   it("resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet", async () => {
     await seed();
@@ -183,37 +212,13 @@ describe("links held until their target exists", () => {
     );
   });
 
-  for (const [first, then] of [
-    ["A.md", "B.md"],
-    ["B.md", "A.md"],
-  ] as const) {
-    it(`creates and links two documents that link each other, ${first} written a pass before ${then}`, async () => {
-      await seed();
-      const text: Record<string, string> = {
-        "A.md": "See [[B]].\n",
-        // A child naming a parent not yet created.
-        "B.md": '---\nchild-of: "[[A]]"\n---\nB\n',
-      };
-      put(first, text[first]!);
-      const held = await push();
-      expect(held.created, "a document was held back for its link").toBe(1);
-      expect(held.flagged.map((file) => [file.path, file.flag])).toEqual([
-        [first, "edges"],
-      ]);
+  it("creates and links two documents that link each other, A.md written a pass before B.md", async () => {
+    await twoPasses("A.md", "B.md");
+  });
 
-      put(then, text[then]!);
-      const resolved = await push();
-      expect(resolved.created).toBe(1);
-      expect(resolved.flagged).toEqual([]);
-      const [a, b] = [created("A"), created("B")];
-      expect(edges()).toEqual(
-        [`create ${a} parent-of ${b}`, `create ${a} references ${b}`].sort(),
-      );
-      for (const path of ["A.md", "B.md"]) {
-        expect((await fileAt(path)).status, path).not.toBe("held");
-      }
-    });
-  }
+  it("creates and links two documents that link each other, B.md written a pass before A.md", async () => {
+    await twoPasses("B.md", "A.md");
+  });
 
   it("never guesses between two items of one name, and resolves once one goes to the bin", async () => {
     const one = note(1, "Same");
