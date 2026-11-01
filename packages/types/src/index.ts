@@ -33,6 +33,7 @@ export type { IconSet } from "./icon-sets.js";
 export { ICON_SETS, lucideIconId } from "./icon-sets.js";
 
 export type {
+  InheritedShapeConflict,
   SchemaValidationIssue,
   TypeSchemaValidationResult,
 } from "./schema-validation.js";
@@ -52,6 +53,7 @@ export {
   isRoleConstraint,
   normalizeEdgeProperties,
   roleFromConstraint,
+  storedShapeConflicts,
   unreadKeys,
   validateTypeSchema,
 } from "./schema-validation.js";

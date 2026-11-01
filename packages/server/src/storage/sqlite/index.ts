@@ -48,6 +48,7 @@ import {
   reportSeedCollisions,
 } from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
+import { reportTypeShapeConflicts } from "../type-shape-conflicts.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
 import {
   computeRetiredPlatformTypes,
@@ -174,6 +175,7 @@ export async function createSqliteStorage(
     edges: unshadowedEdgeTypeRegistrations(loadedEdgeTypes),
   });
   reportEdgeNameCollisions(edgeNameCollisions());
+  reportTypeShapeConflicts();
 
   const runInReadSnapshot = readSnapshotRunner(captureRead);
   const storage = {

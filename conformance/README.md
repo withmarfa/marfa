@@ -204,6 +204,24 @@ value passed for one replaces its own:
 - `MARFA_TEST_HOOKS` true, except for a boot told to run as `production`
   (`--node-env production`), which would be refused for it.
 
+### Stopping a server nobody stopped
+
+A booted server stops by itself, with the process that supervises it, when its
+state directory or its working directory no longer exists, and when no request
+has reached it for 30 minutes. The supervisor checks every 30 seconds, sends the
+server's process group `SIGTERM` as `down` does, and `SIGKILL` 20 seconds later
+if the group is still there. These two environment variables change the limits.
+Set them in the environment of the process that runs `up`, or pass them with
+`--env`, since the supervisor starts with the server's environment:
+
+| Variable                      | Default   | Meaning                                                   |
+| ----------------------------- | --------- | --------------------------------------------------------- |
+| `CONFORMANCE_SERVER_IDLE_MS`  | `1800000` | Time without a request before the stop. `0` turns it off. |
+| `CONFORMANCE_SERVER_WATCH_MS` | `30000`   | Time between checks.                                      |
+
+A request is a log line with a `request_id`, so the server's own background
+lines do not count as activity.
+
 ### The clock
 
 `clock pause` stops the system-time component at its current instant; `clock advance` still moves that paused clock by exactly the requested step. The process's `Date` follows the paused clock too; work wrapped in `withRealTime` remains on real time. Timers and monotonic deadlines continue on real time. `clock resume` and a restart catch up with the system clock while retaining the accumulated offset. Both pause and resume print a JSON object with `now` and `offset_ms`. Pause is process-local and is not restored on restart. The private `POST /_control/test/clock` hook accepts either `{ "advance_ms": <ms> }` or `{ "paused": <boolean> }`.

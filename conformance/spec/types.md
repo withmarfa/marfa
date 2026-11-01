@@ -398,6 +398,32 @@ The server MUST hold an item of a registered type to the lifecycle of `items/tra
 
 **Tests:** `compliance/types.test.ts › items of a custom type follow the universal lifecycle`.
 
+### `types/conflict-listed`
+
+While a registered type declares a field in a shape `types/child-shape` refuses against a type in its chain, when a caller sends `GET /types`, the server MUST give that type's entry a `conflicts` list with one entry for the field, naming its `field`, the first `attribute` that differs, the type `inherited_from`, and what that type gives (`inherited`) and the registered type declares (`declared`).
+
+**Reason:** a build that ships a field on a type can leave a registered type below it in conflict, a state the registration doors refuse (`types/child-shape`) and so cannot produce. The owner sees which types need their source to change before that source registers them again and meets the refusal.
+
+**Tests:** `compliance/type-conflicts.test.ts › lists the field it declares in another shape, and nothing for a type that agrees`.
+
+### `types/conflict-absent`
+
+While no field of a registered type conflicts with a type in its chain, the server MUST omit `conflicts` from that type's entry in `GET /types`.
+
+**Tests:** `compliance/type-conflicts.test.ts › lists the field it declares in another shape, and nothing for a type that agrees`.
+
+### `types/conflict-items-served`
+
+While a registered type conflicts with a type in its chain, the server MUST keep answering reads and listings of its items as it does for a type that does not.
+
+**Tests:** `compliance/type-conflicts.test.ts › keeps its items readable and listable`.
+
+### `types/conflict-clears`
+
+When a registered type is replaced with a definition whose fields agree with the types in its chain, the server MUST omit `conflicts` from its entry in the next `GET /types`, without a restart.
+
+**Tests:** `compliance/type-conflicts.test.ts › stops listing the conflict once the type declares the shape above, with no restart`.
+
 ## Merge policy
 
 ### `types/merge-policy`
