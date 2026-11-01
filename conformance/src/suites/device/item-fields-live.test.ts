@@ -686,9 +686,6 @@ it("clears the own time of a keyed create that lands on a row the server holds",
     }),
   );
   value(await draft(`${key}-kept`));
-  // The clear is queued when the create's answer lands, so the next pass
-  // sends it.
-  value(await device.drain());
   value(await device.drain());
   const served = (await client.getItem(held.id)).data.item;
   expect(served.properties.body).toBe("queued under a held key");
@@ -726,7 +723,6 @@ it("sends the time set after a clear on a keyed create that lands on a held row"
       }),
     );
   }
-  value(await device.drain());
   value(await device.drain());
   const served = (await client.getItem(held.id)).data.item;
   expect(served.occurred_at).toBe("2024-01-01T00:00:00.000Z");

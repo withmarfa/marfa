@@ -518,6 +518,92 @@ describe("a write is answered once", () => {
       "the device did not report that the server answered from its record, so a caller cannot tell a write that landed now from one that had already landed",
     ).toBe(true);
   });
+
+  it("clears the own time of an item whose create was sent and not yet answered to the creation time its answer names", async () => {
+    harness = await hydratedHarness("queue-clear-sent", { rows: held() });
+    const own = "2020-01-01T00:00:00.000Z";
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const queued = await harness.device.create({
+      type: "core.note",
+      properties: { title: "timed", body: "timed" },
+      occurredAt: own,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    const id = queued.value.item_id ?? "";
+
+    let row = wireItem({
+      id,
+      occurred_at: own,
+      created_at: createdAt,
+      properties: { title: "timed", body: "timed" },
+    });
+    // A gateway's failure names no contract, so the device cannot know
+    // whether the server made the item: the create stays sent.
+    scriptWrites(harness.server, {
+      create: [
+        {
+          kind: "json",
+          status: 502,
+          contract: null,
+          body: null,
+          raw: "bad gateway",
+          headers: { "Content-Type": "text/html" },
+        },
+        () => answers.created(row),
+      ],
+      update: [
+        (request) => {
+          const edit = JSON.parse(request.body) as { occurred_at?: string };
+          row = {
+            ...row,
+            version: (row.version as number) + 1,
+            occurred_at: edit.occurred_at ?? row.occurred_at,
+          };
+          return answers.updated(row);
+        },
+      ],
+      read: [() => answers.updated(row)],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const sent = harness.server.requests.filter(
+      (request) => request.method === "POST" && request.pathname === "/items",
+    );
+    expect(
+      sent.map((request) => JSON.parse(request.body).occurred_at),
+      "the create was not sent with its own time, so nothing below tests a time the server already holds",
+    ).toEqual([own]);
+
+    const version = await harness.device.get(id);
+    expect(version.ok).toBe(true);
+    if (!version.ok || version.value === null) return;
+    const cleared = await harness.device.update(id, {
+      properties: {},
+      version: version.value.version,
+      clearOccurredAt: true,
+    });
+    expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
+
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+
+    const edits = harness.server.requests
+      .filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname === `/items/${id}`,
+      )
+      .map(
+        (request) =>
+          (JSON.parse(request.body) as { occurred_at?: string }).occurred_at,
+      )
+      .filter((time) => time !== undefined);
+    expect(
+      edits,
+      "one drain did not send the clear once, as the creation time the answer named",
+    ).toEqual([createdAt]);
+    const shown = await harness.device.get(id);
+    expect(shown.ok && shown.value?.occurred_at).toBe(createdAt);
+  });
 });
 
 describe("a write waits for what it depends on", () => {

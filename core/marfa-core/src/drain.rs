@@ -965,7 +965,16 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ReachChange::default();
     let mut report = DrainReport::empty();
-    let result = match send_queue(core, &http, generation, stop, &mut pass, &mut report) {
+    let mut sent = send_queue(core, &http, generation, stop, &mut pass, &mut report);
+    // No host owes a drain for a write it was not told is waiting, so one an
+    // answer queued goes out in this drain, as a pass of its own.
+    if sent.is_ok() && pass.follow_up && !pass.changed() && report.has_nothing_left() {
+        pass.follow_up = false;
+        let mut later = DrainReport::empty();
+        sent = send_queue(core, &http, generation, stop, &mut pass, &mut later);
+        report.absorb(later);
+    }
+    let result = match sent {
         // From a request that settled nothing, a lookup among them: a write
         // the refusal answered expired the copy as it settled.
         Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
@@ -2640,11 +2649,12 @@ fn settle_success(
     // The receipt can rename a pin, but the fresh response was checked against
     // the exact pre-adoption pin set while this transaction held the writer.
     apply_read_back_unchecked(&tx, &read)?;
-    if row.kind == WriteKind::CreateItem
-        && let Some(parsed) = &item
-    {
-        send_owed_time_clear(&tx, row, &parsed.item, verdict)?;
-    }
+    let follows = match &item {
+        Some(parsed) if row.kind == WriteKind::CreateItem => {
+            queue_owed_time_clear(&tx, row, &parsed.item, verdict)?
+        }
+        _ => false,
+    };
     // Everything the receipt settles is settled; an unread answer leaves only
     // the read owed, for the pass after the copy is built again.
     if !matches!(read, ReadBack::Unread) {
@@ -2653,6 +2663,7 @@ fn settle_success(
     store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
     drop(conn);
+    pass.follow_up |= follows;
     if row.kind == WriteKind::CreateItem
         && let Some(parsed) = &item
     {
@@ -2674,40 +2685,58 @@ fn settle_success(
     Ok(settled)
 }
 
-/// The person cleared the time of an item whose keyed create had not been
-/// sent, so the create named none. When it lands on a row the server holds,
-/// that row keeps its own time, so the clear is sent as the edit it would
-/// have been online: the row's creation time.
-fn send_owed_time_clear(
+/// The person cleared the time of the item a create makes after the create's
+/// body was fixed, so the answer can carry a time of the server's own: a
+/// keyed create's held row keeps its time, and a sent create named one. The
+/// clear is queued as the edit it would have been once the row was known:
+/// the row's creation time. Answers whether it queued one.
+///
+/// Never fails the settle it belongs to: the create's verdict stands
+/// whatever this edit meets, and an error here would keep the receipt and
+/// end every later pass at the same create.
+fn queue_owed_time_clear(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     answered: &WireItem,
     verdict: Verdict,
-) -> Result<()> {
-    let key = crate::cleared_time_key(&row.id);
+) -> Result<bool> {
+    let key = store::cleared_time_key(&row.id);
     if store::meta_get(conn, &key)?.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     store::meta_delete(conn, &key)?;
     if !matches!(verdict, Verdict::Accepted | Verdict::Merged)
         || answered.occurred_at == answered.created_at
     {
-        return Ok(());
+        return Ok(false);
     }
+    // The read of the answer can find the row in the bin or gone, or leave
+    // it outside the copy's slice: there is no row here to edit.
+    let Some(held) = store::item_by_id(conn, &answered.id)? else {
+        return Ok(false);
+    };
     let catalog = crate::catalog::Catalog::load(conn)?;
-    crate::queue_update(
-        conn,
-        &catalog,
-        &answered.id,
-        &crate::model::Edit {
-            base_version: Some(answered.version),
-            clear_occurred_at: true,
-            ..Default::default()
-        },
-        &[],
-        crate::Based::AsRead,
-    )?;
-    Ok(())
+    let queued = store::catalog_scope(conn, |conn| {
+        crate::queue_update(
+            conn,
+            &catalog,
+            &answered.id,
+            &crate::model::Edit {
+                base_version: Some(answered.version.min(held.version)),
+                clear_occurred_at: true,
+                ..Default::default()
+            },
+            &[],
+            crate::Based::AsRead,
+        )
+    });
+    match queued {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            telemetry::degraded!(&error);
+            Ok(false)
+        }
+    }
 }
 
 /// Given to an edit or delete of an edge a create was shown with that the
@@ -3297,12 +3326,16 @@ enum Bin {
     NotFound,
 }
 
-/// What a pass has learned of the copy's reach from the answers it read.
+/// What a pass has learned from the answers it read: of the copy's reach,
+/// and whether one left a write for another pass.
 #[derive(Default)]
 struct ReachChange {
     /// The copy as it stood when the server first said its reach had
     /// changed under a source move or a retype, and the reason it gave.
     seen: Option<(reach::Context, String)>,
+    /// Set when an answer queued a write of its own, which the pass read
+    /// the queue too early to send.
+    follow_up: bool,
 }
 
 impl ReachChange {
@@ -5514,22 +5547,71 @@ mod tests {
         );
     }
 
-    /// A keyed create the person cleared the time of while it waited, drained
-    /// onto a row the server holds with the time `held_time`. Returns every
-    /// body the server was sent and then the queue still holds, in order.
-    fn cleared_create_lands(
+    /// When the person clears the time of the item a create makes.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Clear {
+        Never,
+        /// Before the create is first sent.
+        Unsent,
+        /// After the create was sent once and met a gateway's failure, so
+        /// the server may or may not have made it.
+        InFlight,
+    }
+
+    /// A create of a note at a time of its own, which a pass then answers
+    /// with the row the server holds under the same natural key.
+    #[derive(Clone, Copy)]
+    struct Landing<'a> {
         keyed: bool,
-        clear: bool,
-        later: Option<&str>,
-        held_time: &str,
-    ) -> Vec<serde_json::Value> {
+        clear: Clear,
+        /// A time the person sets after the clear.
+        later: Option<&'a str>,
+        /// The answered row's own time; its creation time is 2026-01-01.
+        held_time: &'a str,
+        /// The state the read of the answered row finds it in.
+        state: &'a str,
+        /// The status the server refuses the create with, where it does.
+        refused: Option<u16>,
+    }
+
+    impl Default for Landing<'_> {
+        fn default() -> Self {
+            Landing {
+                keyed: true,
+                clear: Clear::Unsent,
+                later: None,
+                held_time: "2020-01-01T00:00:00.000Z",
+                state: "active",
+                refused: None,
+            }
+        }
+    }
+
+    /// What one drain of a `Landing` did.
+    struct Landed {
+        /// The bodies of every create sent, in order.
+        creates: Vec<serde_json::Value>,
+        /// The bodies of every edit sent, in order.
+        edits: Vec<serde_json::Value>,
+        drained: Result<DrainReport>,
+        /// The bodies the queue still holds after that drain.
+        queued: Vec<serde_json::Value>,
+        /// Whether the copy still keeps the create's clear for its answer.
+        marked: bool,
+        /// Whether a second drain after it succeeds.
+        again: Result<DrainReport>,
+    }
+
+    const LANDED_CREATED_AT: &str = "2026-01-01T00:00:00.000Z";
+
+    fn cleared_create_lands(landing: Landing<'_>) -> Landed {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = deleting(&server, &[]);
         let made = core
             .create_item(&crate::model::Draft {
                 r#type: "core.note".into(),
                 source: Some("test".into()),
-                source_id: keyed.then(|| "key".to_string()),
+                source_id: landing.keyed.then(|| "key".to_string()),
                 occurred_at: Some("2020-01-01T00:00:00Z".into()),
                 ..Default::default()
             })
@@ -5546,13 +5628,22 @@ mod tests {
             )
             .unwrap();
         };
-        if clear {
+        let clear = || {
             edit(crate::model::Edit {
                 clear_occurred_at: true,
                 ..Default::default()
             });
+        };
+        if landing.clear == Clear::Unsent {
+            clear();
         }
-        if let Some(time) = later {
+        if landing.clear == Clear::InFlight {
+            server.on("/items", vec![crate::scripted::unnamed(502, "bad_gateway")]);
+            core.drain().unwrap();
+            assert!(!store::unsent(&core.conn().unwrap(), &made.id).unwrap());
+            clear();
+        }
+        if let Some(time) = landing.later {
             edit(crate::model::Edit {
                 occurred_at: Some(time.into()),
                 ..Default::default()
@@ -5566,22 +5657,34 @@ mod tests {
         ))
         .unwrap()["item"]
             .clone();
-        item["created_at"] = "2026-01-01T00:00:00.000Z".into();
-        item["occurred_at"] = held_time.into();
+        item["created_at"] = LANDED_CREATED_AT.into();
+        item["occurred_at"] = landing.held_time.into();
         let answer = serde_json::json!({ "item": item, "acknowledged": false }).to_string();
-        server.on("/items", vec![crate::scripted::json(200, &answer)]);
+        server.on(
+            "/items",
+            vec![match landing.refused {
+                Some(status) => crate::scripted::refusal(status, "validation_error"),
+                None => crate::scripted::json(200, &answer),
+            }],
+        );
+        server.on(
+            &format!("/items/{local}"),
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        let mut read = item.clone();
+        read["state"] = landing.state.into();
         server.on(
             "/items/server",
-            vec![
-                crate::scripted::certified(crate::scripted::json(
-                    200,
-                    &serde_json::json!({"item": item, "metadata": {"tags": []}, "listed": true, "acknowledged": false})
-                        .to_string(),
-                ));
-                3
-            ],
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({"item": read, "metadata": {"tags": []}, "listed": true, "acknowledged": false})
+                    .to_string(),
+            ))],
         );
-        core.drain().unwrap();
+        let drained = core.drain();
         let sent = |path: &str| -> Vec<serde_json::Value> {
             server
                 .seen(path)
@@ -5594,12 +5697,24 @@ mod tests {
             .queue()
             .unwrap()
             .iter()
+            .filter(|write| write.verdict.is_none())
             .map(|write| {
                 serde_json::from_str(&store::payload_of(&core.conn().unwrap(), &write.id).unwrap())
                     .unwrap()
             })
             .collect();
-        [sent("/items"), sent("/items/server"), queued].concat()
+        let marked = store::meta_get(&core.conn().unwrap(), &store::cleared_time_key(&made.id))
+            .unwrap()
+            .is_some();
+        let (creates, edits) = (sent("/items"), sent("/items/server"));
+        Landed {
+            creates,
+            edits,
+            drained,
+            queued,
+            marked,
+            again: core.drain(),
+        }
     }
 
     /// The times the bodies name, in order.
@@ -5611,60 +5726,111 @@ mod tests {
     }
 
     #[test]
-    fn a_cleared_time_on_a_keyed_create_that_lands_on_a_held_row_is_sent_as_the_clear() {
-        let sent = cleared_create_lands(true, true, None, "2020-01-01T00:00:00.000Z");
-        assert_eq!(times(&sent), ["2026-01-01T00:00:00.000Z"], "{sent:?}");
-        assert!(sent[0].get("occurred_at").is_none(), "{sent:?}");
+    fn a_cleared_time_on_a_keyed_create_that_lands_on_a_held_row_is_sent_in_the_same_drain() {
+        let landed = cleared_create_lands(Landing::default());
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        assert!(times(&landed.creates).is_empty(), "{:?}", landed.creates);
+        assert_eq!(
+            times(&landed.edits),
+            [LANDED_CREATED_AT],
+            "{:?}",
+            landed.edits
+        );
+        assert!(landed.queued.is_empty(), "{:?}", landed.queued);
+        assert!(!landed.marked);
     }
 
     #[test]
     fn a_keyed_create_whose_time_was_not_cleared_leaves_the_held_rows_time_alone() {
-        // The witness: the same landing without the clear queues no edit, and
+        // The witness: the same landing without the clear sends no edit, and
         // the one that clears does.
-        let sent = cleared_create_lands(true, false, None, "2020-01-01T00:00:00.000Z");
-        assert!(
-            times(&sent)
-                .iter()
-                .all(|time| time == "2020-01-01T00:00:00Z"),
-            "{sent:?}"
-        );
-        assert!(!times(&sent).is_empty(), "{sent:?}");
+        let landed = cleared_create_lands(Landing {
+            clear: Clear::Never,
+            ..Default::default()
+        });
+        assert_eq!(times(&landed.creates), ["2020-01-01T00:00:00Z"]);
+        assert!(times(&landed.edits).is_empty(), "{:?}", landed.edits);
     }
 
     #[test]
     fn a_cleared_time_that_lands_on_a_row_already_at_its_creation_time_sends_no_edit() {
-        let sent = cleared_create_lands(true, true, None, "2026-01-01T00:00:00.000Z");
-        assert!(times(&sent).is_empty(), "{sent:?}");
+        let landed = cleared_create_lands(Landing {
+            held_time: LANDED_CREATED_AT,
+            ..Default::default()
+        });
+        assert!(times(&landed.edits).is_empty(), "{:?}", landed.edits);
+        assert!(!landed.marked);
     }
 
     #[test]
     fn a_time_set_after_the_clear_is_sent_and_no_clear_follows_it() {
-        let sent = cleared_create_lands(
-            true,
-            true,
-            Some("2024-01-01T00:00:00Z"),
-            "2020-01-01T00:00:00.000Z",
-        );
-        let times: Vec<_> = sent
-            .iter()
-            .filter_map(|body| body.get("occurred_at"))
-            .collect();
+        let landed = cleared_create_lands(Landing {
+            later: Some("2024-01-01T00:00:00Z"),
+            ..Default::default()
+        });
+        let times = times(&[landed.creates, landed.edits].concat());
         assert!(
-            !times.contains(&&serde_json::json!("2026-01-01T00:00:00.000Z")),
-            "{sent:?}"
+            !times.iter().any(|time| time == LANDED_CREATED_AT),
+            "{times:?}"
         );
         assert!(
-            times.iter().any(|time| time
-                .as_str()
-                .is_some_and(|time| time.starts_with("2024-01-01"))),
-            "{sent:?}"
+            times.iter().any(|time| time.starts_with("2024-01-01")),
+            "{times:?}"
         );
     }
 
     #[test]
     fn an_unkeyed_create_cleared_while_unsent_sends_no_follow_up_edit() {
-        let sent = cleared_create_lands(false, true, None, "2020-01-01T00:00:00.000Z");
-        assert!(times(&sent).is_empty(), "{sent:?}");
+        let landed = cleared_create_lands(Landing {
+            keyed: false,
+            ..Default::default()
+        });
+        assert!(times(&landed.creates).is_empty(), "{:?}", landed.creates);
+        assert!(times(&landed.edits).is_empty(), "{:?}", landed.edits);
+        assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_cleared_create_answered_with_a_row_the_copy_does_not_hold_live_settles_and_queues_nothing()
+    {
+        let landed = cleared_create_lands(Landing {
+            state: "trashed",
+            ..Default::default()
+        });
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        assert!(landed.again.is_ok(), "{:?}", landed.again);
+        assert!(times(&landed.edits).is_empty(), "{:?}", landed.edits);
+        assert!(landed.queued.is_empty(), "{:?}", landed.queued);
+        assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_time_cleared_while_its_create_is_in_flight_is_sent_once_as_the_answered_creation_time() {
+        let landed = cleared_create_lands(Landing {
+            clear: Clear::InFlight,
+            ..Default::default()
+        });
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        // The create was sent before the clear, so it names its own time.
+        assert!(!times(&landed.creates).is_empty(), "{:?}", landed.creates);
+        assert_eq!(
+            times(&landed.edits),
+            [LANDED_CREATED_AT],
+            "{:?}",
+            landed.edits
+        );
+        assert!(!landed.marked);
+    }
+
+    #[test]
+    fn a_time_cleared_on_a_create_the_server_refuses_leaves_no_mark() {
+        let landed = cleared_create_lands(Landing {
+            refused: Some(422),
+            ..Default::default()
+        });
+        assert!(landed.drained.is_ok(), "{:?}", landed.drained);
+        assert!(landed.edits.is_empty(), "{:?}", landed.edits);
+        assert!(!landed.marked);
     }
 
     #[test]
