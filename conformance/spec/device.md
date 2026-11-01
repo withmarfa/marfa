@@ -1424,15 +1424,39 @@ When the server accepts a create that names `edges`, a device MUST hold each edg
 
 **Reason:** the server gives the edges it makes ids of its own, so a device that kept both would hold each edge twice.
 
-**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+**Tests:** `device/item-fields-live.test.ts › drains a draft carrying a state, a capture location and edges as one write`, `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`.
 
 ### `device/create-edges-kept-short`
 
-When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read brings the server's edge to it.
+When the server accepts a create that names `edges` and its answer carries no block for an edge type, or a block with a `next_cursor` that leaves out a target the create named, a device MUST keep answering the edge it showed to that target until a read of the item's edges of that type succeeds.
 
-**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has.
+**Reason:** a block of an item's edges carries at most 50 edges and a cursor for the rest (`edges/hydrate-cap` and `edges/hydrate-cursor`), so an edge left out of a cut block was made; dropping the one shown would answer the item with fewer edges than it has. The read that settles it (`device/create-edges-read-rest`) can fail while the server is out of reach.
 
-**Tests:** `device/item-fields-live.test.ts › keeps a drawn edge the server's answer cuts off until a read brings the server's own`.
+**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`.
+
+### `device/create-edges-read-rest`
+
+When the server accepts a create that names `edges` and its answer leaves out a target the create named, as `device/create-edges-kept-short` describes, a device MUST read the item's edges of that type, from the block's `next_cursor` where the block is cut and from the start where the answer carries no block, and hold each edge the read brings in place of the one it showed.
+
+**Reason:** the edge the device showed carries an id the device made, which the server never holds (`edges/create-invalid-id`), so an edit or delete of it is refused `edge_not_found` until the device holds the server's edge. A repeat answered as acknowledged carries no edges, and a source filter can leave a block out (`edges/read-source-filter`).
+
+**Tests:** `device/item-fields-live.test.ts › reads the rest of a create's edges the answer cuts off, before the drain returns`, `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
+
+### `device/edge-write-waits-projected`
+
+While a device answers an edge under an id it made, a device MUST hold an edit or delete of that edge in the queue unsent, and send it to the id of the server's edge once a read brings that edge.
+
+**Reason:** the server refuses a write to an id it never gave (`edges/create-invalid-id`), so a write sent before the read would be refused for an edge the server holds.
+
+**Tests:** `device/item-fields-live.test.ts › sends a delete of an edge the create's answer cut off to the server's edge`, `device/item-fields-live.test.ts › sends an edit of an edge the create's answer cut off to the server's edge`.
+
+### `device/create-edges-unread-refused`
+
+If a whole read of a created item's edges of a type brings no edge to a target the create named, then a device MUST stop answering the edge it showed to that target and keep each waiting edit or delete of it in the queue as refused, unsent.
+
+**Reason:** a source filter leaves the item's edges out of every read the key can make (`edges/read-source-filter`), so no read brings an id the write could be sent to, and what the person queued stays where they can read it back.
+
+**Tests:** `device/item-fields-live.test.ts › refuses a waiting delete of an edge no read of the created item brings, without sending it`.
 
 ### `device/create-edges-refused-whole`
 
