@@ -263,6 +263,42 @@ describe("GET /types — a type that conflicts with the types above it", () => {
     expect(replaced.status).toBe(200);
     expect((await listed("drift.child")).conflicts).toBeUndefined();
   });
+
+  it("answers while a stored type holds a malformed enum, and still lists the other conflicts", async () => {
+    registerTypeSchema({
+      id: "drift.broken_parent",
+      version: 1,
+      fields: { title: { type: "string" }, label: { type: "string" } },
+    });
+    registerTypeSchema({
+      id: "drift.broken",
+      version: 1,
+      parent: "drift.broken_parent",
+      fields: { title: { type: "string", enum_values: "broken" } },
+    } as unknown as TypeSchema);
+    registerTypeSchema({
+      id: "drift.other",
+      version: 1,
+      parent: "drift.broken_parent",
+      fields: { label: { type: "number" } },
+    });
+    try {
+      const res = await request(ctx.app, "GET", "/types", {
+        key: ctx.workingKey,
+      });
+      expect(res.status).toBe(200);
+      const types = ((await res.json()) as { data: Listed[] }).data;
+      expect(types.find((t) => t.id === "drift.other")?.conflicts).toEqual([
+        expect.objectContaining({ field: "label", attribute: "type" }),
+      ]);
+      expect(types.find((t) => t.id === "drift.broken")?.conflicts).toEqual([
+        expect.objectContaining({ field: "title", attribute: "enum_values" }),
+      ]);
+    } finally {
+      for (const id of ["drift.broken", "drift.other", "drift.broken_parent"])
+        unregisterTypeSchema(id);
+    }
+  });
 });
 
 // The shipped set spans two families and both are equally immutable: they

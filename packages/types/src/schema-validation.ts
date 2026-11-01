@@ -922,6 +922,8 @@ function entryMembersKey(
   members: Readonly<Record<string, EntryMember>> | undefined,
 ): string {
   if (members === undefined) return "";
+  if (typeof members !== "object" || members === null)
+    return `\0${JSON.stringify(members)}`;
   return JSON.stringify(
     Object.entries(members)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -932,6 +934,17 @@ function entryMembersKey(
         return [name, rest];
       }),
   );
+}
+
+/**
+ * The allowed values as one comparable string. A stored definition is not
+ * guaranteed to hold a list, so anything else compares as its JSON and never
+ * equals a list.
+ */
+function enumKey(values: unknown): string | undefined {
+  if (values === undefined) return undefined;
+  if (Array.isArray(values)) return values.join("|");
+  return `\0${JSON.stringify(values)}`;
 }
 
 function describeShapeConflict(
@@ -947,8 +960,8 @@ function describeShapeConflict(
       };
     }
   }
-  const childEnum = child.enum_values?.join("|");
-  const ancestorEnum = ancestor.enum_values?.join("|");
+  const childEnum = enumKey(child.enum_values);
+  const ancestorEnum = enumKey(ancestor.enum_values);
   if (childEnum !== ancestorEnum) {
     return {
       attribute: "enum_values",

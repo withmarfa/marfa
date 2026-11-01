@@ -2,6 +2,27 @@ import { inheritedShapeConflicts, listTypes } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /**
+ * The conflicts of one registered type. A stored definition that cannot be
+ * compared is skipped and named in the log, so one bad row neither stops the
+ * boot nor hides another type's conflicts. The line carries the type's id and
+ * the failure's class, never a definition or an item.
+ */
+export function shapeConflictsOf(
+  typeId: string,
+): ReturnType<typeof inheritedShapeConflicts> {
+  try {
+    return inheritedShapeConflicts(typeId);
+  } catch (error) {
+    log("warn", "a registered type could not be checked for shape conflicts", {
+      type: typeId,
+      error: error instanceof Error ? error.name : typeof error,
+      effect: "the type is left out of the conflict check",
+    });
+    return [];
+  }
+}
+
+/**
  * Report registered types that declare a field in another shape than a type
  * above them, once the registry holds what the rows say.
  *
@@ -20,7 +41,7 @@ import { log } from "../middleware/logger.js";
  */
 export function reportTypeShapeConflicts(): void {
   const conflicts = listTypes().flatMap((schema) =>
-    inheritedShapeConflicts(schema.id).map((conflict) => ({
+    shapeConflictsOf(schema.id).map((conflict) => ({
       type: schema.id,
       ...conflict,
     })),

@@ -7,7 +7,6 @@ import {
   MarfaError,
   ErrorCode,
   getTypeSchema,
-  inheritedShapeConflicts,
   directChildrenOf,
   maxDescendantDepth,
   listTypes,
@@ -40,6 +39,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
+import { shapeConflictsOf } from "../storage/type-shape-conflicts.js";
 import type { TypeResolver } from "../storage/policy.js";
 import {
   createOpenAPIRouter,
@@ -1427,7 +1427,7 @@ export function typeRoutes(storage: Storage) {
             const roles = resolveRoles(schema.id, resolve);
             const row = rows.get(schema.id);
             const { plural, ...declared } = schema;
-            const conflicts = inheritedShapeConflicts(schema.id).map(
+            const conflicts = shapeConflictsOf(schema.id).map(
               ({ owner, ...conflict }) => ({
                 ...conflict,
                 inherited_from: owner,
