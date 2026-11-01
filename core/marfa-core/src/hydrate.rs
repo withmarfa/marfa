@@ -1226,12 +1226,7 @@ fn refuse_unreadable(
         None => {
             let mut refused = Vec::new();
             for name in named {
-                let probe = http.items_page(&ItemsQuery {
-                    r#type: Some(name),
-                    tier: listed_tier(Some(name), tier),
-                    cursor: None,
-                });
-                match probe {
+                match http.lists(name, listed_tier(Some(name), tier)) {
                     Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => {
                         refused.push(name);
                     }

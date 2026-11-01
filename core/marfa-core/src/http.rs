@@ -751,6 +751,21 @@ impl Http {
         self.get_page_json(&params)
     }
 
+    /// Whether the key may list `declared` at `tier`: a one-row listing, so
+    /// the answer, not the rows, is what is asked for.
+    pub fn lists(&self, declared: &str, tier: SliceTier) -> Result<(), CoreError> {
+        self.get_json::<serde_json::Value>(
+            &["items"],
+            &[
+                ("type", declared),
+                ("tier", tier.as_str()),
+                ("state", "any"),
+                ("limit", "1"),
+            ],
+        )
+        .map(drop)
+    }
+
     /// `GET /items/stats?by=type`: the rows of every state at `tier`, counted
     /// by type, with `system.*` counted only where `system` asks for it. The
     /// count is not a conditional read, so a transport under a reach is
