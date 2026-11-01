@@ -33,6 +33,7 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   passkeysBeforeLastUse,
+  connectorsWithoutReadOnlyTypes,
   withInstanceDatabase,
 } from "../../utils/instance-database.js";
 import {
@@ -1117,11 +1118,13 @@ describe("starting on a database another build wrote", () => {
 /**
  * Turns a stopped database of this build into one at schema version 1, as
  * the releases before the `type_icons` table wrote it: the same tables but
- * that one, `source_names`, `trash_with_hosts`, the bin-order index and a
- * passkey's last use, with the version stamped.
+ * that one, `source_names`, `trash_with_hosts`, the bin-order index, a
+ * passkey's last use and `connectors` without `read_only_types`, with the version
+ * stamped.
  */
 function asVersionOne(db: Database): void {
   db.exec("DROP TABLE type_icons");
+  connectorsWithoutReadOnlyTypes(db);
   db.exec("DROP TABLE source_names");
   db.exec("DROP TABLE trash_with_hosts");
   db.exec("DROP INDEX idx_items_state_binned_at");

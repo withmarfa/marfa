@@ -114,6 +114,7 @@ describe("registration", () => {
     expect(created.data.registered_at).toMatch(ISO);
     expect(created.data.updated_at).toBe(created.data.registered_at);
     expect(created.data.last_heartbeat_at).toBeNull();
+    expect(created.data.read_only_types).toEqual([]);
     expect(created.data.last_run).toBeNull();
     expect(created.data.hold_expires_at).toBeNull();
 

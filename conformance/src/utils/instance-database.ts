@@ -58,3 +58,35 @@ CREATE INDEX \`idx_auth_passkey_user_id\` ON \`auth_passkey\` (\`user_id\`);
 CREATE INDEX \`idx_auth_passkey_credential_id\` ON \`auth_passkey\` (\`credential_id\`);`,
   );
 }
+
+/**
+ * Puts a stopped server's `connectors` table back as schema versions before
+ * `read_only_types` declared it, keeping its rows. Dropping the column would
+ * leave table text no version has, which the server refuses.
+ */
+export function connectorsWithoutReadOnlyTypes(db: DatabaseSync): void {
+  const sqlOf = (name: string): string =>
+    (
+      db.prepare("SELECT sql FROM sqlite_schema WHERE name = ?").get(name) as {
+        sql: string;
+      }
+    ).sql;
+  const table = sqlOf("connectors");
+  const index = sqlOf("connectors_key_id_unique");
+  const column = ",\n\t`read_only_types` text DEFAULT '[]' NOT NULL";
+  if (!table.includes(column))
+    throw new Error("the connectors table has no read_only_types to remove");
+  const columns =
+    "`id`, `key_id`, `source`, `name`, `description`, `registered_at`, `updated_at`, `last_heartbeat_at`";
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(
+    [
+      "CREATE TABLE `connectors_was` AS SELECT * FROM `connectors`",
+      "DROP TABLE `connectors`",
+      table.replace(column, ""),
+      index,
+      `INSERT INTO \`connectors\` (${columns}) SELECT ${columns} FROM \`connectors_was\``,
+      "DROP TABLE `connectors_was`",
+    ].join(";\n"),
+  );
+}

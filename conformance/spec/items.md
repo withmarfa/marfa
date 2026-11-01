@@ -12,6 +12,46 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 **Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› authorizes occurrence parent relationships with their source state`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
 
+## Read only
+
+A connector declares the types whose items it holds read only in its registration's `read_only_types` (`connectors/read-only-types-stored`). The registrations that hold an item are those whose key is live and has the item's `source` as its own or claims it.
+
+### `items/read-only-answered`
+
+When the server answers an item, in a response or in an event frame, the server MUST include `read_only` as a boolean.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`.
+
+### `items/read-only-true`
+
+While at least one registration holds an item and every registration that holds it lists the item's type in `read_only_types`, the server MUST answer the item's `read_only` as `true`.
+
+**Reason:** a connector that holds a type read only puts back an edit made in Marfa on its next run, so a client can show the item as locked.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`, `› keeps an item editable while another connector that claims its source does not declare its type`.
+
+### `items/read-only-false`
+
+While no registration holds an item, or a registration that holds it leaves the item's type out of `read_only_types`, the server MUST answer the item's `read_only` as `false`.
+
+**Reason:** a client never locks an item a connector still accepts edits to.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`, `› keeps an item editable while another connector that claims its source does not declare its type`.
+
+### `items/read-only-current`
+
+When a registration's `read_only_types` changes, the server MUST answer `read_only` on every later read and every event frame sent after it as the registrations then stand.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`.
+
+### `items/read-only-writable`
+
+When a write names an item whose `read_only` is `true`, the server MUST NOT refuse it for that reason.
+
+**Reason:** the connector that holds an item writes it under its own key, and it puts back an edit made in Marfa on its next run.
+
+**Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`.
+
 ## Every write
 
 ### `items/refusal-writes-nothing`

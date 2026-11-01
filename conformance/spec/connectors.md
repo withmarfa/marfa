@@ -10,7 +10,7 @@ A registration belongs to one key, and a key holds one. Direct owner authority, 
 
 ### `connectors/register-created`
 
-When a working key that has no registration sends `POST /connectors` with a `name`, the server MUST answer `201` with the registration's `id`, `key_id`, `source`, `name`, `description`, `registered_at`, `updated_at`, `last_heartbeat_at`, `last_run` and `hold_expires_at`.
+When a working key that has no registration sends `POST /connectors` with a `name`, the server MUST answer `201` with the registration's `id`, `key_id`, `source`, `name`, `description`, `registered_at`, `updated_at`, `last_heartbeat_at`, `read_only_types`, `last_run` and `hold_expires_at`.
 
 **Tests:** `compliance/connectors.test.ts › registers the key as a connector and lists it`.
 
@@ -64,7 +64,7 @@ If an access token an app holds sends `POST /connectors`, then the server MUST a
 
 If the server refuses `POST /connectors`, then the server MUST NOT register the key that sent it.
 
-**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`.
+**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`, `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`.
 
 ### `connectors/register-refused-no-audit`
 
@@ -91,6 +91,40 @@ When a key that already has a registration sends `POST /connectors` with no `des
 **Reason:** a repeat is the new registration in full, so an omitted description is not kept from the old one.
 
 **Tests:** `compliance/connectors.test.ts › clears the description when a key registers again without one`.
+
+### `connectors/read-only-types-stored`
+
+When `POST /connectors` names `read_only_types`, the server MUST answer the registration with `read_only_types` holding each type identifier it named once, in the order first named.
+
+**Tests:** `compliance/connector-read-only.test.ts › stores the declared types, replaces them on a repeat and clears them when left out`.
+
+### `connectors/read-only-types-unregistered`
+
+When `POST /connectors` names in `read_only_types` a type identifier that names no registered type, the server MUST store it.
+
+**Reason:** a connector may register before the types it writes do, and a declared type that no item carries marks no item read only.
+
+**Tests:** `compliance/connector-read-only.test.ts › stores the declared types, replaces them on a repeat and clears them when left out`.
+
+### `connectors/read-only-types-malformed`
+
+If `POST /connectors` names in `read_only_types` a value that is not a type identifier (`types/id-grammar`), then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`.
+
+### `connectors/read-only-types-repeat`
+
+When a key that already has a registration sends `POST /connectors` with `read_only_types`, the server MUST replace the registration's `read_only_types` with them.
+
+**Tests:** `compliance/connector-read-only.test.ts › stores the declared types, replaces them on a repeat and clears them when left out`.
+
+### `connectors/read-only-types-cleared`
+
+When a key that already has a registration sends `POST /connectors` with no `read_only_types`, the server MUST answer the registration's `read_only_types` as `[]`.
+
+**Reason:** a repeat is the new registration in full, so a connector that stops holding a type read only says so by leaving it out.
+
+**Tests:** `compliance/connector-read-only.test.ts › stores the declared types, replaces them on a repeat and clears them when left out`.
 
 ### `connectors/register-repeat-registered-at`
 

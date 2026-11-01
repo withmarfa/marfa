@@ -5,6 +5,8 @@ export interface MarfaItem {
   properties: Record<string, unknown>; // Typed data validated against the type schema
   source: string | null;
   source_id: string | null;
+  /** Whether connectors hold the item read only, worked out on each read. */
+  read_only: boolean;
   state: string; // Lifecycle state, such as "active", "archived", "trashed" or "revoked"
   created_at: string; // ISO 8601
   updated_at: string | null;
@@ -378,6 +380,7 @@ export interface ConnectorRow {
   registered_at: string;
   updated_at: string;
   last_heartbeat_at: string | null;
+  read_only_types: string[];
   last_run: ConnectorRun | null;
   problems: Record<string, string>;
   hold_expires_at: string | null;
