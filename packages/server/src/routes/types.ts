@@ -39,6 +39,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
+import { shapeConflictsOf } from "../storage/type-shape-conflicts.js";
 import type { TypeResolver } from "../storage/policy.js";
 import {
   createOpenAPIRouter,
@@ -674,10 +675,41 @@ const RegisteredTypeResponse = TypeSchemaResponse.extend({
   ),
 }).openapi("RegisteredType");
 
+const TypeConflictResponse = z
+  .object({
+    field: z.string().describe("The name of the field the type declares."),
+    attribute: z
+      .string()
+      .describe(
+        "The first part of the field's shape that differs, such as `type`.",
+      ),
+    inherited_from: z
+      .string()
+      .describe("The ID of the type above this one that declares the field."),
+    inherited: z
+      .string()
+      .describe(
+        'What the types above give the field, such as `type "string"`.',
+      ),
+    declared: z
+      .string()
+      .describe('What this type declares, such as `type "number"`.'),
+  })
+  .describe(
+    "A field this type declares in a shape a type above it declares differently.",
+  )
+  .openapi("TypeConflict");
+
 const ListedTypeResponse = TypeSchemaResponse.extend({
   provenance: TypeProvenanceSchema.describe(
     "The type's recorded origin and creator.",
   ),
+  conflicts: z
+    .array(TypeConflictResponse)
+    .optional()
+    .describe(
+      "The fields this type declares in another shape than a type above it. Present only while there are some, and it clears once the type declares the shape above. Items of the type stay readable.",
+    ),
   own_roles: TypeSchemaResponse.shape.roles
     .unwrap()
     .describe(
@@ -1395,10 +1427,17 @@ export function typeRoutes(storage: Storage) {
             const roles = resolveRoles(schema.id, resolve);
             const row = rows.get(schema.id);
             const { plural, ...declared } = schema;
+            const conflicts = shapeConflictsOf(schema.id).map(
+              ({ owner, ...conflict }) => ({
+                ...conflict,
+                inherited_from: owner,
+              }),
+            );
             return {
               ...declared,
               ...(namedLabel(plural) === undefined ? {} : { plural }),
               ...(roles ? { roles } : {}),
+              ...(conflicts.length > 0 ? { conflicts } : {}),
               own_roles: [...(schema.roles ?? [])].sort(),
               provenance: {
                 origin: row?.origin ?? ("unknown" as const),

@@ -4258,6 +4258,13 @@
                   }
                 ]
               },
+              "conflicts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TypeConflict"
+                },
+                "description": "The fields this type declares in another shape than a type above it. Present only while there are some, and it clears once the type declares the shape above. Items of the type stay readable."
+              },
               "own_roles": {
                 "type": "array",
                 "items": {
@@ -4480,6 +4487,39 @@
         ],
         "additionalProperties": {},
         "description": "One member of the entries of an `array` field."
+      },
+      "TypeConflict": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The name of the field the type declares."
+          },
+          "attribute": {
+            "type": "string",
+            "description": "The first part of the field's shape that differs, such as `type`."
+          },
+          "inherited_from": {
+            "type": "string",
+            "description": "The ID of the type above this one that declares the field."
+          },
+          "inherited": {
+            "type": "string",
+            "description": "What the types above give the field, such as `type \"string\"`."
+          },
+          "declared": {
+            "type": "string",
+            "description": "What this type declares, such as `type \"number\"`."
+          }
+        },
+        "required": [
+          "field",
+          "attribute",
+          "inherited_from",
+          "inherited",
+          "declared"
+        ],
+        "description": "A field this type declares in a shape a type above it declares differently."
       },
       "TypeDefinition": {
         "type": "object",
