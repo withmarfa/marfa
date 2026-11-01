@@ -760,6 +760,7 @@ impl Folder {
         let report = &mut scan.report;
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
+        let mut moved_since: Vec<(String, EdgeWork)> = Vec::new();
         let mut unsettled: HashSet<String> = HashSet::new();
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
@@ -911,30 +912,24 @@ impl Folder {
                             report.updated += 1;
                             continue;
                         }
-                        // Lines only the server can resolve are asked again
-                        // at each scan that can ask it.
-                        // So are lines the copy refused, since what refused
-                        // them can change without the file.
-                        if bound
-                            .held
-                            .as_deref()
-                            .is_some_and(|held| held.starts_with(state::EDGES_WAITING))
-                            || bound.writes.refused.iter().any(|refused| {
-                                matches!(refused.change, state::Change::Edge { .. })
-                                    && copy_refused(refused)
-                            })
-                            // Under the earlier rule an embed attached its file
-                            // and recorded it so; read once more, it references
-                            // the file and attaches only one the query does not
-                            // hold.
-                            || (reread_embeds
-                                && (shown.contains_key(&file.key)
-                                    || bound.lines.iter().any(|line| {
-                                        line.edge_type == embeds::ATTACHMENT_EDGE
-                                            && line.end == crate::catalog::End::Target
-                                    })))
-                        {
-                            work.push(self.edge_work(file, &item_id, Some(&bound)));
+                        // Under the earlier rule an embed attached its file
+                        // and recorded it so; read once more, it references
+                        // the file and attaches only one the query does not
+                        // hold.
+                        let reread = reread_embeds
+                            && (shown.contains_key(&file.key)
+                                || bound.lines.iter().any(|line| {
+                                    line.edge_type == embeds::ATTACHMENT_EDGE
+                                        && line.end == crate::catalog::End::Target
+                                }));
+                        match edges_again(&bound) {
+                            Again::Now => work.push(self.edge_work(file, &item_id, Some(&bound))),
+                            _ if reread => work.push(self.edge_work(file, &item_id, Some(&bound))),
+                            Again::IfMoved(at) => {
+                                moved_since
+                                    .push((at, self.edge_work(file, &item_id, Some(&bound))));
+                            }
+                            Again::No => {}
                         }
                         // An editor's atomic save gives the same bytes a new
                         // inode, and a stale record would lose the next rename;
@@ -1050,6 +1045,14 @@ impl Folder {
                 }
             }
         }
+        // After every create of the pass, so a name made in it resolves.
+        let now = state::copy_moment(&*self.core.conn()?)?;
+        work.extend(
+            moved_since
+                .into_iter()
+                .filter(|(at, _)| *at != now)
+                .map(|(_, pending)| pending),
+        );
         // Without its stat, the next quick pass reads it again.
         scan.stats.retain(|(key, _)| !unsettled.contains(key));
 
@@ -1064,6 +1067,7 @@ impl Folder {
         // Every file is bound now, so a link or a line naming one that
         // arrived in the same scan resolves.
         let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+        let now = state::copy_moment(&*self.core.conn()?)?;
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
@@ -1087,6 +1091,7 @@ impl Folder {
                 held: Some(format!("{}{error}", state::EDGES_WAITING)),
                 refused: Vec::new(),
                 embeds: Vec::new(),
+                refused_lookup: false,
             });
             report.embeds.extend(
                 outcome
@@ -1099,8 +1104,13 @@ impl Folder {
                 if let Some(held) = &outcome.held {
                     report.flagged.push(Flagged::of(&pending.path, held));
                 }
-                let held = outcome.held;
                 let mut writes = bound.writes.clone();
+                let resolvable = outcome
+                    .held
+                    .as_deref()
+                    .is_some_and(|held| held.starts_with(state::EDGES));
+                writes.held_at = (resolvable && !outcome.refused_lookup).then(|| now.clone());
+                let held = outcome.held;
                 let save = writes.save;
                 writes
                     .queued
@@ -2162,6 +2172,34 @@ impl Folder {
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
         Ok(missing)
+    }
+}
+
+/// Whether an unchanged file's links and lines are judged again.
+enum Again {
+    Now,
+    /// Once the copy has moved from where it stood when the file was held.
+    IfMoved(String),
+    No,
+}
+
+/// Lines only the server can resolve are asked again at each scan that can
+/// ask it, and so are lines the copy refused, since what refused them can
+/// change without the file. Names that matched no item, or several, are
+/// asked again once the copy has changed, and a name whose lookup the server
+/// refused not until the file does.
+fn edges_again(bound: &state::Bound) -> Again {
+    let held = bound.held.as_deref().unwrap_or_default();
+    if held.starts_with(state::EDGES_WAITING)
+        || bound.writes.refused.iter().any(|refused| {
+            matches!(refused.change, state::Change::Edge { .. }) && copy_refused(refused)
+        })
+    {
+        return Again::Now;
+    }
+    match &bound.writes.held_at {
+        Some(at) if held.starts_with(state::EDGES) => Again::IfMoved(at.clone()),
+        _ => Again::No,
     }
 }
 
