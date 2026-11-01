@@ -1,12 +1,14 @@
 import { afterEach, expect, it } from "vitest";
 import {
   answers,
+  refusal,
   edgeEvent,
   copyItemEvent,
   copyReplay,
   wireEdge,
   wireItem,
 } from "../../device/marfa-answers.js";
+import type { Answer } from "../../device/scripted-server.js";
 import {
   hydratedHarness,
   queuedEdit,
@@ -358,4 +360,129 @@ it("keeps a dead edge create over an existing server edge", async () => {
     version: 2,
     properties: { weight: 2, note: "new elsewhere" },
   });
+});
+
+const drawnTarget = "01a00000-0000-7000-8000-0000000000d1";
+const servedEdge = "01a00000-0000-7000-8000-0000000000d2";
+
+/**
+ * A create drawn to one target, which the server accepts with an answer that
+ * carries no block of its edges, so the device owes a read of them. Each read
+ * of the item's edges answers what `listing` holds then.
+ */
+async function createdWithUnreadEdge(
+  label: string,
+  listing: () => Answer,
+): Promise<{ harness: Harness; made: string; drawn: string; created: string }> {
+  const started = await hydratedHarness(label, {
+    rows: { "core.note": [{ item: { id: drawnTarget } }] },
+  });
+  const { device, server } = started;
+  const create = await device.create({
+    type: "core.note",
+    properties: { title: "drawn", body: "drawn" },
+    edges: { references: [drawnTarget] },
+  });
+  expect(create.ok, JSON.stringify(create)).toBe(true);
+  if (!create.ok) throw new Error(create.refusal.raw);
+  const made = create.value.item_id!;
+  const accepted = wireItem({ id: made, version: 1 });
+  scriptWrites(server, {
+    create: [answers.created(accepted)],
+    read: [answers.updated(accepted)],
+  });
+  server.copyAnswer("GET", `/items/${made}/edges`, () => listing());
+  const shown = await device.edgesFrom(made);
+  expect(shown.ok, JSON.stringify(shown)).toBe(true);
+  const drawn = shown.ok ? (shown.value[0]?.id ?? "") : "";
+  return { harness: started, made, drawn, created: create.value.id };
+}
+
+function listingReads(server: Harness["server"], made: string): number {
+  return server.requests.filter(
+    (request) =>
+      request.method === "GET" && request.pathname === `/items/${made}/edges`,
+  ).length;
+}
+
+it("keeps showing a created item's edge while the read of its edges fails, until one succeeds", async () => {
+  let listing: Answer = refusal(503, "unavailable", "try again later");
+  const created = await createdWithUnreadEdge(
+    "create-edges-kept-short",
+    () => listing,
+  );
+  harness = created.harness;
+  const { device, server } = harness;
+  const first = await device.drain();
+  expect(
+    first.ok && first.value.verdicts.map((row) => [row.id, row.verdict]),
+  ).toEqual([[created.created, "accepted"]]);
+  expect(listingReads(server, created.made)).toBe(1);
+  const kept = await device.edgesFrom(created.made);
+  expect(
+    kept.ok && kept.value.map((edge) => [edge.id, edge.target_id]),
+    "the edge went before a read brought the server's",
+  ).toEqual([[created.drawn, drawnTarget]]);
+
+  // The witness: once a read succeeds, the server's edge takes its place.
+  listing = {
+    kind: "json",
+    status: 200,
+    body: {
+      data: [
+        wireEdge({
+          id: servedEdge,
+          source_id: created.made,
+          target_id: drawnTarget,
+        }),
+      ],
+      next_cursor: null,
+    },
+  };
+  expect((await device.drain()).ok).toBe(true);
+  expect(listingReads(server, created.made)).toBe(2);
+  const read = await device.edgesFrom(created.made);
+  expect(read.ok && read.value.map((edge) => edge.id)).toEqual([servedEdge]);
+  expect(created.drawn).not.toBe(servedEdge);
+});
+
+it("keeps a created item's edge and refuses its waiting delete unsent when the read of its edges is refused", async () => {
+  const created = await createdWithUnreadEdge("create-edges-read-failed", () =>
+    answers.validation("validation_error", "the request is not valid"),
+  );
+  harness = created.harness;
+  const { device, server } = harness;
+  const deleted = await device.deleteEdge(created.drawn);
+  expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+  if (!deleted.ok) return;
+  const first = await device.drain();
+  expect(first.ok, JSON.stringify(first)).toBe(true);
+  if (!first.ok) return;
+  expect(
+    first.value.verdicts.find((row) => row.id === created.created)?.verdict,
+    "the create's verdict was lost with the read",
+  ).toBe("accepted");
+  expect(
+    first.value.verdicts.find((row) => row.id === deleted.value.id)?.verdict,
+    "the refused delete is in no verdict",
+  ).toBe("refused");
+  expect(listingReads(server, created.made)).toBe(1);
+  expect(
+    server.requests.filter((request) => request.method === "DELETE"),
+    "the delete was sent to an id the server never gave",
+  ).toEqual([]);
+  const queue = await device.queue();
+  expect(queue.ok, JSON.stringify(queue)).toBe(true);
+  if (!queue.ok) return;
+  const write = queue.value.find((row) => row.id === deleted.value.id);
+  expect(write?.verdict).toBe("refused");
+  expect(write?.answer, JSON.stringify(write)).toBeNull();
+  const kept = await device.edgesFrom(created.made);
+  expect(
+    kept.ok && kept.value.map((edge) => [edge.id, edge.target_id]),
+  ).toEqual([[created.drawn, drawnTarget]]);
+
+  // The read is not asked again.
+  expect((await device.drain()).ok).toBe(true);
+  expect(listingReads(server, created.made)).toBe(1);
 });

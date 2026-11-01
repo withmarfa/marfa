@@ -233,7 +233,8 @@ fn candidates<'a>(
                 standing.rows,
                 &*standing.answers,
                 &none,
-                standing.landing
+                standing.landing,
+                super::create_edges::waits(&conn, row)?,
             ),
             Readiness::Ready
         ) || crate::body::rule::lost_body(&conn, row)?.is_some()

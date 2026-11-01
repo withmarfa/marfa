@@ -1174,6 +1174,17 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
     }
 }
 
+/// Every key that starts with `prefix`, in order.
+pub fn meta_keys(conn: &Connection, prefix: &str) -> Result<Vec<String>, CoreError> {
+    let mut keys = conn.prepare_cached(
+        "SELECT key FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
+    )?;
+    let found = keys
+        .query_map([prefix], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(found)
+}
+
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM meta WHERE key = ?1")?
         .execute([key])?;
@@ -4074,6 +4085,28 @@ fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<
         wire.id = crate::model::projected_edge_id(&wire.source_id, &edge_type, &wire.target_id);
         forget_edge(conn, &id)?;
         upsert_edge(conn, &wire)?;
+        readdress_edge_writes(conn, &id, &wire.id, false)?;
+    }
+    // A delete already took its edge out of the copy, so the delete names it.
+    let deletes = read_writes(
+        conn,
+        "WHERE kind = ?1 AND sent = 0 AND (item_id = ?2 OR target_id = ?2)",
+        [WriteKind::DeleteEdge.as_str(), local],
+    )?;
+    for row in deletes {
+        let (Some(id), Some(source), Some(target), Some(edge_type)) = (
+            row.edge_id.as_deref(),
+            row.item_id.as_deref(),
+            row.target_id.as_deref(),
+            row.body.get("edge_type").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if id != crate::model::projected_edge_id(source, edge_type, target) {
+            continue;
+        }
+        let renamed = crate::model::projected_edge_id(&moved(source), edge_type, &moved(target));
+        readdress_edge_writes(conn, id, &renamed, false)?;
     }
     Ok(())
 }
@@ -5682,18 +5715,77 @@ pub fn take_server_item(
     Ok(true)
 }
 
-/// `take_server_item` for an edge.
+/// `take_server_item` for an edge. The edge a create was shown with until
+/// the server's came leaves, and each write waiting on it moves onto the
+/// server's (`device/edge-write-waits-projected`).
 pub fn take_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
-    if !put_server_edge(conn, edge)? {
-        return Ok(false);
-    }
-    // The edge a create was shown with until the server's came.
     let shown = crate::model::projected_edge_id(&edge.source_id, &edge.edge_type, &edge.target_id);
+    let moved = shown != edge.id && readdress_edge_writes(conn, &shown, &edge.id, true)?;
+    let taken = put_server_edge(conn, edge)?;
     if shown != edge.id {
         forget_edge(conn, &shown)?;
     }
-    lay_waiting_edge_writes_over(conn, &edge.id)?;
-    Ok(true)
+    if !taken && moved {
+        hold_beneath_edge(conn, &edge.id)?;
+    }
+    if taken || moved {
+        lay_waiting_edge_writes_over(conn, &edge.id)?;
+    }
+    Ok(taken)
+}
+
+/// Moves each unsent write naming the edge `from` onto `to`, answering
+/// whether any moved. Where `to` is the server's edge, which a create made at
+/// version 1, an edit based on the edge the create was shown with, at
+/// version 0, is based on version 1.
+pub fn readdress_edge_writes(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+    made: bool,
+) -> Result<bool, CoreError> {
+    let waiting = read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND sent = 0 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [from, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+    )?;
+    for row in &waiting {
+        let mut base = row.base_version;
+        let mut payload = payload_of(conn, &row.id)?;
+        if made && row.kind == WriteKind::UpdateEdge && base == Some(0) {
+            base = Some(1);
+            let mut body: Value = serde_json::from_str(&payload)?;
+            body["version"] = Value::from(1);
+            payload = body.to_string();
+        }
+        conn.execute(
+            "UPDATE queue SET edge_id = ?2, base_version = ?3, payload = ?4 WHERE id = ?1",
+            params![row.id, to, base, payload],
+        )?;
+    }
+    Ok(!waiting.is_empty())
+}
+
+/// Refuses, unsent, each write still waiting on the edge `id`, with `reason`.
+pub fn refuse_edge_writes(conn: &Connection, id: &str, reason: &str) -> Result<(), CoreError> {
+    let waiting = read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND sent = 0 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
+    )?;
+    for row in waiting {
+        record_verdict(
+            conn,
+            &row.id,
+            &Answered {
+                verdict: Verdict::Refused,
+                reason: Some(reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
+    drop_beneath(conn, Subject::Edge, id)
 }
 
 /// Call after anything puts the server's row into the copy. The row is
@@ -6349,13 +6441,26 @@ pub fn edge_by_id_with(
 }
 
 /// The only write an edit or a delete of the edge cannot go without; the
-/// writes ahead of one only order it.
+/// writes ahead of one only order it. That is the waiting create that makes
+/// the edge `edge_id`: its own create, or the create of an item shown drawn
+/// with it under an id the copy made.
 pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
-    Ok(waiting_writes_for_edge(conn, edge_id)?
+    let mut creates: Vec<String> = waiting_writes_for_edge(conn, edge_id)?
         .into_iter()
         .filter(|row| row.kind == WriteKind::CreateEdge)
         .map(|row| row.id)
-        .collect())
+        .collect();
+    if let Some(edge) = edge_by_id(conn, edge_id)? {
+        for create in untaken_creates_for_item(conn, &edge.source_id)? {
+            let draft = crate::model::Draft::from_payload(&payload_of(conn, &create)?)?;
+            if draft.edge_pairs().iter().any(|(edge_type, target)| {
+                crate::model::projected_edge_id(&edge.source_id, edge_type, target) == edge_id
+            }) {
+                creates.push(create);
+            }
+        }
+    }
+    Ok(creates)
 }
 
 #[cfg(test)]
