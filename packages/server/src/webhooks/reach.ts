@@ -37,8 +37,6 @@ import type { ReadOnlyItems, Storage } from "../storage/interface.js";
 export interface DeliveryReach {
   key: ApiKey;
   sourceFilter: SourceFilterSettings | undefined;
-  /** Whether a connector holds an item read only, as registrations stand now. */
-  readOnly: ReadOnlyItems;
 }
 
 /** The reach of a credential that still stands, with the source filter that
@@ -47,14 +45,12 @@ export async function deliveryReach(
   storage: Storage,
   credential: LiveCredential,
 ): Promise<DeliveryReach> {
-  const [config, readOnly] = await Promise.all([
-    readInstanceConfig(storage.settings),
-    storage.connectors.readOnly(),
-  ]);
   return {
     key: credential.key,
-    sourceFilter: resolveEnforcement(config, credential.key).source_filter,
-    readOnly,
+    sourceFilter: resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      credential.key,
+    ).source_filter,
   };
 }
 
@@ -66,10 +62,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The frame `key` may be sent for this stored frame, or null where it may
  * be sent none. The stored frame is what a reader of everything is sent,
  * with the types its marks name, as `storedFrame` in `pubsub.ts` builds it.
+ * An item frame carries `read_only` as `readOnly` says; a caller asking only
+ * whether a frame may be sent passes null and loads no registrations.
  */
 export function frameInReach(
-  { key, sourceFilter, readOnly }: DeliveryReach,
+  { key, sourceFilter }: DeliveryReach,
   stored: Record<string, unknown>,
+  readOnly: ReadOnlyItems | null,
 ): Record<string, unknown> | null {
   if (isRecord(stored.edge)) {
     const edge = stored.edge as unknown as Edge;
@@ -107,7 +106,11 @@ export function frameInReach(
   ) {
     return null;
   }
-  const frame = frameFor(stored, (type) => mayReadType(key, type), readOnly);
+  const frame = frameFor(
+    stored,
+    (type) => mayReadType(key, type),
+    readOnly ?? undefined,
+  );
   const metadata = frame.metadata;
   if (!isRecord(metadata)) return frame;
   return {

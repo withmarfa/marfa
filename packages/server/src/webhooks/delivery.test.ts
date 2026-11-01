@@ -1,6 +1,14 @@
 import type { Edge, Item } from "@withmarfa/shared";
 import { createHmac } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
 import * as clock from "../clock.js";
 import {
@@ -587,6 +595,35 @@ describe("what a delivery carries", () => {
       "01HREADONLYREADONLYREADON0": true,
       "01HEDITABLEEDITABLEEDITAB0": false,
     });
+  });
+
+  it("reads connector registrations when it sends a delivery, not when it schedules one", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    await publish({
+      type: "created",
+      item: item("01HSCHEDULEDSCHEDULEDSCHE0"),
+    });
+    const readOnly = vi.spyOn(ctx.storage.connectors, "readOnly");
+    try {
+      const scheduler = new WebhookScheduler({
+        storage: ctx.storage,
+        wakePoller: () => Promise.resolve(),
+      });
+      const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+      while (
+        (await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head
+      ) {
+        await scheduler.runOnce();
+      }
+      expect(readOnly).not.toHaveBeenCalled();
+      const http = recorder();
+      await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+      expect(http.posts).toHaveLength(1);
+      expect(readOnly).toHaveBeenCalled();
+    } finally {
+      readOnly.mockRestore();
+    }
   });
 
   it("carries every mark to a credential that may read the rows they name, and no stored type", async () => {
