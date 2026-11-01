@@ -2589,7 +2589,7 @@ const CONSOLE: GalleryTab = {
       variant("none", "No passkeys yet", () =>
         renderPasswordPage({ ...passwordBase, passkeys: [] }),
       ),
-      variant("some", "Two passkeys, one unnamed and never used", () =>
+      variant("some", "Two passkeys, one unnamed with no use recorded", () =>
         renderPasswordPage({
           ...passwordBase,
           passkeys: [passkey(1, "Passkey on macOS"), passkey(2, null)],

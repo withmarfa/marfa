@@ -170,10 +170,10 @@ describe("the Password and passkeys page", () => {
       ).toHaveLength(2);
   });
 
-  it("says when each passkey was last used, and that one was never used", () => {
+  it("says when each passkey was last used, and that none is recorded for the other", () => {
     const text = visibleText(password(TWO));
     expect(text).toContain("Last used 3 days ago");
-    expect(text).toContain("Never used");
+    expect(text).toContain("No use recorded");
   });
 
   it("writes each date as a time element, with the UTC date for a browser that cannot localize it", () => {

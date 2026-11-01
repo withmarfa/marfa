@@ -313,7 +313,7 @@ export function PasswordPage(props: PasswordPageParams) {
                     <>
                       Added <LocalDate at={passkey.added} />.{" "}
                       {passkey.lastUsed === null
-                        ? "Never used."
+                        ? "No use recorded."
                         : `Last used ${agoWords(passkey.lastUsed.getTime(), props.now)}.`}
                     </>
                   }
