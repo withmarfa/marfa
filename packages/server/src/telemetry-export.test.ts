@@ -2,7 +2,7 @@
  * What one setting, the OTLP endpoint, turns on: a request's trace with spans
  * below the HTTP span for its storage access, and its log lines, all arriving
  * at the collector and all carrying the request id. With the setting absent,
- * nothing is exported and no telemetry SDK or exporter module is loaded.
+ * no trace or log is exported and no telemetry SDK or exporter module is loaded.
  *
  * The first case runs the real server process under the preload, so the HTTP
  * span is the one `HttpInstrumentation` makes. The rest run in this process,

@@ -107,18 +107,59 @@ describe("the server's exception reports", () => {
   it(
     "are all that a host the token may not travel to stops: traces and logs still go",
     async () => {
+      // The unusable host is the local receiver's own address with a user
+      // name in it, so a report sent to it anyway would arrive where the
+      // fixture can see it.
+      const log = await faultAndStop(
+        await boot((receiver) => {
+          const host = new URL(receiver.MARFA_POSTHOG_HOST!);
+          host.username = "user";
+          host.password = "pass";
+          return {
+            OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+            MARFA_POSTHOG_HOST: host.href,
+          };
+        }),
+      );
+      expect(sinks!.trackedErrors).toEqual([]);
+      expect(sinks!.sentExceptions()).toEqual([]);
+      expect(log).toContain("MARFA_POSTHOG_HOST is not an https address");
+      expect(log).not.toContain("user:pass");
+      expect(log).not.toContain("pass@");
+      expect(sinks!.traces.length).toBeGreaterThan(0);
+      expect(sinks!.logRecords.length).toBeGreaterThan(0);
+    },
+    BUDGET,
+  );
+
+  it(
+    "go to the same receiver address once it carries no user name or password",
+    async () => {
+      // The witness for the case above: the one thing changed is the
+      // credential, and the report arrives.
       const log = await faultAndStop(
         await boot((receiver) => ({
           OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
-          MARFA_POSTHOG_HOST: "http://posthog.example",
         })),
       );
-      expect(sinks!.sentExceptions()).toEqual([]);
-      expect(log).toContain("MARFA_POSTHOG_HOST is not an https address");
-      expect(log).not.toContain("posthog.example");
-      // The witness: the same run still exports to the collector.
+      expect(log).not.toContain("MARFA_POSTHOG_HOST is not an https address");
+      expect(sinks!.sentExceptions()).toHaveLength(1);
       expect(sinks!.traces.length).toBeGreaterThan(0);
-      expect(sinks!.logRecords.length).toBeGreaterThan(0);
+    },
+    BUDGET,
+  );
+
+  it(
+    "are not sent when MARFA_ERROR_REPORTING_ENABLED is false",
+    async () => {
+      await faultAndStop(
+        await boot((receiver) => ({
+          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+          MARFA_ERROR_REPORTING_ENABLED: "false",
+        })),
+      );
+      expect(sinks!.trackedErrors).toEqual([]);
+      expect(sinks!.sentExceptions()).toEqual([]);
     },
     BUDGET,
   );

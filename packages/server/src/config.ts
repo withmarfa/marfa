@@ -2002,7 +2002,7 @@ const settingsShape = {
   OTEL_EXPORTER_OTLP_ENDPOINT: grouped(
     { group: "Alerts and monitoring", label: "Telemetry address" },
     optionalUrl(
-      "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
+      "The base URL of the OTLP receiver. Setting it turns traces and logs on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, no trace or log is exported; exception reports have settings of their own (`MARFA_POSTHOG_HOST`).",
       { secret: true },
     ),
   ),

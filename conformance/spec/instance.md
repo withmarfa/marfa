@@ -1452,11 +1452,17 @@ Telemetry has two parts, each with settings of its own. Traces and log records a
 
 ### `instance/telemetry-exception-report`
 
-When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
+When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, the effective reporting preference `error_reporting_enabled` is on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
 
-**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both.
+**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The effective preference is the stored `error_reporting_enabled` choice where there is one, otherwise `MARFA_ERROR_REPORTING_ENABLED`, which is on by default.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are sent with the PostHog host and project token alone, and no trace or log record`.
+
+### `instance/telemetry-exception-reporting-off`
+
+While the effective reporting preference `error_reporting_enabled` is off, the server MUST send no exception report, whatever the PostHog settings are.
+
+**Tests:** `compliance/telemetry-exception-alone.test.ts › are not sent when MARFA_ERROR_REPORTING_ENABLED is false`.
 
 ### `instance/telemetry-disabled`
 
@@ -1466,9 +1472,23 @@ When `OTEL_SDK_DISABLED` is `true`, the server MUST export no trace, no log reco
 
 ### `instance/telemetry-exception-host-unusable`
 
-When `MARFA_POSTHOG_HOST` is not an `https` address, or an `http` address on this machine, or has a user name or password, the server MUST send no exception report and MUST still export its traces and log records, and its boot log MUST warn that exception reports are off, naming the setting and not its value.
+If `MARFA_POSTHOG_HOST` is not an `https` address, or an `http` address on this machine, or has a user name or password, then the server MUST send no exception report to it.
 
-**Reason:** the project token travels with every report, so it goes only where it cannot be read on the way. The address can carry a credential, so the warning does not repeat it.
+**Reason:** the project token travels with every report, so it goes only where it cannot be read on the way.
+
+**Tests:** `compliance/telemetry-exception-alone.test.ts › are all that a host the token may not travel to stops: traces and logs still go`.
+
+### `instance/telemetry-exception-host-unusable-traces`
+
+Where `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED` is not `true`, if `MARFA_POSTHOG_HOST` is unusable as `instance/telemetry-exception-host-unusable` describes, then the server MUST still export its traces and log records.
+
+**Tests:** `compliance/telemetry-exception-alone.test.ts › are all that a host the token may not travel to stops: traces and logs still go`.
+
+### `instance/telemetry-exception-host-unusable-warning`
+
+Where `OTEL_SDK_DISABLED` is not `true`, if `MARFA_POSTHOG_HOST` is unusable as `instance/telemetry-exception-host-unusable` describes, then the server's boot log MUST warn that exception reports are off, naming the setting and not its value.
+
+**Reason:** the address can carry a credential, so the warning does not repeat it.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are all that a host the token may not travel to stops: traces and logs still go`.
 
@@ -1718,7 +1738,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `OTEL_SDK_DISABLED`                         | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Setting this to `true` turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value leaves them as they are.                                                                                                                                                                                                           |
 | `OTEL_SERVICE_NAME`                         | `marfa-server`                | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                            |
 | `OTEL_RESOURCE_ATTRIBUTES`                  | None                          | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.                                                                                                                                                                 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`               | None                          | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.                                                                                                                                                                  |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`               | None                          | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns traces and logs on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, no trace or log is exported; exception reports have settings of their own (`MARFA_POSTHOG_HOST`).                                                                                                                   |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`        | None                          | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                    |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`          | None                          | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                      |
 | `OTEL_EXPORTER_OTLP_HEADERS`                | None                          | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with every OTLP export, as `key=value` pairs.                                                                                                                                                                                                                                                                                                              |
