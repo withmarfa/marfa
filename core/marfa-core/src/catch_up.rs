@@ -1375,6 +1375,9 @@ fn edges_of_entering_row(
     }
     {
         let conn = core.conn()?;
+        if store::removed(&conn, Subject::Item, &item.id)? {
+            return Ok(Vec::new());
+        }
         // A refill keeps the rows it held until its sweep, which takes the
         // edges of a held row neither its walk nor its replay brought: one
         // only the replay brings enters as a row the copy does not hold.
@@ -1403,12 +1406,16 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
+            store::removal_read(tx, Subject::Item, &item.id)?;
             store::purge_item(tx, &item.id)
         }
         kind if ITEM_CHANGES.contains(&kind) => {
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
+            if store::removed(tx, Subject::Item, &item.id)? {
+                return Ok(false);
+            }
             // Strictly older, not "no newer": the stream's order decides a
             // tie, and the copy can hold a row read ahead of the stream.
             if store::holds_later(tx, Subject::Item, &item.id, item.version, &item.updated_at)? {
@@ -1431,7 +1438,11 @@ fn apply(
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
-            if store::holds_later(tx, Subject::Edge, &edge.id, edge.version, &edge.updated_at)? {
+            if store::removed(tx, Subject::Edge, &edge.id)?
+                || store::removed(tx, Subject::Item, &edge.source_id)?
+                || store::removed(tx, Subject::Item, &edge.target_id)?
+                || store::holds_later(tx, Subject::Edge, &edge.id, edge.version, &edge.updated_at)?
+            {
                 return Ok(false);
             }
             // Kept where it waits on this device's own write, until that is
@@ -1451,6 +1462,7 @@ fn apply(
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
+            store::removal_read(tx, Subject::Edge, &edge.id)?;
             store::forget_edge(tx, &edge.id)
         }
         _ => Ok(false),

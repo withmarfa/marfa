@@ -4335,6 +4335,86 @@ pub fn forget_purged(conn: &Connection, id: &str) -> Result<(), CoreError> {
     meta_delete(conn, &purged_key(id))
 }
 
+/// The start of the meta key, `removal/item/<id>` or `removal/edge/<id>`,
+/// of a removal this device sent: `sent` while it is out or waits, then
+/// `accepted` once the server takes it, until the copy reads the event of the
+/// removal or is filled again. Every event before that one is older than the
+/// removal (`device/deleted-stays-gone`).
+const REMOVAL: &str = "removal/";
+const REMOVAL_SENT: &str = "sent";
+const REMOVAL_ACCEPTED: &str = "accepted";
+
+fn removal_key(subject: Subject, id: &str) -> String {
+    let subject = match subject {
+        Subject::Item => "item",
+        Subject::Edge => "edge",
+    };
+    format!("{REMOVAL}{subject}/{id}")
+}
+
+/// Before the removal can reach the server: the event of a removal read
+/// meanwhile takes the mark away, which tells `removal_accepted` the copy is
+/// already past it. An `accepted` mark stays as it is, since the event of
+/// that removal is still ahead whatever becomes of this one.
+pub fn removal_sent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() != Some(REMOVAL_ACCEPTED) {
+        meta_set(conn, &key, REMOVAL_SENT)?;
+    }
+    Ok(())
+}
+
+pub fn removal_accepted(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() == Some(REMOVAL_SENT) {
+        meta_set(conn, &key, REMOVAL_ACCEPTED)?;
+    }
+    Ok(())
+}
+
+/// A removal refused, withdrawn or never answered, which leaves the row the
+/// server's to tell of. An `accepted` mark belongs to an earlier removal.
+pub fn removal_unsent(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    let key = removal_key(subject, id);
+    if meta_get(conn, &key)?.as_deref() == Some(REMOVAL_SENT) {
+        meta_delete(conn, &key)?;
+    }
+    Ok(())
+}
+
+/// The event of the removal was read: every event after it is newer.
+pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &removal_key(subject, id))
+}
+
+/// Whether an event naming the row or edge is from before a removal the
+/// server accepted.
+pub fn removed(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &removal_key(subject, id))?.as_deref() == Some(REMOVAL_ACCEPTED))
+}
+
+/// A copy filled from the first page holds what the server holds after every
+/// removal it accepted. An edge delete still waiting keeps its mark.
+pub fn forget_removals(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute(
+        &format!(
+            "DELETE FROM meta
+              WHERE substr(key, 1, ?1) = ?2
+                AND NOT (value = ?3 AND key IN (
+                  SELECT ?4 || edge_id FROM queue
+                   WHERE kind = ?5 AND edge_id IS NOT NULL AND {WAITING}))"
+        ),
+        params![
+            REMOVAL.len() as i64,
+            REMOVAL,
+            REMOVAL_SENT,
+            removal_key(Subject::Edge, ""),
+            WriteKind::DeleteEdge.as_str(),
+        ],
+    )?;
+    Ok(())
+}
+
 /// Whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // A pin asked for again is somebody's own, which the body rule's release
@@ -4952,6 +5032,21 @@ fn record_verdict_inner(
     }
     if answered.verdict == Verdict::Accepted {
         meta_delete(conn, &effect_key(id))?;
+    }
+    // A delete refused as already gone did what it asked, and the event of
+    // the removal is still ahead wherever its mark is still there.
+    if (answered.verdict == Verdict::Accepted
+        || answered.verdict == Verdict::Refused && answered.reason == Some("edge_not_found"))
+        && let Some(edge) = conn
+            .query_row(
+                "SELECT edge_id FROM queue WHERE id = ?1 AND kind = ?2",
+                params![id, WriteKind::DeleteEdge.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+    {
+        removal_accepted(conn, Subject::Edge, &edge)?;
     }
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
@@ -5872,6 +5967,7 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             lay_waiting_edge_writes_over(conn, id)?;
             if !edge_write_waits(conn, id)? {
                 drop_beneath(conn, Subject::Edge, id)?;
+                removal_unsent(conn, Subject::Edge, id)?;
             }
             // Where the server moved it to a source the copy does not hold
             // while the refused write waited.

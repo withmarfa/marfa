@@ -346,6 +346,7 @@ fn attempt(
                 &serde_json::to_string(edge_types)?,
             )?;
             crate::body::rule::before_rebuild(&tx)?;
+            store::forget_removals(&tx)?;
             if in_place {
                 store::start_refill(&tx)?;
             } else {
