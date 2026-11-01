@@ -39,6 +39,7 @@ import { installUnhandledRejectionReporter } from "./process-faults.js";
 import { installDateShim, setClockOffset } from "./clock.js";
 import { setServedContractVersion } from "./contract.js";
 import { clearFaults } from "./control/faults.js";
+import { severAllConnections } from "./request-deadline.js";
 
 async function main() {
   installUnhandledRejectionReporter((event, listener) => {
@@ -95,7 +96,7 @@ async function main() {
             publicListener.server.close(() => {
               resolve();
             });
-            publicListener.server.closeAllConnections();
+            severAllConnections(publicListener.server);
           }),
       );
     const blobs = await createBlobLayer(storage, config);

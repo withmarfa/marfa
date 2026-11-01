@@ -508,11 +508,19 @@ When the server answers `404 item_not_found` for an id that no item holds, the s
 
 ### `errors/internal-error`
 
-If a request meets a fault for which the server holds no refusal, then the server MUST answer `500 internal_error`.
+If a request meets a fault for which the server holds no refusal, and the fault is not the request body ending early because the client closed its connection, then the server MUST answer `500 internal_error`.
 
-**Reason:** a fault is not the caller's to act on. What a caller can do is read what it changed before it repeats a write.
+**Reason:** a fault is not the caller's to act on. What a caller can do is read what it changed before it repeats a write. A fault that meets a request whose client has already gone is still a fault and is answered and reported as one. `errors/client-closed-request` states the one case that is not.
 
 **Tests:** `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
+
+### `errors/client-closed-request`
+
+When a client closes its connection while the server is still reading the request body, the server MUST NOT report the request as an unhandled fault.
+
+**Reason:** the client gave up and nothing failed on the server, so a report would bury the faults that need a person. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking; the request is still logged, with status `499`.
+
+**Tests:** `compliance/client-closed-request.test.ts › is not logged as an unhandled fault, sent to the error webhook or reported to error tracking`.
 
 ### `errors/internal-error-body`
 

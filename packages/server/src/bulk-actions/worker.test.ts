@@ -8,7 +8,10 @@ import {
   validateRequestAuthority,
   withRequestAuthority,
 } from "../auth/request-authority.js";
+import { DrizzleQueryError } from "drizzle-orm";
+import { LibsqlError } from "@libsql/client";
 import { BulkActionWorker } from "./worker.js";
+import { captureLogLines } from "../test-log.js";
 
 /**
  * Empty matched IDs isolate polling and completion from chunk execution,
@@ -403,6 +406,85 @@ describe("BulkActionWorker and the request that woke it", () => {
       expect(asked).toBe(false);
     } finally {
       await worker.stop();
+    }
+  });
+});
+
+describe("BulkActionWorker and a failed tick", () => {
+  const VALUE = "bound-value-7c41f0aa";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** The tick lines `log()` writes when a worker's claim rejects with `fail`, before or after the worker is told to stop. */
+  async function linesFromTick(
+    fail: Error,
+    stopFirst: boolean,
+  ): Promise<Record<string, unknown>[]> {
+    const lines = captureLogLines();
+    const stub = makeStubStorage();
+    let reject!: (error: Error) => void;
+    (stub.storage.bulkActionJobs as Partial<BulkActionJobStore>).claimNext =
+      () =>
+        new Promise((_, rejected) => {
+          reject = rejected;
+        });
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 500,
+    });
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    if (stopFirst) {
+      const stopping = worker.stop();
+      reject(fail);
+      await stopping;
+    } else {
+      reject(fail);
+      await vi.advanceTimersByTimeAsync(0);
+      await worker.stop();
+    }
+    return lines.filter((line) => String(line.message).includes("tick"));
+  }
+
+  const closed = () => new LibsqlError("The client is closed", "CLIENT_CLOSED");
+
+  it("keeps the code of a closed client in the error line", async () => {
+    const lines = await linesFromTick(closed(), false);
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        error: expect.stringContaining("CLIENT_CLOSED") as unknown,
+      }),
+    );
+  });
+
+  it("logs a tick that failed after the worker was told to stop at info", async () => {
+    const lines = await linesFromTick(closed(), true);
+    expect(lines.map((line) => line.level)).toEqual(["info"]);
+  });
+
+  it("puts no statement text and no bound value in the line", async () => {
+    const failure = new DrizzleQueryError(
+      'insert into "items" ("body") values (?)',
+      [VALUE],
+      closed(),
+    );
+    // Witness: the error as the query layer raises it holds the value.
+    expect(failure.message).toContain(VALUE);
+    const lines = await linesFromTick(failure, false);
+    expect(lines).not.toHaveLength(0);
+    for (const line of lines) {
+      const text = JSON.stringify(line);
+      expect(text).toContain("CLIENT_CLOSED");
+      expect(text).not.toContain(VALUE);
+      expect(text).not.toContain("insert into");
     }
   });
 });

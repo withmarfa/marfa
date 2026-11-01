@@ -358,3 +358,23 @@ describe("the driver's own message beneath a failed query", () => {
     },
   );
 });
+
+describe("a failure libsql raises with a code of its own", () => {
+  it.each([
+    "CLIENT_CLOSED",
+    "TRANSACTION_CLOSED",
+    "SQLITE_UNKNOWN",
+    "SQLITE_UNKNOWN_77",
+  ])("keeps %s in the fixed message", (code) => {
+    const error = failedQuery(undefined, new LibsqlError("native", code));
+    expect(errorMessage(error)).toBe(`${FIXED} (${code})`);
+  });
+
+  it("drops a code whose text the sender chose", () => {
+    const error = failedQuery(
+      undefined,
+      new LibsqlError("native", `NO_SUCH_${VALUE}`),
+    );
+    expect(errorMessage(error)).toBe(FIXED);
+  });
+});

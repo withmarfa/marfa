@@ -1,3 +1,4 @@
+import type { IncomingMessage } from "node:http";
 import type { Context, ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
@@ -11,6 +12,7 @@ import { diskFull } from "../storage/disk-space.js";
 import { PasswordAttemptsSpent } from "../auth/sign-in-throttle.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 import { parseWaitSeconds } from "../pages/lockout.js";
+import { severedStatus } from "../request-deadline.js";
 import * as clock from "../clock.js";
 
 /**
@@ -99,6 +101,38 @@ function isMarfaError(err: unknown): err is ShapedError {
 export function shapedError(err: unknown): ShapedError | undefined {
   if (isMarfaError(err)) return err;
   return refusalInCauses(err) ?? diskFull(err);
+}
+
+/**
+ * The status to log for a request whose body stopped arriving because its
+ * connection ended, or `undefined` when that is not what happened: Node ends
+ * the request stream with `Error: aborted` (`ECONNRESET`) and the request's
+ * signal is aborted by the adapter once the connection is gone. Both must
+ * hold, so a server fault that merely says "aborted" while the client is
+ * still there is still a fault.
+ *
+ * The connection is the client's to end unless the server ended it itself,
+ * the deadline of a request that did not arrive in time or a clean-up that
+ * closes every connection, which mark it (`severedStatus`) with the status
+ * the server answered; then that status is what the log shows, and the client
+ * is not blamed.
+ */
+function endedConnectionStatus(
+  err: unknown,
+  c: Context<AppEnv>,
+): number | undefined {
+  if (!c.req.raw.signal.aborted) return undefined;
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step === null || typeof step !== "object") return undefined;
+    const { code, message } = step as { code?: unknown; message?: unknown };
+    if (code === "ECONNRESET" && message === "aborted") {
+      const incoming = (c.env as { incoming?: IncomingMessage } | undefined)
+        ?.incoming;
+      return (incoming && severedStatus(incoming)) ?? 499;
+    }
+    step = (step as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 export function createErrorHandler(config: {
@@ -251,6 +285,12 @@ export function createErrorHandler(config: {
         "validation_error",
       );
     }
+
+    // Nobody is left to read an answer, so none is written beyond the status
+    // the request log shows: 499 for a client that left, as an export the
+    // client left is, and the server's own status for a connection it ended.
+    const ended = endedConnectionStatus(err, c);
+    if (ended !== undefined) return new Response(null, { status: ended });
 
     await report(err, c);
 

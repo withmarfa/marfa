@@ -1,8 +1,9 @@
 /**
- * How the housekeeping scheduler reports a run that did not finish.
+ * How a background job reports a run that did not finish: the housekeeping
+ * scheduler and the bulk-action worker.
  *
  * A run cut short because the process is going away has not failed. The
- * scheduler is stopped before the storage client closes, so a query still
+ * job is stopped before the storage client closes, so a query still
  * in flight loses its client and rejects. Nothing is lost and nothing is
  * actionable: the job is due again whenever its row says.
  *
@@ -10,8 +11,8 @@
  * event nobody can act on, and a category that is mostly routine deploys is
  * a category whoever reads it learns to discount. The two cases are
  * separable without guessing, because only a canceled run is both
- * client-closed-shaped and preceded by the scheduler's own `stop()`.
- * Anything else, including a closed client while the scheduler is still
+ * client-closed-shaped and preceded by the job's own `stop()`.
+ * Anything else, including a closed client while the job is still
  * running, keeps `error`.
  */
 

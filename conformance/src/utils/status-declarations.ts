@@ -492,6 +492,9 @@ function templateOf(
   });
 }
 
+/** The status the request log gives a request its client dropped. */
+const CLIENT_CLOSED_REQUEST = 499;
+
 /**
  * A route the document does not publish is counted, and a sign-in route among
  * them is held to `signInStatuses`: the sign-in routes, `/health` and the
@@ -518,6 +521,10 @@ export function reportStatuses(
   const signIn = new Map<string, Map<number, Set<string>>>();
 
   for (const line of lines) {
+    // A request whose client closed the connection while the body was read
+    // is logged as 499 and answered to no one (`errors/client-closed-request`),
+    // so no document declares it.
+    if (line.status === CLIENT_CLOSED_REQUEST) continue;
     // HEAD is answered by the GET handler unless the document gives it an
     // operation of its own, so it is held to what GET declares.
     const method =

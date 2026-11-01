@@ -9,8 +9,8 @@
  * the statement's text is not guaranteed to hold only placeholders. For a
  * write those values are the content written. So an error with a database
  * failure anywhere in its chain is replaced, at every sink, by a
- * {@link DatabaseFailure} that keeps the SQLite code and the outer error's
- * stack frames, and nothing the database was given or said.
+ * {@link DatabaseFailure} that keeps the SQLite or libsql code and the outer
+ * error's stack frames, and nothing the database was given or said.
  *
  * Classification reads the original: a typed refusal, write contention or a
  * full disk is decided before any of this runs.
@@ -55,6 +55,26 @@ const PRIMARY_CODES = new Set([
   "SQLITE_NOTICE",
   "SQLITE_WARNING",
 ]);
+
+/**
+ * The codes the local `@libsql/client` raises itself, each a fixed identifier
+ * written in its source (`sqlite3.js` and the `expandConfig` of
+ * `@libsql/core` that it opens through, as of 0.17.4): a closed client or
+ * transaction, and a URL or option it refuses. Marfa opens only `file:`
+ * databases, so the remote clients' codes (`HRANA_*`, `SERVER_ERROR` and the
+ * like), whose text a remote server can choose, are not here.
+ */
+const LIBSQL_CODES = new Set([
+  "CLIENT_CLOSED",
+  "TRANSACTION_CLOSED",
+  "URL_INVALID",
+  "URL_PARAM_NOT_SUPPORTED",
+  "URL_SCHEME_NOT_SUPPORTED",
+  "SQLITE_UNKNOWN",
+]);
+
+/** The code libsql gives a native error whose number it has no name for. */
+const UNKNOWN_NUMBERED = /^SQLITE_UNKNOWN_\d{1,3}$/;
 
 /** An extended code is its primary code and a suffix of capitals. */
 const EXTENDED_SUFFIX = /^_[A-Z]+(?:_[A-Z]+)*$/;
@@ -116,7 +136,7 @@ function isDatabaseError(value: object): boolean {
   );
 }
 
-/** The codes a database error carries, kept only in SQLite's own spelling. */
+/** The codes a database error carries, kept only when SQLite or libsql spells them. */
 function codesOf(value: object): FailureCodes {
   const codes: FailureCodes = {};
   const message = read(value, "message");
@@ -128,6 +148,10 @@ function codesOf(value: object): FailureCodes {
     written,
   ]) {
     if (typeof candidate !== "string") continue;
+    if (LIBSQL_CODES.has(candidate) || UNKNOWN_NUMBERED.test(candidate)) {
+      codes.code ??= candidate;
+      continue;
+    }
     const primary = [...PRIMARY_CODES].find(
       (code) =>
         candidate === code ||
