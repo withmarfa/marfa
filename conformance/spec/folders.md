@@ -3536,6 +3536,14 @@ When a person deletes a bound file before a device first writes its `marfa_id` l
 
 **Tests:** `device/folders-pass-writeback.test.ts › does not write back a file deleted after the scan, and journals the delete`, `device/binding-folders-clock.test.ts › writes back no file deleted between a watch pass's scan and its pull, and sends its delete after the grace`.
 
+### `folders/delete-of-found-render`
+
+When a person deletes a bound file that a device found holding exactly its item's rendered bytes, a device MUST retain the journaled deletion while the item has not changed in content the file showed.
+
+**Reason:** A folder added over files an earlier copy wrote binds them without writing them, so it holds no version line of its own for them. The file showed the version line its bytes carry, and its absence from what the device would write now is no change made elsewhere. A render over a file keeps its comments, empty properties and formatting, so the deletion is the person's own whatever of those the file held, and the item goes to the bin with its values.
+
+**Tests:** `device/folders-identity.test.ts › trashes the item of a file it found as its item renders once the person deletes it`.
+
 ### `folders/pull-missing-file-not-written`
 
 If a folder pull reaches an item whose bound file is missing from a path the folder's lists take outside any nested folder, neither journaled as deleted nor put back by a restore of a paused removal, then a device MUST NOT write the item's file.
@@ -3836,9 +3844,11 @@ When an item starts matching a folder’s query through a tag, property, state, 
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, or those it found before it first wrote the file that are exactly what it would write for the item at the version line and state the file shows and whose frontmatter holds no comment, no second YAML document and no empty property the item does not hold, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`.
+**Reason:** A folder added over files an earlier copy wrote binds them without writing them, at the version line and state they were written at, which differ from the item's once the item changes in something no file shows or leaves the folder by its state. A render over a file keeps the file's comments, any YAML document after the first, empty properties and formatting, so a found file can match a render and still hold something the person added. A comment, a second document or an empty property is something the item does not hold, so a file with one is kept. Formatting alone, such as quoting, key order or spacing, is not told apart from the earlier copy's own: it can be lost when such a file is removed, while its values go to the bin with the item. A change to a file the device wrote is the person's, even a reformatting that a render would keep.
+
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item that leaves by state`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore`, `device/folders-identity.test.ts › keeps the file of an item put in the bin that it found as its item renders with a comment the person added`, `device/folders-identity.test.ts › keeps the file of an item put in the bin that it found as its item renders with an empty property the person added`.
 
 ### `folders/departed-binding-released`
 
@@ -3856,7 +3866,7 @@ When a folder pull removes a departed item’s file, a device MUST NOT queue del
 
 When a trashed item is restored into a folder’s query, a device MUST write its file at the next pull.
 
-**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`.
+**Tests:** `device/folders-identity.test.ts › removes a trashed item's file and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders, and brings it back on restore`, `device/folders-identity.test.ts › removes the file of an item put in the bin that it found as its item renders at an older version line, and brings it back on restore`.
 
 ### `folders/missing-departure-not-pulled`
 

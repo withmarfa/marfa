@@ -33,6 +33,16 @@ impl Document {
             body: self.body.clone(),
         }
     }
+
+    /// Whether the frontmatter holds text its values leave out, a comment or
+    /// a second YAML document, or cannot be read well enough to say.
+    pub(super) fn holds_unread_text(&self) -> bool {
+        self.unreadable.is_some()
+            || self
+                .source
+                .as_ref()
+                .is_some_and(|source| super::preserve::holds_unread_text(&source.yaml))
+    }
 }
 
 impl Presentation {
