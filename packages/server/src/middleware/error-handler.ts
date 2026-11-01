@@ -101,6 +101,24 @@ export function shapedError(err: unknown): ShapedError | undefined {
   return refusalInCauses(err) ?? diskFull(err);
 }
 
+/**
+ * Whether the client closed the connection while the server was still
+ * reading its request: Node ends the request stream with `Error: aborted`
+ * (`ECONNRESET`) and the request's signal is aborted by the adapter once the
+ * connection is gone. Both must hold, so a server fault that merely says
+ * "aborted" while the client is still there is still a fault.
+ */
+function clientAbortedRequest(err: unknown, c: Context<AppEnv>): boolean {
+  if (!c.req.raw.signal.aborted) return false;
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step === null || typeof step !== "object") return false;
+    const { code, message } = step as { code?: unknown; message?: unknown };
+    if (code === "ECONNRESET" && message === "aborted") return true;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function createErrorHandler(config: {
   reportingEnabled?: () => Promise<boolean>;
   errorWebhookUrl: string;
@@ -251,6 +269,11 @@ export function createErrorHandler(config: {
         "validation_error",
       );
     }
+
+    // Nobody is left to read an answer, so none is written beyond the status
+    // the request log shows: 499, as an export the client left is.
+    if (clientAbortedRequest(err, c))
+      return new Response(null, { status: 499 });
 
     await report(err, c);
 
