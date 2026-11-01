@@ -336,6 +336,51 @@ describe("a part goes to the bin with its hosts", () => {
     expect(await stateOf(reply)).toBe("active");
   });
 
+  for (const order of ["part first", "part last"] as const) {
+    it(`sends a named part to the bin with a host another named part's children take, ${order}`, async () => {
+      // `part` is on `host`; `named` is a part of `elsewhere`, which stays
+      // out, and the parent of `host`.
+      const setUp = async (tag: string) => {
+        const host = await note(tag);
+        const part = await note(tag);
+        const named = await note(tag);
+        const elsewhere = await note(`${tag}-elsewhere`);
+        await edge(part, host, "attached-to");
+        await edge(named, elsewhere, "attached-to");
+        await edge(named, host, "parent-of");
+        return { host, part, named };
+      };
+
+      // Witness: `named` alone takes `host`, and `part` with it, and its
+      // restore brings both back.
+      const alone = await setUp(`parts-named-reached-alone-${ctx.runId}`);
+      const one = await client.trashItems([alone.named]);
+      expect(one.status, JSON.stringify(one.error)).toBe(200);
+      expect(await stateOf(alone.part)).toBe("trashed");
+      await restore(alone.named);
+      expect(await stateOf(alone.host)).toBe("active");
+      expect(await stateOf(alone.part)).toBe("active");
+
+      const tag = `parts-named-reached-${order.replace(" ", "-")}-${ctx.runId}`;
+      const { host, part, named } = await setUp(tag);
+      const ids = order === "part first" ? [part, named] : [named, part];
+      const preview = await client.previewItemTrash(ids);
+      expect(preview.status).toBe(200);
+      expect(preview.data.count).toBe(3);
+      const sent = await client.trashItems(ids, preview.data.digest);
+      expect(sent.status, JSON.stringify(sent.error)).toBe(200);
+      const binned = await trashed(tag);
+      expect(binned.get(named)?.trashed_by_cascade ?? false).toBe(false);
+      expect(binned.get(host)?.trashed_with).toBe(named);
+      expect(binned.get(part)?.trashed_by_cascade).toBe(true);
+      expect(binned.get(part)?.trashed_with).toBe(named);
+
+      await restore(named);
+      expect(await stateOf(host)).toBe("active");
+      expect(await stateOf(part)).toBe("active");
+    });
+  }
+
   it("takes a part two hosts share on a bulk transition into the bin that matches both", async () => {
     const tag = `parts-bulk-shared-${ctx.runId}`;
     const first = await note(tag);

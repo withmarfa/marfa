@@ -31,9 +31,10 @@ export interface CascadePlan {
  *     in the bin. A part already in the bin is left where it is.
  *
  * Planned once over every root, so a part whose hosts are all named joins,
- * which planning each root alone would miss. A named part whose hosts all
- * go joins them as if it had not been named; only one left out goes on its
- * own.
+ * which planning each root alone would miss. Every named row is in the set;
+ * only after the closure settles is each named part judged, so that one
+ * whose hosts all go, however late a host joined, goes with them as if it
+ * had not been named, and only one with a host left out goes on its own.
  *
  * A `block` edge on either side of any row in the set refuses the whole
  * plan, naming every blocker. `orphan` does nothing here: `edges` carries no
@@ -58,17 +59,7 @@ export async function planCascadeDelete(
   const children = new Map<string, string[]>();
   const candidates = new Map<string, string[]>();
 
-  // A named part waits until the closure over the other named rows settles:
-  // a part whose hosts all go joins them, as if it had not been named, and
-  // only a part left out then goes on its own.
-  const hostsOf = new Map<string, string[]>();
-  const rootRows = await storage.items.getMany(roots, { includeTrashed: true });
-  for (const id of roots) {
-    if (rootRows.get(id)?.state === "trashed") continue;
-    const hosts = await withHostsTargets(storage, id);
-    if (hosts.length > 0) hostsOf.set(id, hosts);
-  }
-  const queue = roots.filter((id) => !hostsOf.has(id));
+  const queue = [...roots];
   const drain = async (): Promise<void> => {
     for (
       let itemId = queue.shift();
@@ -136,27 +127,31 @@ export async function planCascadeDelete(
   for (;;) {
     const pending = [...candidates.keys()].filter((id) => !inSet.has(id));
     const joining = await joiningParts(pending);
-    if (joining.length > 0) {
-      for (const partId of joining) {
-        for (const host of candidates.get(partId) ?? []) {
-          if (inSet.has(host)) children.get(host)?.push(partId);
-        }
-        candidates.delete(partId);
-        queue.push(partId);
+    if (joining.length === 0) break;
+    for (const partId of joining) {
+      for (const host of candidates.get(partId) ?? []) {
+        if (inSet.has(host)) children.get(host)?.push(partId);
       }
-      await drain();
-      continue;
+      candidates.delete(partId);
+      queue.push(partId);
     }
-    // Named parts left out go on their own, a part hosted by another one
-    // left out after it, so a reply named with the comment it answers goes
-    // with that comment.
-    const left = new Set([...hostsOf.keys()].filter((id) => !inSet.has(id)));
-    if (left.size === 0) break;
-    const first = [...left].filter(
-      (id) => !(hostsOf.get(id) ?? []).some((host) => left.has(host)),
-    );
-    queue.push(...(first.length > 0 ? first : left));
     await drain();
+  }
+
+  // Only once the whole set is known can a named part be judged: a host
+  // another named row's cascade reaches may join after the part did. A named
+  // part whose hosts are all in the set or the bin goes beneath them, as if
+  // it had not been named; one with a host left out heads its own group.
+  const rootRows = await storage.items.getMany(roots, { includeTrashed: true });
+  for (const id of roots) {
+    if (rootRows.get(id)?.state === "trashed") continue;
+    const hosts = [...new Set(await withHostsTargets(storage, id))];
+    const going = hosts.filter((host) => inSet.has(host));
+    if (going.length === 0) continue;
+    const outside = hosts.filter((host) => !inSet.has(host));
+    const held = await storage.items.getMany(outside, { includeTrashed: true });
+    if (!outside.every((host) => held.get(host)?.state === "trashed")) continue;
+    for (const host of going) children.get(host)?.push(id);
   }
 
   // Post-order over the plan, iteratively so a deep chain cannot overflow
