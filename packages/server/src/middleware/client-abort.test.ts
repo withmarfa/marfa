@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import { serve } from "@hono/node-server";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -19,6 +19,8 @@ interface Listener {
   server: Server;
   port: number;
   sockets: Socket[];
+  /** With a gate: the request the app was handed, settled once it holds it. */
+  arrived: Promise<IncomingMessage>;
 }
 const listeners: Listener[] = [];
 
@@ -32,9 +34,14 @@ async function listen(
   deadlineMs?: number,
   gate?: Promise<void>,
 ): Promise<Listener> {
+  let arrive!: (incoming: IncomingMessage) => void;
+  const arrived = new Promise<IncomingMessage>((resolve) => {
+    arrive = resolve;
+  });
   const server = serve({
     fetch: gate
       ? async (request, env) => {
+          arrive(env.incoming as IncomingMessage);
           await gate;
           return ctx.app.fetch(request, env);
         }
@@ -50,6 +57,7 @@ async function listen(
     server,
     port: (server.address() as AddressInfo).port,
     sockets,
+    arrived,
   };
   listeners.push(listener);
   return listener;
@@ -184,6 +192,15 @@ it("logs an upload as dropped when the client left before the server first read 
   await upload.taken;
   upload.reset();
   await upload.closed;
+  // The client's own close says nothing of the server's view. Wait until the
+  // server has seen the reset, so the body is always first read after it.
+  const incoming = await at.arrived;
+  // Not events.once: it listens for "error", and a listener there changes
+  // what Node hands the app.
+  if (!incoming.closed) {
+    await new Promise<void>((resolve) => incoming.once("close", resolve));
+  }
+  expect(incoming.complete).toBe(false);
   open();
   await vi.waitFor(() => {
     expect(requestLines()).toHaveLength(1);
