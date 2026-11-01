@@ -100,8 +100,6 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
     "the build argument that makes an image a release, read by the image's build",
   MARFA_REPLACE_NEWER_REPLICA:
     "replicates a database that may be older than its replica, read by the image's entrypoint",
-  OTEL_SDK_DISABLED:
-    "the OpenTelemetry standard switch that test runs set so they send no telemetry, read by the CLI and the SDK",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:

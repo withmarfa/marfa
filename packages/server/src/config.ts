@@ -440,6 +440,8 @@ export interface AppConfig {
   /** Telemetry, read by `instrumentation.ts`. Optional on the type so a test
    *  context's `AppConfig` literal need not supply it. */
   otel?: OtelSettings;
+  /** Exception reports, read by `instrumentation.ts`. */
+  exceptions?: ExceptionSettings;
   /** Liveness heartbeat target (`MARFA_HEARTBEAT_URL`). Empty = off, the
    *  default. When set, the server GETs this URL on its housekeeping
    *  cadence so something running elsewhere can notice when the pings
@@ -459,8 +461,8 @@ export interface AppConfig {
    *  memory bound: viewers hold no database connection, so any limit is
    *  a stated choice rather than a pool artifact. */
   sseMaxViewers?: number;
-  /** Names in the environment that look like a misspelled setting; boot
-   *  logs each one. */
+  /** What boot logs as a warning: names in the environment that look like a
+   *  misspelled setting, and a setting that turns off one report. */
   settingWarnings?: string[];
   /** Every setting as the console shows it. A secret has no value in it.
    *  Optional on the type for the same reason as `s3ForcePathStyle`. */
@@ -474,15 +476,19 @@ export interface Placement {
   country?: string;
 }
 
-/**
- * Present only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, which is what turns
- * telemetry on. Absent, nothing is exported and the SDK never loads.
- */
-export interface OtelSettings {
+/** What every report of the server shares, whichever of them is asked for. */
+export interface TelemetryIdentity {
   serviceName: string;
   /** `OTEL_RESOURCE_ATTRIBUTES`, which replace the server's own of the same
    *  name. `service.name` is not among them: it is `serviceName`. */
   resourceAttributes: Record<string, string>;
+}
+
+/**
+ * Present only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED`
+ * is not `true`. Absent, no trace or log record is exported.
+ */
+export interface OtelSettings extends TelemetryIdentity {
   /** Each signal's resolved URL. */
   tracesEndpoint: string;
   logsEndpoint: string;
@@ -492,8 +498,15 @@ export interface OtelSettings {
   /** Baseline trace sample ratio; errors export whatever it says, see
    *  `otel/error-aware-sampler.ts`. */
   sampleRatio: number;
-  /** Exception reporting to PostHog, on when both are set. OTLP carries no
-   *  exceptions into PostHog's error tracking, so this stays separate. */
+}
+
+/**
+ * Exception reports to PostHog: present when `MARFA_POSTHOG_HOST` is usable,
+ * `MARFA_POSTHOG_PROJECT_TOKEN` is set and `OTEL_SDK_DISABLED` is not `true`,
+ * whatever the OTLP settings are. OTLP carries no exceptions into PostHog's
+ * error tracking, so this is a pipeline of its own.
+ */
+export interface ExceptionSettings extends TelemetryIdentity {
   posthogHost: string;
   posthogToken: string;
 }
@@ -833,6 +846,22 @@ const flag: Parser<boolean> = {
     if (FALSE_WORDS.has(word)) return false;
     throw new Error("must be true or false (also 1/0, yes/no, on/off)");
   },
+};
+
+/**
+ * `OTEL_SDK_DISABLED` as the command line reads it (`telemetry/settings.rs`):
+ * `true` in any case switches telemetry off and every other value leaves it
+ * on, so one shell setting means the same to both.
+ */
+const disabledSwitch: Parser<boolean> = {
+  rule: { kind: "flag" },
+  parse: (value) => value.toLowerCase() === "true",
+};
+
+/** Text kept as written; {@link usablePosthogHost} judges it. */
+const anyAddress: Parser<string> = {
+  rule: { kind: "url" },
+  parse: (value) => value,
 };
 
 const httpUrl: Parser<string> = {
@@ -1947,6 +1976,14 @@ const settingsShape = {
       "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
     ),
   ),
+  OTEL_SDK_DISABLED: grouped(
+    { group: "Alerts and monitoring", label: "Telemetry switch" },
+    setting(
+      disabledSwitch,
+      () => false,
+      "Setting this to `true` turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value leaves them as they are.",
+    ),
+  ),
   OTEL_SERVICE_NAME: grouped(
     { group: "Alerts and monitoring", label: "Telemetry service name" },
     optionalText(
@@ -2012,15 +2049,17 @@ const settingsShape = {
   ),
   MARFA_POSTHOG_HOST: grouped(
     { group: "Alerts and monitoring", label: "PostHog address" },
-    optionalUrl(
-      "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_PROJECT_TOKEN` set too.",
+    setting<string | undefined>(
+      anyAddress,
+      () => undefined,
+      "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. With `MARFA_POSTHOG_PROJECT_TOKEN` it turns exception reports on; no OTLP setting is needed. It must be an `https` address, or an `http` address on this machine, with no user name or password; any other value turns off exception reports alone and the boot log says so.",
       { secret: true },
     ),
   ),
   MARFA_POSTHOG_PROJECT_TOKEN: grouped(
     { group: "Alerts and monitoring", label: "PostHog project token" },
     secretSetting(
-      "The PostHog project token for exception reports. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_HOST` set too.",
+      "The PostHog project token for exception reports. It needs `MARFA_POSTHOG_HOST` set too; no OTLP setting is needed.",
     ),
   ),
 };
@@ -2156,14 +2195,12 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       "must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS",
     );
   }
-  // Telemetry is on when the general endpoint is set, so a setting that only
-  // refines or extends it has nothing to act on without it.
+  // Traces and logs are on when the general endpoint is set, so a setting
+  // that only refines it has nothing to act on without it.
   if (s.OTEL_EXPORTER_OTLP_ENDPOINT === undefined) {
     for (const name of [
       "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-      "MARFA_POSTHOG_HOST",
-      "MARFA_POSTHOG_PROJECT_TOKEN",
     ] as const) {
       if (s[name] !== undefined) {
         refuse(name, "needs OTEL_EXPORTER_OTLP_ENDPOINT set too");
@@ -2268,12 +2305,9 @@ function namedAttributes(
   );
 }
 
-/** Telemetry is on exactly when the general endpoint is set. */
-function otelSettings(
+function telemetryIdentity(
   s: z.output<typeof settingsSchema>,
-): OtelSettings | undefined {
-  const general = s.OTEL_EXPORTER_OTLP_ENDPOINT;
-  if (general === undefined) return undefined;
+): TelemetryIdentity {
   return {
     serviceName:
       firstNamed(
@@ -2281,6 +2315,17 @@ function otelSettings(
         s.OTEL_RESOURCE_ATTRIBUTES["service.name"],
       ) ?? "marfa-server",
     resourceAttributes: namedAttributes(s.OTEL_RESOURCE_ATTRIBUTES),
+  };
+}
+
+/** Traces and logs are on exactly when the general endpoint is set and the SDK is not disabled. */
+function otelSettings(
+  s: z.output<typeof settingsSchema>,
+): OtelSettings | undefined {
+  const general = s.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (general === undefined || s.OTEL_SDK_DISABLED) return undefined;
+  return {
+    ...telemetryIdentity(s),
     tracesEndpoint: otlpSignalUrl(
       s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
       general,
@@ -2300,9 +2345,45 @@ function otelSettings(
       ...s.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
     },
     sampleRatio: s.MARFA_OTEL_SAMPLE_RATIO,
-    posthogHost: s.MARFA_POSTHOG_HOST ?? "",
-    posthogToken: s.MARFA_POSTHOG_PROJECT_TOKEN ?? "",
   };
+}
+
+/**
+ * A PostHog host the project token may travel to, the rule the command line
+ * applies (`telemetry/posthog.rs`): `https`, or `http` to this machine, with
+ * no user name or password.
+ */
+function usablePosthogHost(host: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(host);
+  } catch {
+    return false;
+  }
+  if (url.username !== "" || url.password !== "" || url.hostname === "") {
+    return false;
+  }
+  if (url.protocol === "https:") return true;
+  return (
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" ||
+      url.hostname === "[::1]" ||
+      /^127(\.\d{1,3}){3}$/.test(url.hostname))
+  );
+}
+
+const UNUSABLE_POSTHOG_HOST =
+  "MARFA_POSTHOG_HOST is not an https address, or an http address on this machine, without a user name or password, so exception reports are off";
+
+/** Exception reports are on when both PostHog settings are usable, whatever OTLP says. */
+function exceptionSettings(
+  s: z.output<typeof settingsSchema>,
+): ExceptionSettings | undefined {
+  const host = s.MARFA_POSTHOG_HOST;
+  const token = s.MARFA_POSTHOG_PROJECT_TOKEN;
+  if (host === undefined || !token || s.OTEL_SDK_DISABLED) return undefined;
+  if (!usablePosthogHost(host)) return undefined;
+  return { ...telemetryIdentity(s), posthogHost: host, posthogToken: token };
 }
 
 /**
@@ -2372,6 +2453,13 @@ export function loadConfig(
   }
   const s = result.data;
   const warnings = misspelledSettings(env);
+  if (
+    s.MARFA_POSTHOG_HOST !== undefined &&
+    !s.OTEL_SDK_DISABLED &&
+    !usablePosthogHost(s.MARFA_POSTHOG_HOST)
+  ) {
+    warnings.push(UNUSABLE_POSTHOG_HOST);
+  }
   const versionFile = readVersionFile();
   const sha = versionFile?.sha;
   const release = releaseOf(versionFile);
@@ -2509,6 +2597,7 @@ export function loadConfig(
     versionFile,
     placement: Object.keys(placement).length > 0 ? placement : undefined,
     otel: otelSettings(s),
+    exceptions: exceptionSettings(s),
     heartbeatUrl: s.MARFA_HEARTBEAT_URL,
     heartbeatIntervalMs: s.MARFA_HEARTBEAT_INTERVAL_MS,
     housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,

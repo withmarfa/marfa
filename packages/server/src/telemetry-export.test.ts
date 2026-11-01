@@ -157,6 +157,7 @@ async function bootServer(env: Record<string, string>): Promise<{
         MARFA_AUTH_SECRET: "test-secret-for-local-runs-0123456789abcdef",
         RATE_LIMIT_ENABLED: "false",
         MARFA_ENRICHMENT_ENABLED: "false",
+        OTEL_SDK_DISABLED: "false",
         ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -287,6 +288,7 @@ async function startTelemetry(
   collectorUrl: string,
   ratio: string,
 ): Promise<void> {
+  vi.stubEnv("OTEL_SDK_DISABLED", "false");
   vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", collectorUrl);
   vi.stubEnv("MARFA_OTEL_SAMPLE_RATIO", ratio);
   vi.resetModules();
@@ -539,6 +541,7 @@ async function bootRecordingLoads(
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "",
     MARFA_POSTHOG_HOST: "",
     MARFA_POSTHOG_PROJECT_TOKEN: "",
+    OTEL_SDK_DISABLED: "false",
     ...env,
   })) {
     vi.stubEnv(name, value);

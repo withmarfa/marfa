@@ -87,6 +87,7 @@ async function bootInstrumentation(
     MARFA_POSTHOG_HOST: "",
     MARFA_POSTHOG_PROJECT_TOKEN: "",
     MARFA_TEST_HOOKS: "false",
+    OTEL_SDK_DISABLED: "false",
   };
   for (const [name, value] of Object.entries({ ...hermetic, ...env })) {
     vi.stubEnv(name, value);
@@ -112,6 +113,7 @@ async function bootInstrumentation(
   bindErrorReporting(ctx.storage.settings, {
     ...ctx.config,
     otel: bootConfig().otel,
+    exceptions: bootConfig().exceptions,
   });
   return { loadedPostHog: () => loaded };
 }
@@ -482,24 +484,81 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     expect(collector.events).toHaveLength(0);
   });
 
-  it("stops the process on a PostHog pair without the endpoint, naming the setting", async () => {
-    const write = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("exited");
-    });
-    await expect(
-      bootInstrumentation(ctx, {
+  describe("exception reports without an OTLP endpoint", () => {
+    const exceptionsSent = () =>
+      collector.events.filter((e) => e.event === "$exception");
+
+    async function failOnce(): Promise<void> {
+      const response = await appThatFails().request("/explode");
+      expect(response.status).toBe(500);
+      await globalThis.__marfaOtelShutdown?.();
+    }
+
+    it("sends an exception with the PostHog pair alone, and no trace or log", async () => {
+      await bootInstrumentation(ctx, {
         MARFA_POSTHOG_HOST: collector.url,
         MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
-      }),
-    ).rejects.toThrow("exited");
-    const written = write.mock.calls.map((call) => String(call[0])).join("");
-    expect(written).toContain(
-      "MARFA_POSTHOG_HOST needs OTEL_EXPORTER_OTLP_ENDPOINT set too",
-    );
-    expect(collector.events).toHaveLength(0);
+      });
+      await failOnce();
+
+      expect(exceptionsSent()).toHaveLength(1);
+      expect(collector.requests.map((r) => r.path)).not.toContainEqual(
+        expect.stringMatching(/\/v1\/(traces|logs)/),
+      );
+    });
+
+    it("sends nothing when OTEL_SDK_DISABLED is true, with an endpoint or without", async () => {
+      for (const endpoint of [
+        { OTEL_EXPORTER_OTLP_ENDPOINT: collector.url },
+        {} as Record<string, string>,
+      ]) {
+        await bootInstrumentation(ctx, {
+          ...endpoint,
+          OTEL_SDK_DISABLED: "TRUE",
+          MARFA_POSTHOG_HOST: collector.url,
+          MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+        });
+        expect(globalThis.__marfaReportException).toBeUndefined();
+        expect(globalThis.__marfaOtelShutdown).toBeUndefined();
+        await appThatFails().request("/explode");
+      }
+      expect(collector.events).toHaveLength(0);
+      expect(collector.requests).toHaveLength(0);
+    });
+
+    it("turns off only the exception report for a host the token may not travel to, and says so", async () => {
+      for (const host of [
+        "not a url",
+        "http://posthog.example",
+        "https://user:secret@posthog.example",
+      ]) {
+        const written: string[] = [];
+        vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+          written.push(String(chunk));
+          return true;
+        });
+        await bootInstrumentation(ctx, {
+          OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+          MARFA_POSTHOG_HOST: host,
+          MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+        });
+        // The traces and logs are still on; the exception report is not.
+        expect(globalThis.__marfaOtelShutdown, host).toBeDefined();
+        expect(globalThis.__marfaReportException, host).toBeUndefined();
+        const config = (await import("./config.js")).bootConfig();
+        expect(config.settingWarnings, host).toEqual([
+          expect.stringContaining("MARFA_POSTHOG_HOST"),
+        ]);
+        expect(JSON.stringify(config.settingWarnings)).not.toContain(host);
+        await appThatFails().request("/explode");
+        await globalThis.__marfaOtelShutdown?.();
+        globalThis.__marfaOtelShutdown = undefined;
+        trace.disable();
+        logs.disable();
+        vi.unstubAllEnvs();
+      }
+      expect(exceptionsSent()).toHaveLength(0);
+    });
   });
 
   it("stops the process on a PostHog host without a project token, naming the setting", async () => {

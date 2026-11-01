@@ -4,10 +4,7 @@ import { readInstanceConfig } from "./storage/instance-config.js";
 import type { SettingsStore } from "./storage/interface.js";
 
 export function hasErrorReceiver(config: AppConfig): boolean {
-  return Boolean(
-    config.errorWebhookUrl ||
-    (config.otel?.posthogHost && config.otel.posthogToken),
-  );
+  return Boolean(config.errorWebhookUrl || config.exceptions);
 }
 
 /** Persisted choices override the environment; addresses and credentials never do. */
