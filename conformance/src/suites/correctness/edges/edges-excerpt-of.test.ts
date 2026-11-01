@@ -75,7 +75,6 @@ describe("excerpt-of", () => {
     const second = await makeHighlight("second");
 
     expect((await link(first, book)).ok).toBe(true);
-    // The witness: a second excerpt of the same source is taken.
     expect((await link(second, book)).ok).toBe(true);
 
     const again = await link(first, otherBook);
@@ -108,7 +107,6 @@ describe("excerpt-of", () => {
     const purged = await client.purgeItem(book);
     expect(purged.status, JSON.stringify(purged.error)).toBe(200);
 
-    // The witness: the source is gone.
     expect((await client.getItem(book)).status).toBe(404);
     const fetched = await client.getItem(highlight);
     expect(fetched.ok).toBe(true);
