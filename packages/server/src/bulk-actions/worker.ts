@@ -38,7 +38,7 @@ import {
   originalErrorMessage,
   reconcileCommitHooks,
 } from "../storage/sqlite/transaction-control.js";
-import { errorMessage } from "../error-text.js";
+import { logJobTickFailure } from "../storage/job-tick.js";
 import * as clock from "../clock.js";
 import { runInBackground } from "../background-context.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
@@ -235,9 +235,7 @@ export class BulkActionWorker {
         this.scheduleNext(this.currentPollMs);
       }
     } catch (err) {
-      log("error", "bulk_action_worker.tick_error", {
-        error: errorMessage(err),
-      });
+      logJobTickFailure("Bulk action worker tick", err, this.stopped);
       this.scheduleNext(this.currentPollMs);
     } finally {
       this.inFlight = false;

@@ -9,7 +9,7 @@
  * the statement's text is not guaranteed to hold only placeholders. For a
  * write those values are the content written. So an error with a database
  * failure anywhere in its chain is replaced, at every sink, by a
- * {@link DatabaseFailure} that keeps the SQLite code and the outer error's
+ * {@link DatabaseFailure} that keeps the SQLite or libsql code and the outer error's
  * stack frames, and nothing the database was given or said.
  *
  * Classification reads the original: a typed refusal, write contention or a
@@ -55,6 +55,32 @@ const PRIMARY_CODES = new Set([
   "SQLITE_NOTICE",
   "SQLITE_WARNING",
 ]);
+
+/**
+ * The codes `@libsql/client` raises itself, each a fixed identifier written
+ * in its source (`sqlite3.js`, `hrana.js`, `http.js`, `ws.js`, `node.js`):
+ * a closed client or transaction, a refused URL or option, and the remote
+ * clients' transport failures. A remote server's own code is not here,
+ * because the server chooses its text.
+ */
+const LIBSQL_CODES = new Set([
+  "CLIENT_CLOSED",
+  "TRANSACTION_CLOSED",
+  "URL_INVALID",
+  "ENCRYPTION_KEY_NOT_SUPPORTED",
+  "SYNC_NOT_SUPPORTED",
+  "HRANA_PROTO_ERROR",
+  "HRANA_CLOSED_ERROR",
+  "HRANA_WEBSOCKET_ERROR",
+  "SERVER_ERROR",
+  "PROTOCOL_VERSION_ERROR",
+  "INTERNAL_ERROR",
+  "UNKNOWN",
+  "SQLITE_UNKNOWN",
+]);
+
+/** The code libsql gives a native error whose number it has no name for. */
+const UNKNOWN_NUMBERED = /^SQLITE_UNKNOWN_\d{1,3}$/;
 
 /** An extended code is its primary code and a suffix of capitals. */
 const EXTENDED_SUFFIX = /^_[A-Z]+(?:_[A-Z]+)*$/;
@@ -116,7 +142,7 @@ function isDatabaseError(value: object): boolean {
   );
 }
 
-/** The codes a database error carries, kept only in SQLite's own spelling. */
+/** The codes a database error carries, kept only when SQLite or libsql spells them. */
 function codesOf(value: object): FailureCodes {
   const codes: FailureCodes = {};
   const message = read(value, "message");
@@ -128,6 +154,10 @@ function codesOf(value: object): FailureCodes {
     written,
   ]) {
     if (typeof candidate !== "string") continue;
+    if (LIBSQL_CODES.has(candidate) || UNKNOWN_NUMBERED.test(candidate)) {
+      codes.code ??= candidate;
+      continue;
+    }
     const primary = [...PRIMARY_CODES].find(
       (code) =>
         candidate === code ||
