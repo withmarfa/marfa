@@ -157,19 +157,24 @@ export async function revokeProjectedGrant(
     return true;
   };
   const commit = () =>
-    runAuditedTransaction(storage, cascade, (revoked) =>
-      revoked
-        ? (opts.audit ?? {
-            action: "auth.grant.revoked",
-            resource_type: "oauth_grant",
-            resource_id: opts.clientId ?? opts.itemId ?? undefined,
-            details: {
-              client_id: opts.clientId,
-              user_id: opts.authUserId,
-              grant_item_id: opts.itemId,
-            },
-          })
-        : null,
+    runAuditedTransaction(
+      storage,
+      cascade,
+      (revoked) =>
+        revoked
+          ? (opts.audit ?? {
+              action: "auth.grant.revoked",
+              resource_type: "oauth_grant",
+              resource_id: opts.clientId ?? opts.itemId ?? undefined,
+              details: {
+                client_id: opts.clientId,
+                user_id: opts.authUserId,
+                grant_item_id: opts.itemId,
+              },
+            })
+          : null,
+      undefined,
+      opts.audit?.action ?? "auth.grant.revoked",
     );
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the

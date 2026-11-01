@@ -10,6 +10,7 @@ import {
   faultProblem,
   faultsArmed,
   freeFault,
+  healthAdmitted,
   holdArmed,
   holdAt,
   POINTS,
@@ -409,5 +410,90 @@ describe("counted holds", () => {
     expect(activeFaults()).toEqual([]);
     expect(arm("hold:write", "item.update@2")).toBeUndefined();
     expect(arm("hold:export-page", "2")).toBeUndefined();
+  });
+});
+
+describe("a release fault", () => {
+  it("clears its hold as /health is admitted, once, and records the holds waiting when it answers", async () => {
+    expect(arm("release:housekeeping:trash-purge")).toBeUndefined();
+    expect(arm("hold:housekeeping:trash-purge")).toBeUndefined();
+    expect(arm("hold:version-thinning:item")).toBeUndefined();
+    let resumed = false;
+    const job = holdAt("housekeeping:trash-purge").then(async () => {
+      resumed = true;
+      await holdAt("version-thinning:item");
+    });
+    const answered = healthAdmitted();
+    expect(answered).toBeDefined();
+    expect(holdArmed("housekeeping:trash-purge")).toBe(false);
+    expect(resumed).toBe(false);
+    await new Promise((resolve) => setImmediate(resolve));
+    answered?.();
+    const release = activeFaults().find(
+      (fault) => fault.name === "release:housekeeping:trash-purge",
+    );
+    expect(release).toMatchObject({
+      fired: 1,
+      held_when_answered: ["hold:version-thinning:item"],
+    });
+    expect(healthAdmitted()).toBeUndefined();
+    clearFaults();
+    await job;
+  });
+
+  it("records no hold when /health answers before the work reaches one", () => {
+    arm("release:read-hydration");
+    arm("hold:read-hydration");
+    arm("hold:export-page", "5");
+    const answered = healthAdmitted();
+    answered?.();
+    expect(activeFaults()).toEqual([
+      {
+        name: "release:read-hydration",
+        arg: null,
+        waiting: 0,
+        fired: 1,
+        held_when_answered: [],
+      },
+      { name: "hold:export-page", arg: "5", waiting: 0, fired: 0 },
+    ]);
+  });
+
+  it("costs one read of the table when nothing is set, and acts on no hold without a release", () => {
+    expect(healthAdmitted()).toBeUndefined();
+    arm("hold:read-hydration");
+    expect(healthAdmitted()).toBeUndefined();
+    expect(holdArmed("read-hydration")).toBe(true);
+  });
+
+  it("names a hold point and takes no argument", () => {
+    for (const [name, arg] of [
+      ["release:nothing", null],
+      ["release:housekeeping:no-such-job", null],
+      ["release:read-hydration", "1"],
+      ["release:", null],
+    ] as const)
+      expect(arm(name, arg), name).toBeDefined();
+    expect(activeFaults()).toEqual([]);
+    expect(arm("release:read-hydration")).toBeUndefined();
+  });
+});
+
+describe("a counted hold between bulk chunks", () => {
+  it("holds every reach without an argument, and only the nth with one", async () => {
+    arm("hold:bulk-job:between-chunks", "3");
+    await holdAt("bulk-job:between-chunks");
+    await holdAt("bulk-job:between-chunks");
+    const third = holdAt("bulk-job:between-chunks");
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    await holdAt("bulk-job:between-chunks");
+    clearFaults();
+    await third;
+    arm("hold:bulk-job:between-chunks");
+    const first = holdAt("bulk-job:between-chunks");
+    const second = holdAt("bulk-job:between-chunks");
+    expect(activeFaults()[0]?.waiting).toBe(2);
+    clearFaults();
+    await Promise.all([first, second]);
   });
 });

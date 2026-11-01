@@ -13,7 +13,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
 import { log } from "../middleware/logger.js";
-import { faultsArmed, holdAt } from "../control/faults.js";
+import { faultsArmed, holdArmed, holdAt } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { readableExportEdges } from "./export-read.js";
@@ -335,6 +335,8 @@ export function exportRoutes(
           lines: result.data.map((record) => record.line),
           holds: () => authority.rows(result.data),
         };
+        if (faultsArmed() && holdArmed("export-page"))
+          await holdAt("export-page");
 
         cursor = result.next_cursor ?? undefined;
       } while (cursor);
@@ -369,6 +371,8 @@ export function exportRoutes(
           lines: edges.map((edge) => JSON.stringify({ edge }) + "\n"),
           holds: () => authority.edges(edges),
         };
+        if (faultsArmed() && holdArmed("export-page"))
+          await holdAt("export-page");
         edgeCursor = page.next_cursor ?? undefined;
       } while (edgeCursor);
     }

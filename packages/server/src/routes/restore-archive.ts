@@ -543,6 +543,7 @@ async function restoreRows(
       let index = 0;
       const seenSnapshotIds = new Set<string>();
       const restoreItem = async (entry: ArchivedItemLine): Promise<void> => {
+        if (faultsArmed()) await holdAt("restore:item");
         const { item, metadata: meta, lending_blobs: lending } = entry;
         const dates = {
           ...archiveDates("item", item, index),

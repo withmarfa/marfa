@@ -269,6 +269,9 @@ describe("the fault routes", () => {
       { name: "fail:disk" },
       { name: "hold:write", arg: "<action>@<n>" },
       { name: "hold:export-page", arg: "<n>" },
+      { name: "release:housekeeping:no-such-job" },
+      { name: "release:read-hydration", arg: "1" },
+      { name: "hold:bulk-job:between-chunks", arg: "0" },
       { name: "hold:write", arg: "item.update@0" },
       { name: "fail:lock", arg: "0" },
       { name: "fail:lock", arg: "items.bulk@2" },
@@ -311,6 +314,8 @@ describe("the fault routes", () => {
       { name: "resolve:rebind.test", arg: "1.1.1.1,::1;127.0.0.1" },
       { name: "hold:write", arg: "item.update@2" },
       { name: "hold:export-page", arg: "2" },
+      { name: "release:housekeeping:trash-purge" },
+      { name: "hold:bulk-job:between-chunks", arg: "2" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",
