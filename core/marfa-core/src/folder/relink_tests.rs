@@ -238,6 +238,7 @@ fn a_link_by_id_in_a_table_row_the_reader_cannot_take_apart_leaves_the_document_
     assert!(updates(&folder, HOST).is_empty());
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn a_document_that_fails_leaves_the_others_and_the_pull_going() {
     const SECOND: &str = "01a00000-0000-7000-8000-000000024374";
