@@ -1246,17 +1246,14 @@ describe("the scripted answers match the server's", () => {
     });
     expect(winner.ok).toBe(true);
 
-    const stale = await client.rawRequest(
-      `/items/${seeded.id}?conflict=auto`,
-      {
-        method: "PATCH",
-        body: {
-          properties: { body: "loser" },
-          version: seeded.version,
-          version_match: "exact",
-        },
+    const stale = await client.rawRequest(`/items/${seeded.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "loser" },
+        version: seeded.version,
+        version_match: "exact",
       },
-    );
+    });
     expect(
       stale.status,
       "an exact write at a moved-on version was merged, so the refusal this case exists to compare was never produced",
@@ -1297,11 +1294,7 @@ describe("the scripted answers match the server's", () => {
           "current.version",
           "current.properties",
         ],
-        shape: [
-          "current.tier",
-          "current.occurred_at",
-          "current.source_id",
-        ],
+        shape: ["current.tier", "current.occurred_at", "current.source_id"],
       },
     );
   });
