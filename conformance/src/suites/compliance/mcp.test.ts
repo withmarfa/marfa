@@ -355,6 +355,99 @@ describe("marfa_find", () => {
     }
   });
 
+  it("names a part by the types the caller may read, whatever its edge access", async () => {
+    const tag = `mcp-parts-edges-${ctx.runId}`;
+    const reader = async (label: string, edges: boolean) => {
+      const minted = await client.createKey({
+        label: `${ctx.source}-${label}`,
+        source: `${ctx.source}-${label}`,
+        permissions: [],
+        type_permissions: { "core.note": "read", "core.bookmark": "read" },
+        ...(edges && { edge_permissions: { "*": "read" } }),
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return connectMcp(apiUrl, minted.data.key);
+    };
+    const host = await client.createItem({
+      type: "core.note",
+      properties: { title: "Plan" },
+    });
+    expect(host.status, JSON.stringify(host.error)).toBe(201);
+    trackItem(ctx, host.data.item.id);
+    const part = await client.createItem({
+      type: "core.note",
+      properties: { body: "Looks good" },
+      tags: [tag],
+    });
+    expect(part.status, JSON.stringify(part.error)).toBe(201);
+    trackItem(ctx, part.data.item.id);
+    const edge = await client.createEdge({
+      source_id: part.data.item.id,
+      target_id: host.data.item.id,
+      edge_type: "comments-on",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+
+    for (const [label, edges] of [
+      ["parts-edges", true],
+      ["parts-no-edges", false],
+    ] as const) {
+      const connection = await reader(label, edges);
+      try {
+        const found = toolResult(
+          await callTool(connection, "marfa_find", {
+            type: "core.note",
+            tags: [tag],
+          }),
+        ) as { items: { id: string; title: string }[] };
+        expect(
+          found.items.find((row) => row.id === part.data.item.id)?.title,
+          label,
+        ).toBe("Comment on Plan");
+      } finally {
+        await connection.close();
+      }
+    }
+  });
+
+  it("names a part in the bin after its host out of the bin, as the owner's bin does", async () => {
+    const tag = `mcp-parts-binned-${ctx.runId}`;
+    const host = await client.createItem({
+      type: "core.note",
+      properties: { title: "Plan" },
+    });
+    expect(host.status, JSON.stringify(host.error)).toBe(201);
+    trackItem(ctx, host.data.item.id);
+    const part = await client.createItem({
+      type: "core.note",
+      properties: { body: "Draft notes" },
+      tags: [tag],
+    });
+    expect(part.status, JSON.stringify(part.error)).toBe(201);
+    trackItem(ctx, part.data.item.id);
+    const edge = await client.createEdge({
+      source_id: part.data.item.id,
+      target_id: host.data.item.id,
+      edge_type: "attached-to",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackEdge(ctx, edge.data.edge.id);
+    expect((await client.deleteItem(part.data.item.id)).status).toBe(200);
+
+    const found = toolResult(
+      await callTool(mcp, "marfa_find", {
+        type: "core.note",
+        tags: [tag],
+        state: "trashed",
+      }),
+    ) as { items: { id: string; title: string }[] };
+    expect(
+      found.items.find((row) => row.id === part.data.item.id)?.title,
+    ).toBe("Attached to Plan");
+  });
+
   it("names a part after its oldest host when it has more hosts than an item read carries", async () => {
     const tag = `mcp-many-hosts-${ctx.runId}`;
     const reader = await connectMcp(apiUrl, apiKey);

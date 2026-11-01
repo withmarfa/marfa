@@ -1658,7 +1658,7 @@ When computing the name of an item that is the source of an edge of a `with-host
 
 **Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. With no such host, its own fields name it.
 
-**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part after its oldest host when it has more hosts than an item read carries`.
+**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
 
 ### `types/item-name-text`
 

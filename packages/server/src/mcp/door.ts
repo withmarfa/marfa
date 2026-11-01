@@ -5,7 +5,10 @@
  *
  * Every tool calls the public API in process with the caller's own bearer,
  * so the API's checks decide what a tool may do and the endpoint decides
- * nothing of its own beyond who may call it. The 2026-07-28 revision is
+ * nothing of its own beyond who may call it. The one read past the API is a
+ * part's name, which the server computes by the caller's type map as its
+ * own pages do, since the API answers no computed name to a credential.
+ * The 2026-07-28 revision is
  * served statelessly, and a client of an earlier revision that opens with
  * `initialize` is served by the SDK's stateless fallback from the same
  * tools.
@@ -31,7 +34,10 @@ import {
   credentialHandle,
   holdsMetadataPermission,
   holdsPermission,
+  mayReadType,
 } from "../middleware/auth.js";
+import type { Storage } from "../storage/interface.js";
+import { namingsOf } from "../storage/part-names.js";
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { McpApi } from "./api.js";
 import { nowMs } from "../clock.js";
@@ -50,6 +56,8 @@ export interface McpDoorOptions {
   version: string;
   /** The key a confirmation token is signed with. */
   confirmKey: Buffer;
+  /** Where a tool reads the hosts it names a part after. */
+  storage: Pick<Storage, "items" | "runInReadSnapshot">;
   /** How a tool fetches a file from a web address. */
   fetch: ToolFetchOptions;
   /** Whether a browser page on `origin` may call the endpoint. */
@@ -138,6 +146,8 @@ export function mcpRoutes(options: McpDoorOptions): Hono<AppEnv> {
       callerKeyId: c.get("authType") === "oauth" ? null : apiKey.id,
       credentialHandle: handle,
       confirmKey: options.confirmKey,
+      nameItems: (items) =>
+        namingsOf(options.storage, items, (type) => mayReadType(apiKey, type)),
       fetchFile: toolFetchFor(options.fetch, {
         handle,
         keyId: authorityId(c),

@@ -3,7 +3,6 @@ import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
-import { itemNameOf } from "./display.js";
 
 /**
  * The file a ChatGPT user attached, as ChatGPT hands it to a tool that
@@ -275,7 +274,7 @@ export function registerCreate(server: McpServer, ctx: ToolContext): void {
         id: item.id,
         type: item.type,
         version: item.version,
-        title: await itemNameOf(ctx, item),
+        title: (await ctx.nameItems([item])).get(item.id)?.name ?? "",
         tags: metadata.tags,
         created: acknowledged !== true,
         ...(file !== undefined &&

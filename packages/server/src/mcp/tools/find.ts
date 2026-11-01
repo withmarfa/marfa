@@ -4,7 +4,8 @@ import { itemId } from "../args.js";
 import * as z from "zod";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
-import { displayHintsOf, itemNamesOf, type ItemNaming } from "./display.js";
+import type { ItemNaming } from "../../storage/part-names.js";
+import { displayHintsOf } from "./display.js";
 
 export const FIND_DEFAULT_LIMIT = 20;
 export const FIND_MAX_LIMIT = 50;
@@ -127,10 +128,7 @@ async function rowsOf(
     ctx,
     entries.map(({ item }) => item.type),
   );
-  const names = await itemNamesOf(
-    ctx,
-    entries.map(({ item }) => item),
-  );
+  const names = await ctx.nameItems(entries.map(({ item }) => item));
   return entries.map(({ item, snippetHtml }) =>
     rowOf(
       item,

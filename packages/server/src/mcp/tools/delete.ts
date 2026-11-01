@@ -10,7 +10,6 @@ import {
 } from "../confirm.js";
 import type { ToolContext } from "../context.js";
 import { fail, ok, refused } from "../results.js";
-import { itemNamesOf } from "./display.js";
 
 export const DELETE_MAX_IDS = 20;
 
@@ -62,7 +61,7 @@ async function titles(
   );
   const found = new Map<string, string>();
   if (!answer.ok) return found;
-  for (const [id, { name }] of await itemNamesOf(ctx, answer.data.items)) {
+  for (const [id, { name }] of await ctx.nameItems(answer.data.items)) {
     found.set(id, name);
   }
   return found;
