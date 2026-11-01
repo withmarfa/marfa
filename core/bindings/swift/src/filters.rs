@@ -42,6 +42,9 @@ pub enum FilterField {
     },
     Tags,
     StatusGroup,
+    /// Whether the item is a part of another, compared with `eq` or `neq`
+    /// and a boolean.
+    Part,
     Edge {
         edge_type: String,
         direction: EdgeDirection,
@@ -206,6 +209,7 @@ impl From<FilterField> for marfa_core::FilterField {
             FilterField::Member { field, member } => F::Member { field, member },
             FilterField::Tags => F::Tags,
             FilterField::StatusGroup => F::StatusGroup,
+            FilterField::Part => F::Part,
             FilterField::Edge {
                 edge_type,
                 direction,
@@ -226,6 +230,7 @@ impl From<marfa_core::FilterField> for FilterField {
             F::Member { field, member } => FilterField::Member { field, member },
             F::Tags => FilterField::Tags,
             F::StatusGroup => FilterField::StatusGroup,
+            F::Part => FilterField::Part,
             F::Edge {
                 edge_type,
                 direction,

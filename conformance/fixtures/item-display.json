@@ -417,5 +417,154 @@
       "name": null,
       "preview": null
     }
+  ],
+  "parts": [
+    {
+      "description": "a comment with no title, named after its host, its preview every line of its body",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "Fix login bug"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "body": "LGTM\n\nShip it"
+        }
+      },
+      "name": "Comment on Fix login bug",
+      "preview": "LGTM Ship it"
+    },
+    {
+      "description": "an attachment holding only a filename, named after its host",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "Plan"
+        }
+      },
+      "edge_type": "attached-to",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "filename": "scan.pdf"
+        }
+      },
+      "name": "Attached to Plan",
+      "preview": null
+    },
+    {
+      "description": "a part with a title of its own keeps it",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "Fix login bug"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "title": "Review",
+          "body": "Looks good"
+        }
+      },
+      "name": "Review",
+      "preview": "Looks good"
+    },
+    {
+      "description": "a part whose type's title field holds text keeps it",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "Fix login bug"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "user.displayed",
+        "properties": {
+          "heading": "Kept",
+          "content": "Its own text"
+        }
+      },
+      "name": "Kept",
+      "preview": "Its own text"
+    },
+    {
+      "description": "a part whose type's title field is blank, previewed from its type's body field",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "Fix login bug"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "user.displayed",
+        "properties": {
+          "heading": "   ",
+          "content": "First line\nsecond"
+        }
+      },
+      "name": "Comment on Fix login bug",
+      "preview": "First line second"
+    },
+    {
+      "description": "a host named by the Markdown of its body",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "body": "# Weekly *plan*\nmore"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "body": "Noted"
+        }
+      },
+      "name": "Comment on Weekly plan",
+      "preview": "Noted"
+    },
+    {
+      "description": "a host with no name",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "body": "  "
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "body": "Noted"
+        }
+      },
+      "name": "Comment on Untitled",
+      "preview": "Noted"
+    },
+    {
+      "description": "a long host name, bounded as every name is",
+      "host": {
+        "type": "core.note",
+        "properties": {
+          "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+        }
+      },
+      "edge_type": "comments-on",
+      "part": {
+        "type": "core.note",
+        "properties": {
+          "body": "Noted"
+        }
+      },
+      "name": "Comment on \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026",
+      "preview": "Noted"
+    }
   ]
 }

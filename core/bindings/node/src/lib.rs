@@ -473,13 +473,15 @@ pub struct EdgeType {
     pub flat: bool,
 }
 
-/// An item to name and preview: its type and properties.
+/// An item to name and preview: its type and properties, and its id where
+/// the copy may hold it, so a part is named after its host.
 #[napi(object)]
 pub struct ItemDisplayInput {
     #[napi(js_name = "type")]
     pub type_: String,
     #[napi(ts_type = "Record<string, unknown>")]
     pub properties: Option<serde_json::Value>,
+    pub id: Option<String>,
 }
 
 /// How a device shows an item: its name and a line of preview text, each
@@ -2722,7 +2724,9 @@ impl MarfaCore {
     }
 
     /// The name and preview text of each item, in order, by the copy's
-    /// catalog alone. An unknown type is named by the fallback fields.
+    /// held catalog and rows. An unknown type is named by the fallback fields. An
+    /// item given with its id is named after its host where it is a part
+    /// the copy holds a host for.
     #[napi]
     pub fn item_displays(
         &self,
@@ -2731,11 +2735,11 @@ impl MarfaCore {
     ) -> Result<Vec<ItemDisplay>> {
         let items = items
             .into_iter()
-            .map(|item| Ok((item.type_, object(item.properties)?)))
+            .map(|item| Ok((item.id, item.type_, object(item.properties)?)))
             .collect::<Result<Vec<_>>>()?;
         let items: Vec<_> = items
             .iter()
-            .map(|(item_type, properties)| (item_type.as_str(), properties))
+            .map(|(id, item_type, properties)| (id.as_deref(), item_type.as_str(), properties))
             .collect();
         Ok(self
             .inner

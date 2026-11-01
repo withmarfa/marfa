@@ -15,6 +15,7 @@ type ModelField =
   | { kind: "member"; field: string; member: string }
   | { kind: "tags" }
   | { kind: "status_group" }
+  | { kind: "part" }
   | { kind: "edge"; edge_type: string; direction: "outbound" | "backref" };
 
 interface Model {

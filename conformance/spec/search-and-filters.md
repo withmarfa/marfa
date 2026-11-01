@@ -642,7 +642,7 @@ If a `filter` compares `status_group` with a value other than `"not_started"`, `
 
 ## The part term
 
-A `part` term selects the items that are parts of another (`edges/parts-trash`): an item out of the bin that is the source of a `with-hosts` edge whose target is out of the bin. No listing leaves parts out unless its filter says so.
+A `part` term selects the items that are parts of another (`edges/parts-trash`): an item out of the bin that is the source of a `with-hosts` edge whose target is out of the bin. No listing leaves parts out unless its filter says so. A device answers the term from its working copy by the same rule (`device/filter-part`).
 
 ### `search-and-filters/part`
 

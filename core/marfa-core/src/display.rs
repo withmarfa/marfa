@@ -44,6 +44,47 @@ pub(crate) fn display(
     }
 }
 
+/// The name an item takes from its effective `display_hints.title_field`,
+/// `title` or `name` alone, or none where none of them holds text.
+pub(crate) fn title_name(
+    properties: &Map<String, Value>,
+    title_field: Option<&str>,
+) -> Option<String> {
+    let mut tried: Vec<&str> = Vec::with_capacity(3);
+    [title_field, Some("title"), Some("name")]
+        .into_iter()
+        .flatten()
+        .find_map(|field| {
+            if tried.contains(&field) {
+                return None;
+            }
+            tried.push(field);
+            plain_name(properties.get(field)?.as_str()?).map(|(_, text)| text)
+        })
+}
+
+/// A part named after its host by `types/item-name-part`: the edge type's
+/// label, a space and the host's name, bounded as every name is. Its name
+/// comes from no line of its body, so the preview keeps every line.
+pub(crate) fn part_display(
+    properties: &Map<String, Value>,
+    body_field: Option<&str>,
+    label: &str,
+    host_name: &str,
+) -> ItemDisplay {
+    let mut plain = Plain::new(NAME_POINTS);
+    plain.push_str(label);
+    plain.push(' ');
+    plain.push_str(host_name);
+    ItemDisplay {
+        name: plain.finish(),
+        preview: properties
+            .get(body_field.unwrap_or(BODY_PROPERTY))
+            .and_then(Value::as_str)
+            .and_then(|body| preview(body, None)),
+    }
+}
+
 /// A name, the property it was taken from, and the index of the line in
 /// that property's value it was taken from.
 struct Named<'a> {

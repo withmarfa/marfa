@@ -1656,9 +1656,9 @@ When computing the name of an item that `types/item-name-part` does not name, th
 
 When computing the name of an item that is the source of an edge of a `with-hosts` type and whose effective `display_hints.title_field`, `title` and `name` produce no nonblank text, the server MUST name it `<label> <host name>`, by `types/item-name-text`, from the edge type's `label` and the name by `types/item-name-fields` and `types/item-name-empty` of the target of the oldest such edge, by `created_at` and then `id`, whose target is out of the bin and of a type the credential may read.
 
-**Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. With no such host, its own fields name it.
+**Reason:** a comment or an attached file is read beside its host, so "Comment on Plan" says what it is where its first line would not. With no such host, its own fields name it. A device names a part by the same rule (`device/item-name-part`).
 
-**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
+**Tests:** `compliance/item-summaries.test.ts › names a part with no title after its oldest host out of the bin, at read time`, `› names every shared part case as a device does`, `compliance/mcp.test.ts › names a part after a host the caller may read, and never after one it may not`, `› names a part by the types the caller may read, whatever its edge access`, `› names a part in the bin after its host out of the bin, as the owner's bin does`, `› names a part after its oldest host when it has more hosts than an item read carries`.
 
 ### `types/item-name-text`
 
