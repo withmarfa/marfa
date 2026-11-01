@@ -44,8 +44,11 @@ export async function planCascadeDelete(
 
   const queue = [rootItemId];
   const drain = async (): Promise<void> => {
-    while (queue.length > 0) {
-      const itemId = queue.shift() as string;
+    for (
+      let itemId = queue.shift();
+      itemId !== undefined;
+      itemId = queue.shift()
+    ) {
       if (inSet.has(itemId)) continue;
       inSet.add(itemId);
       const { outbound, inbound } = await storage.edges.listAllByItem(itemId);
@@ -139,8 +142,8 @@ export async function planCascadeDelete(
   while (stack.length > 0) {
     const top = stack[stack.length - 1] as { id: string; next: number };
     const kids = children.get(top.id) ?? [];
-    if (top.next < kids.length) {
-      const kid = kids[top.next] as string;
+    const kid = kids[top.next];
+    if (kid !== undefined) {
       top.next += 1;
       if (!placed.has(kid) && inSet.has(kid)) {
         placed.add(kid);

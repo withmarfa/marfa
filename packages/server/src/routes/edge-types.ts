@@ -132,7 +132,7 @@ const SOURCE_CONSTRAINTS =
 const TARGET_CONSTRAINTS =
   "The types an edge's target item can have, in the same form as `source_type_constraints`.";
 const CASCADE =
-  "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored.";
+  "What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any.";
 const PROPERTY_SCHEMA =
   "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list.";
 const REVERSE_NAME =

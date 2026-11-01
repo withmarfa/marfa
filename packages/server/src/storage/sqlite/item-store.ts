@@ -2508,7 +2508,9 @@ export class SqliteItemStore implements ItemStore {
       const rows = await this.db
         .select({ id: trash_with_hosts.item_id })
         .from(trash_with_hosts)
-        .where(inArray(trash_with_hosts.item_id, ids.slice(offset, offset + 500)))
+        .where(
+          inArray(trash_with_hosts.item_id, ids.slice(offset, offset + 500)),
+        )
         .all();
       for (const row of rows) out.add(row.id);
     }

@@ -135,7 +135,10 @@ export async function itemNamesOf(
     const label = edge && labels.get(edge.edge_type);
     if (!host || label === undefined) continue;
     names.set(id, {
-      name: partName(label, itemName(host.properties, hostHints.get(host.type))),
+      name: partName(
+        label,
+        itemName(host.properties, hostHints.get(host.type)),
+      ),
       fromHost: true,
     });
   }

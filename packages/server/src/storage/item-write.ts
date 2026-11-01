@@ -1601,7 +1601,10 @@ async function transitionRow(
     ? await itemWrites(storage).restoreBeneath(row.id)
     : [];
   const item = await itemWrites(storage).transition(row.id, write.state);
-  if (leaving) broughtBack.push(...(await restorePartsOf(storage, [item, ...broughtBack])));
+  if (leaving)
+    broughtBack.push(
+      ...(await restorePartsOf(storage, [item, ...broughtBack])),
+    );
   return moved(item, row.state, { broughtBack });
 }
 

@@ -392,13 +392,19 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
         async () => {
           const row = await visibleRow(storage, id);
           if (row.version !== version)
-            return { stale: true as const, current: await summary(storage, row) };
+            return {
+              stale: true as const,
+              current: await summary(storage, row),
+            };
           await writeItem(
             storage,
             { kind: "platform", by: requestWriter(c) },
             { op, id },
           );
-          return { stale: false as const, current: await summary(storage, row) };
+          return {
+            stale: false as const,
+            current: await summary(storage, row),
+          };
         },
         (result) =>
           result.stale

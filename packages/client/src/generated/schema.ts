@@ -2265,7 +2265,7 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
             target_type_constraints: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored.
+             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any.
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
@@ -3941,7 +3941,7 @@ export interface components {
             /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type. */
             target_type_constraints?: string[];
             /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. `with-hosts`: the source is a part of the target, its host; the part goes to the trash when all its hosts are in the trash, and comes back when any of them is restored. Leave it out for `orphan`.
+             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any. Leave it out for `orphan`.
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block" | "with-hosts";

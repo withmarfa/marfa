@@ -310,7 +310,10 @@ describe("marfa_find", () => {
     trackKey(ctx, minted.data.id);
     const reader = await connectMcp(apiUrl, minted.data.key);
     try {
-      const made = async (type: string, properties: Record<string, unknown>) => {
+      const made = async (
+        type: string,
+        properties: Record<string, unknown>,
+      ) => {
         const r = await client.createItem({ type, properties, tags: [tag] });
         expect(r.status, JSON.stringify(r.error)).toBe(201);
         trackItem(ctx, r.data.item.id);
@@ -336,7 +339,10 @@ describe("marfa_find", () => {
       await on(hidden, secret);
 
       const found = toolResult(
-        await callTool(reader, "marfa_find", { type: "core.note", tags: [tag] }),
+        await callTool(reader, "marfa_find", {
+          type: "core.note",
+          tags: [tag],
+        }),
       ) as { items: { id: string; title: string; snippet?: string }[] };
       const byId = new Map(found.items.map((row) => [row.id, row]));
       expect(byId.get(seen)?.title).toBe("Comment on Plan");

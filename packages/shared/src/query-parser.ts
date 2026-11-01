@@ -397,7 +397,7 @@ function parseFieldRef(token: Token): FieldRef {
     ErrorCode.VALIDATION_ERROR,
     `Unknown field "${name}" at position ${String(token.pos)}. ` +
       `Valid system fields: ${[...SYSTEM_FIELDS].join(", ")}. ` +
-      `Use "properties.<field>" for custom fields, "tags" for tag filtering, "status_group" for a status group, or "part" for parts.`,
+      `Use "properties.<field>" for custom fields, "tags" for tag filtering, or "status_group" for a status group.`,
   );
 }
 
