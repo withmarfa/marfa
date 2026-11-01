@@ -38,3 +38,13 @@ overrides:
 
   # Keep build tooling above the indexed source-map denial-of-service fix.
   "source-map-js@<1.2.2": "1.2.2"
+
+  # `minimatch` 10, which ESLint's file matching takes, carries a pattern
+  # amplification advisory that only 11.0.1 fixes. ESLint matches only its
+  # own configured patterns with it. The 5.x line `@redocly/openapi-core`
+  # takes is left as it is: the override would hand it an API it was not
+  # written for.
+  #
+  # Remove this once ESLint's matching admits a `minimatch` at or above
+  # 11.0.1 without it.
+  "minimatch@>=10.0.0 <11.0.1": "11.0.3"
