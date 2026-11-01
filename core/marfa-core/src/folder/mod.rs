@@ -19,6 +19,7 @@ mod preserve;
 mod pull;
 mod push;
 mod refused;
+mod relink;
 mod removal;
 mod scan;
 mod selective;
@@ -2337,6 +2338,8 @@ fn typed_title(
 
 #[cfg(test)]
 mod held_links_tests;
+#[cfg(test)]
+mod relink_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3842,7 +3845,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_reference_that_hides_an_edge_follows_the_move_of_its_target() {
+    fn a_body_link_that_hides_an_edge_follows_the_retitle_of_its_target() {
         let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
         referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
         changed_on_the_server(&folder, "a.md", "[[b.md]]");
@@ -3855,8 +3858,11 @@ mod tests {
         );
         renamed_on_the_server(&folder, "b.md", "bee", "bee.md");
         settle_selecting(&folder, &mut selection);
+        // The link names the item by its new title (`folders/body-link-retitled`),
+        // so it still carries the edge.
         let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
-        assert!(text.contains("references:"), "{text}");
+        assert!(text.contains("[[bee]]"), "{text}");
+        assert!(!text.contains("references:"), "{text}");
         assert_a_full_pull_changes_nothing(dir.path(), &folder);
     }
 

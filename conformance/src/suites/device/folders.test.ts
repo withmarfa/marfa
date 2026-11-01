@@ -2185,12 +2185,14 @@ describe("files and items", () => {
       "the links never became edges, so there is nothing here for a later scan to remove",
     ).toBe(2);
 
-    // A link naming nothing looks like one gone, so while `target` names
-    // nothing, taking out `other` removes nothing.
+    // A link naming nothing looks like one gone, so while `targt` names
+    // nothing, taking out `other` removes nothing. A link the folder already
+    // resolved keeps naming its item through a rename
+    // (`folders/body-link-retitled-unflagged`), so the edit retypes it.
     renameSync(join(harness.dir, "target.md"), join(harness.dir, "moved.md"));
     writeFileSync(
       join(harness.dir, "source.md"),
-      "---\ntitle: Source\n---\nsee [[target]] for more, and a word\n",
+      "---\ntitle: Source\n---\nsee [[targt]] for more, and a word\n",
     );
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);

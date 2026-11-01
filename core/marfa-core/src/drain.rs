@@ -5699,6 +5699,64 @@ mod tests {
     }
 
     #[test]
+    fn a_write_withdrawn_alone_lets_every_write_behind_it_go() {
+        use crate::scripted::{certified, json};
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (ahead, behind) = {
+            let conn = core.conn().unwrap();
+            let item = store::testing::note("local", "Local", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+            let ahead = store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "local", None, Some(1), &[]),
+            )
+            .unwrap();
+            store::mark_sent(&conn, &ahead.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &ahead.id,
+                &store::Answered {
+                    verdict: Verdict::Blocked,
+                    reason: Some(BlockedReason::ConflictUnresolved.as_str()),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            let waits = [ahead.id.clone()];
+            let behind = store::enqueue(
+                &conn,
+                &write(WriteKind::UpdateItem, "local", None, Some(1), &waits),
+            )
+            .unwrap();
+            assert_eq!(behind.follows.as_deref(), Some(ahead.id.as_str()));
+            (ahead, behind)
+        };
+        let mut theirs: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "local",
+            "core.note",
+            2,
+        ))
+        .unwrap();
+        theirs["listed"] = true.into();
+        server.on(
+            "/items/local",
+            vec![certified(json(200, &theirs.to_string()))],
+        );
+        assert!(core.withdraw_alone(&ahead.id).unwrap());
+        let conn = core.conn().unwrap();
+        assert_eq!(store::queued_write(&conn, &ahead.id).unwrap(), None);
+        let left = store::queued_write(&conn, &behind.id).unwrap().unwrap();
+        assert_eq!(
+            (left.verdict, left.depends_on.len(), left.follows.as_deref()),
+            (None, 0, None),
+            "the write behind was refused or still waits on one the queue no longer holds"
+        );
+    }
+
+    #[test]
     fn a_drain_keeps_a_refusal_a_withdraw_recorded_while_it_ran() {
         use crate::scripted::{Answer, certified, json, refusal};
         use std::sync::Arc;

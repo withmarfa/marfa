@@ -1105,6 +1105,25 @@ export const answers = {
       merge_policy: mergePolicy,
     },
   }),
+  /** An update sent with `version_match: "exact"` at a version the row has
+   *  moved past: the row as it now stands, and nothing to merge against. */
+  staleVersion: (
+    current: ConflictSnapshotBody,
+    requestedVersion: number,
+  ): Answer => ({
+    kind: "json",
+    status: 409,
+    body: {
+      error: {
+        code: "version_conflict",
+        status: 409,
+        message:
+          `Version ${String(requestedVersion)} is stale; current version is ` +
+          `${String(current.version)}. Re-read the item and send again at version ${String(current.version)}.`,
+      },
+      current,
+    },
+  }),
   /** An edge the server already holds between the same two items under the
    *  same type, refused rather than made twice. */
   edgeDuplicate: (edge: {

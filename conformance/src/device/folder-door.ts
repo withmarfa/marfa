@@ -327,6 +327,7 @@ export class FolderDoor {
       tier?: "library" | "feed";
       occurred_at?: string;
       version: number;
+      version_match?: "exact";
     },
     options: { resolve?: boolean } = {},
   ): Answer {
@@ -362,6 +363,11 @@ export class FolderDoor {
     let sourceId = sent.source_id ?? before.source_id;
     let resolution: Record<string, string> | undefined;
     let sibling: string | undefined;
+    // Exact is refused once the row moved on, conflict mode or not
+    // (`versions/exact-match`).
+    if (sent.version_match === "exact" && sent.version !== before.version) {
+      return answers.staleVersion(this.snapshot(id, before), sent.version);
+    }
     if (sent.version !== before.version) {
       const ancestor = this.snapshots.get(id)?.get(sent.version);
       if (ancestor === undefined) {

@@ -1658,6 +1658,34 @@ impl Core {
         Ok(true)
     }
 
+    /// `withdraw` for a write the device made on its own, which no one is
+    /// asked about: it alone leaves the queue, and every write that waited
+    /// on it goes on as if it had never been queued, never refused for it.
+    /// The row is read back first; the check that it is still as read and
+    /// its taking out are one transaction.
+    pub(crate) fn withdraw_alone(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+            return Ok(false);
+        };
+        if !row.withdrawable() {
+            return Ok(false);
+        }
+        let read = drain::read_back(self, &row)?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        if store::queued_write(&tx, id)?.as_ref() != Some(&row) {
+            return Ok(false);
+        }
+        store::stop_waiting_on(&tx, id)?;
+        drain::withdraw_read_backs(&tx, &row, &[], &[read])?;
+        if let Some(item) = row.item_id.as_deref() {
+            store::refollow(&tx, item, id)?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub(crate) fn rebase_on_held(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -3676,6 +3704,9 @@ pub(crate) enum Based {
     OnHeld,
     /// The held version or an earlier one, which the server merges against.
     AsRead,
+    /// The held version, which the server refuses `version_conflict` once
+    /// the row has moved past it, rather than merging over another writer.
+    Exact,
 }
 
 fn queue_update(
@@ -3794,7 +3825,14 @@ fn queue_update(
             message: required.join("; "),
         });
     }
-    let payload = edit.payload(base)?;
+    let mut payload = edit.payload(base)?;
+    if based == Based::Exact {
+        let mut body: Value = serde_json::from_str(&payload)?;
+        if let Some(body) = body.as_object_mut() {
+            body.insert("version_match".into(), Value::String("exact".into()));
+        }
+        payload = body.to_string();
+    }
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
         &edit.properties,
@@ -5015,6 +5053,7 @@ mod tests {
             let refused = match based {
                 Based::OnHeld => core.update_item("typed", &edit),
                 Based::AsRead => core.update_item_as_read("typed", &edit),
+                Based::Exact => unreachable!("not among the cases"),
             };
             let Err(CoreError::Validation { code, .. }) = refused else {
                 panic!("a clear of a required field was queued: {refused:?}");
@@ -7635,6 +7674,10 @@ mod tests {
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
             ("withdraw", reader.withdraw("blocked").unwrap_err()),
+            (
+                "withdraw_alone",
+                reader.withdraw_alone("blocked").unwrap_err(),
+            ),
             // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             ("forget_answered", reader.forget_answered().unwrap_err()),
@@ -7802,7 +7845,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            51,
+            52,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

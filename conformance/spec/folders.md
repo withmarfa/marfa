@@ -1976,7 +1976,7 @@ When an edge line already resolves to its item, a device MUST preserve the typed
 
 When another item takes an existing edge target's name, a device MUST retain the existing edge target.
 
-**Tests:** `device/folders-frontmatter.test.ts › leaves an existing link unchanged when a same-named item appears`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves an existing link unchanged when a same-named item appears`, `device/folders-retitled-links.test.ts › keeps naming the item when another takes its old title`.
 
 ### `folders/edge-lookup-waits`
 
@@ -2257,6 +2257,70 @@ When a body link resolves to no item, a device MUST flag its document with the l
 While a body link is unresolved, a device MUST retain the document's existing references until every link resolves.
 
 **Tests:** `device/folders-frontmatter.test.ts › reports missing body links and preserves removals until all links resolve`, `device/body-links-live.test.ts › resolves body links through real server lookup and keeps their removal after pull`.
+
+### `folders/body-link-retitled`
+
+When a pull finds that a wiki link in a document's body names, by a title or a file name, an item the device's record of the body resolves it to, and that name no longer answers to the item, a device MUST rewrite only the name part of the link in the document's file to the item's current title, or to its ID where `folders/body-link-retitled-id` applies, keeping the link's heading, block reference, and alias, and leaving links by ID, Markdown links, embeds, links in code or comments, and frontmatter lines unchanged.
+
+**Reason:** a person who retitles a note expects the links to it to follow, as Obsidian rewrites them. Without the rewrite the body keeps a name that the next reader, or another app, resolves to nothing or to another item. Only the name changes, so the link still shows what the person wrote. The device sends the rewritten body as an update conditioned on the exact version it read (`versions/exact-match`), so where two folders or two Macs rewrite the same document, one rewrite lands and the others take its answer.
+
+**Tests:** `device/folders-retitled-links.test.ts › names the item by its new title, its alias and heading kept, code, embeds and frontmatter lines left alone`, `› names the item by its new title where its file here was renamed`, `› is rewritten once where %s`.
+
+### `folders/body-link-retitled-edit`
+
+If a document's file differs from what the folder last wrote or read, or the document's update was refused or answered with a conflict at the version the rewrite would send from, then a device MUST NOT rewrite the document's links for `folders/body-link-retitled` until the folder has read and sent the file's bytes or holds a newer version of the document.
+
+**Reason:** the person's bytes are theirs. A rewrite made over an edit the folder has not read yet would replace it, and a rewrite the server refused or that lost to another write would otherwise be sent again at every pull. A rewrite that loses is dropped without a report, since the document keeps the winner's body.
+
+**Tests:** `device/folders-retitled-links.test.ts › keeps an edit the person made and rewrites the links of what they wrote`, `› is rewritten once where %s`.
+
+### `folders/body-link-retitled-waits`
+
+While the server has not accepted an item's new title, or a write of the document or of the linked item waits unanswered in the device's queue, a device MUST NOT rewrite the document's links to that item for `folders/body-link-retitled`.
+
+**Reason:** a title the server refuses is not the item's title, so a rewrite to it would name nothing. A write still waiting may change the body or the title the rewrite reads.
+
+**Tests:** `device/folders-retitled-links.test.ts › rewrites nothing for a title the server refuses`, `› waits while a write of the linking document is unanswered, and rewrites it once answered`.
+
+### `folders/body-link-retitled-id`
+
+When the item's current title is empty, is not a name a wiki link can hold, or answers to another item too, a device MUST rewrite the link for `folders/body-link-retitled` to name the item by its ID, with an alias of the text the link showed.
+
+**Reason:** a title that names two items would make the link ambiguous (`folders/body-link-ambiguity`). The ID names the item alone, and the alias keeps what the reader sees.
+
+**Tests:** `device/folders-retitled-links.test.ts › names the item by its id where its new title names another item too`.
+
+### `folders/body-link-retitled-reparsed`
+
+If a document's body, with its links renamed to the items' titles for `folders/body-link-retitled`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST rename those links to the items' IDs as `folders/body-link-retitled-id` does.
+
+**Reason:** a title can hold characters that change how the text around the link reads. A title with a backtick or `<!--` opens a code span or a comment that hides the links after it, so the next scan would end their `references` edges. An ID holds none of these characters.
+
+**Tests:** `device/folders-retitled-links.test.ts › names the item by its id where its new title would open %s over the text after the link`.
+
+### `folders/body-link-retitled-unparsed`
+
+If a document's body, with its links renamed to the items' IDs for `folders/body-link-retitled-id`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST NOT rewrite the document's links.
+
+**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID carries its alias behind a bar, which in a table row, a table in a blockquote or callout included, would end the cell, so such a document keeps its old links.
+
+**Tests:** `device/folders-retitled-links.test.ts › leaves a document alone where a link by id would sit in a table row`.
+
+### `folders/body-link-retitled-behind`
+
+If a rewrite of a document's links for `folders/body-link-retitled` is answered `version_conflict`, then a device MUST send each write queued behind the rewrite as it would have sent it had the rewrite never been queued.
+
+**Reason:** the rewrite is the device's own, and the person never made it. Their edit made while it waited is theirs, so it is never refused, dropped or held because the rewrite lost to another writer.
+
+**Tests:** `device/folders-retitled-links.test.ts › lands an edit the person made behind a rewrite another machine beat`.
+
+### `folders/body-link-retitled-unflagged`
+
+While a document's `references` edge to an item stands and the device's record of the body resolves a link to that item, a device MUST resolve the link to that item, without flagging it as missing or ambiguous, even where its name no longer answers to it or answers to another item.
+
+**Reason:** a link waiting for its rewrite, or one the person's edit keeps, still means the item it meant. Flagging it, or moving its edge to a newcomer with the old name, would report or change what the person did not.
+
+**Tests:** `device/folders-retitled-links.test.ts › waits while a write of the linking document is unanswered, and rewrites it once answered`, `› keeps naming the item when another takes its old title`.
 
 ### `folders/embed-edge`
 

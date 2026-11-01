@@ -49,6 +49,15 @@ pub(crate) mod live {
         );
     }
 
+    /// A document whose links to a retitled item a pull could not rewrite,
+    /// which the pull carried on past.
+    pub(crate) fn unrelinked(error: &CoreError) {
+        tracing::warn!(
+            code = error.code(),
+            "a document's links to a retitled item could not be rewritten"
+        );
+    }
+
     /// Ends the span of one request that got no answer. An error that ends
     /// the operation is recorded by the operation, once; one it carries on
     /// past is a warning here.
@@ -172,7 +181,23 @@ macro_rules! unsynced {
     }};
 }
 
-pub(crate) use {degraded, ended, operation, record, unsynced};
+/// A document whose links to a retitled item could not be rewritten, given
+/// as a `&CoreError`.
+#[cfg(feature = "telemetry")]
+macro_rules! unrelinked {
+    ($error:expr) => {
+        $crate::telemetry::live::unrelinked($error)
+    };
+}
+
+#[cfg(not(feature = "telemetry"))]
+macro_rules! unrelinked {
+    ($error:expr) => {{
+        let _ = $error;
+    }};
+}
+
+pub(crate) use {degraded, ended, operation, record, unrelinked, unsynced};
 
 /// The subscriber of the thread that made it, for work it hands to a thread
 /// of its own: a host that installed one for that thread alone would
