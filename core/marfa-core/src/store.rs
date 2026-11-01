@@ -812,6 +812,7 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("items", "capture_latitude REAL"),
     ("items", "capture_longitude REAL"),
     ("items", "trashed_at TEXT"),
+    ("folder_files", "embeds TEXT"),
 ];
 
 /// The columns, from `ADDED_COLUMNS`, that the store's `table` lacks, where

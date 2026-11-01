@@ -243,7 +243,10 @@ CREATE TABLE IF NOT EXISTS folder_files (
   held TEXT,
   own TEXT,
   writes TEXT NOT NULL DEFAULT '{}',
-  seen_at TEXT NOT NULL
+  seen_at TEXT NOT NULL,
+  -- The file items the body's embeds named, apart from `links`, since only
+  -- an embed new to the body attaches its file. Null where never recorded.
+  embeds TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
 

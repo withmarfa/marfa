@@ -2200,9 +2200,9 @@ When a Markdown body embeds a local file, a device MUST create a `references` ed
 
 ### `folders/embed-edge-outside`
 
-When a Markdown body comes to embed a local file the folder's query does not hold, a device MUST create an `attached-to` edge from the file item to the document item.
+When a Markdown body comes to embed a local file the folder's query does not hold, a device MUST create an `attached-to` edge from the file item to the document item, whether or not a link in the body already names the file.
 
-**Reason:** a file outside the query is in the folder only as a document's part (`folders/embedded-outside-search`), and a folder of notes keeps its pictures beside them. A file the query holds is the folder's own, and only its `has-attachment` line attaches it. An embed already in the body when its attachment is taken away elsewhere does not attach the file again.
+**Reason:** a file outside the query is in the folder only as a document's part (`folders/embedded-outside-search`), and a folder of notes keeps its pictures beside them. A file the query holds is the folder's own, and only its `has-attachment` line attaches it. An embed already in the body when its attachment is taken away elsewhere does not attach the file again. A link to the file is no embed of it, so the folder keeps a document's embeds apart from its links in its record of the document.
 
 **Tests:** `device/folders-frontmatter.test.ts › references an embedded file, and attaches it only where the query does not hold it`, `› sends an embedded file with its file`.
 
@@ -2230,17 +2230,17 @@ When a document removes an embed, a device MUST NOT delete the embedded file's `
 
 ### `folders/embed-rederived`
 
-When a folder has not read its files since its device came to read an embed as a `references` edge, a device MUST read every document in the folder again once, at the next scan, whether or not the file changed.
+When a folder has not read its files since its device came to read an embed as a `references` edge, a device MUST read every document in the folder that embeds a file again once, at the next scan, whether or not the file changed.
 
-**Reason:** an embed once made the file's `attached-to` edge instead, and the folder's record of each document says so. Reading once brings each document to this rule; a folder added afresh starts under it and reads nothing again.
+**Reason:** an embed once made the file's `attached-to` edge instead, and the folder's record of each document says so. A folder added afresh reads its documents again too: its first pull records each document it writes as read, and a body written under the earlier rule has no reference until it is read. Reading once brings each document to this rule, and the folder reads no unchanged document again after it.
 
-**Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`.
+**Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`, `› references the files a document already embeds when the folder is added afresh`.
 
 ### `folders/embed-rederived-attachment`
 
-When a folder reads a document again for `folders/embed-rederived`, a device MUST delete the `attached-to` edge that an embed alone made to a file the folder's query holds.
+When a folder reads a document again for `folders/embed-rederived`, a device MUST delete each `attached-to` edge from a file item to the document item where the folder's query holds the file, the document's body embeds the file, the document has no `has-attachment` line naming the file, and the folder's record of the document names the edge.
 
-**Reason:** under `folders/embed-edge-outside` an embed attaches only a file outside the query, so a file the query holds that only an embed attached was never the document's part.
+**Reason:** under `folders/embed-edge-outside` an embed attaches only a file outside the query, so a file the query holds that only an embed attached was never the document's part. The earlier rule recorded such an edge as the document's own, whoever made it, so no record tells an edge the embed made from one a person or an app made: the read corrects every such edge once. It deletes only the edge, and both items stay.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads its embeds again once, and keeps only an outside file's attachment the earlier rule made`.
 

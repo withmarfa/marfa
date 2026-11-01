@@ -28,6 +28,10 @@ pub struct Bound {
     pub written_hash: Option<String>,
     /// The item ids the file's links named when last read or written.
     pub links: Vec<String>,
+    /// The file items the file's embeds named when last read or written,
+    /// apart from its links: an embed new to the body attaches an outside
+    /// file, which a link to the same file does not.
+    pub embeds: Vec<String>,
     /// The edges this file's lines named when last read or written: what tells
     /// a line taken out from an edge no pull has written yet.
     pub lines: Vec<Line>,
@@ -213,8 +217,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
-        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, seen_at, embeds)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT (path) DO UPDATE SET
            item_id = excluded.item_id,
            identity = excluded.identity,
@@ -228,7 +232,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
            writes = excluded.writes,
            presentation = excluded.presentation,
            blob = excluded.blob,
-           seen_at = excluded.seen_at",
+           seen_at = excluded.seen_at,
+           embeds = excluded.embeds",
         params![
             bound.path,
             bound.item_id,
@@ -246,7 +251,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             serde_json::to_string(&bound.writes).unwrap_or_else(|_| "{}".into()),
             bound.presentation.as_ref().map(serde_json::to_string).transpose().map_err(|error| CoreError::Store(error.to_string()))?,
             bound.blob,
-            now_iso()
+            now_iso(),
+            serde_json::to_string(&bound.embeds).unwrap_or_else(|_| "[]".into())
         ],
     )?;
     if let Some(before) = before {
@@ -400,7 +406,7 @@ pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), C
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob FROM folder_files WHERE path = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files WHERE path = ?1",
             [path],
             read_bound,
         )
@@ -410,7 +416,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob FROM folder_files WHERE item_id = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files WHERE item_id = ?1",
             [item_id],
             read_bound,
         )
@@ -454,7 +460,7 @@ fn bound_where<P: rusqlite::Params>(
     params: P,
 ) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(&format!(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob FROM folder_files {clause} ORDER BY path",
+        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files {clause} ORDER BY path",
     ))?;
     let rows = statement.query_map(params, read_bound)?;
     let mut bound = Vec::new();
@@ -479,6 +485,10 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
         blob: row.get(12)?,
         // Unreadable, it names no links or lines, so no edge is removed for it.
         links: serde_json::from_str(&links).unwrap_or_default(),
+        embeds: row
+            .get::<_, Option<String>>(13)?
+            .and_then(|embeds| serde_json::from_str(&embeds).ok())
+            .unwrap_or_default(),
         lines: serde_json::from_str(&lines).unwrap_or_default(),
         edit_line: row.get(7)?,
         held: row.get(8)?,

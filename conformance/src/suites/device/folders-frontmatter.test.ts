@@ -2048,12 +2048,13 @@ describe("embedded files", () => {
 
   /**
    * A folder whose server already places `items` where another machine put
-   * them, each row carrying its placement and the attachments it draws.
+   * them, each row carrying its placement and the attachments and references
+   * it draws.
    */
   async function placedEmbeds(
     label: string,
     items: WireItemOptions[],
-    attachments: WireEdgeOptions[],
+    edges: WireEdgeOptions[],
     paths: Record<string, string>,
     types: string[] = ["core.note", "core.file"],
   ): Promise<{
@@ -2073,11 +2074,14 @@ describe("embedded files", () => {
     const made = await folderHarness(label, {
       settings: { query: { types } },
       rows,
-      edges: { "attached-to": attachments },
+      edges: {
+        "attached-to": edges.filter((edge) => edge.edge_type === "attached-to"),
+        references: edges.filter((edge) => edge.edge_type === "references"),
+      },
       hydrate: false,
       events: [door.stream()],
     });
-    for (const edge of attachments) door.hold(edge);
+    for (const edge of edges) door.hold(edge);
     const placements: Record<string, string> = {};
     for (const [id, path] of Object.entries(paths)) {
       const edge: WireEdgeOptions = {
@@ -2359,7 +2363,7 @@ describe("embedded files", () => {
           "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at) VALUES (?, ?, ?, 'attached-to', '{}', 1, ?, ?)",
         ).run(earlier, pic, note, now, now);
         db.prepare(
-          "UPDATE folder_files SET links = '[]', edge_lines = ? WHERE path = 'Note.md'",
+          "UPDATE folder_files SET links = '[]', embeds = NULL, edge_lines = ? WHERE path = 'Note.md'",
         ).run(
           JSON.stringify([
             { edge_type: "attached-to", end: "target", other: pic },
@@ -2407,6 +2411,39 @@ describe("embedded files", () => {
     }
   });
 
+  it("references the files a document already embeds when the folder is added afresh", async () => {
+    const made = await edgeHarness(
+      "folder-embed-fresh-reread",
+      [
+        {
+          id: host,
+          properties: { title: "Host", body: "a picture ![[pic.png]]\n" },
+        },
+        fileRow(pic, "pic.png", png(1)),
+      ],
+      [attached("01a00000-0000-7000-8000-00000000e2da", pic, host)],
+      { settings: { query: { types: ["core.note"] } } },
+    );
+    harness = made.harness;
+    scriptBlob(harness.server, png(1));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(existsSync(join(harness.dir, "pic.png"))).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      heldEdges(made.door),
+      "an embed the folder pulled gained no reference",
+    ).toEqual(
+      [`${host} references ${pic}`, `${pic} attached-to ${host}`].sort(),
+    );
+
+    // Once: the next push reads no unchanged document again.
+    const writes = sentEdgeWrites(harness).length;
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness)).toHaveLength(writes);
+  });
+
   it("writes an embedded file where its link says", async () => {
     const made = await edgeHarness(
       "folder-embed-pull",
@@ -2426,6 +2463,9 @@ describe("embedded files", () => {
         attached("01a00000-0000-7000-8000-00000000e2e1", pic, host),
         attached("01a00000-0000-7000-8000-00000000e2e2", chart, host),
         attached("01a00000-0000-7000-8000-00000000e2e9", scan, host),
+        referenced("01a00000-0000-7000-8000-00000000e2db", host, pic),
+        referenced("01a00000-0000-7000-8000-00000000e2dc", host, chart),
+        referenced("01a00000-0000-7000-8000-00000000e2dd", host, scan),
       ],
       {
         settings: {
@@ -2517,6 +2557,9 @@ describe("embedded files", () => {
         `${chart} attached-to ${host}`,
         `${pic} attached-to ${host}`,
         `${scan} attached-to ${host}`,
+        `${host} references ${chart}`,
+        `${host} references ${pic}`,
+        `${host} references ${scan}`,
       ].sort(),
     );
   });
@@ -3171,6 +3214,8 @@ describe("embedded files", () => {
       [
         attached("01a00000-0000-7000-8000-00000000e2ea", chart, host),
         attached("01a00000-0000-7000-8000-00000000e2ed", scan, host),
+        referenced("01a00000-0000-7000-8000-00000000e2de", host, chart),
+        referenced("01a00000-0000-7000-8000-00000000e2df", host, scan),
       ],
       {
         [host]: "notes/Host.md",
@@ -3561,6 +3606,7 @@ describe("embedded files", () => {
         attached("01a00000-0000-7000-8000-00000000e2f6", pic, host),
         attached("01a00000-0000-7000-8000-00000000e2f7", twin, host),
         attached("01a00000-0000-7000-8000-00000000e2f8", chart, host),
+        referenced("01a00000-0000-7000-8000-00000000e2d0", host, chart),
       ],
     );
     harness = made.harness;
@@ -3589,11 +3635,22 @@ describe("embedded files", () => {
         ) as unknown,
       }),
     ]);
-    // Read back, the embed and the lines keep every edge as it was.
+    // Read back from the disk, where one file holds the name, the embed
+    // references that file, and every other edge stays as it was.
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    expect(sentEdgeWrites(harness)).toEqual([]);
-    expect(heldEdges(made.door)).toHaveLength(3);
+    const named =
+      readFileSync(join(harness.dir, "dup.png"))[8] === 1 ? pic : twin;
+    expect(sentEdgeWrites(harness)).toHaveLength(1);
+    expect(heldEdges(made.door)).toEqual(
+      [
+        `${pic} attached-to ${host}`,
+        `${twin} attached-to ${host}`,
+        `${chart} attached-to ${host}`,
+        `${host} references ${chart}`,
+        `${host} references ${named}`,
+      ].sort(),
+    );
   });
 
   it("writes no file a .txt file's text embeds", async () => {

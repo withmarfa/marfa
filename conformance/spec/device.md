@@ -5794,7 +5794,7 @@ When a body carries an embed of a file, a device MUST NOT queue an `attached-to`
 
 When a working copy is whole and has not read its bodies since its device came to read an embed as a `references` edge, a device MUST read once every active or archived body the copy holds that carries an embed, and queue the `references` edge of each embed of a file that the item has none to.
 
-**Reason:** an embed once made the file's `attached-to` edge instead, so a body written before has no reference until it is read again, and reading once keeps a later drain from reading every body. The `attached-to` edge an earlier embed made stays (`device/body-link-removed-only`). Two copies that read at once each send the create, and the second is settled as one edge (`device/body-edge-duplicate`).
+**Reason:** an embed once made the file's `attached-to` edge instead, so a body written before has no reference until it is read again, and reading once keeps a later drain from reading every body. Each embed is read on its own, so a link that names the same file earlier in the body does not stand for the embed's edge. The `attached-to` edge an earlier embed made stays (`device/body-link-removed-only`). Two copies that read at once each send the create, and the second is settled as one edge (`device/body-edge-duplicate`).
 
 **Tests:** `device/body-edges-live.test.ts › adds each embed's reference once on each copy, keeps the attachment an earlier embed made, and settles two copies' references as one`.
 
@@ -6014,7 +6014,7 @@ If a body no longer carries a name that waits, whoever changed the body, then a 
 
 When an embed's name answers to a file attached to the item and to other file items, a device MUST resolve the embed to the attached file.
 
-**Reason:** an embed is read against the item's attachments first, so an attach's embed text names the file it attached whatever else shares its name.
+**Reason:** an embed is read against the item's attachments first, so an attach's embed text names the file it attached whatever else shares its name. A folder reads a document's embeds by the same rule, so a file the document references under the same name does not make the embed name nothing.
 
 **Tests:** `device/body-edges-live.test.ts › reads an embed as the file attached to the item before other file items of that name`.
 

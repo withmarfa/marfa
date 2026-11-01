@@ -13,14 +13,16 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::embed::{FILE_TYPE, blob_ref_of, bytes_of, file_like, is_note, joined, read_as};
+use super::embed::{
+    Candidate, FILE_TYPE, Pick, blob_ref_of, bytes_of, file_like, held, is_note, pick, read_as,
+};
 use super::resolve::{Names, Others, Paths, Resolved, Resolver, is_id, resolve_reference};
 use super::text::{self, Embed, Typed};
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::folder::fields;
 use crate::model::{Edge, EdgeDraft, Item, Verdict, WriteKind};
-use crate::names::{folded, name_of, same};
+use crate::names::{folded, name_of};
 use crate::wire::{WireEdge, WireItem};
 use crate::{Core, Result, store};
 
@@ -155,14 +157,6 @@ pub(crate) fn body_of<'a>(catalog: &Catalog, item: &'a Item) -> &'a str {
         .unwrap_or_default()
 }
 
-/// A file item and the names an embed may call it by, folded: its title,
-/// and the file name of each placement.
-struct Candidate {
-    id: String,
-    paths: Vec<String>,
-    names: Vec<String>,
-}
-
 fn candidate(conn: &Connection, catalog: &Catalog, item: &Item) -> Result<Candidate> {
     let paths = Placements.of(conn, &item.id)?;
     let mut names: Vec<String> = paths.iter().map(|path| folded(name_of(path))).collect();
@@ -243,41 +237,6 @@ fn held_files(conn: &Connection, catalog: &Catalog) -> Result<Vec<Candidate>> {
     Ok(found)
 }
 
-enum Pick {
-    One(String),
-    Many,
-    None,
-}
-
-/// The candidate an embed names: by a path, the one placed where the path
-/// leads from where the host is placed; else, as by a name, the one whose
-/// title or file name is the embed's file name, as a folder's pull reads it.
-fn pick(candidates: &[Candidate], host_paths: &[String], name: &str, by_name: bool) -> Pick {
-    let one = |found: Vec<&Candidate>| match found.as_slice() {
-        [] => Pick::None,
-        [one] => Pick::One(one.id.clone()),
-        _ => Pick::Many,
-    };
-    if !by_name {
-        for host in host_paths {
-            if let Some(at) = joined(host, name) {
-                let placed: Vec<&Candidate> = candidates
-                    .iter()
-                    .filter(|held| held.paths.iter().any(|path| same(path, &at)))
-                    .collect();
-                if !placed.is_empty() {
-                    return one(placed);
-                }
-            }
-        }
-    }
-    let wanted = folded(name_of(name.trim()));
-    one(candidates
-        .iter()
-        .filter(|held| held.names.contains(&wanted))
-        .collect())
-}
-
 /// How a body's embeds are read against the copy: its attachments first,
 /// then the files it already references, the held file items loaded only for
 /// an embed neither answers.
@@ -313,10 +272,13 @@ impl<'c> Embeds<'c> {
     /// The file the host's own edges say an embed names: an attachment, or
     /// else a file the host references.
     fn held(&self, name: &str, by_name: bool) -> Pick {
-        match pick(&self.attachments, &self.host_paths, name, by_name) {
-            Pick::None => pick(&self.referenced, &self.host_paths, name, by_name),
-            picked => picked,
-        }
+        held(
+            &self.attachments,
+            &self.referenced,
+            &self.host_paths,
+            name,
+            by_name,
+        )
     }
 
     fn files(&self) -> Result<&[Candidate]> {
@@ -1523,10 +1485,17 @@ fn rederive_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()>
         &recorded(conn, host)?,
         Reading::Previous,
     )?;
-    for (kind, other) in read.targets() {
-        if kind == Kind::Embed && held_edges(conn, host, &other)?.is_empty() {
-            let queued = crate::queue_edge(conn, &draft(host, &other), &[])?;
-            remember_edge(conn, &queued.id, host, kind, &other, None)?;
+    // Each embed on its own: a link naming the same file first does not
+    // stand for the embed's edge here.
+    let mut queued: Vec<&str> = Vec::new();
+    for (kind, _, other) in &read.found {
+        if *kind == Kind::Embed
+            && !queued.contains(&other.as_str())
+            && held_edges(conn, host, other)?.is_empty()
+        {
+            let write = crate::queue_edge(conn, &draft(host, other), &[])?;
+            remember_edge(conn, &write.id, host, Kind::Embed, other, None)?;
+            queued.push(other);
         }
     }
     Ok(())
@@ -3557,6 +3526,26 @@ mod tests {
         after_answers(&mut core.conn().unwrap()).unwrap();
         assert!(edge_writes(&core).is_empty(), "the bodies were read again");
         assert!(!has_answer_work(&core.conn().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn a_copy_reads_an_embed_again_when_a_link_names_the_same_file_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, file) = host_with_attachment(&core, &dir);
+        as_the_server_s(&core);
+        land_remote_body(&core, &host, &format!("[[{file}]] ![[photo.png]]"));
+        assert!(held_out(&core, &host, LINK_EDGE).is_empty());
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM meta WHERE key = ?1", [REDERIVED])
+            .unwrap();
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert_eq!(
+            edge_writes(&core),
+            [(WriteKind::CreateEdge, host.clone(), file.clone())],
+            "the embed a link named first was not read again"
+        );
     }
 
     #[test]

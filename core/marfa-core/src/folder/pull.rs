@@ -818,10 +818,10 @@ impl Folder {
                 match on_disk {
                     Some(found) => {
                         self.core.let_go_blob(blob);
-                        (found, Vec::new(), Vec::new())
+                        (found, Default::default(), Vec::new())
                     }
                     None => match self.core.blob_file(blob).map(|file| read_file(&file)) {
-                        Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
+                        Ok(Ok(found)) => (found, Default::default(), Vec::new()),
                         Err(
                             error @ (CoreError::Unauthorized { .. }
                             | CoreError::RenewalFailed(_)
@@ -882,7 +882,11 @@ impl Folder {
                         return Ok(PlacementWrite::Refused);
                     }
                 };
-                (text.into_bytes(), rendered.links, rendered.lines)
+                (
+                    text.into_bytes(),
+                    (rendered.links, rendered.embeds),
+                    rendered.lines,
+                )
             }
         };
         rendering.context.borrow().check(&*self.core.conn()?)?;
@@ -1041,7 +1045,8 @@ impl Folder {
                     presentation: presentation.clone(),
                     blob: bytes_of(item, catalog).map(str::to_string),
                     written_hash: Some(hash),
-                    links: wrote,
+                    links: wrote.0,
+                    embeds: wrote.1,
                     lines,
                     edit_line: None,
                     held: None,
@@ -1101,7 +1106,8 @@ impl Folder {
             presentation: presentation.clone(),
             blob: bytes_of(item, catalog).map(str::to_string),
             written_hash: Some(hash.clone()),
-            links: wrote.clone(),
+            links: wrote.0.clone(),
+            embeds: wrote.1.clone(),
             lines: lines.clone(),
             edit_line,
             held: None,
@@ -1413,6 +1419,7 @@ impl Folder {
             blob: theirs.blob.clone(),
             written_hash: Some(theirs.content_hash.clone()),
             links: theirs.links.clone(),
+            embeds: theirs.embeds.clone(),
             lines: theirs.lines.clone(),
             edit_line: None,
             held: None,
@@ -2425,6 +2432,7 @@ mod tests {
                     blob: None,
                     written_hash: None,
                     links: Vec::new(),
+                    embeds: Vec::new(),
                     lines: Vec::new(),
                     edit_line: None,
                     held: None,

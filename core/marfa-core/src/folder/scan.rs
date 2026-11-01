@@ -756,7 +756,7 @@ impl Folder {
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
         let (unanswered, embedded) = (&scan.unanswered, &scan.embedded);
-        let only_embedded = &scan.only_embedded;
+        let (only_embedded, shown) = (&scan.only_embedded, &scan.shown);
         let report = &mut scan.report;
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
@@ -928,10 +928,11 @@ impl Folder {
                             // the file and attaches only one the query does not
                             // hold.
                             || (reread_embeds
-                                && bound.lines.iter().any(|line| {
-                                    line.edge_type == embeds::ATTACHMENT_EDGE
-                                        && line.end == crate::catalog::End::Target
-                                }))
+                                && (shown.contains_key(&file.key)
+                                    || bound.lines.iter().any(|line| {
+                                        line.edge_type == embeds::ATTACHMENT_EDGE
+                                            && line.end == crate::catalog::End::Target
+                                    })))
                         {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }
@@ -1081,6 +1082,7 @@ impl Folder {
             let rejudged = judged.is_ok();
             let outcome = judged.unwrap_or_else(|error| lines::Outcome {
                 links: pending.had_links.clone(),
+                embedded: pending.had_embeds.clone(),
                 lines: pending.had_lines.clone(),
                 held: Some(format!("{}{error}", state::EDGES_WAITING)),
                 refused: Vec::new(),
@@ -1136,6 +1138,7 @@ impl Folder {
                     &conn,
                     &state::Bound {
                         links: outcome.links,
+                        embeds: outcome.embedded,
                         lines: outcome.lines,
                         held,
                         writes,
@@ -1664,6 +1667,7 @@ impl Folder {
                         // them, so the file is the folder's to take away.
                         written_hash: Some(file.hash.clone()),
                         links: Vec::new(),
+                        embeds: Vec::new(),
                         lines: Vec::new(),
                         edit_line: None,
                         held: None,
