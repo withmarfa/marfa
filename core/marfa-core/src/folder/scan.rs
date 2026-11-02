@@ -1123,6 +1123,7 @@ impl Folder {
                 embeds: Vec::new(),
                 refused_lookups: pending.refused_lookups.clone(),
                 unmatched: false,
+                names: Vec::new(),
             });
             report.embeds.extend(
                 outcome
@@ -1144,6 +1145,14 @@ impl Folder {
                     }
                 });
                 writes.refused_lookups = outcome.refused_lookups;
+                // A failed judgment leaves the record as it was; it lapses
+                // once the file holds other bytes than those it was judged from.
+                if rejudged {
+                    writes.line_names = outcome.held.as_ref().map(|_| state::LineNames {
+                        hash: bound.content_hash.clone(),
+                        lines: outcome.names,
+                    });
+                }
                 let held = outcome.held;
                 let save = writes.save;
                 writes

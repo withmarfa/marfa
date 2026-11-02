@@ -68,6 +68,27 @@ pub struct Writes {
     /// its reason: not asked again until the file changes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refused_lookups: BTreeMap<String, String>,
+    /// While the file is held, the item each name on its edge lines made an
+    /// edge for, as judged from the bytes it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_names: Option<LineNames>,
+}
+
+/// The names of a held file's edge lines, as judged from the bytes whose
+/// hash is `hash`: a pull that writes other bytes ends them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LineNames {
+    pub hash: String,
+    pub lines: Vec<NamedLine>,
+}
+
+/// Each name on one edge line, folded, with the item it made an edge for,
+/// or `None` where it made none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NamedLine {
+    pub edge_type: String,
+    pub end: End,
+    pub names: Vec<(String, Option<String>)>,
 }
 
 /// When an unchanged file held `edges` is judged again.

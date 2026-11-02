@@ -2084,31 +2084,55 @@ If a held edge name still matches more than one item when it is looked up again,
 
 ### `folders/edge-held-partly-written`
 
-When an edge line holds a name under `folders/edge-name-unmatched`, `folders/edge-name-ambiguous`, `folders/edge-lookup-waits` or `folders/edge-lookup-refused`, a device MUST create the edge for each other name on the line that resolves to one item.
+When an edge line holds a name under `folders/edge-name-unmatched`, `folders/edge-name-ambiguous`, `folders/edge-lookup-waits` or `folders/edge-lookup-refused`, and its end of the edge type allows more than one item, a device MUST create the edge for each other name on the line that resolves to one item.
 
-**Reason:** A held name says nothing about the other names on its line. Leaving their edges unwritten would hide links to existing items from a person reading the document in an app.
+**Reason:** A held name says nothing about the other names on its line. Leaving their edges unwritten would hide links to existing items from a person reading the document in an app. A line whose end allows one item at most is under `folders/edge-held-one-end`.
 
 **Tests:** `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one that matches no item, and adds the other once it exists`, `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one matching two items, and never guesses the other`, `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`.
 
 ### `folders/edge-held-made-once`
 
-When a name held on an edge line resolves to one item, a device MUST NOT write again an edge the line's other names made.
+While a file is flagged `edges`, a device MUST NOT create again the edge of a name on its edge line that already made that edge, including an edge deleted elsewhere since.
 
-**Tests:** `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one that matches no item, and adds the other once it exists`.
+**Reason:** A pull leaves a held file as it is, so it cannot take out the name of an edge another device deleted, as it does in a file that is not held. The name still in the file is no new request from the person, and making its edge again would roll over the newer change.
+
+**Tests:** `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one that matches no item, and adds the other once it exists`, `device/folders-held-links.test.ts › never makes again the edge of a name on a held line that another device deleted`.
+
+### `folders/edge-held-name-kept`
+
+While a file is flagged `edges`, a device MUST treat each unchanged name on its edge line that made an edge as naming that edge's item, whatever the item is titled now.
+
+**Reason:** A pull leaves a held file as it is, so it cannot rewrite a name whose item was retitled elsewhere. The person did not change the name, so its edge is no name taken out.
+
+**Tests:** `device/folders-held-links.test.ts › keeps the edge of a name on a held line whose item is retitled elsewhere, until the person takes the name out`.
 
 ### `folders/edge-held-removal`
 
-When a person takes a name out of an edge line that holds another name, a device MUST delete the edge that name made, unless a name the line holds may name that edge's item.
+When a person takes a name out of an edge line that holds another name, a device MUST delete the edge that name made, unless no name left on the line names an item (`folders/edge-line-invalid-keeps-type`) or the line's end allows one item at most (`folders/edge-held-one-end`).
 
-**Reason:** An item in the bin, or one the device cannot read, matches no name, though the line may still name it. Deleting its edge would remove a link the person kept.
+**Tests:** `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`, `device/folders-held-links.test.ts › keeps the edge of a name that matches no item because its item is in the bin, and takes out the edge of a name removed from the line`, `device/folders-held-links.test.ts › keeps the edge of a name on a held line whose item is retitled elsewhere, until the person takes the name out`.
 
-**Tests:** `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`, `device/folders-held-links.test.ts › keeps the edge of a name that matches no item because its item is in the bin, and takes out the edge of a name removed from the line`.
+### `folders/edge-held-may-name`
+
+When a person changes a file so that an edge line holds a name, a device MUST keep each edge of that line's type that the file's lines, links or embeds showed and that a held name may name, unless a name taken out of the line made that edge.
+
+**Reason:** An item in the bin, or one the device cannot read, matches no name, though the line may still name it. Deleting its edge would remove a link the person kept, such as a body link moved into the line.
+
+**Tests:** `device/folders-held-links.test.ts › keeps the edge of a name that matches no item because its item is in the bin, and takes out the edge of a name removed from the line`, `device/folders-held-links.test.ts › takes out the edge of a body link moved into a held line once the person takes its name out`.
+
+### `folders/edge-held-kept-recorded`
+
+When an edge stays under `folders/edge-held-may-name`, a device MUST record the edge as the edge line's, so that taking the name out of the line deletes it.
+
+**Reason:** An edge a body link made, kept for a line, would otherwise be recorded neither by the body nor by the line, and no later edit could take it out.
+
+**Tests:** `device/folders-held-links.test.ts › takes out the edge of a body link moved into a held line once the person takes its name out`.
 
 ### `folders/edge-held-one-end`
 
 If an edge line holds a name and its end of the edge type allows one item at most, then a device MUST leave that file's edges of that type unchanged.
 
-**Reason:** the held name may name a second item, and the line would then exceed what its end allows. Writing the edge of the name that resolves could give the item an edge the whole line would not.
+**Reason:** The held name may name a second item, and the line would then exceed what its end allows. Writing the edge of the name that resolves could give the item an edge the whole line would not.
 
 **Tests:** `device/folders-held-links.test.ts › writes none of a line that has room for one item and holds a name`.
 
@@ -2162,7 +2186,7 @@ When an edge has arrived from elsewhere but has not appeared in the file, a devi
 
 ### `folders/edge-line-invalid-keeps-type`
 
-If none of an edge line's targets resolves to one item, or it names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type unchanged.
+If no name on an edge line resolves to one item or names one under `folders/edge-held-name-kept`, or the line names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type unchanged.
 
 **Tests:** `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`.
 

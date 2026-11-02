@@ -574,3 +574,120 @@ fn a_line_with_room_for_one_item_holding_a_name_writes_no_part_of_itself() {
     folder.scan().unwrap();
     assert_eq!(folder.core.edges_to(&a).unwrap().len(), 1);
 }
+
+const OLD: &str = "01a00000-0000-7000-8000-0000000023c1";
+
+fn from_elsewhere(folder: &Folder, id: &str, title: &str) {
+    crate::store::put_server_item(
+        &folder.core.conn().unwrap(),
+        &crate::store::testing::note(id, title, "", "2026-01-01T00:00:00Z"),
+        None,
+        &crate::catalog::Catalog::empty(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_held_line_keeps_the_edge_of_a_name_whose_item_is_retitled_elsewhere() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    from_elsewhere(&folder, OLD, "Old");
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    let typed = "---\nabout:\n  - \"[[B]]\"\n  - \"[[Old]]\"\n  - \"[[Ghost]]\"\n---\nA\n";
+    std::fs::write(dir.path().join("A.md"), typed).unwrap();
+    folder.scan().unwrap();
+    let mut both = [item_at(&folder, "B.md"), OLD.to_string()];
+    both.sort();
+    assert_eq!(about(&folder, "A.md"), both);
+    assert!(held(&folder, "A.md").is_some());
+
+    // Retitled on another device: no item is called Old now, but the file,
+    // unchanged, still names the item its edge was made for.
+    from_elsewhere(&folder, OLD, "New");
+    let again = folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), both, "{again:?}");
+
+    // The witness: the person taking the name out takes its edge out.
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nabout:\n  - \"[[B]]\"\n  - \"[[Ghost]]\"\n---\nA\n",
+    )
+    .unwrap();
+    let edited = folder.scan().unwrap();
+    assert_eq!(
+        about(&folder, "A.md"),
+        [item_at(&folder, "B.md")],
+        "{edited:?}"
+    );
+}
+
+#[test]
+fn a_held_line_never_makes_again_an_edge_deleted_elsewhere() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    std::fs::write(dir.path().join("A.md"), HELD_LINE).unwrap();
+    folder.scan().unwrap();
+    let (a, b) = (item_at(&folder, "A.md"), item_at(&folder, "B.md"));
+    assert_eq!(about(&folder, "A.md"), std::slice::from_ref(&b));
+    answered(&folder);
+    let edge = folder.core.edges_from(&a).unwrap().pop().unwrap();
+    crate::store::delete_edge(&folder.core.conn().unwrap(), &edge.id).unwrap();
+    from_elsewhere(&folder, OLD, "Unrelated");
+
+    let again = folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), Vec::<String>::new(), "{again:?}");
+    assert_eq!(edge_creates(&folder, &a), 0, "{again:?}");
+
+    // The held name resolving makes its own edge, and only that one.
+    std::fs::write(dir.path().join("Ghost.md"), "Ghost\n").unwrap();
+    let resolved = folder.scan().unwrap();
+    assert_eq!(
+        about(&folder, "A.md"),
+        [item_at(&folder, "Ghost.md")],
+        "{resolved:?}"
+    );
+    assert_eq!(edge_creates(&folder, &a), 1, "{resolved:?}");
+}
+
+#[test]
+fn a_body_link_moved_into_a_held_line_is_taken_out_with_its_name() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    for name in ["B", "C"] {
+        std::fs::write(dir.path().join(format!("{name}.md")), format!("{name}\n")).unwrap();
+    }
+    std::fs::write(dir.path().join("A.md"), "See [[B]].\n").unwrap();
+    folder.scan().unwrap();
+    let (a, b, c) = (
+        item_at(&folder, "A.md"),
+        item_at(&folder, "B.md"),
+        item_at(&folder, "C.md"),
+    );
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), std::slice::from_ref(&b));
+
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute("DELETE FROM folder_files WHERE item_id = ?1", [&b])
+        .unwrap();
+    std::fs::remove_file(dir.path().join("B.md")).unwrap();
+    folder.core.delete_item(&b).unwrap();
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nreferences:\n  - \"[[B]]\"\n  - \"[[C]]\"\n---\nA\n",
+    )
+    .unwrap();
+    let moved = folder.scan().unwrap();
+    let mut both = [b.clone(), c.clone()];
+    both.sort();
+    let mut now = edges_of(&folder, &a, LINK_EDGE);
+    now.sort();
+    assert_eq!(now, both, "{moved:?}");
+
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nreferences:\n  - \"[[C]]\"\n---\nA\n",
+    )
+    .unwrap();
+    let taken = folder.scan().unwrap();
+    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [c], "{taken:?}");
+}

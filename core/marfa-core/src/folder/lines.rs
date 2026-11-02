@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeTypes};
 use super::embeds::{self, ATTACHMENT_EDGE, Target};
-use super::state::{self, Line};
+use super::state::{self, Line, NamedLine};
 use super::{
     FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, fields, local_admission_refusal,
     local_refusal_reason,
@@ -26,6 +26,9 @@ pub(super) struct EdgeWork {
     pub had_links: Vec<String>,
     pub had_embeds: Vec<String>,
     pub had_lines: Vec<Line>,
+    /// The item each name on the lines made an edge for, where the file was
+    /// held when its last bytes were judged.
+    pub had_names: Vec<NamedLine>,
     pub embeds: Vec<(String, Target)>,
     /// Names whose lookup the server refused while the file was as it is
     /// now, answered with that refusal rather than asked again.
@@ -79,6 +82,8 @@ pub(super) struct Outcome {
     /// Whether a name matched no item or more than one, which a change to
     /// the copy can resolve.
     pub unmatched: bool,
+    /// The item each name on the file's edge lines made an edge for.
+    pub names: Vec<NamedLine>,
 }
 
 /// What became of the lookups of a file's names that resolved nothing.
@@ -146,6 +151,20 @@ impl Resolved {
 struct Desired {
     found: Vec<String>,
     held: Vec<Typed>,
+    /// Items named only by names that already made their edge, which is not
+    /// made again (`folders/edge-held-made-once`).
+    made: Vec<String>,
+}
+
+/// A name on a line, folded, and the item it made an edge for.
+type NamedAs = (String, Option<String>);
+
+/// A name on a line: the item it made an edge for when the file was last
+/// judged, else the item it resolves to now.
+struct Named {
+    key: String,
+    made: Option<String>,
+    found: Option<String>,
 }
 
 struct Group<'t> {
@@ -568,6 +587,7 @@ impl Folder {
         }
 
         let mut lines: Vec<Line> = Vec::new();
+        let mut line_names: Vec<NamedLine> = Vec::new();
         for ((edge_type, end), group) in &groups {
             let (edge_type, end) = (edge_type.as_str(), *end);
             let other_of = |edge: &Edge| match end {
@@ -590,9 +610,16 @@ impl Folder {
                 .filter(|line| line.edge_type == edge_type && line.end == end)
                 .map(|line| line.other.clone())
                 .collect();
+            let before: &[NamedAs] = work
+                .had_names
+                .iter()
+                .find(|named| named.edge_type == edge_type && named.end == end)
+                .map_or(&[], |named| &named.names[..]);
+            let mut names: Vec<Named> = Vec::new();
             let desired = self.desired(
                 group,
                 item_id,
+                (before, &mut names),
                 &current,
                 &other_of,
                 catalog,
@@ -600,12 +627,29 @@ impl Folder {
                 &mut reasons,
                 &mut unresolved,
             )?;
+            let mut record = |names: Vec<Named>, written: &dyn Fn(&str) -> bool| {
+                if group.typed.is_some() {
+                    line_names.push(NamedLine {
+                        edge_type: edge_type.to_string(),
+                        end,
+                        names: names
+                            .into_iter()
+                            .map(|named| {
+                                let made =
+                                    named.made.or(named.found.filter(|found| written(found)));
+                                (named.key, made)
+                            })
+                            .collect(),
+                    });
+                }
+            };
             let links_group = edge_type == LINK_EDGE && end == End::Source;
             let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::Target;
             if removals.is_some() && (links_group || embeds_group) {
                 continue;
             }
             let Some(desired) = desired else {
+                record(names, &|_| false);
                 lines.extend(recorded.into_iter().map(|other| Line {
                     edge_type: edge_type.to_string(),
                     end,
@@ -623,6 +667,7 @@ impl Folder {
             let Desired {
                 found: desired,
                 held: held_names,
+                made,
             } = desired;
             let mut wanted: Vec<String> = desired.clone();
             let mut had: Vec<String> = recorded.clone();
@@ -645,7 +690,10 @@ impl Folder {
                 }
             }
             let held: Vec<String> = current.iter().map(|edge| other_of(edge)).collect();
-            let adds: Vec<&String> = wanted.iter().filter(|id| !held.contains(id)).collect();
+            let adds: Vec<&String> = wanted
+                .iter()
+                .filter(|id| !held.contains(id) && !made.contains(id))
+                .collect();
             // An edge the file never carried arrived from elsewhere and is
             // not yet written; a link or an embed that names nothing looks
             // like one gone.
@@ -660,11 +708,16 @@ impl Folder {
                 .collect();
             // A name the line holds may be one it named before, of an item
             // gone to the bin or out of reach, so its edge is not a name
-            // taken out; it stays, and the line still records it.
+            // taken out, unless a name taken out of the line made it. It
+            // stays, and the line records it, a body link's edge among them.
             if !held_names.is_empty() {
                 let mut standing: Vec<&Edge> = Vec::new();
                 for edge in std::mem::take(&mut removes) {
-                    if self.could_name(catalog, &held_names, &other_of(edge))? {
+                    let other = other_of(edge);
+                    let taken_out = before
+                        .iter()
+                        .any(|(_, made)| made.as_deref() == Some(other.as_str()));
+                    if !taken_out && self.could_name(catalog, &held_names, &other)? {
                         standing.push(edge);
                     } else {
                         removes.push(edge);
@@ -672,7 +725,7 @@ impl Folder {
                 }
                 for edge in standing {
                     let other = other_of(edge);
-                    if recorded.contains(&other) && !shown.contains(&other) {
+                    if !shown.contains(&other) {
                         shown.push(other);
                     }
                 }
@@ -715,6 +768,7 @@ impl Folder {
                         "its {} line names another item, and this one already has [[{held}]] from elsewhere, which the file has not shown yet; take the line out to see it",
                         group.name
                     ));
+                    record(names, &|_| false);
                     lines.extend(recorded.into_iter().map(|other| Line {
                         edge_type: edge_type.to_string(),
                         end,
@@ -766,6 +820,11 @@ impl Folder {
             for edge in removes {
                 queued.push(self.core.delete_edge(&edge.id)?.id);
             }
+            record(names, &|found: &str| {
+                let line = line_of(edge_type, end, found);
+                shown.iter().any(|shown| shown == found)
+                    && !refused.iter().any(|(refused, _)| *refused == line)
+            });
             lines.extend(shown.into_iter().map(|other| Line {
                 edge_type: edge_type.to_string(),
                 end,
@@ -803,6 +862,7 @@ impl Folder {
             embeds: embed_reasons,
             refused_lookups: unresolved.refused,
             unmatched: unresolved.unmatched,
+            names: line_names,
         })
     }
 
@@ -827,6 +887,7 @@ impl Folder {
         &self,
         group: &Group<'_>,
         item_id: &str,
+        (before, names): (&[NamedAs], &mut Vec<Named>),
         current: &[&Edge],
         other_of: &dyn Fn(&Edge) -> String,
         catalog: &Catalog,
@@ -845,9 +906,31 @@ impl Folder {
         };
         let mut found: Vec<(String, Option<String>)> = Vec::new();
         let mut held: Vec<Typed> = Vec::new();
+        let mut made: Vec<String> = Vec::new();
+        let mut fresh: Vec<String> = Vec::new();
         let mut stood_down = false;
         for typed in texts {
             let raw = &typed.raw;
+            let key = crate::names::folded(raw.trim());
+            // An unchanged name keeps naming the item it made its edge for,
+            // whatever that item is titled now, and its edge, deleted since,
+            // is not made again.
+            if let Some(id) = before
+                .iter()
+                .find(|(named, _)| *named == key)
+                .and_then(|(_, made)| made.clone())
+            {
+                if !found.iter().any(|(held, _)| held == &id) {
+                    found.push((id.clone(), None));
+                }
+                made.push(id.clone());
+                names.push(Named {
+                    key,
+                    made: Some(id),
+                    found: None,
+                });
+                continue;
+            }
             let resolved = resolve_reference(typed, |text| {
                 self.resolve_typed(text, current, other_of, catalog, resolver, unresolved)
             })?;
@@ -855,17 +938,29 @@ impl Folder {
                 resolved.settled(raw, &format!("{name} line"), reasons, unresolved)
             else {
                 held.push(typed.clone());
+                names.push(Named {
+                    key,
+                    made: None,
+                    found: None,
+                });
                 continue;
             };
+            names.push(Named {
+                key,
+                made: None,
+                found: (id != item_id).then(|| id.clone()),
+            });
             if id == item_id {
                 reasons.push(format!("its {name} line names this file's own item"));
                 stood_down = true;
                 continue;
             }
+            fresh.push(id.clone());
             if !found.iter().any(|(held, _)| held == &id) {
                 found.push((id, r#type));
             }
         }
+        made.retain(|id| !fresh.contains(id));
         // A line that holds a name writes the edges of the names that resolve
         // (`folders/edge-held-partly-written`), unless none does, or it has
         // room for one item and the held name could be a second.
@@ -905,6 +1000,7 @@ impl Folder {
         Ok(Some(Desired {
             found: found.into_iter().map(|(id, _)| id).collect(),
             held,
+            made,
         }))
     }
 

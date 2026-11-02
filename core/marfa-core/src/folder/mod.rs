@@ -1612,6 +1612,16 @@ impl Folder {
             had_links: bound.map(|bound| bound.links.clone()).unwrap_or_default(),
             had_embeds: bound.map(|bound| bound.embeds.clone()).unwrap_or_default(),
             had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
+            had_names: bound
+                .and_then(|bound| {
+                    bound
+                        .writes
+                        .line_names
+                        .as_ref()
+                        .filter(|names| names.hash == bound.content_hash)
+                })
+                .map(|names| names.lines.clone())
+                .unwrap_or_default(),
             embeds: Vec::new(),
             refused_lookups: BTreeMap::new(),
         }

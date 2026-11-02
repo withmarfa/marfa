@@ -33,7 +33,9 @@ import {
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
 // `folders/edge-held-cleared`, `folders/edge-held-never-guessed`), and the
 // names of its line that resolve are written meanwhile
-// (`folders/edge-held-partly-written`). A name
+// (`folders/edge-held-partly-written`), each name keeping the item it made
+// its edge for and never making it again (`folders/edge-held-name-kept`,
+// `folders/edge-held-made-once`). A name
 // the server refused to look up on its own is not asked again
 // (`folders/edge-lookup-no-repeat`), while the names of a lookup it refused
 // as a whole wait and are asked again at the next scan
@@ -365,6 +367,107 @@ describe("links held until their target exists", () => {
     await push();
     await push();
     expect(edges()).toEqual([`create ${id(1)} parent-of ${created("Ticket")}`]);
+  });
+
+  it("keeps the edge of a name on a held line whose item is retitled elsewhere, until the person takes the name out", async () => {
+    const old = note(2, "Old");
+    const { elsewhere, door } = await seed([note(1, "Marfa"), old]);
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Old]]"\n  - "[[Ghost]]"\n---\nbody\n',
+    );
+    await push();
+    const ticket = created("Ticket");
+    expect(edges()).toEqual(
+      [1, 2].map((n) => `create ${ticket} about ${id(n)}`),
+    );
+    const toOld = [...door.edges.values()].find(
+      (held) => held.edge_type === "about" && held.target_id === id(2),
+    );
+    expect(toOld, "the server holds the edge to Old").toBeDefined();
+    const deletes = () =>
+      sentEdgeWrites(folder!).filter((write) => write.startsWith("delete "));
+
+    // Retitled on another device: the pull renames its file, so no item is
+    // called Old now, but the held file still names it as typed.
+    old.properties = { title: "New", body: "Old\n" };
+    elsewhere({ ...old, version: 2 }, "item.updated");
+    await push();
+    await push();
+    expect((await fileAt("Ticket.md")).status).toBe("held");
+    expect(deletes(), "a rename elsewhere took an edge out").toEqual([]);
+
+    // The witness: the person taking the name out takes its edge out.
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Ghost]]"\n---\nbody\n',
+    );
+    await push();
+    expect(deletes()).toEqual([`delete ${toOld!.id}`]);
+  });
+
+  it("never makes again the edge of a name on a held line that another device deleted", async () => {
+    const { elsewhere, edgeElsewhere, door } = await seed([note(1, "Marfa")]);
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Plans]]"\n---\nbody\n',
+    );
+    await push();
+    const ticket = created("Ticket");
+    expect(edges()).toEqual([`create ${ticket} about ${id(1)}`]);
+    const edge = [...door.edges.values()].find(
+      (held) => held.edge_type === "about" && held.source_id === ticket,
+    );
+    expect(edge, "the server holds the line's edge").toBeDefined();
+    edgeElsewhere("edge.deleted", edge!);
+    elsewhere(note(5, "Unrelated"), "item.created");
+    await push();
+    await push();
+    expect(edges(), "the edge deleted elsewhere was made again").toEqual([
+      `create ${ticket} about ${id(1)}`,
+    ]);
+
+    // The held name resolving makes its own edge, and only that one.
+    put("Plans.md", "The plans.\n");
+    await push();
+    expect(edges()).toEqual(
+      [
+        `create ${ticket} about ${id(1)}`,
+        `create ${ticket} about ${created("Plans")}`,
+      ].sort(),
+    );
+  });
+
+  it("takes out the edge of a body link moved into a held line once the person takes its name out", async () => {
+    const plans = note(2, "Plans");
+    const { elsewhere, door } = await seed([note(1, "Marfa"), plans]);
+    put("Ticket.md", "See [[Plans]].\n");
+    await push();
+    const ticket = created("Ticket");
+    expect(edges()).toEqual([`create ${ticket} references ${id(2)}`]);
+    const link = [...door.edges.values()].find(
+      (held) => held.edge_type === "references" && held.target_id === id(2),
+    );
+    expect(link, "the server holds the link's edge").toBeDefined();
+    plans.state = "trashed";
+    elsewhere({ ...plans, version: 2 }, "item.deleted");
+    await push();
+    await push();
+    const deletes = () =>
+      sentEdgeWrites(folder!).filter((write) => write === `delete ${link!.id}`);
+
+    put(
+      "Ticket.md",
+      '---\nreferences:\n  - "[[Plans]]"\n  - "[[Marfa]]"\n---\nbody\n',
+    );
+    const moved = await push();
+    expect(moved.flagged.map((file) => file.flag)).toEqual(["edges"]);
+    expect(deletes(), "the moved link's edge went").toEqual([]);
+    expect(edges()).toContain(`create ${ticket} references ${id(1)}`);
+
+    put("Ticket.md", '---\nreferences: "[[Marfa]]"\n---\nbody\n');
+    await push();
+    expect(deletes(), "the edge of the name taken out stayed").toHaveLength(1);
   });
 
   it("creates and links two new documents that link each other in one pass", async () => {
