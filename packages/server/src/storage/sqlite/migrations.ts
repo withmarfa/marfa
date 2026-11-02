@@ -19,6 +19,7 @@ import { log } from "../../middleware/logger.js";
 import { storedFrame } from "../../pubsub.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 import { RefusedDatabaseError } from "./refused-database.js";
+import { titleFieldIn, titleKeyFrom } from "./title-keys.js";
 import {
   currentShape,
   ownTables,
@@ -121,6 +122,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   { to: 8, changes: [], apply: passkeyLastUse },
   { to: 9, changes: ["connectors"], apply: readOnlyTypesOnConnectors },
+  { to: 10, changes: ["item_title_keys"], apply: titleKeys },
 ];
 
 const PASSKEY_COLUMNS =
@@ -427,6 +429,77 @@ async function contactListsOnEntities(db: Writer): Promise<void> {
         now,
       ],
     });
+  }
+}
+
+/**
+ * Makes the table `POST /items/titles` reads and fills it for every item, in
+ * the bin too. The property an item is titled by is read from the types as
+ * stored, since the registry is not loaded while a database updates; a type
+ * the table does not hold titles by `title`.
+ */
+async function titleKeys(db: Writer): Promise<void> {
+  await db.executeMultiple(
+    "CREATE TABLE `item_title_keys` (\n" +
+      "\t`item_id` text PRIMARY KEY NOT NULL,\n" +
+      "\t`title_key` text NOT NULL,\n" +
+      "\tFOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade\n" +
+      ");\n" +
+      "CREATE INDEX `idx_item_title_keys_key` ON `item_title_keys` (`title_key`,`item_id`);",
+  );
+  const stored = new Map<
+    string,
+    { parent?: string; display_hints?: { title_field?: string } }
+  >();
+  const defined = await db.execute(
+    "SELECT id, schema FROM types WHERE json_valid(schema)",
+  );
+  for (const row of defined.rows) {
+    const schema = JSON.parse(row.schema as string) as {
+      parent?: unknown;
+      display_hints?: { title_field?: unknown } | null;
+    };
+    const field = schema.display_hints?.title_field;
+    stored.set(row.id as string, {
+      ...(typeof schema.parent === "string" && { parent: schema.parent }),
+      ...(typeof field === "string" && { display_hints: { title_field: field } }),
+    });
+  }
+  const fields = new Map<string, string>();
+  let after = "";
+  for (;;) {
+    const page = await db.execute({
+      sql:
+        "SELECT id, type, json(properties) AS properties FROM items " +
+        "WHERE id > ? AND json_valid(properties, 9) AND json_type(properties) = 'object' " +
+        "ORDER BY id LIMIT 500",
+      args: [after],
+    });
+    if (page.rows.length === 0) return;
+    const keys: [string, string][] = [];
+    for (const row of page.rows) {
+      const type = row.type as string;
+      let field = fields.get(type);
+      if (field === undefined) {
+        field = titleFieldIn(type, (id) => stored.get(id));
+        fields.set(type, field);
+      }
+      const key = titleKeyFrom(
+        type,
+        field,
+        JSON.parse(row.properties as string) as Record<string, unknown>,
+      );
+      if (key !== null) keys.push([row.id as string, key]);
+    }
+    if (keys.length > 0) {
+      await db.execute({
+        sql:
+          "INSERT INTO item_title_keys (item_id, title_key) VALUES " +
+          keys.map(() => "(?, ?)").join(", "),
+        args: keys.flat(),
+      });
+    }
+    after = page.rows[page.rows.length - 1]?.id as string;
   }
 }
 

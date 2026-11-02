@@ -23,6 +23,7 @@ import {
   typesSql,
 } from "../filter-sql.js";
 import { items } from "./schema.js";
+import { rekeyType, titleFieldOf } from "./title-keys.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
@@ -128,16 +129,18 @@ async function replaceIndexRow(
 export function indexShapes(typeId: string): Map<string, string> {
   const shapes = new Map<string, string>();
   for (const type of [typeId, ...declaredDescendants(typeId)]) {
+    let shape: string;
     try {
-      shapes.set(type, searchableShape(type));
+      shape = searchableShape(type);
     } catch (error) {
       if (
         !(error instanceof MarfaError) ||
         error.code !== ErrorCode.TYPE_CHAIN_UNRESOLVABLE
       )
         throw error;
-      shapes.set(type, "unresolvable");
+      shape = "unresolvable";
     }
+    shapes.set(type, JSON.stringify([shape, titleFieldOf(type)]));
   }
   return shapes;
 }
@@ -151,7 +154,9 @@ export function indexShapes(typeId: string): Map<string, string> {
  * description, costs nothing. Call it inside the transaction that made the
  * change, after the registry holds it.
  *
- * A trashed row is not in the index and stays out of it.
+ * A trashed row is not in the index and stays out of it. The shape also
+ * carries the property each type is titled by, so that a change to it makes
+ * the title keys again (`title-keys.ts`).
  */
 export async function reindexChangedTypes(
   db: Executor,
@@ -159,7 +164,15 @@ export async function reindexChangedTypes(
   before: ReadonlyMap<string, string>,
 ): Promise<void> {
   for (const [type, shape] of indexShapes(typeId)) {
-    if (before.get(type) === shape) continue;
+    const was = before.get(type);
+    if (was === shape) continue;
+    const [wasShape, wasTitleField] = (was === undefined
+      ? [undefined, undefined]
+      : JSON.parse(was)) as [string | undefined, string | undefined];
+    const [nowShape, nowTitleField] = JSON.parse(shape) as [string, string];
+    // The title keys also cover the bin, which the index does not.
+    if (wasTitleField !== nowTitleField) await rekeyType(db, type);
+    if (wasShape === nowShape) continue;
     const rows = await db.all<{ id: string; properties: string }>(sql`
       SELECT id, json(properties) AS properties FROM items
       WHERE type = ${type} AND state <> 'trashed'

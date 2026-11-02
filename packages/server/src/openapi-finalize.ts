@@ -123,6 +123,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "transitionItem",
       "listItemVersions",
       "lookupItems",
+      "findItemsByTitle",
       "bulkGetItems",
       "bulkUpsertItems",
       "getItemStats",
