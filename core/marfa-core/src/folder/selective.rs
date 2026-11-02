@@ -39,6 +39,10 @@ pub(super) struct Selection {
     /// up to date, that did not run to their end, which the next pull
     /// reaches too: those names no longer differ.
     owed: HashSet<String>,
+    /// The items whose rendered name changed where a narrow pull pinned the
+    /// end of an edge, and their neighbors, which the next pull reaches
+    /// whether this one ends or not; a pull drops from it only what it took.
+    named: HashSet<String>,
     /// Whether the next pull reads every item, where a narrow one met what
     /// only a pull of every item settles.
     widen: bool,
@@ -95,6 +99,8 @@ pub(super) struct Pick {
     settled_before: HashSet<String>,
     settled: RefCell<HashSet<String>>,
     missed: RefCell<Vec<String>>,
+    /// The items of `Selection::named` this pull reached.
+    named: HashSet<String>,
 }
 
 /// What a narrow pull reads by.
@@ -130,6 +136,7 @@ impl Selection {
             settled_before: HashSet::new(),
             settled: RefCell::default(),
             missed: RefCell::default(),
+            named: HashSet::new(),
         })
     }
 
@@ -247,6 +254,7 @@ impl Selection {
         let mut reached = Self::with_neighbors(folder, &changed)?;
         reached.extend(rebound);
         reached.extend(self.owed.iter().cloned());
+        reached.extend(self.named.iter().cloned());
         let last = self.last.as_mut().expect("a baseline that holds");
         let ids: Vec<String> = reached.iter().cloned().collect();
         let held = folder.core.held_among(settings, &ids)?;
@@ -307,6 +315,7 @@ impl Selection {
             .cloned()
             .collect();
         self.owed.extend(reached.iter().cloned());
+        pick.named = self.named.clone();
         pick.reached = Some(reached);
         pick.read = read.clone();
         pick.settled_before = last.settled.clone();
@@ -326,8 +335,8 @@ impl Selection {
 
     /// Called once a narrow pull has pinned `pinned`, which the baseline's
     /// names do not hold yet, so a line to one shows its title. An item
-    /// whose name one of them took is owed to the next pull, with its
-    /// neighbors.
+    /// whose name one of them took is kept in `named` for the next pull,
+    /// with its neighbors.
     pub(super) fn name_pinned(
         &mut self,
         folder: &Folder,
@@ -353,8 +362,8 @@ impl Selection {
             .refresh(&*folder.core.conn()?, catalog, &ids, &paths)?;
         differing.retain(|id| !ids.contains(id));
         let differing: HashSet<String> = differing.into_iter().collect();
-        self.owed.extend(Self::with_neighbors(folder, &differing)?);
-        self.owed.extend(differing);
+        self.named.extend(Self::with_neighbors(folder, &differing)?);
+        self.named.extend(differing);
         Ok(())
     }
 
@@ -387,6 +396,7 @@ impl Selection {
         changed.extend(moved);
         changed.extend(names.differing(&last.names));
         changed.extend(self.owed.iter().cloned());
+        changed.extend(self.named.iter().cloned());
         let mut reached = Self::with_neighbors(folder, &changed)?;
         reached.extend(rebound);
         #[cfg(debug_assertions)]
@@ -395,6 +405,7 @@ impl Selection {
         }
         // Every file renders anyway, so an item the choice left out shows.
         pick.checking = self.full_render_due();
+        pick.named = self.named.clone();
         pick.reached = Some(reached);
         pick.settled_before = last.settled.clone();
         Ok(())
@@ -415,6 +426,7 @@ impl Selection {
             self.rendered_all_at = Some(crate::clock::now());
         }
         self.owed.clear();
+        self.named.retain(|id| !pick.named.contains(id));
         self.missed.extend(pick.missed.into_inner());
         self.last = Some(Baseline {
             change: pick.change,
@@ -432,6 +444,7 @@ impl Selection {
     /// shown as embeds or attachments only.
     pub(super) fn end_narrow(&mut self, pick: Pick, shown: HashSet<String>) {
         self.owed.clear();
+        self.named.retain(|id| !pick.named.contains(id));
         let Some(last) = self.last.as_mut() else {
             return;
         };
@@ -450,6 +463,7 @@ impl Selection {
     pub(super) fn forget(&mut self) {
         self.last = None;
         self.owed.clear();
+        self.named.clear();
     }
 
     /// Whether the next pull renders every file, to check the choice, even

@@ -4138,6 +4138,67 @@ mod tests {
     }
 
     #[test]
+    fn a_name_a_pinned_end_takes_reaches_the_files_that_name_it_on_the_next_pull() {
+        const X: &str = "01a00000-0000-7000-8000-0000000000b2";
+        let (dir, folder, server, _) = watched_notes_in(
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            &["a.md", "b.md", "c.md"],
+        );
+        // A task titled as a note's file is, which a pin reads from the
+        // server.
+        server.on(
+            &format!("/items/{X}"),
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({
+                    "listed": true,
+                    "item": {
+                        "id": X, "type": "core.task", "state": "active",
+                        "properties": { "title": "b.md" },
+                        "version": 1, "schema_version": 1, "source": "test",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z"
+                    },
+                    "metadata": { "tags": [] }
+                })
+                .to_string(),
+            ))],
+        );
+        referenced_on_the_server(&folder, "edge-c-b", "c.md", "b.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder.core.get(X).unwrap().is_none(),
+            "the witness: X is not held"
+        );
+
+        let a = id_at(&folder, "a.md");
+        let c = id_at(&folder, "c.md");
+        crate::store::put_server_edge(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_edge("about-x", &a, X, "about"),
+        )
+        .unwrap();
+        changed_on_the_server(&folder, "a.md", "from the server");
+        rendered_items();
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(folder.core.get(X).unwrap().is_some(), "X was not pinned");
+        assert!(
+            !rendered_items().contains(&c),
+            "the witness: the pull that pins X does not render c.md"
+        );
+
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(
+            rendered_items().contains(&c),
+            "c.md was not rendered once b.md's name belonged to two items"
+        );
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
     fn a_body_link_that_hides_an_edge_follows_the_retitle_of_its_target() {
         let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
         referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
