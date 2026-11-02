@@ -634,6 +634,11 @@ impl Core {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
+        // Only the writer may replace triggers: another build's writer may
+        // hold the store with its own triggers (`device/reading-handle-refuses`).
+        if lock.handle() == Handle::Writer {
+            store::hold_triggers(&conn)?;
+        }
         let relocation = if let Some(http) = &http
             && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
             && expected != http.origin()

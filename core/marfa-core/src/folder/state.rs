@@ -483,6 +483,15 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "", [])
 }
 
+/// Every bound file whose record waits on the answer of a write.
+pub fn bound_awaiting(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
+    bound_where(
+        conn,
+        "WHERE json_valid(writes) AND json_array_length(writes, '$.queued') > 0",
+        [],
+    )
+}
+
 pub fn bound_with_identity(conn: &Connection, identity: &str) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "WHERE identity = ?1", [identity])
 }

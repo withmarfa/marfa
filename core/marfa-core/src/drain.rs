@@ -3181,14 +3181,21 @@ fn read_owed_backs(
 ) -> Result<Option<Unreadable>> {
     let pending = {
         let conn = core.conn()?;
-        store::queued_writes(&conn)?
+        let mut owed: HashMap<String, String> = {
+            let prefix = receipt_key("");
+            let mut statement = conn.prepare(
+                "SELECT substr(key, length(?1) + 1), value FROM meta
+                  WHERE substr(key, 1, length(?1)) = ?1",
+            )?;
+            statement
+                .query_map([&prefix], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let ids: Vec<String> = owed.keys().cloned().collect();
+        store::queued_writes_named(&conn, &ids)?
             .into_iter()
-            .filter_map(|row| match store::meta_get(&conn, &receipt_key(&row.id)) {
-                Ok(Some(shape)) => Some(Ok((row, shape))),
-                Ok(None) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<Result<Vec<_>>>()?
+            .filter_map(|row| owed.remove(&row.id).map(|shape| (row, shape)))
+            .collect::<Vec<_>>()
     };
     // `land` reads these, and takes no row in the bin
     // (`queue-and-verdicts/landed-target-unreadable`).

@@ -1671,6 +1671,7 @@ mod tests {
             },
             rebased: 0,
             gave_way: 0,
+            withdrawn: std::collections::HashSet::new(),
         }
     }
 

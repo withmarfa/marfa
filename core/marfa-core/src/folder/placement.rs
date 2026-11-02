@@ -333,21 +333,22 @@ impl Folder {
     /// Gives way where another machine placed or moved the item first,
     /// whichever drain the server said so in, and remembers any other refusal
     /// this drain reports. Reads nothing where the drain already found the
-    /// server unable to answer. Answers how many gave way.
+    /// server unable to answer. Answers how many gave way and the writes
+    /// that left the queue.
     pub(super) fn settle_placements(
         &self,
         report: &mut DrainReport,
         watched: bool,
-    ) -> Result<usize> {
+    ) -> Result<(usize, HashSet<String>)> {
         self.remember_refusals(report)?;
         if report.unavailable.is_some() || report.stopped.is_some() {
-            return Ok(0);
+            return Ok((0, HashSet::new()));
         }
         let (gave_way, withdrawn) = self.give_way(watched)?;
         report
             .verdicts
             .retain(|verdict| !withdrawn.contains(&verdict.id));
-        Ok(gave_way)
+        Ok((gave_way, withdrawn))
     }
 
     /// Remembers each placement the server refused among the verdicts a
@@ -401,7 +402,7 @@ impl Folder {
     /// waits out `GIVE_WAY_REREAD` first. Answers how many gave way and the
     /// writes that left the queue.
     fn give_way(&self, watched: bool) -> Result<(usize, HashSet<String>)> {
-        let queue = store::queued_writes(&*self.core.conn()?)?;
+        let queue = give_way_candidates(&*self.core.conn()?)?;
         let mut latest: Vec<QueuedWrite> = Vec::new();
         for row in queue {
             if !gives_way(&row) || !self.places_by(&row)? {
@@ -577,6 +578,21 @@ impl Folder {
         record.placements.extend(placements);
         self.keep_refused(&record)
     }
+}
+
+/// The writes that may give way, in queue order: every edge create refused,
+/// and every write blocked as a conflict left unresolved.
+fn give_way_candidates(conn: &rusqlite::Connection) -> Result<Vec<QueuedWrite>> {
+    store::read_writes(
+        conn,
+        "WHERE (kind = ?1 AND verdict = ?2) OR (verdict = ?3 AND reason = ?4)",
+        [
+            WriteKind::CreateEdge.as_str(),
+            Verdict::Refused.as_str(),
+            Verdict::Blocked.as_str(),
+            BlockedReason::ConflictUnresolved.as_str(),
+        ],
+    )
 }
 
 /// A placement the server answered as made over another machine's: a move
@@ -985,7 +1001,8 @@ mod tests {
         let _ = folder.settle_placements(&mut drained(reported(&folder)), false);
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 1, "a later drain did not finish giving way");
         assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
         assert!(
@@ -1023,7 +1040,8 @@ mod tests {
                     .settle_placements(&mut report, watched)
                     .unwrap_or_else(|error| {
                         panic!("{status} failed drain {drain}: {error}");
-                    });
+                    })
+                    .0;
                 assert_eq!(gave_way, 0, "{status}");
                 assert_eq!(
                     report.verdicts.iter().map(|v| &v.id).collect::<Vec<_>>(),
@@ -1042,7 +1060,8 @@ mod tests {
             assert_eq!(
                 folder
                     .settle_placements(&mut drained(Vec::new()), false)
-                    .unwrap(),
+                    .unwrap()
+                    .0,
                 1
             );
             assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
@@ -1108,7 +1127,8 @@ mod tests {
         memo_moved_and_refused_as_stale(&folder);
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 0);
         assert!(
             server.seen("/items/memo/edges").is_empty(),
@@ -1117,7 +1137,8 @@ mod tests {
         // The witness: the next drain reads for both and gives way twice.
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 2);
         assert_eq!(server.seen("/items/memo/edges").len(), 1);
         let memo = store::edge_by_id(&folder.core.conn().unwrap(), "memo-placed")
@@ -1180,7 +1201,7 @@ mod tests {
                 stopped: stopped.then(|| "credential_refused".into()),
                 ..drained(reported(&folder))
             };
-            assert_eq!(folder.settle_placements(&mut report, false).unwrap(), 0);
+            assert_eq!(folder.settle_placements(&mut report, false).unwrap().0, 0);
             assert!(server.seen("/items/note/edges").is_empty());
             assert_eq!(blocked(&folder), before);
             assert_eq!(report.verdicts.len(), 1);
@@ -1189,7 +1210,8 @@ mod tests {
         assert_eq!(
             folder
                 .settle_placements(&mut drained(Vec::new()), false)
-                .unwrap(),
+                .unwrap()
+                .0,
             1
         );
     }
@@ -1227,7 +1249,7 @@ mod tests {
         assert_eq!(queued.len(), 2, "the later move was not queued on its own");
         let later = queued.last().unwrap().clone();
         let mut report = drained(reported(&folder));
-        assert_eq!(folder.settle_placements(&mut report, false).unwrap(), 1);
+        assert_eq!(folder.settle_placements(&mut report, false).unwrap().0, 1);
         assert_eq!(
             store::queued_writes(&folder.core.conn().unwrap()).unwrap(),
             vec![later.clone()],
@@ -1274,7 +1296,7 @@ mod tests {
         .unwrap();
         assert_eq!(reported(&folder).len(), 2);
         let mut report = drained(reported(&folder));
-        assert_eq!(folder.settle_placements(&mut report, false).unwrap(), 1);
+        assert_eq!(folder.settle_placements(&mut report, false).unwrap().0, 1);
         assert_eq!(server.seen("/items/note/edges").len(), 1);
         assert!(report.verdicts.is_empty());
         assert!(

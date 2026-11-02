@@ -427,7 +427,11 @@ CREATE TRIGGER IF NOT EXISTS queue_revise_update AFTER UPDATE ON queue BEGIN
   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
 END;
-CREATE TRIGGER IF NOT EXISTS queue_revise_delete AFTER DELETE ON queue BEGIN
+-- A write the server answered is laid over no row, so its leaving the queue
+-- changes nothing a pull reads; the update that recorded its answer moved
+-- the revision already.
+CREATE TRIGGER IF NOT EXISTS queue_revise_delete AFTER DELETE ON queue
+  WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked', 'dead') BEGIN
   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
 END;
@@ -583,7 +587,10 @@ CREATE TRIGGER IF NOT EXISTS queue_change_update AFTER UPDATE ON queue BEGIN
     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id UNION SELECT NEW.item_id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
-CREATE TRIGGER IF NOT EXISTS queue_change_delete AFTER DELETE ON queue BEGIN
+-- As for `queue_revise_delete`: an answered write leaving the queue renders
+-- no file again.
+CREATE TRIGGER IF NOT EXISTS queue_change_delete AFTER DELETE ON queue
+  WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked', 'dead') BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL

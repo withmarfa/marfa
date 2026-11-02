@@ -167,8 +167,7 @@ impl Folder {
         };
         if sends_again(catch_up.is_ok(), &drain.report) && pull.as_ref().is_some_and(places) {
             let rebuilt_before = rebuilt.is_some();
-            let later = self.drain_rebuilding(&mut rebuilt)?;
-            self.absorb(&mut drain, later)?;
+            drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
             // The rebuild read the copy under the new reach after the pull
             // wrote it out, and a body rewritten for a retitled link was
             // written at the version it was sent from, so the directory is
@@ -182,8 +181,7 @@ impl Folder {
                     again.add_writes(first);
                 }
                 if sends_again(true, &drain.report) && places_again {
-                    let last = self.drain_rebuilding(&mut rebuilt)?;
-                    self.absorb(&mut drain, last)?;
+                    drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
                 }
                 pull = Some(again);
             }
@@ -215,27 +213,11 @@ impl Folder {
             }) if reason == "reach_changed" && rebuilt.is_none() => {
                 *rebuilt = Some(self.hydrate()?);
                 let mut drained = *settled;
-                self.absorb(&mut drained, self.drain()?)?;
+                drained.absorb(self.drain()?);
                 Ok(drained)
             }
             Err(cut) => Err(cut.error),
         }
-    }
-
-    /// Takes `later`, a later drain of the same run, into `drained`. A write
-    /// that drain gave way from has left the queue, and the verdict an
-    /// earlier drain told of it goes with it.
-    fn absorb(&self, drained: &mut Drained, later: Drained) -> Result<()> {
-        drained.absorb(later);
-        let conn = self.core.conn()?;
-        let mut kept = Vec::with_capacity(drained.report.verdicts.len());
-        for verdict in std::mem::take(&mut drained.report.verdicts) {
-            if crate::store::queued_write(&conn, &verdict.id)?.is_some() {
-                kept.push(verdict);
-            }
-        }
-        drained.report.verdicts = kept;
-        Ok(())
     }
 
     /// Takes the folder at `dir` off this machine: its own state under
@@ -408,31 +390,6 @@ mod tests {
 
     #[test]
     fn a_verdict_an_earlier_drain_told_leaves_with_a_write_a_later_drain_withdrew() {
-        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let db = dir.path().join(STATE_DIR).join("core.sqlite");
-        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
-        let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();
-        super::super::settings_file::bind(&core, "folder").unwrap();
-        drop(core);
-        let folder = Folder::open(
-            dir.path(),
-            Some(crate::Server {
-                url: "http://127.0.0.1:9".into(),
-                key: "fixture".into(),
-            }),
-        )
-        .unwrap();
-        let queued = folder
-            .core
-            .create_item(&crate::model::Draft {
-                r#type: "core.note".into(),
-                properties: serde_json::json!({ "title": "Kept", "body": "" })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ..Default::default()
-            })
-            .unwrap();
         let told = |id: &str| crate::drain::DrainVerdict {
             id: id.into(),
             kind: crate::model::WriteKind::CreateEdge,
@@ -446,16 +403,19 @@ mod tests {
             replayed: false,
             merged_fields: Vec::new(),
         };
-        let drained = |verdicts| Drained {
+        let drained = |verdicts, withdrawn: &[&str]| Drained {
             report: crate::DrainReport {
                 verdicts,
                 ..drained()
             },
             rebased: 0,
             gave_way: 0,
+            withdrawn: withdrawn.iter().map(|id| id.to_string()).collect(),
         };
-        let mut first = drained(vec![told(&queued.id), told("withdrawn")]);
-        folder.absorb(&mut first, drained(Vec::new())).unwrap();
+        // `cleared` has left the queue as an answered write the folder
+        // recorded, not as a write giving way withdrew.
+        let mut first = drained(vec![told("kept"), told("withdrawn"), told("cleared")], &[]);
+        first.absorb(drained(vec![told("later")], &["withdrawn"]));
         assert_eq!(
             first
                 .report
@@ -463,8 +423,8 @@ mod tests {
                 .iter()
                 .map(|verdict| verdict.id.as_str())
                 .collect::<Vec<_>>(),
-            vec![queued.id.as_str()],
-            "a write no longer queued kept its verdict, or a queued one lost it"
+            vec!["kept", "cleared", "later"],
+            "a withdrawn write kept its verdict, or another write lost its own"
         );
     }
 

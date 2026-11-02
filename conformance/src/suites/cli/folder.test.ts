@@ -71,7 +71,15 @@ interface PushReport {
     renamed: number;
     unchanged: number;
   };
-  drain: { answered: number; held: number };
+  drain: {
+    answered: number;
+    held: number;
+    verdicts: Array<{
+      kind: string;
+      item_id: string | null;
+      verdict: string | null;
+    }>;
+  };
   pull: { written: number; rewritten: number; unchanged: number };
 }
 
@@ -1303,12 +1311,19 @@ describe("a folder round trip", () => {
     // wrote.
     expect(pushed.drain.answered).toBe(2 + pushed.pull.written);
 
-    // It is in Marfa under the id the folder minted, with no natural key.
-    const queued = await c.cli.json<
-      Array<{ kind: string; item_id: string | null }>
-    >(["device", "--db", store, "queue"]);
-    const minted = queued.find((row) => row.kind === "create_item")?.item_id;
-    expect(minted, "the folder queued no create for the note").toBeTruthy();
+    // It is in Marfa under the id the folder minted and wrote into the
+    // file, with no natural key. The push clears the answered create from
+    // the queue, so the push's own report says what became of it, in the
+    // six-word vocabulary.
+    const minted = /^marfa_id: (\S+)$/m.exec(
+      readFileSync(join(dir, "dropped.md"), "utf8"),
+    )?.[1];
+    expect(minted, "the folder wrote no id into the file").toBeTruthy();
+    expect(
+      pushed.drain.verdicts
+        .filter((verdict) => verdict.kind === "create_item")
+        .map((verdict) => [verdict.item_id, verdict.verdict]),
+    ).toEqual([[minted, "accepted"]]);
     const landed = (
       await c.cli.json<{
         item: {
@@ -1378,13 +1393,6 @@ describe("a folder round trip", () => {
     // A person's own fields keep the order they wrote them in.
     expect(file.indexOf("title:")).toBeLessThan(file.indexOf("status:"));
 
-    // The queue says what became of the write, in the six-word vocabulary.
-    const queue = await c.cli.json<
-      Array<{ kind: string; verdict: string | null }>
-    >(["device", "--db", store, "queue"]);
-    const create = queue.find((row) => row.kind === "create_item");
-    expect(create?.verdict).toBe("accepted");
-
     // A change to the settings from anywhere reaches the folder's copy
     // through its stream, and the next new file takes it.
     await c.cli.json([
@@ -1411,16 +1419,17 @@ describe("a folder round trip", () => {
       `---\ntitle: ${unique("cli-folder-second")}\n---\nA second note.\n`,
     );
     await c.cli.json(["folders", "push", dir]);
-    const after = await c.cli.json<
-      Array<{ kind: string; tag: string | null; item_id: string | null }>
-    >(["device", "--db", store, "queue"]);
-    const second = after.find(
-      (row) => row.kind === "create_item" && row.item_id !== minted,
-    )?.item_id;
-    if (second) trackItem(c.ctx, second);
-    expect(
-      after.filter((row) => row.kind === "add_tag").map((row) => row.tag),
-    ).toEqual(["from-elsewhere"]);
+    const second = /^marfa_id: (\S+)$/m.exec(
+      readFileSync(join(dir, "second.md"), "utf8"),
+    )?.[1];
+    expect(second, "the folder wrote no id into the second file").toBeTruthy();
+    trackItem(c.ctx, String(second));
+    const tagged = await c.cli.json<ItemEnvelope>([
+      "items",
+      "get",
+      String(second),
+    ]);
+    expect(tagged.metadata?.tags).toEqual(["from-elsewhere"]);
 
     // And the other way: an edit of the settings file goes through the
     // folder door and is the folder's settings on the server.

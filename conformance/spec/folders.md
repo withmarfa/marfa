@@ -6178,6 +6178,14 @@ While the key, saved folder settings and placement used by a refused placement w
 
 **Tests:** `device/folders.test.ts › reports a placement the server refuses in the push's second drain, and does not send it again`.
 
+### `folders/clears-recorded-answers`
+
+When a folder's drain begins, a device MUST take out of the folder's queue each write that clearing the answered writes takes out (`queue-and-verdicts/clear-answered`, `queue-and-verdicts/clear-withdrawn-leftovers`), other than a write whose answer a file's record still waits on or a link rewrite the folder has yet to settle.
+
+**Reason:** a folder sends a write for each edit it reads. Kept after the folder had recorded its answer, every write it ever sent stayed in the queue, and every drain read them all, so a quiet folder cost more with each edit. An answered write is laid over no row of the working copy, so taking it out changes nothing a pull reads, and a quiet folder stays quiet (`folders/watch-pull-renders-reached`).
+
+**Tests:** `device/folders-cleared-answers.test.ts › clears the writes it recorded as its next drain begins, and keeps a refused edit's words and every refusal it shows`.
+
 ### `folders/conflict-file-report`
 
 When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the CLI MUST name the file in its text output.

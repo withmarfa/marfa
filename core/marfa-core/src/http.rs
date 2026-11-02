@@ -471,14 +471,8 @@ impl Http {
     }
 
     pub(crate) fn for_reporting(&self) -> Result<Self, CoreError> {
-        if let Some(relocation) = self.relocation.get() {
-            let verified = relocation
-                .try_lock()
-                .map(|held| held.verified)
-                .unwrap_or(false);
-            if !verified {
-                return Err(CoreError::Canceled);
-            }
+        if !self.origin_admitted() {
+            return Err(CoreError::Canceled);
         }
         // Content owns renewal. A report keeps its outbox on refusal and
         // uses the authorization that content later renews, without delaying
@@ -573,6 +567,18 @@ impl Http {
             keep,
             verified: false,
         }));
+    }
+
+    /// Whether this origin is the copy's: the one it records, or one whose
+    /// anonymous root `confirm_origin` found serving the copy's instance.
+    /// Asks nothing, and answers no while a confirmation is under way.
+    pub(crate) fn origin_admitted(&self) -> bool {
+        self.relocation.get().is_none_or(|relocation| {
+            relocation
+                .try_lock()
+                .map(|held| held.verified)
+                .unwrap_or(false)
+        })
     }
 
     pub(crate) fn confirm_origin(&self) -> Result<(), CoreError> {

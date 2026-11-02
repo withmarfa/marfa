@@ -1,3 +1,4 @@
+mod answered;
 mod default_edges;
 pub mod document;
 pub mod edge_types;
@@ -1689,6 +1690,16 @@ fn local_properties_refusal(bound: &state::Bound) -> bool {
         .is_some_and(|reason| reason.starts_with(LOCAL_ADMISSION_REFUSAL))
 }
 
+/// The writes the file's record waits on the answer of, by id.
+fn waited_on(bound: &state::Bound) -> Vec<String> {
+    bound
+        .writes
+        .queued
+        .iter()
+        .map(|queued| queued.id.clone())
+        .collect()
+}
+
 /// Whether a move was answered that another machine deleted its edge first.
 fn gone_before_its_move(row: &crate::model::QueuedWrite) -> bool {
     row.kind == WriteKind::UpdateEdge
@@ -1774,6 +1785,10 @@ pub struct Drained {
     pub report: crate::DrainReport,
     pub rebased: usize,
     pub gave_way: usize,
+    /// The writes giving way withdrew, which a verdict an earlier drain of
+    /// the same sync told leaves with.
+    #[serde(skip)]
+    pub(crate) withdrawn: HashSet<String>,
 }
 
 impl Drained {
@@ -1782,6 +1797,11 @@ impl Drained {
         self.report.absorb(later.report);
         self.rebased += later.rebased;
         self.gave_way += later.gave_way;
+        self.withdrawn.extend(later.withdrawn);
+        let withdrawn = &self.withdrawn;
+        self.report
+            .verdicts
+            .retain(|verdict| !withdrawn.contains(&verdict.id));
     }
 }
 
@@ -1818,7 +1838,10 @@ impl Folder {
         let one = self.core.one_drain();
         let mut report = crate::DrainReport::empty();
         let mut rebased = 0;
-        let ended = self.drain_rebasing(&one, &mut report, &mut rebased).err();
+        let ended = self
+            .clear_answered_if_due()
+            .and_then(|_| self.drain_rebasing(&one, &mut report, &mut rebased))
+            .err();
         if let Some(drain_error) = ended {
             // A refusal that could not be remembered is told in place of the
             // drain's own error, since a caller that went on would lose it.
@@ -1833,6 +1856,7 @@ impl Folder {
                     report,
                     rebased,
                     gave_way: 0,
+                    withdrawn: HashSet::new(),
                 }),
             });
         }
@@ -1844,16 +1868,17 @@ impl Folder {
             self.hold_refused()?;
             Ok(gave_way)
         })();
-        let drained = |report, gave_way| Drained {
+        let drained = |report, (gave_way, withdrawn)| Drained {
             report,
             rebased,
             gave_way,
+            withdrawn,
         };
         match settled {
             Ok(gave_way) => Ok(drained(report, gave_way)),
             Err(error) => Err(Cut {
                 error,
-                settled: Box::new(drained(report, 0)),
+                settled: Box::new(drained(report, (0, HashSet::new()))),
             }),
         }
     }
@@ -1888,10 +1913,10 @@ impl Folder {
     /// Read from the queue rather than this drain's report, so a refusal a plain
     /// device drain was answered holds its file too.
     fn hold_refused(&self) -> Result<()> {
-        let queue = self.core.queue()?;
         let conn = self.core.conn()?;
-        for mut bound in state::every_bound(&conn)? {
+        for mut bound in state::bound_awaiting(&conn)? {
             let was = (bound.writes.clone(), bound.lines.clone(), bound.edit_line);
+            let queue = crate::store::queued_writes_named(&conn, &waited_on(&bound))?;
             for verdict in &queue {
                 let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
                     continue;
@@ -2007,10 +2032,10 @@ impl Folder {
     /// Makes the edge a line names where its move was answered that another
     /// machine deleted the edge first: the line still asks for it.
     fn make_edges_gone_before_their_move(&self) -> Result<usize> {
-        let queue = self.core.queue()?;
         let mut made = 0;
-        let bounds = state::every_bound(&*self.core.conn()?)?;
+        let bounds = state::bound_awaiting(&*self.core.conn()?)?;
         for mut bound in bounds {
+            let queue = crate::store::queued_writes_named(&*self.core.conn()?, &waited_on(&bound))?;
             let mut changed = false;
             let mut at = 0;
             while at < bound.writes.queued.len() {
@@ -2076,7 +2101,15 @@ impl Folder {
     /// Only the first `ancestor_unavailable` edit of each item: the next was
     /// made against it, so it goes on its answer, a pass later.
     fn rebase_thinned(&self) -> Result<usize> {
-        let queue = self.core.queue()?;
+        let queue = crate::store::read_writes(
+            &*self.core.conn()?,
+            "WHERE kind = ?1 AND verdict = ?2 AND reason = ?3",
+            [
+                WriteKind::UpdateItem.as_str(),
+                crate::model::Verdict::Blocked.as_str(),
+                BlockedReason::AncestorUnavailable.as_str(),
+            ],
+        )?;
         let mut first: HashSet<&str> = HashSet::new();
         let mut rebased = 0;
         for row in &queue {
@@ -2375,6 +2408,8 @@ fn typed_title(
 }
 
 #[cfg(test)]
+mod answered_tests;
+#[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
 mod quiet_watch_tests;
@@ -2655,7 +2690,7 @@ mod tests {
     }
 
     /// The items whose file this thread rendered since the last call.
-    fn rendered_items() -> std::collections::BTreeSet<String> {
+    pub(super) fn rendered_items() -> std::collections::BTreeSet<String> {
         RENDERED.with(|rendered| rendered.set(0));
         RENDERED_ITEMS.with(|rendered| std::mem::take(&mut *rendered.borrow_mut()))
     }
