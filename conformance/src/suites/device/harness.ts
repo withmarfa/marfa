@@ -320,6 +320,9 @@ export function scriptHydration(
      *  interrupted hydration does, or what it answers in place of its rows,
      *  such as a refusal of its cursor. Asked of every page but the first. */
     drop?: (offset: number) => boolean | Answer;
+    /** Holds every page of the item listing until this settles, as a server
+     *  slow to answer a first hydration does. */
+    listingHeldUntil?: Promise<void>;
   },
 ): void {
   server.answer(
@@ -445,12 +448,15 @@ export function scriptHydration(
       if (dropped === true) return { kind: "drop" };
       if (dropped !== undefined && dropped !== false) return dropped;
       const next = offset + size;
-      return itemsPage(
+      const page = itemsPage(
         inState
           .slice(offset, next)
           .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
         next < inState.length ? { nextCursor: String(next) } : {},
       );
+      return options.listingHeldUntil === undefined
+        ? page
+        : { kind: "gated", until: options.listingHeldUntil, then: page };
     }
     // A pin that a read by id answers 404 asks the bin for the row this way.
     const byId = /^id eq "([^"]*)"$/.exec(filter);
@@ -793,6 +799,9 @@ export async function folderHarness(
     /** Whether a page of the item listing dies unanswered, as
      *  `scriptHydration` takes it. */
     drop?: (offset: number) => boolean;
+    /** Holds the item listing until this settles, as `scriptHydration` takes
+     *  it, for a first hydration the server is slow to answer. */
+    listingHeldUntil?: Promise<void>;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -840,6 +849,7 @@ export async function folderHarness(
       key: options.key,
       pageSize: options.pageSize,
       drop: options.drop,
+      listingHeldUntil: options.listingHeldUntil,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

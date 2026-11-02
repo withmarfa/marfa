@@ -4308,6 +4308,14 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 **Tests:** `device/folders.test.ts › hydrates again at a push whose cursor the log has aged past`, `device/folders.test.ts › hydrates again while watching when the log ages past its cursor`.
 
+### `folders/watch-awaits-first-hydration`
+
+While a folder watch runs on a copy whose first hydration has not completed, a device MUST keep watching until the hydration completes.
+
+**Reason:** `folders add` with `--yes` hydrates nothing, and a hydration brings the folder's own `system.folder` row last, so a watch's first passes meet a copy without the folder's settings. That is a hydration still to come, not a folder the key cannot read, and a server slow to answer the first hydration must not end the watch. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
+
+**Tests:** `device/folders.test.ts › waits for the first hydration instead of ending on a copy without the folder's settings`.
+
 ### `folders/pull-waits-for-whole-copy`
 
 While a hydration of a folder's copy has started and not completed, or the folder's copy is stale, a device MUST refuse a pull of the folder `hydration_incomplete`, writing and removing no file.

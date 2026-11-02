@@ -6033,6 +6033,56 @@ describe("a folder that cannot reach the server", () => {
   });
 });
 
+describe("a watch started straight after a folder is added", () => {
+  const id = "01a00000-0000-7000-8000-0000000000c4";
+
+  it("waits for the first hydration instead of ending on a copy without the folder's settings", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A confirmed add hydrates nothing, so the watch's follow does it, and
+    // the server is slow to answer the listing.
+    harness = await folderHarness("folder-watch-first-hydration", {
+      hydrate: false,
+      listingHeldUntil: slow,
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "first", body: "from the server" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watch();
+    try {
+      // Past the watch's first passes, which run while the hydration waits.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(
+        watching.running(),
+        `a watch ended on its first pass, before the hydration it waits on: ${watching.stderr}`,
+      ).toBe(true);
+      release();
+      await vi.waitFor(
+        () =>
+          expect(read(harness!, "first.md"), watching.stderr).toContain(
+            "from the server",
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      release();
+      await watching.stop();
+    }
+  });
+});
+
 describe("a folder's first sync", () => {
   const remoteA = "01a00000-0000-7000-8000-0000000005a1";
   const remoteB = "01a00000-0000-7000-8000-0000000005a2";
