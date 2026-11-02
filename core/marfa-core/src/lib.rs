@@ -634,9 +634,8 @@ impl Core {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        // Only under the writer role: a reading handle writes nothing, and
-        // another build's writer may hold the store, with its own triggers
-        // (`device/reading-handle-refuses`).
+        // Only the writer may replace triggers: another build's writer may
+        // hold the store with its own triggers (`device/reading-handle-refuses`).
         if lock.handle() == Handle::Writer {
             store::hold_triggers(&conn)?;
         }
