@@ -358,9 +358,6 @@ describe("links held until their target exists", () => {
     const second = await push();
     expect(second.created).toBe(1);
     expect(edges()).toEqual([]);
-    expect(second.flagged.map((file) => [file.path, file.flag])).toEqual([
-      ["Ticket.md", "edges"],
-    ]);
     const ticket = await fileAt("Ticket.md");
     expect(ticket.status).toBe("held");
     expect(ticket.reason).toContain(

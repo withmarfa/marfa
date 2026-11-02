@@ -1197,7 +1197,7 @@ describe("edges in frontmatter", () => {
     expect(heldEdges(made.door)).toHaveLength(2);
   });
 
-  it("flags a name more common than the lookup lists", async () => {
+  it("flags a name more common than the lookup lists as matching more than one item", async () => {
     // Bookmarks are outside the copy, so only the server holds them.
     const common = Array.from({ length: 21 }, (_, n) =>
       titled(
@@ -1215,7 +1215,7 @@ describe("edges in frontmatter", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
     expect(pushed.value.scan.flagged[0]?.reason).toContain(
-      "more items are titled it than the server lists",
+      "matches more than one item",
     );
     expect(sentEdgeWrites(harness)).toEqual([]);
   });

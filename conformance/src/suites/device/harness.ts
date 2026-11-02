@@ -468,7 +468,7 @@ export function scriptHydration(
     }
     return refusal(400, "validation_error", `no scripted filter: ${filter}`);
   });
-  scriptTitles(server, rows, options.lookup);
+  scriptTitles(server, rows, options.lookup, options.catalog);
 }
 
 /** The white space Unicode names, which the server trims from a name. */
@@ -497,6 +497,7 @@ export function scriptTitles(
   server: ScriptedServer,
   rows: Record<string, Array<{ item: WireItemOptions }>>,
   lookup?: (text: string) => Answer | undefined,
+  catalog: Responder = typeCatalog(),
 ): void {
   server.answer("POST", "/items/titles", (request) => {
     const asked = (JSON.parse(request.body) as { names: string[] }).names;
@@ -504,6 +505,33 @@ export function scriptTitles(
       const standIn = lookup?.(name);
       if (standIn !== undefined) return standIn;
     }
+    // The property an item's type is titled by: the nearest `title_field`
+    // up its chain, else `title`, as the server keys it.
+    const declared = new Map(
+      (
+        (typeof catalog === "function" ? catalog(request) : catalog) as {
+          body: { data: Array<Record<string, unknown>> };
+        }
+      ).body.data.map((type) => [String(type.id), type]),
+    );
+    const titleFieldOf = (type: string): string => {
+      const seen = new Set<string>();
+      for (
+        let at = declared.get(type);
+        at !== undefined && !seen.has(String(at.id));
+        at =
+          at.parent === undefined ? undefined : declared.get(String(at.parent))
+      ) {
+        seen.add(String(at.id));
+        const hints = at.display_hints as { title_field?: string } | undefined;
+        if (hints?.title_field !== undefined) return hints.title_field;
+      }
+      return "title";
+    };
+    const titleOf = (item: Record<string, unknown>): unknown =>
+      (item.properties as Record<string, unknown>)[
+        titleFieldOf(String(item.type))
+      ];
     const held = Object.values(rows)
       .flat()
       .map((row) => wireItem(row.item))
@@ -520,8 +548,7 @@ export function scriptTitles(
             ? []
             : held
                 .filter((item) => {
-                  const title = (item.properties as Record<string, unknown>)
-                    .title;
+                  const title = titleOf(item);
                   return typeof title === "string" && foldedName(title) === key;
                 })
                 .sort((one, other) =>
@@ -534,7 +561,7 @@ export function scriptTitles(
             return {
               id: String(item.id),
               type: String(item.type),
-              title: String(properties.title),
+              title: String(titleOf(item)),
               has_blob: typeof properties.blob_ref === "string",
             };
           }),

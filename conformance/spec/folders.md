@@ -1092,9 +1092,9 @@ When a folder file is renamed only in case or Unicode normalization, a device MU
 
 ### `folders/lookup-any-normalization`
 
-When a folder asks the server to resolve a title, a device MUST ask for the name once, as typed, and the server's answer MUST hold every item whose title equals the name in case and Unicode normalization (`items/titles-fold`).
+When a folder asks the server to resolve a title, a device MUST ask for the name once, as typed.
 
-**Reason:** the server compares by a folded title key, so a device that asked once for each Unicode form, or for each spelling of the case, would send the server more requests than names without finding any more.
+**Reason:** the server compares by a folded title key (`items/titles-fold`), so a device that asked once for each Unicode form, or for each spelling of the case, would send the server more requests than names without finding any more.
 
 **Tests:** `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks the server for a name once, in the form typed`.
 
@@ -2010,9 +2010,9 @@ When the server becomes reachable after a name lookup waited, a device MUST retr
 
 ### `folders/edge-lookup-refused`
 
-When the server refuses a lookup, a device MUST flag each file naming a name the refused call carried with the refusal, MUST flag no file whose names another call answered, and MUST go on with the rest of the scan.
+If the server refuses a lookup, then a device MUST flag each file naming a name that call carried with the refusal, and no file whose names another call answered.
 
-**Reason:** the server refuses a lookup as a whole, as it does a key that reads no type, so every name in that call is left unanswered, while a call of other names, of which a scan may send several, is unaffected.
+**Reason:** the server refuses a lookup as a whole, as it does a key that reads no type, so every name in that call is left unanswered; the rest of the scan goes on.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags the files whose names a refused lookup carried, and goes on with the push`.
 
@@ -2060,15 +2060,15 @@ If a held edge name still matches more than one item when it is looked up again,
 
 ### `folders/edge-lookup-list-limit`
 
-When the server says more items are titled a name than it lists, and the items it lists do not name more than one item, a device MUST flag the name as not looked up, and MUST NOT create an edge for it.
+If the server says more items are titled a name than it lists, then a device MUST flag the name as matching more than one item.
 
-**Reason:** the item wanted may be among those the server did not list.
+**Reason:** the server lists at most 20 items for a name, so more than that are titled alike, and no one of them is the item wanted.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup lists`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup lists as matching more than one item`.
 
 ### `folders/lookup-batched`
 
-When a scan resolves the names its files' links and lines type, a device MUST ask the server for them in calls of at most 200 distinct names, each name once, and MUST NOT ask for a name with a request of its own.
+When a scan resolves the names its files' links and lines type, a device MUST ask the server for them in calls of at most 200 distinct names, each name once.
 
 **Reason:** a request for each name takes time that grows with the names a folder links, and a folder of ten thousand notes links more names than a server can answer one at a time in a useful while.
 
@@ -2076,11 +2076,11 @@ When a scan resolves the names its files' links and lines type, a device MUST as
 
 ### `folders/lookup-held-ambiguous`
 
-If the copy holds two or more items under a name, then a device MUST NOT ask the server for that name, and MUST flag the name as matching more than one item.
+If the copy holds two or more items under a name, then a device MUST flag the name as matching more than one item without asking the server for it.
 
 **Reason:** what the server holds can only add to the items, so no answer could make the name name one.
 
-**Tests:** `device/folders-held-links.test.ts › leaves a name the copy holds under two items out of the lookup, and asks the rest`, `› never guesses between two items of one name, and resolves once one goes to the bin`.
+**Tests:** `device/folders-held-links.test.ts › leaves a name the copy holds under two items out of the lookup, and asks the rest`, `device/folders-held-links.test.ts › never guesses between two items of one name, and resolves once one goes to the bin`.
 
 ### `folders/edge-lookup-states`
 

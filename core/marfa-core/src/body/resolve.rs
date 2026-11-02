@@ -221,7 +221,8 @@ impl<'a> Resolver<'a> {
             }
         }
         Ok(match found.len() {
-            0 | 1 if more => Resolved::Unanswered(TOO_MANY.to_string()),
+            // The server lists 20 and holds more than that titled so.
+            _ if more => Resolved::Ambiguous,
             0 => Resolved::Unmatched,
             1 => {
                 let (id, r#type) = found.into_iter().next().expect("one");
@@ -769,6 +770,30 @@ mod tests {
             Resolved::Found { .. }
         ));
         assert_eq!(server.seen("/items/titles").len(), 1);
+    }
+
+    #[test]
+    fn a_name_the_server_holds_under_more_items_than_it_lists_is_ambiguous() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::json(
+                200,
+                &format!(
+                    r#"{{"results":[{{"name":"Common","items":[{}],"more":true}}]}}"#,
+                    titled("one", "Common")
+                ),
+            )],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Common"]).unwrap();
+        assert!(matches!(
+            resolver.resolve("Common").unwrap(),
+            Resolved::Ambiguous
+        ));
     }
 
     #[test]

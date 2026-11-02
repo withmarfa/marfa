@@ -104,14 +104,15 @@ describe("POST /items/titles", () => {
     );
   });
 
-  it.each(FOLDS.filter((fold) => fold.folded !== ""))(
-    "finds a title by its folded form, and by the name as typed, folded like $about",
-    async ({ name, folded }) => {
+  it("finds a title by its folded form and by the name as typed, for every case of the shared fold", async () => {
+    for (const { about, name, folded } of FOLDS.filter(
+      (fold) => fold.folded !== "",
+    )) {
       const id = await note(name);
-      expect(await idsFor(folded)).toContain(id);
-      expect(await idsFor(name)).toContain(id);
-    },
-  );
+      expect(await idsFor(folded), about).toContain(id);
+      expect(await idsFor(name), about).toContain(id);
+    }
+  });
 
   it("finds no title for a name that folds to nothing", async () => {
     await note(unique("nothing"));
