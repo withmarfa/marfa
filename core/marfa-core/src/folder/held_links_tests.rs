@@ -7,7 +7,7 @@ use crate::scripted::{Scripted, certified, json, refusal};
 
 /// A folder of notes with nothing in it yet, whose copy has synced, over a
 /// server that answers every name lookup with `lookup`.
-fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
+pub(super) fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
     let (dir, folder) = scanned_folder();
     {
         use crate::store::{self, meta_set};
@@ -32,9 +32,9 @@ fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
     (dir, folder, server)
 }
 
-type Answer = crate::scripted::Answer;
+pub(super) type Answer = crate::scripted::Answer;
 
-fn nothing_found() -> Answer {
+pub(super) fn nothing_found() -> Answer {
     json(200, r#"{"data":[],"next_cursor":null}"#)
 }
 
@@ -46,7 +46,7 @@ fn flags(report: &ScanReport) -> Vec<(&str, &str, &str)> {
         .collect()
 }
 
-fn item_at(folder: &Folder, path: &str) -> String {
+pub(super) fn item_at(folder: &Folder, path: &str) -> String {
     state::bound_at(&folder.core.conn().unwrap(), path)
         .unwrap()
         .unwrap_or_else(|| panic!("{path} has no item"))
@@ -64,7 +64,7 @@ fn edges_of(folder: &Folder, from: &str, edge_type: &str) -> Vec<String> {
         .collect()
 }
 
-fn held(folder: &Folder, path: &str) -> Option<String> {
+pub(super) fn held(folder: &Folder, path: &str) -> Option<String> {
     state::bound_at(&folder.core.conn().unwrap(), path)
         .unwrap()
         .and_then(|bound| bound.held)

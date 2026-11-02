@@ -2357,6 +2357,8 @@ fn typed_title(
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
+mod quiet_watch_tests;
+#[cfg(test)]
 mod relink_tests;
 
 #[cfg(test)]
@@ -3698,7 +3700,7 @@ mod tests {
 
     /// As if the copy had synced and the server had taken the folder's
     /// create of the file's item, so a pull reaches it, and the item's id.
-    fn landed(folder: &Folder, path: &str) -> String {
+    pub(super) fn landed(folder: &Folder, path: &str) -> String {
         use crate::store::{self, meta_set};
         let conn = folder.core.conn().unwrap();
         meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -4504,7 +4506,7 @@ mod tests {
     }
 
     /// Moves the journaled delete at `path` past the grace.
-    fn past_the_grace(folder: &Folder, path: &str) {
+    pub(super) fn past_the_grace(folder: &Folder, path: &str) {
         let long_ago = crate::store::iso_at(
             crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1),
         );
@@ -4678,7 +4680,7 @@ mod tests {
         (dir, folder, id, swept)
     }
 
-    fn deletes_queued(folder: &Folder) -> Vec<Option<i64>> {
+    pub(super) fn deletes_queued(folder: &Folder) -> Vec<Option<i64>> {
         folder
             .core
             .queue()
@@ -5706,7 +5708,7 @@ mod tests {
     }
 
     /// As if another device had changed the item's body to `body`.
-    fn changed_elsewhere(folder: &Folder, item_id: &str, body: &str) {
+    pub(super) fn changed_elsewhere(folder: &Folder, item_id: &str, body: &str) {
         folder
             .core
             .conn()

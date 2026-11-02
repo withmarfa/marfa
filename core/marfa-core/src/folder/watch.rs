@@ -355,10 +355,7 @@ impl Folder {
                 continue;
             }
             let full = full_due(last_full, crate::clock::now());
-            // A tick alone moves nothing on a folder the last pass left at
-            // rest: a pass walks the whole folder, so it is not run to find
-            // out.
-            if !full && !changed && telling.at_rest {
+            if telling.rests(full, changed) {
                 continue;
             }
             changed = false;
@@ -474,6 +471,10 @@ impl Folder {
                 pull
             }
             None => {
+                #[cfg(test)]
+                {
+                    telling.pulls += 1;
+                }
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-pass-pull");
                 let (pull, barred) =
@@ -587,6 +588,8 @@ pub(super) struct Passes {
     health: Mutex<FollowHealth>,
     /// The paths each `Missed` the passes told named.
     pub(super) missed: Vec<String>,
+    /// The ticks since the last full pass.
+    ticks: u64,
 }
 
 #[cfg(test)]
@@ -605,6 +608,26 @@ impl Passes {
             Err(WatchError::Core(error)) => Err(error),
             Err(other) => panic!("the pass ended the watch: {other:?}"),
         }
+    }
+
+    /// Runs what a second's tick of a watch that hears no file event and no
+    /// server change runs: a full pass once a minute, and otherwise a quick
+    /// pass only where the last pass left the folder short of rest.
+    pub(super) fn tick(&mut self, folder: &Folder) -> Result<(), CoreError> {
+        self.ticks += 1;
+        let full = self.ticks >= FULL_PASS.as_secs() / TICK.as_secs();
+        if self.telling.rests(full, false) {
+            return Ok(());
+        }
+        if full {
+            self.ticks = 0;
+        }
+        self.run(folder, full)
+    }
+
+    /// The pulls the passes ran rather than reused since the last call.
+    pub(super) fn pulls(&mut self) -> usize {
+        std::mem::take(&mut self.telling.pulls)
     }
 
     /// Makes the next pull render every file, as an hour after the last
@@ -958,6 +981,18 @@ struct Telling {
     /// file as it was, so pulls nothing.
     pulled: Option<Pulled>,
     selection: Selection,
+    /// The pulls the passes ran rather than reused.
+    #[cfg(test)]
+    pulls: usize,
+}
+
+impl Telling {
+    /// Whether a tick leaves the folder be. A tick alone moves nothing on a
+    /// folder the last pass left at rest: a pass walks the whole folder, so
+    /// it is not run to find out.
+    fn rests(&self, full: bool, changed: bool) -> bool {
+        !full && !changed && self.at_rest
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
