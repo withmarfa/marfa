@@ -11,15 +11,24 @@
 //! The edges the copy holds are the server's and the copy's own waiting
 //! writes as they leave them: a waiting create or move shows its edge where
 //! it will stand, and a waiting delete shows none, so each counts as the
-//! server will hold it once the writes before this one reach it. A refused
-//! create's edge is no longer shown, so it counts for nothing.
+//! server will hold it once the writes before this one reach it. An edge
+//! whose create the queue holds refused counts for nothing, though the copy
+//! still shows it until a read of the server's row lands: counting it could
+//! refuse a write the server takes, while leaving it out can only let
+//! through a write the server may refuse, which is kept with its verdict.
+//!
+//! Each refusal carries the `details` the server's answer to the same write
+//! carries, so an app reads one refusal one way whichever refused it.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::{Value, json};
 
 use crate::catalog::{self, EdgeType, End, Lineage};
 use crate::error::CoreError;
+use crate::model::{Verdict, WriteKind};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
@@ -90,20 +99,42 @@ fn end_not_found(end: &str, id: &str) -> CoreError {
     }
 }
 
-fn refused_end(edge_type: &str, end: &str, r#type: &str) -> CoreError {
+fn constraint_violation(message: String, details: Value) -> CoreError {
     CoreError::Validation {
         code: "edge_constraint_violation".into(),
-        message: format!("Edge \"{edge_type}\" does not allow {end} type \"{type}\""),
+        message,
+        details: Some(Box::new(details)),
     }
 }
 
-fn refused_nesting(edge_type: &str) -> CoreError {
-    CoreError::Validation {
-        code: "edge_constraint_violation".into(),
-        message: format!(
+fn refused_end(edge_type: &EdgeType, end: End, r#type: &str) -> CoreError {
+    let id = &edge_type.id;
+    let (end, allowed) = match end {
+        End::Source => ("source", &edge_type.source_type_constraints),
+        End::Target => ("target", &edge_type.target_type_constraints),
+    };
+    let mut details = serde_json::Map::new();
+    details.insert("edge_type".into(), json!(id));
+    details.insert(format!("{end}_type"), json!(r#type));
+    details.insert("allowed".into(), json!(allowed));
+    constraint_violation(
+        format!("Edge \"{id}\" does not allow {end} type \"{type}\""),
+        Value::Object(details),
+    )
+}
+
+fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> CoreError {
+    constraint_violation(
+        format!(
             "Edge \"{edge_type}\" does not take a source its target constraints admit; use \"parent-of\" for hierarchy"
         ),
-    }
+        json!({
+            "edge_type": edge_type,
+            "source_id": source_id,
+            "source_type": source_type,
+            "constraint": "nesting",
+        }),
+    )
 }
 
 /// Lineages read once per call, since a retype judges every edge at an item.
@@ -145,13 +176,18 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                     && earlier.target_id == edge.target_id
             })
         {
-            return Err(CoreError::Validation {
-                code: "edge_constraint_violation".into(),
-                message: format!(
+            return Err(constraint_violation(
+                format!(
                     "Edge \"{}\" already exists between these items",
                     edge.edge_type
                 ),
-            });
+                json!({
+                    "edge_type": edge.edge_type,
+                    "source_id": edge.source.id(),
+                    "target_id": edge.target_id,
+                    "constraint": "duplicate",
+                }),
+            ));
         }
         for end in [End::Source, End::Target] {
             if !edge_type.one_at(end) {
@@ -165,42 +201,66 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 || earlier()
                     .any(|earlier| earlier.edge_type == edge.edge_type && at(earlier) == at(edge))
             {
-                return Err(refused_cardinality(edge_type, end));
+                return Err(refused_cardinality(edge_type, end, &at(edge)));
             }
         }
         if edge_type.acyclic && closes_cycle(conn, edge)? {
             return Err(CoreError::Validation {
                 code: "edge_cycle".into(),
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
+                details: None,
             });
         }
     }
     Ok(())
 }
 
-fn refused_cardinality(edge_type: &EdgeType, end: End) -> CoreError {
+fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> CoreError {
     let (end, edge) = match end {
         End::Source => ("source", "outbound"),
         End::Target => ("target", "inbound"),
     };
-    CoreError::Validation {
-        code: "edge_constraint_violation".into(),
-        message: format!(
+    let mut details = serde_json::Map::new();
+    details.insert("edge_type".into(), json!(edge_type.id));
+    details.insert(format!("{end}_id"), json!(at));
+    details.insert("constraint".into(), json!("cardinality"));
+    constraint_violation(
+        format!(
             "Edge \"{}\" is {}; {end} already has an {edge} edge of this type",
             edge_type.id, edge_type.cardinality
         ),
-    }
+        Value::Object(details),
+    )
+}
+
+/// That the edge whose id is in `column` is not one whose create the queue
+/// holds refused, which the copy may still show (see the module).
+fn not_refused(column: &str) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM queue
+                      WHERE queue.edge_id = {column} AND queue.kind = '{}'
+                        AND queue.verdict = '{}')",
+        WriteKind::CreateEdge.as_str(),
+        Verdict::Refused.as_str()
+    )
 }
 
 /// The held edges the write leaves standing beside the proposed one: every
-/// edge of its type but the one the write is and those a create replaces.
-const STANDING: &str = "edge_type = ?1 AND id IS NOT ?2 AND source_id IS NOT ?3";
+/// edge of its type but the one the write is, those a create replaces and
+/// those refused.
+static STANDING: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "edge_type = ?1 AND id IS NOT ?2 AND source_id IS NOT ?3 AND {}",
+        not_refused("edges.id")
+    )
+});
 
 /// Whether the copy holds an edge of the proposed triple.
 fn holds_triple(conn: &Connection, edge: &Proposed) -> Result<bool> {
     let mut statement = conn.prepare_cached(&format!(
         "SELECT EXISTS (SELECT 1 FROM edges
-          WHERE {STANDING} AND source_id = ?4 AND target_id = ?5)"
+          WHERE {} AND source_id = ?4 AND target_id = ?5)",
+        *STANDING
     ))?;
     Ok(statement.query_row(
         params![
@@ -222,7 +282,8 @@ fn holds_at(conn: &Connection, edge: &Proposed, end: End) -> Result<bool> {
         End::Target => ("target_id", edge.target_id),
     };
     let mut statement = conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM edges WHERE {STANDING} AND {column} = ?4)"
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE {} AND {column} = ?4)",
+        *STANDING
     ))?;
     Ok(statement.query_row(
         params![edge.edge_type, edge.replacing, edge.source.replaced(), id],
@@ -256,36 +317,37 @@ fn refuse_unfitting_ends(
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false)
     {
-        return Err(refused_end(edge.edge_type, "source", r#type));
+        return Err(refused_end(edge_type, End::Source, r#type));
     }
     if let Some(r#type) = &target_type
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false)
     {
-        return Err(refused_end(edge.edge_type, "target", r#type));
+        return Err(refused_end(edge_type, End::Target, r#type));
     }
     if edge_type.flat
         && let Some(r#type) = &source_type
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
     {
-        return Err(refused_nesting(edge.edge_type));
+        return Err(refused_nesting(edge.edge_type, edge.source.id(), r#type));
     }
     Ok(())
 }
 
 /// Whether the target reaches the source through the held edges of the type,
-/// those still waiting to be sent among them.
+/// those still waiting to be sent among them and those refused left out.
 fn closes_cycle(conn: &Connection, edge: &Proposed) -> Result<bool> {
-    let mut statement = conn.prepare_cached(
+    let mut statement = conn.prepare_cached(&format!(
         "WITH RECURSIVE reached(id) AS (
             SELECT ?1
             UNION
             SELECT e.target_id FROM edges e JOIN reached r ON e.source_id = r.id
-             WHERE e.edge_type = ?3 AND e.id IS NOT ?4
+             WHERE e.edge_type = ?3 AND e.id IS NOT ?4 AND {}
          )
          SELECT EXISTS (SELECT 1 FROM reached WHERE id = ?2)",
-    )?;
+        not_refused("e.id")
+    ))?;
     Ok(statement.query_row(
         params![
             edge.target_id,
@@ -309,11 +371,13 @@ pub(crate) fn refuse_retype_breaking_edges(
     let Some(lineage) = lineages.of(conn, next_type)? else {
         return Ok(());
     };
-    let mut statement = conn.prepare_cached(
+    let mut statement = conn.prepare_cached(&format!(
         "SELECT edge_type, source_id = ?1, target_id = ?1 FROM edges
           WHERE (source_id = ?1 OR target_id = ?1) AND source_id != target_id
+            AND {}
           ORDER BY created_at, id",
-    )?;
+        not_refused("edges.id")
+    ))?;
     let edges = statement
         .query_map([item_id], |row| {
             Ok((
@@ -333,16 +397,16 @@ pub(crate) fn refuse_retype_breaking_edges(
             continue;
         };
         if from && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false) {
-            return Err(refused_end(&id, "source", next_type));
+            return Err(refused_end(edge_type, End::Source, next_type));
         }
         if from
             && edge_type.flat
             && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
         {
-            return Err(refused_nesting(&id));
+            return Err(refused_nesting(&id, item_id, next_type));
         }
         if to && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false) {
-            return Err(refused_end(&id, "target", next_type));
+            return Err(refused_end(edge_type, End::Target, next_type));
         }
     }
     Ok(())
@@ -405,8 +469,25 @@ mod tests {
 
     /// The same, with these types and edge types in its catalog too.
     fn copy_with(more_types: Vec<WireType>, more_edge_types: Vec<Value>) -> Core {
+        copy_of(None, more_types, more_edge_types)
+    }
+
+    /// The same copy, drained to `server`.
+    fn copy_served(server: &crate::scripted::Scripted) -> Core {
+        let server = crate::Server {
+            url: server.url(),
+            key: "k".into(),
+        };
+        copy_of(Some(server), Vec::new(), Vec::new())
+    }
+
+    fn copy_of(
+        server: Option<crate::Server>,
+        more_types: Vec<WireType>,
+        more_edge_types: Vec<Value>,
+    ) -> Core {
         let many = "many-to-many";
-        let core = Core::open_in_memory(None).unwrap();
+        let core = Core::open_in_memory(server).unwrap();
         {
             let conn = core.conn().unwrap();
             let mut types = vec![
@@ -529,30 +610,67 @@ mod tests {
         assert_eq!(queued(core), before, "{what}: a refused edge was queued");
     }
 
-    /// A duplicate and a cardinality refusal share their code, so the words
-    /// say which one the copy gave.
-    fn assert_refused_for<T: std::fmt::Debug>(outcome: crate::Result<T>, words: &str, what: &str) {
+    /// The server's `error.details` for an `edge_constraint_violation`.
+    fn details_of<T: std::fmt::Debug>(outcome: crate::Result<T>, what: &str) -> Value {
         match outcome {
-            Err(CoreError::Validation { code, message }) => {
+            Err(CoreError::Validation {
+                code,
+                message,
+                details,
+            }) => {
                 assert_eq!(code, "edge_constraint_violation", "{what}: {message}");
-                assert!(message.contains(words), "{what}: {message}");
+                *details.unwrap_or_else(|| panic!("{what}: no details on {message}"))
             }
             other => panic!("{what}: {other:?}"),
         }
     }
 
-    /// The check and the create give the same refusal for `words`, and
-    /// nothing is queued.
-    fn assert_create_refused_for(core: &Core, draft: &EdgeDraft, words: &str, what: &str) {
-        let before = queued(core);
-        assert_refused_for(core.check_edge(draft), words, what);
-        assert_refused_for(core.create_edge(draft), words, what);
-        assert_eq!(queued(core), before, "{what}: a refused edge was queued");
+    /// A duplicate and a cardinality refusal share their code; an app tells
+    /// them apart by `details.constraint`, and a full end by the end the
+    /// details name.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Refusal {
+        Duplicate,
+        SourceFull,
+        TargetFull,
     }
 
-    const DUPLICATE: &str = "already exists between these items";
-    const SOURCE_FULL: &str = "source already has";
-    const TARGET_FULL: &str = "target already has";
+    const DUPLICATE: Refusal = Refusal::Duplicate;
+    const SOURCE_FULL: Refusal = Refusal::SourceFull;
+    const TARGET_FULL: Refusal = Refusal::TargetFull;
+
+    fn assert_refused_for<T: std::fmt::Debug>(
+        outcome: crate::Result<T>,
+        refusal: Refusal,
+        what: &str,
+    ) {
+        let details = details_of(outcome, what);
+        let constraint = if refusal == DUPLICATE {
+            "duplicate"
+        } else {
+            "cardinality"
+        };
+        assert_eq!(details["constraint"], constraint, "{what}: {details}");
+        let names = |end: &str| details.get(end).is_some();
+        let ends = match refusal {
+            Refusal::Duplicate => (true, true),
+            Refusal::SourceFull => (true, false),
+            Refusal::TargetFull => (false, true),
+        };
+        assert_eq!(
+            (names("source_id"), names("target_id")),
+            ends,
+            "{what}: {details}"
+        );
+    }
+
+    /// The check and the create give the same refusal, and nothing is queued.
+    fn assert_create_refused_for(core: &Core, draft: &EdgeDraft, refusal: Refusal, what: &str) {
+        let before = queued(core);
+        assert_refused_for(core.check_edge(draft), refusal, what);
+        assert_refused_for(core.create_edge(draft), refusal, what);
+        assert_eq!(queued(core), before, "{what}: a refused edge was queued");
+    }
 
     /// The check passes without queuing, and the create queues the edge.
     fn assert_create_queued(core: &Core, draft: &EdgeDraft, what: &str) {
@@ -1022,6 +1140,189 @@ mod tests {
     }
 
     #[test]
+    fn an_edge_the_server_refused_counts_for_nothing_while_its_read_is_owed() {
+        let server = crate::scripted::Scripted::start();
+        let core = copy_served(&server);
+        core.create_edge(&EdgeDraft {
+            id: Some(OTHER_EDGE.into()),
+            ..edge(NOTE_A, NOTE_B, "mock.next-note")
+        })
+        .unwrap();
+        server.on(
+            "/edges",
+            vec![crate::scripted::refusal(422, "edge_constraint_violation")],
+        );
+        server.on(
+            &format!("/edges/{OTHER_EDGE}"),
+            vec![crate::scripted::unnamed(503, "unavailable")],
+        );
+        let report = core.drain().unwrap();
+        assert!(
+            report.unavailable.is_some(),
+            "the read went through: {report:?}"
+        );
+        // The witness: the refusal is recorded, the read is still owed, and
+        // the copy still shows the refused edge.
+        let queue = core.queue().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].verdict, Some(crate::Verdict::Refused));
+        assert!(
+            !store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            core.edges_from(NOTE_A)
+                .unwrap()
+                .iter()
+                .any(|shown| shown.id == OTHER_EDGE),
+            "the copy put the refused edge back before its read landed"
+        );
+        for (draft, what) in [
+            (edge(NOTE_A, NOTE_B, "mock.next-note"), "the triple again"),
+            (
+                edge(NOTE_A, NOTE_C, "mock.next-note"),
+                "another edge from a",
+            ),
+            (edge(NOTE_C, NOTE_B, "mock.next-note"), "another edge to b"),
+        ] {
+            core.check_edge(&draft)
+                .unwrap_or_else(|error| panic!("{what} once refused: {error:?}"));
+        }
+    }
+
+    #[test]
+    fn each_refusal_carries_the_details_the_server_gives_it() {
+        let core = copy();
+        hold(&core, HELD_EDGE, NOTE_A, NOTE_B, "mock.next-note");
+        for (draft, details, what) in [
+            (
+                edge(TASK, NOTE_B, "mock.notes"),
+                json!({
+                    "edge_type": "mock.notes",
+                    "source_type": "core.task",
+                    "allowed": ["core.note"],
+                }),
+                "a source of a type the edge type does not admit",
+            ),
+            (
+                edge(NOTE_A, TASK, "mock.notes"),
+                json!({
+                    "edge_type": "mock.notes",
+                    "target_type": "core.task",
+                    "allowed": ["core.note"],
+                }),
+                "a target of a type the edge type does not admit",
+            ),
+            (
+                edge(SERIES, ALBUM, "mock.member"),
+                json!({
+                    "edge_type": "mock.member",
+                    "source_id": SERIES,
+                    "source_type": "core.collection",
+                    "constraint": "nesting",
+                }),
+                "a collection nested in an album",
+            ),
+            (
+                edge(NOTE_A, NOTE_B, "mock.next-note"),
+                json!({
+                    "edge_type": "mock.next-note",
+                    "source_id": NOTE_A,
+                    "target_id": NOTE_B,
+                    "constraint": "duplicate",
+                }),
+                "a duplicate",
+            ),
+            (
+                edge(NOTE_A, NOTE_C, "mock.next-note"),
+                json!({
+                    "edge_type": "mock.next-note",
+                    "source_id": NOTE_A,
+                    "constraint": "cardinality",
+                }),
+                "a second edge from a",
+            ),
+            (
+                edge(NOTE_C, NOTE_B, "mock.next-note"),
+                json!({
+                    "edge_type": "mock.next-note",
+                    "target_id": NOTE_B,
+                    "constraint": "cardinality",
+                }),
+                "a second edge to b",
+            ),
+        ] {
+            assert_eq!(details_of(core.check_edge(&draft), what), details, "{what}");
+            assert_eq!(
+                details_of(core.create_edge(&draft), what),
+                details,
+                "{what}"
+            );
+        }
+        hold(&core, OTHER_EDGE, NOTE_C, NOTE_D, "mock.next-note");
+        assert_eq!(
+            details_of(
+                core.check_edge_move(HELD_EDGE, End::Target, NOTE_D),
+                "a move onto d"
+            ),
+            json!({
+                "edge_type": "mock.next-note",
+                "target_id": NOTE_D,
+                "constraint": "cardinality",
+            }),
+        );
+
+        let core = copy();
+        hold(&core, "notes", NOTE_C, NOTE_D, "mock.notes");
+        hold(&core, "member", TASK, ALBUM, "mock.member");
+        let retype = |r#type: &str| Edit {
+            base_version: Some(1),
+            r#type: Some(r#type.into()),
+            ..Edit::default()
+        };
+        for (id, r#type, details, what) in [
+            (
+                NOTE_C,
+                "core.task",
+                json!({
+                    "edge_type": "mock.notes",
+                    "source_type": "core.task",
+                    "allowed": ["core.note"],
+                }),
+                "the source of a notes edge made a task",
+            ),
+            (
+                NOTE_D,
+                "core.task",
+                json!({
+                    "edge_type": "mock.notes",
+                    "target_type": "core.task",
+                    "allowed": ["core.note"],
+                }),
+                "the target of a notes edge made a task",
+            ),
+            (
+                TASK,
+                "core.collection",
+                json!({
+                    "edge_type": "mock.member",
+                    "source_id": TASK,
+                    "source_type": "core.collection",
+                    "constraint": "nesting",
+                }),
+                "an album's member made a collection",
+            ),
+        ] {
+            assert_eq!(
+                details_of(core.update_item(id, &retype(r#type)), what),
+                details,
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
     fn a_move_onto_a_full_end_is_refused_and_onto_its_own_end_changes_nothing() {
         let core = copy();
         hold(&core, HELD_EDGE, NOTE_A, NOTE_B, "mock.next-note");
@@ -1148,11 +1449,11 @@ mod tests {
             "the edge from b that closes a, b, a",
         );
         hold(&core, "task-b", TASK, NOTE_B, "mock.notes");
-        assert_create_refused_for(
-            &core,
-            &edge(TASK, NOTE_B, "mock.notes"),
-            "does not allow source type",
-            "a repeat of an edge from a task, which the edge type does not admit",
+        let what = "a repeat of an edge from a task, which the edge type does not admit";
+        assert_eq!(
+            details_of(core.check_edge(&edge(TASK, NOTE_B, "mock.notes")), what)["source_type"],
+            "core.task",
+            "{what}"
         );
     }
 

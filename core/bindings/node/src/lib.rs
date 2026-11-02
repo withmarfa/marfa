@@ -1428,9 +1428,10 @@ fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_co
 /// A core error as a JS error. The message starts with the error's code,
 /// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
 /// binding's carries as properties: `code`, the core's own name for it, and
-/// whichever of `serverCode`, `status`, `retryAfterSeconds`, `origin`,
-/// `location`, `path`, `reason`, `unsent`, `agreed`, `expected`, `got`,
-/// `served`, `writeSent` and `hash` it has.
+/// whichever of `serverCode`, `details`, `status`, `retryAfterSeconds`,
+/// `origin`, `location`, `path`, `reason`, `unsent`, `agreed`, `expected`,
+/// `got`, `served`, `writeSent` and `hash` it has. `details` is the object a
+/// refused write's `answer` holds under `error.details`.
 fn failure(env: Env, error: marfa_core::CoreError) -> Error {
     match error_value(&env, &error) {
         Ok(thrown) => Error::from(thrown),
@@ -1482,7 +1483,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         E::NotFound { code, message }
         | E::Unauthorized { code, message }
         | E::Forbidden { code, message }
-        | E::Validation { code, message }
+        | E::Validation { code, message, .. }
         | E::RateLimited { code, message, .. } => server_detail(error.code(), Some(code), message),
         E::UnknownType { message } => server_detail(error.code(), None, message),
         E::Server {
@@ -1519,10 +1520,16 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Canceled => error.to_string(),
     };
     let fields = match error {
-        E::NotFound { code, .. }
-        | E::Unauthorized { code, .. }
-        | E::Forbidden { code, .. }
-        | E::Validation { code, .. } => vec![("serverCode", json!(code))],
+        E::NotFound { code, .. } | E::Unauthorized { code, .. } | E::Forbidden { code, .. } => {
+            vec![("serverCode", json!(code))]
+        }
+        E::Validation { code, details, .. } => {
+            let mut fields = vec![("serverCode", json!(code))];
+            if let Some(details) = details {
+                fields.push(("details", (**details).clone()));
+            }
+            fields
+        }
         E::UnknownType { .. } => vec![("serverCode", json!("unknown_type"))],
         E::RateLimited {
             code,
@@ -3523,7 +3530,8 @@ mod tests {
         assert_eq!(
             describe(&E::Validation {
                 code: "invalid_properties".into(),
-                message: "read: Expected boolean".into()
+                message: "read: Expected boolean".into(),
+                details: None,
             })
             .0,
             "validation: (invalid_properties) read: Expected boolean"
@@ -3574,6 +3582,17 @@ mod tests {
                 ("expected", json!(3)),
                 ("status", json!(201)),
                 ("writeSent", json!(true)),
+            ]
+        );
+        assert_eq!(
+            fields(E::Validation {
+                code: "edge_constraint_violation".into(),
+                message: String::new(),
+                details: Some(Box::new(json!({ "constraint": "duplicate" }))),
+            }),
+            vec![
+                ("serverCode", json!("edge_constraint_violation")),
+                ("details", json!({ "constraint": "duplicate" })),
             ]
         );
         // A failed renewal carries its cause's fields, as it carries its code.

@@ -44,7 +44,7 @@ fn shared() -> Shared {
 
 fn refusal(result: Result<impl std::fmt::Debug>) -> (String, String) {
     match result {
-        Err(CoreError::Validation { code, message }) => (code, message),
+        Err(CoreError::Validation { code, message, .. }) => (code, message),
         other => panic!("expected a validation refusal, got {other:?}"),
     }
 }

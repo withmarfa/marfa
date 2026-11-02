@@ -11,7 +11,14 @@ pub enum CoreError {
     #[error("{}", classified("forbidden", Some(code), message))]
     Forbidden { code: String, message: String },
     #[error("{}", classified("validation", Some(code), message))]
-    Validation { code: String, message: String },
+    Validation {
+        code: String,
+        message: String,
+        /// What the server's `error.details` holds for the same refusal,
+        /// where the copy refuses a write the server would and the server
+        /// names more than its code.
+        details: Option<Box<serde_json::Value>>,
+    },
     #[error("{}", classified("unknown type", None, message))]
     UnknownType { message: String },
     #[error("{}", classified("rate limited", Some(code), message))]
@@ -579,6 +586,7 @@ mod tests {
         let validation = CoreError::Validation {
             code: "invalid_properties".into(),
             message: "read: Expected boolean".into(),
+            details: None,
         };
         assert_eq!(
             validation.to_string(),

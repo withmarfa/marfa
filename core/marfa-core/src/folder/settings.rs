@@ -166,11 +166,16 @@ impl Settings {
         }
         if let Some(filter) = &self.query.filter {
             crate::filter::check(filter).map_err(|error| match error {
-                CoreError::Validation { code, message } => CoreError::Validation {
+                CoreError::Validation {
+                    code,
+                    message,
+                    details,
+                } => CoreError::Validation {
                     code,
                     message: format!(
                         "the folder's query.filter is refused: {message}. Change the filter with `marfa folders change`"
                     ),
+                    details,
                 },
                 other => other,
             })?;
@@ -179,11 +184,16 @@ impl Settings {
         // file is never made with a tag or a property name it would refuse.
         let named = |setting: &str, refusal: Result<()>| {
             refusal.map_err(|error| match error {
-                CoreError::Validation { code, message } => CoreError::Validation {
+                CoreError::Validation {
+                    code,
+                    message,
+                    details,
+                } => CoreError::Validation {
                     code,
                     message: format!(
                         "the folder's {setting} is refused: {message}. Change it with `marfa folders change`"
                     ),
+                    details,
                 },
                 other => other,
             })
@@ -236,6 +246,7 @@ impl Settings {
                     message: format!(
                         "{type}: {dir:?} is not a directory inside the folder: write a path relative to its root, with \"/\" between names and no \"..\" name"
                     ),
+                    details: None,
                 });
             }
         }
@@ -529,7 +540,7 @@ mod tests {
     #[test]
     fn a_setting_the_server_would_refuse_is_named_with_the_way_to_change_it() {
         let refused = |properties: Value| match read(properties) {
-            Err(CoreError::Validation { code, message }) => {
+            Err(CoreError::Validation { code, message, .. }) => {
                 assert!(
                     matches!(code.as_str(), "validation_error" | "invalid_properties"),
                     "{code}"
@@ -594,7 +605,7 @@ mod tests {
             "Notes\0",
         ] {
             let message = match read(json!({ "first_placement": { "core.note": dir } })) {
-                Err(CoreError::Validation { code, message }) => {
+                Err(CoreError::Validation { code, message, .. }) => {
                     assert_eq!(code, "validation_error", "{dir:?}");
                     message
                 }

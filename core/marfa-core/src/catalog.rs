@@ -1119,6 +1119,7 @@ impl Catalog {
                     status.name,
                     words.join(", ")
                 ),
+                details: None,
             });
         }
         Ok(())

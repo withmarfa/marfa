@@ -505,6 +505,7 @@ fn refused(message: impl Into<String>) -> CoreError {
     CoreError::Validation {
         code: "validation_error".into(),
         message: message.into(),
+        details: None,
     }
 }
 
@@ -1068,7 +1069,7 @@ mod tests {
             "starts_with",
         ] {
             let input = format!("properties.note {op} null");
-            let Err(CoreError::Validation { code, message }) = parse(&input) else {
+            let Err(CoreError::Validation { code, message, .. }) = parse(&input) else {
                 panic!("{input} was accepted");
             };
             assert_eq!(code, "validation_error");
@@ -1464,7 +1465,7 @@ mod tests {
                 "\"status_group\" for a status group, or \"part\" for the parts of other items",
             ),
         ] {
-            let Err(CoreError::Validation { code, message }) = check(input) else {
+            let Err(CoreError::Validation { code, message, .. }) = check(input) else {
                 panic!("{input} was accepted");
             };
             assert_eq!(code, "validation_error");

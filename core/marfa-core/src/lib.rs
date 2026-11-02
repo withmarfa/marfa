@@ -1807,6 +1807,7 @@ impl Core {
                     "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
                     held.state.as_str()
                 ),
+                details: None,
             });
         }
         if !waiting.is_empty() {
@@ -3504,6 +3505,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
                 "{} cannot start in the revoked state; use active, archived or trashed",
                 draft.r#type
             ),
+            details: None,
         });
     }
     for (name, value) in [
@@ -3514,6 +3516,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
             return Err(CoreError::Validation {
                 code: "validation_error".into(),
                 message: format!("{name} must be a number"),
+                details: None,
             });
         }
     }
@@ -3894,6 +3897,7 @@ fn queue_update(
         return Err(CoreError::Validation {
             code: "invalid_properties".into(),
             message: required.join("; "),
+            details: None,
         });
     }
     let mut payload = edit.payload(base)?;
@@ -4011,6 +4015,7 @@ fn refuse_self_loop(source_id: &str, target_id: &str) -> Result<()> {
         return Err(CoreError::Validation {
             code: "edge_cycle".into(),
             message: format!("an edge from {source_id} to itself closes a cycle"),
+            details: None,
         });
     }
     Ok(())
@@ -4046,6 +4051,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                     "an update moves one end of edge {} at a time; delete it and create the edge wanted",
                     held.id
                 ),
+                details: None,
             });
         }
         (Some(source), None) => (catalog::End::Source, source, held.target_id.as_str()),
@@ -4059,6 +4065,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                     "{} is {}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one",
                     held.edge_type, edge_type.cardinality
                 ),
+                details: None,
             });
         }
         Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
@@ -4488,7 +4495,7 @@ mod tests {
             draft.properties.insert(field.into(), value);
             let failure = core.create_item(&draft).unwrap_err();
             assert!(
-                matches!(&failure, CoreError::Validation {code, message} if code == "invalid_properties" && message.contains(field)),
+                matches!(&failure, CoreError::Validation {code, message, .. } if code == "invalid_properties" && message.contains(field)),
                 "{failure:?}"
             );
             assert_eq!(core.queue().unwrap(), before);
@@ -4571,7 +4578,7 @@ mod tests {
             ];
             for (door, failure) in failures {
                 assert!(
-                    matches!(&failure, CoreError::Validation { code, message }
+                    matches!(&failure, CoreError::Validation { code, message, .. }
                         if code == "validation_error" && message.contains(reason)),
                     "{door} with {named}: {failure:?}"
                 );
@@ -4641,7 +4648,7 @@ mod tests {
                 .unwrap_err(),
         ] {
             assert!(
-                matches!(&failure, CoreError::Validation { code, message }
+                matches!(&failure, CoreError::Validation { code, message, .. }
                     if code == "validation_error" && message.contains("property name")),
                 "{failure:?}"
             );
@@ -5101,7 +5108,8 @@ mod tests {
             ..clear(3, &["notes"])
         };
         let before = core.get("row").unwrap();
-        let Err(CoreError::Validation { code, message }) = core.update_item("row", &both) else {
+        let Err(CoreError::Validation { code, message, .. }) = core.update_item("row", &both)
+        else {
             panic!("a property both set and cleared was queued");
         };
         assert_eq!(code, "validation_error");
@@ -5482,7 +5490,7 @@ mod tests {
             ..EdgeEdit::default()
         };
         let refused = |result: Result<()>, where_: &str| match result {
-            Err(CoreError::Validation { code, message }) => {
+            Err(CoreError::Validation { code, message, .. }) => {
                 assert_eq!(code, "invalid_properties", "{where_}");
                 assert!(
                     message.contains("Must be a whole number that Marfa serves back"),
