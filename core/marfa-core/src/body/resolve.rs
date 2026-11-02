@@ -111,7 +111,7 @@ pub(crate) enum Resolved {
     },
     Unmatched,
     Ambiguous,
-    /// The server could not be reached, so the name is asked again later.
+    /// The lookup could not be completed, so the name is asked again later.
     Waiting,
     /// The server answered the lookup with something other than items.
     Unanswered(String),
@@ -122,7 +122,7 @@ pub(crate) enum Resolved {
 enum Looked {
     /// The items it found, and whether it held more than it listed.
     Titled { items: Vec<TitledItem>, more: bool },
-    /// The server could not be reached.
+    /// The lookup could not be completed and can be retried.
     Waiting,
     /// The server refused the lookup, for this reason.
     Unanswered(String),

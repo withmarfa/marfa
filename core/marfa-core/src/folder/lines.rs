@@ -85,7 +85,7 @@ pub(super) struct Outcome {
 struct Unresolved<'w> {
     /// Refusals kept from an earlier judgment of the file as it is.
     known: &'w BTreeMap<String, String>,
-    /// The server could not be reached.
+    /// A lookup could not be completed and can be retried.
     waiting: bool,
     unmatched: bool,
     refused: BTreeMap<String, String>,
