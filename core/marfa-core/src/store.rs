@@ -51,9 +51,9 @@ pub const META_LOCAL_CATALOG: &str = "local_catalog";
 /// again: set when the server was lost or a drain left a write undelivered,
 /// and cleared by a drain that left none or found no work.
 pub const META_DRAIN_OWED: &str = "drain_owed";
-/// Moved by the triggers in `schema.sql` with every change to a row of the
-/// copy or the queue, so a reader can tell the copy changed even where its
-/// own connection made the change.
+/// Moved by the triggers in `schema.sql` when the copy changes, so a reader
+/// can detect changes made by its own connection. Removing an answered
+/// queue row does not move it because that row is no longer laid over the copy.
 pub const META_COPY_REVISION: &str = "copy_revision";
 /// Set once, when a writer first opens the store, so a cursor of
 /// `Core::changes_since` taken from one store is told from another's at the
@@ -836,8 +836,8 @@ fn triggers_behind(conn: &Connection) -> Result<Vec<String>, CoreError> {
     Ok(behind)
 }
 
-/// Makes again, in one transaction, each trigger the store holds as an
-/// earlier build made it, which `CREATE TRIGGER IF NOT EXISTS` leaves as it
+/// Makes again, in one transaction, each trigger the store holds differently
+/// from this build, which `CREATE TRIGGER IF NOT EXISTS` leaves as it
 /// is. A store already holding this build's triggers is not written to.
 fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
     if triggers_behind(conn)?.is_empty() {
