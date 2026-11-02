@@ -2,7 +2,7 @@
   "id": "core.file.webpage",
   "parent": "core.file",
   "label": "Web Page",
-  "description": "An HTML page held as a file, such as a report an agent wrote. Inherits all core.file fields.",
+  "description": "A web page saved as an HTML file, such as a report an agent wrote.",
   "version": 0,
   "fields": {},
   "display_hints": {

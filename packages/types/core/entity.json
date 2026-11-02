@@ -1,12 +1,12 @@
 {
   "id": "core.entity",
   "label": "Entity",
-  "description": "Any named entity: a person, a company, a band, a team, a charity, a brand, a school or a place. `core.entity.person` and `core.entity.place` narrow it.",
+  "description": "Someone or something with a name, such as a person, company, band, team, charity, brand, school or place.",
   "version": 0,
   "fields": {
     "name": {
       "type": "string",
-      "description": "Display name"
+      "description": "The name to show for the entity."
     },
     "url": {
       "type": "string",
@@ -16,7 +16,7 @@
     },
     "description": {
       "type": "string",
-      "description": "What the entity is"
+      "description": "A short description of the entity."
     },
     "emails": {
       "type": "array",
@@ -102,7 +102,7 @@
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the entity's details."
     }
   },
   "required": [

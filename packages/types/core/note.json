@@ -1,16 +1,16 @@
 {
   "id": "core.note",
   "label": "Note",
-  "description": "Text content you created.",
+  "description": "Text you wrote, such as a thought, a meeting note or a list.",
   "version": 0,
   "fields": {
     "body": {
       "type": "string",
-      "description": "The note text"
+      "description": "The text of the note."
     },
     "title": {
       "type": "string",
-      "description": "Heading or title"
+      "description": "The note's heading."
     },
     "language": {
       "type": "string",
@@ -19,7 +19,7 @@
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the note's text."
     }
   },
   "display_hints": {

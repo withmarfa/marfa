@@ -1,34 +1,34 @@
 {
   "id": "core.highlight",
   "label": "Highlight",
-  "description": "A user's engagement with content — the highlighted passage, its body, plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`, and names the highlight, which has no title of its own; the moment of highlighting is the item's own `occurred_at`.",
+  "description": "A passage you highlighted, with your note on it.",
   "version": 0,
   "fields": {
     "text": {
       "type": "string",
-      "description": "The highlighted passage, as Markdown"
+      "description": "The highlighted passage, as Markdown."
     },
     "note": {
       "type": "string",
-      "description": "User annotation on the highlight"
+      "description": "Your note on the passage."
     },
     "color": {
       "type": "enum",
-      "description": "Highlight color",
+      "description": "The color of the highlight.",
       "enum_values": ["yellow", "blue", "green", "pink", "orange", "purple"]
     },
     "locator_type": {
       "type": "enum",
-      "description": "How start_location / end_location are interpreted",
+      "description": "How to read start_location and end_location: offset, page, time, cfi, order or none.",
       "enum_values": ["offset", "page", "time", "cfi", "order", "none"]
     },
     "start_location": {
       "type": "string",
-      "description": "Start locator, typed by locator_type"
+      "description": "Where the highlight starts, read as locator_type says."
     },
     "end_location": {
       "type": "string",
-      "description": "End locator, typed by locator_type"
+      "description": "Where the highlight ends, read as locator_type says."
     }
   },
   "required": ["text"],

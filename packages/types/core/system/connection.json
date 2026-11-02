@@ -1,32 +1,32 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An OAuth client this user has authorized, written when the user approves the client's consent or device sign-in. `kind` is `app`. Lifecycle bounded to active | revoked. Has no tier.",
+  "description": "An app you signed in to Marfa, with the access you gave it and when it last used it.",
   "version": 0,
   "fields": {
     "kind": {
       "type": "enum",
-      "description": "Discriminator for connection variant",
+      "description": "The kind of connection. Only app exists.",
       "enum_values": [
         "app"
       ]
     },
     "client_id": {
       "type": "string",
-      "description": "OAuth client identifier"
+      "description": "The app's OAuth client ID."
     },
     "name": {
       "type": "string",
-      "description": "The owner's own name for this app's sign-in, set at `PATCH /owner/sign-ins/{id}`. Unset, the app's registered client name names it. Any credential that can read `system.connection` items, such as an app holding the default read bundle, can read this name and the item's ID, which is the sign-in's ID"
+      "description": "Your own name for this app's sign-in. Unset, the app's registered name is used."
     },
     "scopes": {
       "type": "array",
       "items_type": "string",
-      "description": "Granted scope strings"
+      "description": "The scopes you granted the app."
     },
     "status": {
       "type": "enum",
-      "description": "Lifecycle status",
+      "description": "Whether the sign-in is active or revoked.",
       "enum_values": [
         "active",
         "revoked"
@@ -34,15 +34,15 @@
     },
     "granted_at": {
       "type": "datetime",
-      "description": "When the grant was approved"
+      "description": "When you approved the app."
     },
     "last_used_at": {
       "type": "datetime",
-      "description": "Most recent successful use of any token issued under this grant"
+      "description": "When the app last used the sign-in successfully."
     },
     "revoked_at": {
       "type": "datetime",
-      "description": "When the grant was revoked, if any"
+      "description": "When you revoked the sign-in, if you did."
     }
   },
   "required": [

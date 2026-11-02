@@ -2,7 +2,7 @@
   "id": "core.media.book",
   "parent": "core.media",
   "label": "Book",
-  "description": "A book. Inherits all core.media fields.",
+  "description": "A book, with details such as its ISBN and page count.",
   "version": 0,
   "fields": {
     "isbn": {

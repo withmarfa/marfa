@@ -2,7 +2,7 @@
   "id": "core.entity.place",
   "parent": "core.entity",
   "label": "Place",
-  "description": "A location or venue. Inherits all core.entity fields.",
+  "description": "A place, such as a cafe, an office or a city, with its address and coordinates.",
   "version": 0,
   "fields": {
     "street_address": {
@@ -33,11 +33,11 @@
     },
     "latitude": {
       "type": "number",
-      "description": "Subject latitude"
+      "description": "Latitude of the place."
     },
     "longitude": {
       "type": "number",
-      "description": "Subject longitude"
+      "description": "Longitude of the place."
     },
     "altitude": {
       "type": "number",

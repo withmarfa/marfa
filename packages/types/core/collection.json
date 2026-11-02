@@ -1,17 +1,17 @@
 {
   "id": "core.collection",
   "label": "Collection",
-  "description": "Items of any type that you gather together. Members join it through the in-collection edge, and it can hold any item but another container.",
+  "description": "A named group of items of any type, such as a reading list or the plans for a trip.",
   "version": 0,
   "roles": ["container"],
   "fields": {
     "title": {
       "type": "string",
-      "description": "Name of the collection"
+      "description": "The name of the collection."
     },
     "description": {
       "type": "string",
-      "description": "What the collection gathers"
+      "description": "What the collection is for."
     }
   },
   "required": ["title"],
