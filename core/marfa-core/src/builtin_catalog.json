@@ -2489,7 +2489,7 @@
    "id": "about",
    "label": "About",
    "reverse_label": "Subject of",
-   "description": "Source item is about the target item. Topical connection between items across types. For a passage taken from the target use `excerpt-of`; for a mention in the source's text use `references`.",
+   "description": "Says that an item is about another item, such as a note about a book.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2508,7 +2508,7 @@
    "id": "attached-to",
    "label": "Attached to",
    "reverse_label": "Attachments",
-   "description": "Source exists only for the item or items it is attached to, whoever or whatever made it: a file, a scan, a page of a scan, a clip. Many-to-many: a part may be attached to several hosts; a host may have several attachments. The source goes to the trash with its hosts once all of them are in the trash, and comes back when any of them is restored; removing the edge never trashes it. Carries an optional position for ordered parts, such as the pages of a scan. The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
+   "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2522,7 +2522,7 @@
    "property_schema": {
     "position": {
      "type": "number",
-     "description": "Ordering among the host's attachments, such as the page of a scan (1-based)."
+     "description": "Where the attachment comes among the item's attachments, such as the page number of a scan."
     }
    },
    "shipped": true,
@@ -2533,7 +2533,7 @@
    "id": "comments-on",
    "label": "Comment on",
    "reverse_label": "Comments",
-   "description": "Source is a comment on the target: a comment, a reply to another comment, a review comment, a suggestion or a review verdict. Many-to-one: a comment is on one item; an item may have many comments. A reply is a comment on the comment it answers. The source goes to the trash with its target and comes back when the target is restored; removing the edge never trashes it.",
+   "description": "Says that an item is a comment on another item, including a reply to another comment.",
    "cardinality": "many-to-one",
    "source_type_constraints": [
     "*"
@@ -2552,7 +2552,7 @@
    "id": "derived-from",
    "label": "Derived from",
    "reverse_label": "Basis for",
-   "description": "Source was produced from the target (imports, AI generation, transformations). Both items remain valid in parallel.",
+   "description": "Says that an item was made from another item, such as an imported copy or a summary generated from a note.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2571,7 +2571,7 @@
    "id": "excerpt-of",
    "label": "Excerpt from",
    "reverse_label": "Excerpts",
-   "description": "Source is a highlight, quote or clip taken from the target. Each excerpt is taken from one item; an item can have many excerpts. An excerpt with no title of its own is named after the target, such as \"Excerpt from Thinking, Fast and Slow\". The excerpt carries its own text, stays in lists and stays when its source is binned or purged (orphan). Use it for a passage taken from an item, `about` for a topical link and `references` for a mention in text.",
+   "description": "Says that an item is a highlight, quote or clip taken from another item, such as a quote from a book.",
    "cardinality": "many-to-one",
    "source_type_constraints": [
     "*"
@@ -2590,7 +2590,7 @@
    "id": "in-collection",
    "label": "In collection",
    "reverse_label": "Contents",
-   "description": "Source item is a member of the target container. The target may be any type declaring the `container` role, such as a collection, an ongoing series, an album or a publisher's own container type, rather than a fixed list of type names, so a connector writing its own vocabulary can express containment without the platform naming its types first. An item may belong to any number of containers, and a container holds any number of members. A container may not itself be a member: containment here is flat, and `parent-of` is what hierarchy is for. Deleting the container leaves its members in place. Carries position for ordering within the container.",
+   "description": "Says that an item is a member of a container, such as a collection, a series or an album.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2603,7 +2603,7 @@
    "property_schema": {
     "position": {
      "type": "number",
-     "description": "Ordering within the collection (1-based)."
+     "description": "Where the item comes among the container's members."
     }
    },
    "shipped": true,
@@ -2614,7 +2614,7 @@
    "id": "in-folder",
    "label": "In folder",
    "reverse_label": "Folder contents",
-   "description": "Where an item's file sits in a folder: the source is the item, the target the folder's `system.folder`, and `path` the file's path relative to the folder's root. Placement only; a folder's query alone decides what it holds, and the edge is never written in a file's frontmatter. An item may sit in any number of folders. Revoking or removing the folder leaves its items in place, and a revoked folder takes no new placement.",
+   "description": "Says where an item's file sits in a synced folder.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2627,7 +2627,7 @@
    "property_schema": {
     "path": {
      "type": "string",
-     "description": "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property."
+     "description": "The file's path from the folder's root."
     }
    },
    "shipped": true,
@@ -2638,7 +2638,7 @@
    "id": "in-thread",
    "label": "In thread",
    "reverse_label": "Messages",
-   "description": "Source item is in the thread-target sequence. Each source is in at most one thread; the target is the thread item. Carries position for ordering.",
+   "description": "Says that an item is a message in a thread, such as a reply in a conversation.",
    "cardinality": "many-to-one",
    "source_type_constraints": [
     "*"
@@ -2651,7 +2651,7 @@
    "property_schema": {
     "position": {
      "type": "number",
-     "description": "Ordering within the thread (1-based)."
+     "description": "Where the message comes in the thread."
     }
    },
    "shipped": true,
@@ -2662,7 +2662,7 @@
    "id": "parent-of",
    "label": "Children",
    "reverse_label": "Parent",
-   "description": "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children. A child's file writes the edge, naming its parent under the reverse name, `child-of`, so a parent's file does not list every child.",
+   "description": "Says that an item is the parent of another item, so that items form a hierarchy.",
    "cardinality": "one-to-many",
    "source_type_constraints": [
     "*"
@@ -2682,7 +2682,7 @@
    "id": "references",
    "label": "References",
    "reverse_label": "Referenced by",
-   "description": "Source mentions the target: a link or embed in the source's text, or a system's own link from one item to another. Nothing else. Distinct from `about` (topical), `derived-from` (provenance) and `excerpt-of` (a passage taken from the target).",
+   "description": "Says that an item mentions another item, such as a note that links to another note.",
    "cardinality": "many-to-many",
    "source_type_constraints": [
     "*"
@@ -2701,7 +2701,7 @@
    "id": "supersedes",
    "label": "Supersedes",
    "reverse_label": "Superseded by",
-   "description": "Source replaces the target as the current version. Linear chain; no cycles. Deleting the head does not promote the predecessor (orphan).",
+   "description": "Says that an item replaces another item as the current version, such as a revised document that replaces its earlier draft.",
    "cardinality": "one-to-one",
    "source_type_constraints": [
     "*"

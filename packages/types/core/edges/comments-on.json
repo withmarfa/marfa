@@ -2,7 +2,7 @@
   "id": "comments-on",
   "label": "Comment on",
   "reverse_label": "Comments",
-  "description": "Source is a comment on the target: a comment, a reply to another comment, a review comment, a suggestion or a review verdict. Many-to-one: a comment is on one item; an item may have many comments. A reply is a comment on the comment it answers. The source goes to the trash with its target and comes back when the target is restored; removing the edge never trashes it.",
+  "description": "Says that an item is a comment on another item, including a reply to another comment.",
   "cardinality": "many-to-one",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],

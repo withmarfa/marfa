@@ -2,7 +2,7 @@
   "id": "attached-to",
   "label": "Attached to",
   "reverse_label": "Attachments",
-  "description": "Source exists only for the item or items it is attached to, whoever or whatever made it: a file, a scan, a page of a scan, a clip. Many-to-many: a part may be attached to several hosts; a host may have several attachments. The source goes to the trash with its hosts once all of them are in the trash, and comes back when any of them is restored; removing the edge never trashes it. Carries an optional position for ordered parts, such as the pages of a scan. The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
+  "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],
@@ -10,7 +10,7 @@
   "property_schema": {
     "position": {
       "type": "number",
-      "description": "Ordering among the host's attachments, such as the page of a scan (1-based)."
+      "description": "Where the attachment comes among the item's attachments, such as the page number of a scan."
     }
   },
   "reverse_name": "has-attachment"

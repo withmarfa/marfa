@@ -2,7 +2,7 @@
   "id": "in-folder",
   "label": "In folder",
   "reverse_label": "Folder contents",
-  "description": "Where an item's file sits in a folder: the source is the item, the target the folder's `system.folder`, and `path` the file's path relative to the folder's root. Placement only; a folder's query alone decides what it holds, and the edge is never written in a file's frontmatter. An item may sit in any number of folders. Revoking or removing the folder leaves its items in place, and a revoked folder takes no new placement.",
+  "description": "Says where an item's file sits in a synced folder.",
   "cardinality": "many-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["system.folder"],
@@ -11,7 +11,7 @@
   "property_schema": {
     "path": {
       "type": "string",
-      "description": "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property."
+      "description": "The file's path from the folder's root."
     }
   }
 }
