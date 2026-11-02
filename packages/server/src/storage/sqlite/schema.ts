@@ -275,6 +275,24 @@ export const item_links = sqliteTable(
   ],
 );
 
+// What `POST /items/titles` finds an item by: its title as `foldName` writes
+// it. An item outside `system.*` has a row while its type's title property
+// holds text of at most `MAX_NAME_UNITS` UTF-16 code units once trimmed; the
+// rows are kept in every state, and the lookup reads the state. Kept in
+// step by `syncTitleKey` with every write that can move a title.
+export const item_title_keys = sqliteTable(
+  "item_title_keys",
+  {
+    item_id: text("item_id")
+      .primaryKey()
+      .references(() => items.id, { onDelete: "cascade" }),
+    title_key: text("title_key").notNull(),
+  },
+  (table) => [
+    index("idx_item_title_keys_key").on(table.title_key, table.item_id),
+  ],
+);
+
 // The blobs an item's properties name, by the digest rule `collectBlobHashes`
 // applies, so a blob door finds the items that lend it their reach without
 // reading every row. `lends` is fixed when the digest enters the row and

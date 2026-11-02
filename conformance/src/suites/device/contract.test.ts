@@ -1008,6 +1008,7 @@ const invocations: Record<string, () => string[]> = {
   "items bulk-action job": () => [ID],
   "items bulk-action cancel": () => [ID],
   "items bulk-get": () => [ID],
+  "items titles": () => ["Ada"],
   "items lookup": () => ["--type", "core.note", "--id", ID],
   "items tombstones": () => [
     "--type",

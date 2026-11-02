@@ -1092,6 +1092,15 @@ impl Folder {
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
+        // The names of every file go to the server together, so a folder of
+        // many links costs a few calls and not several for each link. A name
+        // this leaves out is asked for alone where its file asks, and a
+        // failure here is judged there, file by file, so it is not raised.
+        let names: Vec<String> = work
+            .iter()
+            .flat_map(|pending| pending.lookup_names(edge_types))
+            .collect();
+        let _ = resolver.prefetch(names.iter().map(String::as_str));
         for pending in work {
             // A failure is this file's alone: it waits, and the scan goes on,
             // and what was queued before it stays the file's.
@@ -1183,6 +1192,8 @@ impl Folder {
                 )?;
             }
         }
+        report.lookup_refused = resolver.refused_call().map(str::to_string);
+        report.lookup_answered = resolver.answered();
 
         Ok(())
     }

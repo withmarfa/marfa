@@ -843,6 +843,9 @@ export interface BindingFolderScan {
   paused: number;
   trashed: string[];
   rootGone?: string;
+  /** Why links by name wait though the server answered
+   *  (`folders/edge-lookup-call-told`). */
+  lookupRefused?: string;
 }
 
 export interface BindingFolderPull {

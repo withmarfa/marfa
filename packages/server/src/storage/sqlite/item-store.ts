@@ -97,6 +97,7 @@ import type {
   CursorSortKey,
   Tombstone,
   TombstoneSelector,
+  TitledItems,
   ViewListing,
 } from "../interface.js";
 import {
@@ -143,6 +144,7 @@ import {
   cascade_marks,
   edges,
   item_links,
+  item_title_keys,
   items,
   metadata,
   trash_cascades,
@@ -167,6 +169,7 @@ import {
   syncBlobReferences,
   syncEdgeBlobReferences,
 } from "./blob-references.js";
+import { syncTitleKey, titleTextSql } from "./title-keys.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import { isFileType, stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
@@ -476,6 +479,7 @@ async function insertConflictedSibling(
   // Everything `create()` does, because this row is a create: unindexed, the
   // sibling is missed by the search people use to look for a conflicted copy.
   await searchStore.index(siblingId, properties, row.type);
+  await syncTitleKey(tx, { id: siblingId, type: row.type, properties });
 
   return {
     sibling: {
@@ -1030,6 +1034,7 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
+      await syncTitleKey(tx, { id, type: input.type, properties });
       await syncBlobReferences(
         tx,
         { id, properties },
@@ -1168,6 +1173,50 @@ export class SqliteItemStore implements ItemStore {
     return out;
   }
 
+  async titled(
+    keys: readonly string[],
+    filters: ItemFilters,
+    perKey: number,
+  ): Promise<Map<string, TitledItems>> {
+    const out = new Map<string, TitledItems>();
+    const scope = itemFilterConditions(filters);
+    const title = titleTextSql(items.type, items.properties);
+    for (const key of new Set(keys)) {
+      // One more than asked, so a key with others says so.
+      const rows = await this.db
+        .select({
+          id: items.id,
+          type: items.type,
+          title: sql<string | null>`${title}`,
+          has_blob: sql<number>`json_type(${items.properties}, '$.blob_ref') = 'text'`,
+        })
+        .from(item_title_keys)
+        .innerJoin(items, eq(items.id, item_title_keys.item_id))
+        .where(and(eq(item_title_keys.title_key, key), ...scope))
+        // By the key index's own column, so a common title stops at the
+        // limit instead of sorting every item that shares it.
+        .orderBy(asc(item_title_keys.item_id))
+        .limit(perKey + 1)
+        .all();
+      out.set(key, {
+        items: rows.slice(0, perKey).flatMap((row) =>
+          row.title === null
+            ? []
+            : [
+                {
+                  id: row.id,
+                  type: row.type,
+                  title: row.title,
+                  has_blob: row.has_blob === 1,
+                },
+              ],
+        ),
+        more: rows.length > perKey,
+      });
+    }
+    return out;
+  }
+
   async findBySourceIds(
     source: string,
     sourceIds: readonly string[],
@@ -1224,6 +1273,7 @@ export class SqliteItemStore implements ItemStore {
     refuseUnprovenFile: boolean,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
+    await syncTitleKey(tx, after);
     await syncBlobReferences(tx, after, proof, {
       carried,
       bytes: refuseUnprovenFile

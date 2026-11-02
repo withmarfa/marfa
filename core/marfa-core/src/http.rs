@@ -337,6 +337,32 @@ pub enum Replacement {
     Refused { code: String, message: String },
 }
 
+/// The names `POST /items/titles` takes in one call.
+pub(crate) const TITLE_LOOKUP_NAMES: usize = 200;
+
+/// The longest name, in UTF-16 code units, `POST /items/titles` takes, and the
+/// longest title it finds: a name over it matches no item.
+pub(crate) const TITLE_LOOKUP_UNITS: usize = 1000;
+
+/// An item `POST /items/titles` found for a name.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct TitledItem {
+    pub id: String,
+    pub r#type: String,
+    /// The title as the server holds it, which the caller compares itself.
+    pub title: String,
+    /// Whether the item's `blob_ref` holds a blob digest.
+    pub has_blob: bool,
+}
+
+/// What `POST /items/titles` answers for one name.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct TitledName {
+    pub items: Vec<TitledItem>,
+    /// Whether more items matched than `items` lists.
+    pub more: bool,
+}
+
 /// What `POST /types/normalize` answers, the two definitions it compares.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct NormalizedType {
@@ -992,46 +1018,36 @@ impl Http {
         })
     }
 
-    /// The server matches without regard to ASCII case. The flag says
-    /// whether `pages` pages left more.
-    pub fn items_containing(
-        &self,
-        field: &str,
-        text: &str,
-        pages: usize,
-    ) -> Result<(Vec<WireItemWithMetadata>, bool), CoreError> {
-        let filter = crate::FilterExpression {
-            join: crate::FilterJoin::All,
-            conditions: vec![crate::FilterCondition {
-                field: crate::FilterField::Property {
-                    name: field.to_string(),
-                },
-                operator: crate::FilterOperator::Contains,
-                value: Some(crate::FilterValue::Text(text.to_string())),
-            }],
+    /// `POST /items/titles` for at most `TITLE_LOOKUP_NAMES` names: for each,
+    /// in the order asked, the active and archived items the key reads whose
+    /// folded title is the name's, and whether more than the server lists
+    /// matched. The answer is read, not conditional, so it is asked of no
+    /// reach.
+    pub(crate) fn item_titles(&self, names: &[String]) -> Result<Vec<TitledName>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            results: Vec<TitledName>,
         }
-        .encode()?;
-        let limit = ITEM_PAGE_LIMIT.to_string();
-        let mut found = Vec::new();
-        let mut cursor: Option<String> = None;
-        for _ in 0..pages {
-            let mut params: Vec<(&str, &str)> = vec![
-                ("filter", &filter),
-                ("state", "any"),
-                ("include", "metadata"),
-                ("limit", &limit),
-            ];
-            if let Some(cursor) = &cursor {
-                params.push(("cursor", cursor));
-            }
-            let page: WirePage<WireItemWithMetadata> = self.get_page_json(&params)?;
-            found.extend(page.data);
-            match page.next_cursor {
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => return Ok((found, false)),
-            }
+        if names.len() > TITLE_LOOKUP_NAMES {
+            return Err(CoreError::Invalid(format!(
+                "a title lookup takes at most {TITLE_LOOKUP_NAMES} names, not {}",
+                names.len()
+            )));
         }
-        Ok((found, true))
+        let body = serde_json::json!({ "names": names }).to_string();
+        let plain = Self {
+            reach: None,
+            ..self.clone()
+        };
+        let answer: Answer = plain.read_json(&["items", "titles"], &[], Some(&body))?;
+        if answer.results.len() != names.len() {
+            return Err(CoreError::Decoding(format!(
+                "/items/titles: {} results for {} names",
+                answer.results.len(),
+                names.len()
+            )));
+        }
+        Ok(answer.results)
     }
 
     /// `None` for a credential that is not a key, which that door refuses
@@ -2836,6 +2852,58 @@ mod tests {
     }
 
     #[test]
+    fn a_title_lookup_sends_the_names_and_pairs_each_answer_with_its_name() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::json(
+                200,
+                r#"{"results":[
+                    {"name":"Ada","items":[{"id":"a1","type":"core.note","title":"ADA","has_blob":false}],"more":false},
+                    {"name":"Many","items":[],"more":true}
+                ]}"#,
+            )],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        let names = vec!["Ada".to_string(), "Many".to_string()];
+        let answers = http.item_titles(&names).unwrap();
+        assert_eq!(answers[0].items[0].id, "a1");
+        assert_eq!(answers[0].items[0].title, "ADA");
+        assert!(!answers[0].items[0].has_blob);
+        assert!(answers[1].more && answers[1].items.is_empty());
+        let seen = server.seen("/items/titles");
+        assert_eq!(seen.len(), 1);
+        let sent: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+        assert_eq!(sent, serde_json::json!({ "names": ["Ada", "Many"] }));
+    }
+
+    #[test]
+    fn a_title_lookup_refuses_more_names_than_a_call_takes_before_sending() {
+        let server = crate::scripted::Scripted::start();
+        let http = Http::new(&server.url(), "k").unwrap();
+        let names = vec!["a".to_string(); TITLE_LOOKUP_NAMES + 1];
+        assert!(matches!(
+            http.item_titles(&names),
+            Err(CoreError::Invalid(_))
+        ));
+        assert_eq!(server.asked(), 0);
+    }
+
+    #[test]
+    fn a_title_lookup_answered_with_too_few_results_is_not_read() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::json(200, r#"{"results":[]}"#)],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        assert!(matches!(
+            http.item_titles(&["Ada".to_string()]),
+            Err(CoreError::Decoding(_))
+        ));
+    }
+
+    #[test]
     fn each_listing_asks_for_the_most_a_page_holds() {
         let server = crate::scripted::Scripted::start();
         let empty = || {
@@ -2854,7 +2922,6 @@ mod tests {
             cursor: None,
         })
         .unwrap();
-        http.items_containing("title", "a", 1).unwrap();
         http.edges_page("parent-of", None).unwrap();
         http.item_edges_page("n1", "parent-of", None).unwrap();
         let limits = |path: &str| -> Vec<String> {
@@ -2869,7 +2936,7 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(limits("/items"), ["500", "500"]);
+        assert_eq!(limits("/items"), ["500"]);
         assert_eq!(limits("/edges"), ["500"]);
         assert_eq!(limits("/items/n1/edges"), ["500"]);
     }

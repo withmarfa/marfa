@@ -831,10 +831,93 @@ describe("starting on a database at schema version 8", () => {
   });
 });
 
+describe("starting on a database at schema version 9", () => {
+  async function insertItem(
+    client: Client,
+    id: string,
+    type: string,
+    properties: unknown,
+    state = "active",
+  ): Promise<void> {
+    await client.execute({
+      sql: "INSERT INTO items (id, type, state, properties, occurred_at, created_at, updated_at) VALUES (?, ?, ?, jsonb(?), 't', 't', 't')",
+      args: [id, type, state, JSON.stringify(properties)],
+    });
+  }
+
+  it("keys every item by the title its type names, in the bin too, and leaves out one with no title text", async () => {
+    const path = scratch();
+    await versionOne(path);
+    await migrateInPlace(path, 1, {}, MIGRATIONS.slice(0, 8), replayedShape(9));
+    const client = createClient({ url: `file:${path}` });
+    for (const [id, schema] of [
+      [
+        "user.person",
+        { parent: "core.entity", display_hints: { title_field: "name" } },
+      ],
+      ["user.worker", { parent: "user.person" }],
+      ["user.cycle-a", { parent: "user.cycle-b" }],
+      ["user.cycle-b", { parent: "user.cycle-a" }],
+    ] as const) {
+      await client.execute({
+        sql: "INSERT INTO types (id, schema, origin, created_at, updated_at) VALUES (?, ?, 'user', 't', 't')",
+        args: [id, JSON.stringify({ id, ...schema })],
+      });
+    }
+    await insertItem(client, "n1", "core.note", {
+      title: "  Caf\u00e9 Notes ",
+    });
+    await insertItem(
+      client,
+      "n2",
+      "core.note",
+      { title: "Cafe\u0301 notes" },
+      "trashed",
+    );
+    await insertItem(client, "p1", "user.person", {
+      name: "ADA",
+      title: "ignored",
+    });
+    await insertItem(client, "w1", "user.worker", { name: "Grace" });
+    await insertItem(client, "c1", "user.cycle-a", {
+      title: "Loop",
+      name: "other",
+    });
+    await insertItem(client, "u1", "user.unregistered", { title: "Stray" });
+    await insertItem(client, "s1", "system.connection", { title: "Secret" });
+    await insertItem(client, "t1", "core.note", { title: 7 });
+    await insertItem(client, "t2", "core.note", { title: " \u00a0 " });
+    await insertItem(client, "t3", "core.note", { body: "no title" });
+    await insertItem(client, "t4", "core.note", { title: "x".repeat(1001) });
+    await insertItem(client, "t5", "core.note", { title: "y".repeat(1000) });
+    await client.execute(
+      "INSERT INTO items (id, type, properties, occurred_at, created_at, updated_at) VALUES ('bad', 'core.note', x'01', 't', 't', 't')",
+    );
+    client.close();
+
+    await open(path);
+
+    const check = createClient({ url: `file:${path}` });
+    const keys = await check.execute(
+      "SELECT item_id, title_key FROM item_title_keys WHERE item_id IN ('n1', 'n2', 'p1', 'w1', 'c1', 'u1', 's1', 't1', 't2', 't3', 't4', 't5', 'bad') ORDER BY item_id",
+    );
+    check.close();
+    expect(keys.rows.map((row) => [row.item_id, row.title_key])).toEqual([
+      ["c1", "loop"],
+      ["n1", "caf\u00e9 notes"],
+      ["n2", "caf\u00e9 notes"],
+      ["p1", "ada"],
+      ["t5", "y".repeat(1000)],
+      ["u1", "stray"],
+      ["w1", "grace"],
+    ]);
+  });
+});
+
 describe("starting on an unstamped database", () => {
   it("updates an unstamped one from the last version a build left unstamped", async () => {
     // Schema versions 3 and 4 changed rows and not tables, version 5 adds
-    // one index, versions 6 and 7 one table each, version 8 a column of
+    // one index, versions 6, 7 and 10 one table each, version 8 a column of
     // `auth_passkey` and version 9 one of `connectors`, so an unstamped file
     // of this shape without them is at version 2: every build since stamps
     // what it writes.
@@ -852,6 +935,7 @@ describe("starting on an unstamped database", () => {
     );
     await fill(client);
     await client.execute("DROP TABLE trash_with_hosts");
+    await client.execute("DROP TABLE item_title_keys");
     client.close();
     // The fixture's icons are bare names no icon set has, which the update
     // to version 3 removes; every other row stays.
@@ -859,7 +943,8 @@ describe("starting on an unstamped database", () => {
       (table) =>
         table !== "type_icons" &&
         table !== "source_names" &&
-        table !== "trash_with_hosts",
+        table !== "trash_with_hosts" &&
+        table !== "item_title_keys",
     );
     const before = await rowsOf(path, tables);
 

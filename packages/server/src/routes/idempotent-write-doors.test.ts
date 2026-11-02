@@ -252,6 +252,7 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/bulk-get": "read-only batch fetch",
   "POST /items/trash-preview": "read-only preview of a trash",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
+  "POST /items/titles": "read-only lookup by title",
   "POST /items/tombstones":
     "moves a time only ever later, so a repeat is already a no-op",
   "POST /items/bulk-actions/jobs/:id/cancel":

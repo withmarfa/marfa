@@ -141,7 +141,7 @@ fn deleted_after(
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains(took), "{text}");
     std::fs::write(&path, text.replace(took, line)).unwrap();
-    server.on("/items", vec![certified(lookup)]);
+    server.on("/items/titles", vec![lookup]);
     folder.scan().unwrap();
     answered(&folder);
     assert!(
@@ -377,13 +377,13 @@ fn a_deleted_file_held_for_a_name_two_items_have_goes_to_the_bin() {
 }
 
 #[test]
-fn a_deleted_file_held_for_a_name_that_could_not_be_looked_up_goes_to_the_bin() {
+fn a_deleted_file_held_for_names_whose_lookup_was_refused_goes_to_the_bin() {
     let (dir, folder, _server, _) = deleted_after(
         r#"about: "[[B]]""#,
         r#"about: ["[[B]]", "[[Denied]]"]"#,
         (
             crate::scripted::refusal(403, "forbidden"),
-            "could not be looked up",
+            "is looked up once the server can be asked",
         ),
         |_, _| {},
     );

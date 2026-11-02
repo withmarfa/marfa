@@ -65,6 +65,7 @@ const NOT_WRITING: Record<string, string> = {
   "POST /items/:id/restore": "a state, the properties as they stand",
   "POST /items/bulk-get": "a read",
   "POST /items/lookup": "a read",
+  "POST /items/titles": "a read",
   "POST /items/tombstones": "a read",
 };
 

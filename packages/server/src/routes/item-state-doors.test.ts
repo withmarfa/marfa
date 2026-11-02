@@ -152,6 +152,7 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
     "moves existing rows to the bin through the same write a delete makes, reaches no created row's state",
   "POST /items/trash-preview": "read-only preview of a trash",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
+  "POST /items/titles": "read-only lookup by title",
   "POST /items/tombstones": "writes a purge's record, reaches no row's state",
   "POST /items/:id/tags": "metadata layer, reaches no state",
   "PUT /items/:id/metadata": "metadata layer, reaches no state",

@@ -605,34 +605,19 @@ fn drain_clause(report: &marfa_core::DrainReport) -> String {
     clause
 }
 
-fn passed(
-    say: Say<'_>,
-    folder: &Folder,
-    conflicts: &mut folders::Conflicts,
-    pass: &WatchPass,
-) -> Result<(), CliError> {
-    let WatchPass {
-        settings,
-        scan: scanned,
-        drain: drained,
-        pull: pulled,
-        flagged,
-        embeds,
-        unplaced_changed,
-        stopped_changed,
-        notices_changed,
-    } = pass;
-    let unplaced = unplaced_changed
-        .then(|| folders::unplaced_line(pulled.unplaced))
-        .flatten();
-    let stopped = drained
-        .report
-        .stopped
-        .clone()
-        .filter(|_| *stopped_changed)
-        .map(|reason| format!("the drain stopped: {reason}"));
-    // What stands is said when it changes; what happened, every time.
-    let standing: Vec<String> = if *notices_changed {
+/// The lines for what stands in this pass. The other notices are all said
+/// when any of them changes; the refusal of the folder's title lookups only
+/// when it changes itself, so a held file or an excluded secret does not say
+/// an unchanged refusal again.
+fn standing(
+    scanned: &marfa_core::ScanReport,
+    pulled: &marfa_core::PullReport,
+    flagged: &[marfa_core::folder::Flagged],
+    embeds: &[marfa_core::folder::Flagged],
+    notices_changed: bool,
+    lookup_changed: bool,
+) -> Vec<String> {
+    let notices: Vec<String> = if notices_changed {
         folders::unsure_lines(scanned)
             .into_iter()
             .chain(folders::uncarried_line(&pulled.uncarried))
@@ -655,6 +640,48 @@ fn passed(
     } else {
         Vec::new()
     };
+    notices
+        .into_iter()
+        .chain(folders::lookup_line(scanned).filter(|_| lookup_changed))
+        .collect()
+}
+
+fn passed(
+    say: Say<'_>,
+    folder: &Folder,
+    conflicts: &mut folders::Conflicts,
+    pass: &WatchPass,
+) -> Result<(), CliError> {
+    let WatchPass {
+        settings,
+        scan: scanned,
+        drain: drained,
+        pull: pulled,
+        flagged,
+        embeds,
+        unplaced_changed,
+        stopped_changed,
+        notices_changed,
+        lookup_changed,
+    } = pass;
+    let unplaced = unplaced_changed
+        .then(|| folders::unplaced_line(pulled.unplaced))
+        .flatten();
+    let stopped = drained
+        .report
+        .stopped
+        .clone()
+        .filter(|_| *stopped_changed)
+        .map(|reason| format!("the drain stopped: {reason}"));
+    // What stands is said when it changes; what happened, every time.
+    let standing = standing(
+        scanned,
+        pulled,
+        flagged,
+        embeds,
+        *notices_changed,
+        *lookup_changed,
+    );
     let said: Vec<String> = if say.json {
         Vec::new()
     } else {
@@ -783,6 +810,37 @@ mod tests {
             drain_clause(&pass(0, 0, Vec::new())),
             "the server answered 0 write(s)"
         );
+    }
+
+    #[test]
+    fn a_standing_lookup_refusal_is_said_when_it_changes_and_not_when_another_notice_does() {
+        let why = "links by name wait, since the server has no title lookup";
+        let refused = marfa_core::ScanReport {
+            lookup_refused: Some(why.into()),
+            secrets: vec![".env".into()],
+            ..Default::default()
+        };
+        let pulled = marfa_core::PullReport::default();
+        let say = |notices_changed, lookup_changed| {
+            standing(&refused, &pulled, &[], &[], notices_changed, lookup_changed)
+        };
+        let excluded = say(true, false);
+        assert!(
+            excluded.iter().any(|line| line.contains(".env")),
+            "the witness: the notice that changed is said: {excluded:?}"
+        );
+        assert!(
+            !excluded.iter().any(|line| line == why),
+            "another notice said the unchanged refusal again: {excluded:?}"
+        );
+        let refusal = say(false, true);
+        assert_eq!(refusal, [why], "a refusal that changed was not said alone");
+        let both = say(true, true);
+        assert!(
+            both.iter().any(|line| line == why) && both.len() == 2,
+            "{both:?}"
+        );
+        assert!(say(false, false).is_empty());
     }
 
     #[test]

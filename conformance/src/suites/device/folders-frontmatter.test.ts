@@ -20,7 +20,6 @@ import {
   edgeTypeCatalog,
   copyHeadRead,
   copyItemEvent,
-  itemsPage,
   copyLiveReplay,
   refusal,
   copyReplay,
@@ -515,8 +514,8 @@ describe("edges in frontmatter", () => {
     expect(
       harness.server.requests.some(
         (request) =>
-          request.pathname === "/items" &&
-          (request.query.get("filter") ?? "").includes('contains "Twin"'),
+          request.pathname === "/items/titles" &&
+          request.body.includes('"Twin"'),
       ),
       "the server was not asked for the name",
     ).toBe(true);
@@ -793,7 +792,7 @@ describe("edges in frontmatter", () => {
     expect(sentEdgeWrites(harness)).toHaveLength(1);
   });
 
-  it("flags only the file whose name cannot be looked up, and goes on with the rest", async () => {
+  it("leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push", async () => {
     const back = "01a00000-0000-7000-8000-00000000e10b";
     harness = await folderHarness("folder-edge-lookup-fails", {
       rows: edgeRows(
@@ -816,36 +815,37 @@ describe("edges in frontmatter", () => {
       `a lookup the server could not answer ended the push: ${JSON.stringify(pushed)}`,
     ).toBe(true);
     if (!pushed.ok) return;
-    const id = (title: string) =>
-      String(
-        sentCreates(harness!).find(
-          (sent) =>
-            (sent.properties as Record<string, unknown>).title === title,
-        )?.id,
-      );
-    expect(sentEdgeWrites(harness).sort()).toEqual(
-      [
-        `create ${id("One")} about ${back}`,
-        `create ${id("Two")} about ${alpha}`,
-      ].sort(),
-    );
+    // The server refuses a lookup of several names, which names none of
+    // them: each name the call carried waits, and the files are made and
+    // kept as typed.
+    expect(sentEdgeWrites(harness)).toEqual([]);
     expect(
-      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
-    ).toEqual([["Three.md", "edges"]]);
-    expect(pushed.value.scan.flagged[0]?.reason).toContain("forbidden");
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
+    ).toEqual([
+      ["One.md", "edges"],
+      ["Three.md", "edges"],
+      ["Two.md", "edges"],
+    ]);
+    for (const flagged of pushed.value.scan.flagged) {
+      expect(flagged.reason).toContain("once the server can be asked");
+      expect(flagged.reason).not.toContain("forbidden");
+    }
+    expect(pushed.value.scan.lookup_refused).toContain("several names");
+    expect(pushed.value.scan.lookup_refused).toContain("forbidden");
     expect(
       frontOf(harness, "Two.md"),
-      "a line that made its edge was erased by the pull",
+      "a line that was refused was erased by the pull",
     ).toContain("[[Alpha]]");
 
-    // A refusal is an answer: it is not asked again until the file changes.
+    // No name was refused on its own, so each is asked again at the next
+    // push, though no file changed.
     const asked = () =>
-      harness!.server.requests.filter((request) =>
-        (request.query.get("filter") ?? "").includes('"Denied"'),
+      harness!.server.requests.filter(
+        (request) => request.pathname === "/items/titles",
       ).length;
     const before = asked();
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(asked()).toBe(before);
+    expect(asked()).toBeGreaterThan(before);
   });
 
   it("flags a new target for an end whose edge the file never showed, and deletes nothing", async () => {
@@ -1201,26 +1201,26 @@ describe("edges in frontmatter", () => {
     expect(heldEdges(made.door)).toHaveLength(2);
   });
 
-  it("flags a name more common than the lookup reads", async () => {
-    let page = 0;
+  it("flags a name more common than the lookup lists as matching more than one item", async () => {
+    // Bookmarks are outside the copy, so only the server holds them.
+    const common = Array.from({ length: 21 }, (_, n) =>
+      titled(
+        `01a00000-0000-7000-8000-00000000f${String(n).padStart(3, "0")}`,
+        "Common",
+        "core.bookmark",
+      ),
+    );
     harness = await folderHarness("folder-edge-common", {
-      rows: edgeRows([titled(alpha, "Alpha")], []),
-      lookup: (text) => {
-        if (text !== "Common") return undefined;
-        page += 1;
-        return itemsPage([{ item: wireItem(titled(gamma, "Common one")) }], {
-          nextCursor: `page-${String(page)}`,
-        });
-      },
+      rows: edgeRows([titled(alpha, "Alpha"), ...common], []),
     });
     scriptFolderWrites(harness);
     put(harness, "New.md", '---\nabout: "[[Common]]"\n---\nso common\n');
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
-    expect(pushed.value.scan.flagged[0]?.reason).toContain("more than 2 pages");
-    // Two pages for the one property a scripted title lives in, `title`.
-    expect(page, "the lookup read past its cap").toBe(2);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain(
+      "matches more than one item",
+    );
     expect(sentEdgeWrites(harness)).toEqual([]);
   });
 

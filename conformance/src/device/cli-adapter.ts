@@ -1273,6 +1273,10 @@ export interface ScanReport {
   /** Why the scan read nothing, where the folder's directory is gone
    *  (`folders/root-gone-scan-report`). */
   root_gone: string | null;
+  /** Why links by name wait though the server answered, where they do: it
+   *  refused a title lookup as a whole or has none
+   *  (`folders/edge-lookup-call-told`). */
+  lookup_refused: string | null;
 }
 
 /** Where every file stands (`folders/status-files`). */

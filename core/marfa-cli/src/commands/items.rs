@@ -159,6 +159,12 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
+    /// Find the items titled by each name, in one request.
+    Titles {
+        /// The titles to look for, at most 200.
+        #[arg(required = true)]
+        names: Vec<String>,
+    },
     /// Items by link, natural key or id, in every state, with the
     /// tombstones purges left for the keys named.
     Lookup {
@@ -856,6 +862,12 @@ pub fn bulk_get_request(ids: &[String], include: &[String]) -> Request {
     Request::post(&["items", "bulk-get"]).json(body).reading()
 }
 
+pub fn titles_request(names: &[String]) -> Request {
+    Request::post(&["items", "titles"])
+        .json(json!({ "names": names }))
+        .reading()
+}
+
 fn key_selector(
     type_: &str,
     links: &[String],
@@ -1119,6 +1131,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         ItemsCommand::Bulk(args) => bulk_request(args)?,
         ItemsCommand::BulkGet { ids, include } => bulk_get_request(ids, include),
+        ItemsCommand::Titles { names } => titles_request(names),
         ItemsCommand::Lookup {
             type_,
             links,

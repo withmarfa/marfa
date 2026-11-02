@@ -142,6 +142,22 @@ export interface ViewListing {
   >;
 }
 
+/** An item `ItemReader.titled` found: enough to tell whether it is the one a
+ *  name means. */
+export interface TitledItem {
+  id: string;
+  type: string;
+  /** The text of its title, as it is stored. */
+  title: string;
+  /** Whether it holds a blob, by a `blob_ref` property. */
+  has_blob: boolean;
+}
+
+export interface TitledItems {
+  items: TitledItem[];
+  more: boolean;
+}
+
 export interface ItemFilters {
   types?: readonly string[];
   states?: readonly ItemState[];
@@ -918,6 +934,17 @@ export interface ItemStore {
     source: string,
     sourceIds: readonly string[],
   ): Promise<Map<string, Item>>;
+  /**
+   * The items outside the bin whose title folds to each key (`foldName`), by
+   * key, at most `perKey` for a key with `more` set when there are others.
+   * `filters` narrows to what the caller may read, as a listing does, and its
+   * `states` say which outside the bin count.
+   */
+  titled(
+    keys: readonly string[],
+    filters: ItemFilters,
+    perKey: number,
+  ): Promise<Map<string, TitledItems>>;
   /** The tombstones purges left for these keys under `type`. */
   tombstones(type: string, selector: TombstoneSelector): Promise<Tombstone[]>;
   /** Moves each named tombstone's `settled_at` to `settledAt` where that is

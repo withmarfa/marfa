@@ -592,6 +592,13 @@ CREATE TABLE IF NOT EXISTS `item_search_keys` (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `item_search_keys_item_id_unique` ON `item_search_keys` (`item_id`);
+CREATE TABLE IF NOT EXISTS `item_title_keys` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`title_key` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_item_title_keys_key` ON `item_title_keys` (`title_key`,`item_id`);
 CREATE TABLE IF NOT EXISTS `items` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,

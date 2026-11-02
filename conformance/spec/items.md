@@ -694,6 +694,70 @@ If `POST /items/bulk-get` names a `system.*` item and its `include` does not hol
 
 **Tests:** `compliance/reach.test.ts › answers a system row to a bulk read under a reach only when include names system`.
 
+### `items/titles`
+
+When a key sends `POST /items/titles` with `names`, the server MUST answer `200` with `results`, one entry for each name in the order the request named them, each holding the `name` as sent and the `items` that the key may read, in the state active or archived, that are not `system.*` items and whose title equals the name under `items/titles-fold`, with each item's `id`, `type`, `title` as stored and whether its `blob_ref` holds a blob.
+
+**Reason:** a device resolving the links of a folder asks for many names at once, and the answer to a name is a lookup in an index, so it costs the same on a million items as on a hundred.
+
+**Tests:** `compliance/item-titles.test.ts › answers each name in the order named with the items it titles`, `› finds an archived item, and leaves out an item in the bin`, `› matches a whole title, not a part of one`.
+
+### `items/titles-fold`
+
+When a key sends `POST /items/titles`, the server MUST match a title to a name if they are equal after each loses the Unicode `White_Space` at either end, is put in normalization form NFC, has each code point lowercased on its own with no context rule, and is put in NFC again.
+
+**Reason:** a device compares names the same way (`folders/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. A capital sigma lowercases to `σ` at the end of a word, as the device lowercases it.
+
+**Tests:** `compliance/item-titles.test.ts › finds a title by its folded form and by the name as typed, for every case of the shared fold`.
+
+### `items/titles-blank`
+
+When a name sent to `POST /items/titles` is empty after the Unicode `White_Space` at its ends is removed, the server MUST answer it with no items.
+
+**Tests:** `compliance/item-titles.test.ts › finds no title for a name that folds to nothing`.
+
+### `items/titles-title`
+
+When a key sends `POST /items/titles`, the server MUST read an item's title from the property that the nearest `display_hints.title_field` up its type's parents names, or from `title` where none names one.
+
+**Reason:** the property is the one a device reads an item's title from, so the two agree on what an item is called.
+
+**Tests:** `compliance/item-titles.test.ts › reads a title from the property its type is titled by, inherited down the type's parents`, `device/folders-frontmatter.test.ts › matches a title only in the property its type keeps it in`.
+
+### `items/titles-scope`
+
+When a key sends `POST /items/titles`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
+
+**Reason:** a name looked up must not tell a key that an item exists which it may not list.
+
+**Tests:** `compliance/item-titles.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+
+### `items/titles-no-type`
+
+If the key sending `POST /items/titles` reaches no type, then the server MUST answer `403` with `type_not_permitted`.
+
+**Tests:** `compliance/item-titles.test.ts › leaves out an item whose type the key may not read, and refuses a key that reads no type`.
+
+### `items/titles-limits`
+
+If `POST /items/titles` names more than 200 names, or a name longer than 1,000 UTF-16 code units, or is not a list of names, or carries a key the operation does not declare, then the server MUST answer `400` with `validation_error`.
+
+**Tests:** `compliance/item-titles.test.ts › takes at most 200 names of at most 1,000 UTF-16 code units`, `› refuses a body that is not a list of names`.
+
+### `items/titles-long-title`
+
+When an item's title is longer than 1,000 UTF-16 code units once the Unicode `White_Space` at its ends is removed, the server MUST match no name sent to `POST /items/titles` to that item.
+
+**Reason:** a name sent is at most 1,000 UTF-16 code units (`items/titles-limits`), yet a shorter name can fold to a longer title, and a title past that limit is a body typed into the wrong field, not a name anyone links by.
+
+**Tests:** `compliance/item-titles.test.ts › matches no name to a title longer than 1,000 UTF-16 code units after trimming`.
+
+### `items/titles-list`
+
+When more than 20 items match a name sent to `POST /items/titles`, the server MUST answer the first 20 by `id` with `more` set to `true`.
+
+**Tests:** `compliance/item-titles.test.ts › lists at most 20 items for a name and says when there are more`.
+
 ## Updating an item
 
 What a write at a stale version does is `versions.md`'s.

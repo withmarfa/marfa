@@ -1064,7 +1064,7 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
 
-**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
+**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks the server for a name once, in the form typed`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
 
 ### `folders/same-name-scan-choice`
 
@@ -1090,11 +1090,13 @@ When a folder file is renamed only in case or Unicode normalization, a device MU
 
 **Tests:** `device/folders-contract-b.test.ts › does not send a placement for an equivalent rename to %s`.
 
-### `folders/lookup-both-normalizations`
+### `folders/lookup-any-normalization`
 
-When a folder asks the server to resolve a title whose NFC and NFD forms differ, a device MUST look up both forms.
+When a folder asks the server to resolve a title, a device MUST ask for the name once, as typed.
 
-**Tests:** `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks server names in both forms`.
+**Reason:** the server compares by a folded title key (`items/titles-fold`), so a device that asked once for each Unicode form, or for each spelling of the case, would send the server more requests than names without finding any more.
+
+**Tests:** `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks the server for a name once, in the form typed`.
 
 ### `folders/state-not-admitted`
 
@@ -1980,7 +1982,7 @@ If a typed edge target matches no readable item, then a device MUST flag the fil
 
 If a typed edge target matches more than one readable item, then a device MUST flag the file `edges` with the ambiguity.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags an ambiguous name and leaves it as typed`, `device/fidelity.test.ts › matches the name lookup a folder asks the server for a typed name`.
+**Tests:** `device/folders-frontmatter.test.ts › flags an ambiguous name and leaves it as typed`, `device/fidelity.test.ts › matches the title lookup a folder asks the server for typed names`.
 
 ### `folders/edge-name-kept`
 
@@ -2008,15 +2010,41 @@ When the server becomes reachable after a name lookup waited, a device MUST retr
 
 ### `folders/edge-lookup-refused`
 
-When the server refuses a name lookup, a device MUST flag only the affected file with the refusal.
+If the server refuses a name lookup that carried one name, other than by answering it as a route it does not have (HTTP 404 or 405), then a device MUST flag each file naming that name with the refusal.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`.
+**Reason:** only a refusal of a call that carried one name says which name was refused, and a missing route refuses the call whatever the number of names it carried, which `folders/edge-lookup-call-refused` covers.
+
+**Tests:** `device/folders-held-links.test.ts › does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal`.
 
 ### `folders/edge-lookup-no-repeat`
 
-While a file with a refused name lookup is unchanged, a device MUST NOT repeat that lookup.
+While a file naming a name flagged under `folders/edge-lookup-refused` is unchanged, a device MUST NOT repeat that lookup.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags only the file whose name cannot be looked up, and goes on with the rest`, `device/folders-held-links.test.ts › asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+**Tests:** `device/folders-held-links.test.ts › does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal`.
+
+### `folders/edge-lookup-call-refused`
+
+If the server refuses a name lookup that carried more than one name, or answers a name lookup that carried any number of names, one included, as a route it does not have (HTTP 404 or 405), then a device MUST flag each file naming a name that call carried as waiting for lookup.
+
+**Reason:** a refusal of the call as a whole names none of its names, and a server older than the title lookup refuses every call, so the refusal says nothing about any one name.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-held-links.test.ts › holds the one link a server without the title lookup refused, as the call's refusal and not the name's`.
+
+### `folders/edge-lookup-call-retried`
+
+When a scan follows one in which the server refused a name lookup under `folders/edge-lookup-call-refused`, a device MUST look up the names that call carried again, whether or not the files naming them changed.
+
+**Reason:** the condition that refused the call, such as a server not yet upgraded, can clear with no change to the folder.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+
+### `folders/edge-lookup-call-told`
+
+When the server refuses a name lookup under `folders/edge-lookup-call-refused`, a device MUST report the refusal once for the folder's scan rather than in each flagged file's reason.
+
+**Reason:** the refusal is a standing condition of the server, not of any file, and a folder of thousands of linked notes would repeat it in each.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/binding-folders-lookup.test.ts › tells an app why links by name wait when the server has no title lookup, and no longer once it has`.
 
 ### `folders/create-before-links`
 
@@ -2032,7 +2060,7 @@ When the working copy has changed since a file was flagged `edges` because a nam
 
 **Reason:** The target may since have been created on this device, pulled in from another, or one of two namesakes moved to the bin. The working copy changes with every write sent or taken in, local or pulled.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`.
 
 ### `folders/edge-held-quiet`
 
@@ -2046,7 +2074,7 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
 
 ### `folders/edge-held-never-guessed`
 
@@ -2054,11 +2082,29 @@ If a held edge name still matches more than one item when it is looked up again,
 
 **Tests:** `device/folders-held-links.test.ts › never guesses between two items of one name, and resolves once one goes to the bin`.
 
-### `folders/edge-lookup-page-limit`
+### `folders/edge-lookup-list-limit`
 
-When the second lookup page for a title property and spelling says more matches follow, a device MUST flag the name as exceeding the two-page lookup limit.
+If the server says more items are titled a name than it lists, then a device MUST flag the name as matching more than one item.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup reads`.
+**Reason:** the server lists at most 20 items for a name, so more than that are titled alike, and no one of them is the item wanted.
+
+**Tests:** `device/folders-frontmatter.test.ts › flags a name more common than the lookup lists as matching more than one item`.
+
+### `folders/lookup-batched`
+
+When a scan resolves the names its files' links and lines type, a device MUST ask the server for them in calls of at most 200 distinct names, each name once.
+
+**Reason:** a request for each name takes time that grows with the names a folder links, and a folder of ten thousand notes links more names than a server can answer one at a time in a useful while.
+
+**Tests:** `device/folders-held-links.test.ts › asks the server for the names of a scan in calls of 200, each distinct name once`.
+
+### `folders/lookup-held-ambiguous`
+
+If the copy holds two or more items under a name, then a device MUST flag the name as matching more than one item without asking the server for it.
+
+**Reason:** what the server holds can only add to the items, so no answer could make the name name one.
+
+**Tests:** `device/folders-held-links.test.ts › leaves a name the copy holds under two items out of the lookup, and asks the rest`, `device/folders-held-links.test.ts › never guesses between two items of one name, and resolves once one goes to the bin`.
 
 ### `folders/edge-lookup-states`
 
@@ -6938,7 +6984,7 @@ When a `folders watch` pass only waits for a journaled deletion's grace period t
 
 When a `folders watch` pass reports new activity, the CLI MUST NOT repeat a standing notice unchanged since the preceding pass.
 
-**Tests:** `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
+**Tests:** `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`, `device/folders.test.ts › says a refused title lookup once while another notice changes and other passes report`.
 
 ### `folders/watch-notice-change`
 

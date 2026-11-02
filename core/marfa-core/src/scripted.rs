@@ -28,6 +28,12 @@ pub enum Answer {
         then: Then,
     },
     Stall,
+    /// `POST /items/titles` answered for the names the request sent: each
+    /// name's items are the entries of `found` whose key is the name as sent,
+    /// each an item as the endpoint lists it, and a name with none finds none.
+    Titled {
+        found: Vec<(String, String)>,
+    },
     /// `answer`, once `after` has passed, so callers can overlap.
     Slow {
         after: Duration,
@@ -230,6 +236,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         let _ = reader.read_exact(&mut body);
         body
     };
+    let sent = body.clone();
     let answer = {
         let mut script = script.lock().unwrap();
         script.seen.push(Seen {
@@ -254,6 +261,29 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         body: format!(r#"{{"error":{{"code":"not_found","message":"no answer for {path}"}}}}"#),
         headers: Vec::new(),
     });
+    if let Answer::Titled { found } = &answer {
+        let names = serde_json::from_slice::<serde_json::Value>(&sent)
+            .ok()
+            .and_then(|body| body["names"].as_array().cloned())
+            .unwrap_or_default();
+        let results: Vec<String> = names
+            .iter()
+            .map(|name| {
+                let name = name.as_str().unwrap_or_default();
+                let items: Vec<&str> = found
+                    .iter()
+                    .filter(|(key, _)| key == name)
+                    .map(|(_, item)| item.as_str())
+                    .collect();
+                format!(
+                    r#"{{"name":{},"items":[{}],"more":false}}"#,
+                    serde_json::Value::from(name),
+                    items.join(",")
+                )
+            })
+            .collect();
+        answer = json(200, &format!(r#"{{"results":[{}]}}"#, results.join(",")));
+    }
     loop {
         answer = match answer {
             Answer::Slow { after, answer } => {
@@ -386,7 +416,9 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
-        Answer::Slow { .. } | Answer::WaitFor { .. } => unreachable!("taken apart above"),
+        Answer::Slow { .. } | Answer::WaitFor { .. } | Answer::Titled { .. } => {
+            unreachable!("taken apart above")
+        }
     }
     let _ = stream.shutdown(Shutdown::Both);
 }

@@ -540,10 +540,11 @@ describe("profiles", () => {
     expect(unprofiled.code, unprofiled.stderr).toBe(0);
     expect(unprofiled.stderr).toBe(`marfa: writing to ${origin}\n`);
 
-    // `items bulk-get` is a read sent as POST.
+    // `items bulk-get` and `items titles` are reads sent as POST.
     for (const read of [
       ["items", "get", id],
       ["items", "bulk-get", id],
+      ["items", "titles", "Ada"],
     ]) {
       const ran = await base.run(["--profile", "demo", ...read]);
       expect(ran.code, ran.stderr).toBe(0);

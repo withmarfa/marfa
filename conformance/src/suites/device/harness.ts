@@ -308,7 +308,8 @@ export function scriptHydration(
     catalog?: Responder;
     /** What `GET /edge-types` answers, the shipped types unless named. */
     edgeTypes?: Responder;
-    /** A folder's name lookup answered otherwise, where this answers. */
+    /** A call to `POST /items/titles` naming a name this answers is answered
+     *  with that answer, as a refusal of the call. */
     lookup?: (text: string) => Answer | undefined;
     /** What `GET /keys/current` answers, a key reading and writing every
      *  type unless named. */
@@ -465,20 +466,108 @@ export function scriptHydration(
           .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
       );
     }
-    const contains = containsFilter(filter);
-    if ("kind" in contains) return contains;
-    const standIn = options.lookup?.(contains.text);
-    if (standIn !== undefined) return standIn;
-    const visible = inState.filter((row) => {
-      const value = wireItem(row.item).properties as Record<string, unknown>;
-      const held = value[contains.field];
-      return (
-        typeof held === "string" &&
-        asciiLower(held).includes(asciiLower(contains.text))
+    return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+  });
+  scriptTitles(server, rows, options.lookup, options.catalog);
+}
+
+/** The white space Unicode names, which the server trims from a name. */
+const WHITE_SPACE = /^\p{White_Space}+|\p{White_Space}+$/gu;
+
+/** A name as the server folds it for `POST /items/titles`: trimmed, in NFC,
+ *  lowercased one code point at a time, and in NFC again. */
+export function foldedName(text: string): string {
+  let lowered = "";
+  for (const point of text.replace(WHITE_SPACE, "").normalize("NFC"))
+    lowered += point.toLowerCase();
+  return lowered.normalize("NFC");
+}
+
+/** The items one name answers with, as the server lists at most. */
+const TITLES_PER_NAME = 20;
+
+/**
+ * What `POST /items/titles` answers for the rows a fixture scripts: for each
+ * name, the active and archived rows outside `system.*` whose folded title
+ * is the name's folded, the first `TITLES_PER_NAME` of them, by id. `lookup`
+ * answers a call that names a name it recognises with its own answer, as a
+ * server that refuses the call would.
+ */
+export function scriptTitles(
+  server: ScriptedServer,
+  rows: Record<string, Array<{ item: WireItemOptions }>>,
+  lookup?: (text: string) => Answer | undefined,
+  catalog: Responder = typeCatalog(),
+): void {
+  server.answer("POST", "/items/titles", (request) => {
+    const asked = (JSON.parse(request.body) as { names: string[] }).names;
+    for (const name of asked) {
+      const standIn = lookup?.(name);
+      if (standIn !== undefined) return standIn;
+    }
+    // The property an item's type is titled by: the nearest `title_field`
+    // up its chain, else `title`, as the server keys it.
+    const declared = new Map(
+      (
+        (typeof catalog === "function" ? catalog(request) : catalog) as {
+          body: { data: Array<Record<string, unknown>> };
+        }
+      ).body.data.map((type) => [String(type.id), type]),
+    );
+    const titleFieldOf = (type: string): string => {
+      const seen = new Set<string>();
+      for (
+        let at = declared.get(type);
+        at !== undefined && !seen.has(String(at.id));
+        at =
+          at.parent === undefined ? undefined : declared.get(String(at.parent))
+      ) {
+        seen.add(String(at.id));
+        const hints = at.display_hints as { title_field?: string } | undefined;
+        if (hints?.title_field !== undefined) return hints.title_field;
+      }
+      return "title";
+    };
+    const titleOf = (item: Record<string, unknown>): unknown =>
+      (item.properties as Record<string, unknown>)[
+        titleFieldOf(String(item.type))
+      ];
+    const held = Object.values(rows)
+      .flat()
+      .map((row) => wireItem(row.item))
+      .filter(
+        (item) =>
+          !String(item.type).startsWith("system.") &&
+          (item.state === "active" || item.state === "archived"),
       );
-    });
-    return itemsPage(
-      visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+    return answers.titles(
+      asked.map((name) => {
+        const key = foldedName(name);
+        const found =
+          key === ""
+            ? []
+            : held
+                .filter((item) => {
+                  const title = titleOf(item);
+                  return typeof title === "string" && foldedName(title) === key;
+                })
+                .sort((one, other) =>
+                  String(one.id).localeCompare(String(other.id)),
+                );
+        return {
+          name,
+          items: found.slice(0, TITLES_PER_NAME).map((item) => {
+            const properties = item.properties as Record<string, unknown>;
+            return {
+              id: String(item.id),
+              type: String(item.type),
+              title: String(titleOf(item)),
+              has_blob: typeof properties.blob_ref === "string",
+            };
+          }),
+          more: found.length > TITLES_PER_NAME,
+        };
+      }),
     );
   });
 }
@@ -541,42 +630,6 @@ export function scriptKey(server: ScriptedServer, ...key: Responder[]): void {
       ? key
       : [answers.currentKey("fixture-key", { "*": "write" })]),
   );
-}
-
-/** ASCII letters lowercased and nothing else, as the server's `contains`. */
-function asciiLower(text: string): string {
-  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
-}
-
-/** A name lookup's filter read as the server's grammar reads it, where `\"`
- *  and `\\` escape and every other backslash is itself. */
-function containsFilter(
-  filter: string,
-): { field: string; text: string } | Answer {
-  const head = /^properties\.([A-Za-z0-9_]+) contains "/.exec(filter);
-  if (head === null) {
-    return refusal(400, "validation_error", `no scripted filter: ${filter}`);
-  }
-  let text = "";
-  let at = head[0].length;
-  while (at < filter.length && filter[at] !== '"') {
-    const next = filter[at + 1];
-    if (filter[at] === "\\" && (next === '"' || next === "\\")) {
-      text += next;
-      at += 2;
-    } else {
-      text += filter[at];
-      at += 1;
-    }
-  }
-  if (at >= filter.length) {
-    return refusal(
-      400,
-      "validation_error",
-      `Unterminated string starting at position ${String(head[0].length - 1)}`,
-    );
-  }
-  return { field: head[1] ?? "", text };
 }
 
 /**
@@ -781,7 +834,8 @@ export async function folderHarness(
     catalog?: Answer;
     /** What `GET /edge-types` answers, the shipped types unless named. */
     edgeTypes?: Responder;
-    /** A name lookup answered otherwise, where this answers. */
+    /** A call to `POST /items/titles` naming a name this answers is answered
+     *  with that answer, as a refusal of the call. */
     lookup?: (text: string) => Answer | undefined;
     /**
      * Event-stream answers for the catch-ups after the hydration.

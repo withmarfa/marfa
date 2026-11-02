@@ -99,6 +99,10 @@ pub struct WatchPass {
     /// refused secret or a held file say, differs from the pass before. A
     /// pass that did something else says them again only where it does.
     pub notices_changed: bool,
+    /// Whether the refusal of the folder's title lookups, which a pass says
+    /// when it changes and apart from the other notices, differs from the
+    /// pass before.
+    pub lookup_changed: bool,
 }
 
 /// How a watch ended where nothing went wrong.
@@ -1031,6 +1035,7 @@ struct Standing {
     registry: Option<String>,
     unsure: Vec<Unsure>,
     paused: (usize, usize),
+    lookup_refused: Option<String>,
 }
 
 impl Standing {
@@ -1080,8 +1085,13 @@ impl Telling {
     }
 
     fn waiting(&mut self, settings: SettingsFileReport, scan: ScanReport) -> Option<WatchEvent> {
+        // A pass that read nothing heard nothing from the server.
         let now = Standing {
             root_gone: scan.root_gone.clone(),
+            lookup_refused: self
+                .standing
+                .as_ref()
+                .and_then(|before| before.lookup_refused.clone()),
             ..Standing::default()
         };
         let changed = self.standing.as_ref() != Some(&now);
@@ -1100,6 +1110,16 @@ impl Telling {
         drain: Drained,
         pull: PullReport,
     ) -> Option<WatchEvent> {
+        // The refusal stands as the last pass that asked the server found it,
+        // until a pass hears the server answer or refuse again: a pass that
+        // asked no name, or whose calls failed with no answer, proves neither.
+        let mut scan = scan;
+        if scan.lookup_refused.is_none()
+            && !scan.lookup_answered
+            && let Some(before) = &self.standing
+        {
+            scan.lookup_refused = before.lookup_refused.clone();
+        }
         let happened = stirred(&settings, &scan, &drain, &pull);
         let flagged = super::merged_flagged(&scan.flagged, &pull.flagged);
         let mut embeds: Vec<Flagged> = Vec::new();
@@ -1149,6 +1169,7 @@ impl Telling {
             embeds: embeds.clone(),
             registry: scan.registry.clone(),
             unsure: scan.unsure.clone(),
+            lookup_refused: scan.lookup_refused.clone(),
         };
         let before = self.standing.replace(now.clone());
         let changed = before.as_ref() != Some(&now);
@@ -1161,6 +1182,11 @@ impl Telling {
         let notices_changed = before
             .as_ref()
             .is_none_or(|before| !before.same_notices(&now));
+        let lookup_changed = before
+            .as_ref()
+            .map_or(now.lookup_refused.is_some(), |before| {
+                before.lookup_refused != now.lookup_refused
+            });
         (happened || changed).then(|| {
             WatchEvent::Passed(Box::new(WatchPass {
                 settings,
@@ -1172,6 +1198,7 @@ impl Telling {
                 unplaced_changed,
                 stopped_changed,
                 notices_changed,
+                lookup_changed,
             }))
         })
     }
@@ -1779,6 +1806,159 @@ mod tests {
         assert!(more.notices_changed, "a second secret is news");
         let cleared = pass_of(&mut telling, held(&[], 0)).unwrap();
         assert!(cleared.notices_changed, "a notice that clears is told");
+    }
+
+    /// A pass that heard a whole-call refusal, one that heard the server
+    /// answer, and one that heard nothing: no name was asked, or every call
+    /// failed with no answer.
+    fn refused() -> ScanReport {
+        ScanReport {
+            lookup_refused: Some("links by name wait".into()),
+            ..ScanReport::default()
+        }
+    }
+
+    fn answered() -> ScanReport {
+        ScanReport {
+            lookup_answered: true,
+            ..ScanReport::default()
+        }
+    }
+
+    fn heard_nothing() -> ScanReport {
+        ScanReport::default()
+    }
+
+    fn passed_with(telling: &mut Telling, full: bool, scan: ScanReport) -> Option<WatchPass> {
+        match telling.passed(
+            full,
+            SettingsFileReport::default(),
+            scan,
+            drained(),
+            PullReport::default(),
+        ) {
+            Some(WatchEvent::Passed(pass)) => Some(*pass),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_refused_title_lookup_is_told_once_while_it_stands_and_again_when_it_clears() {
+        let mut telling = Telling::default();
+        let first = passed_with(&mut telling, true, refused()).unwrap();
+        assert!(first.lookup_changed, "the refusal was not told");
+        assert_eq!(
+            first.scan.lookup_refused.as_deref(),
+            Some("links by name wait")
+        );
+        assert!(
+            passed_with(&mut telling, true, refused()).is_none(),
+            "a full pass told the standing refusal again"
+        );
+        let cleared = passed_with(&mut telling, true, answered()).unwrap();
+        assert!(cleared.lookup_changed, "a cleared refusal was not told");
+        assert_eq!(cleared.scan.lookup_refused, None);
+        assert!(
+            passed_with(&mut telling, true, heard_nothing()).is_none(),
+            "a cleared refusal came back"
+        );
+    }
+
+    #[test]
+    fn a_refusal_stands_through_a_pass_that_heard_nothing_of_the_server() {
+        for full in [true, false] {
+            let mut telling = Telling::default();
+            passed_with(&mut telling, true, refused()).unwrap();
+            assert!(
+                passed_with(&mut telling, full, heard_nothing()).is_none(),
+                "a pass that asked the server nothing lifted the refusal (full: {full})"
+            );
+            // The witness: the same pass lifts it where the server answered.
+            let lifted = passed_with(&mut telling, full, answered()).unwrap();
+            assert!(lifted.lookup_changed, "full: {full}");
+            assert_eq!(lifted.scan.lookup_refused, None, "full: {full}");
+        }
+    }
+
+    #[test]
+    fn a_quick_pass_that_hears_the_server_answer_lifts_the_refusal_and_it_stays_lifted() {
+        let mut telling = Telling::default();
+        passed_with(&mut telling, true, refused()).unwrap();
+        // Held files are judged again on a quick pass, and the server answers.
+        let lifted = passed_with(&mut telling, false, answered()).unwrap();
+        assert!(lifted.lookup_changed);
+        assert_eq!(lifted.scan.lookup_refused, None);
+        for full in [false, true] {
+            assert!(
+                passed_with(&mut telling, full, heard_nothing()).is_none(),
+                "the old refusal was put back by a pass that heard nothing (full: {full})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quick_pass_that_hears_a_refusal_sets_it() {
+        let mut telling = Telling::default();
+        passed_with(&mut telling, true, answered()).unwrap();
+        let set = passed_with(&mut telling, false, refused()).unwrap();
+        assert!(set.lookup_changed);
+        assert_eq!(
+            set.scan.lookup_refused.as_deref(),
+            Some("links by name wait")
+        );
+    }
+
+    #[test]
+    fn a_refusal_heard_beside_an_answered_call_stands() {
+        let mut telling = Telling::default();
+        let both = ScanReport {
+            lookup_answered: true,
+            ..refused()
+        };
+        let first = passed_with(&mut telling, true, both).unwrap();
+        assert_eq!(
+            first.scan.lookup_refused.as_deref(),
+            Some("links by name wait")
+        );
+    }
+
+    #[test]
+    fn a_new_notice_does_not_say_the_standing_lookup_refusal_again() {
+        let mut telling = Telling::default();
+        passed_with(&mut telling, true, refused()).unwrap();
+        let more = passed_with(
+            &mut telling,
+            true,
+            ScanReport {
+                secrets: vec![".env".into()],
+                ..heard_nothing()
+            },
+        )
+        .unwrap();
+        assert!(more.notices_changed, "the witness: the secret is news");
+        assert!(
+            !more.lookup_changed,
+            "an unchanged refusal was told again beside a new notice"
+        );
+    }
+
+    #[test]
+    fn a_folder_whose_directory_is_gone_keeps_the_refusal_it_had() {
+        let mut telling = Telling::default();
+        passed_with(&mut telling, true, refused()).unwrap();
+        telling.waiting(
+            SettingsFileReport::default(),
+            ScanReport {
+                root_gone: Some("gone".into()),
+                ..ScanReport::default()
+            },
+        );
+        assert!(
+            passed_with(&mut telling, true, heard_nothing()).is_some_and(|pass| {
+                !pass.lookup_changed
+                    && pass.scan.lookup_refused.as_deref() == Some("links by name wait")
+            })
+        );
     }
 
     #[test]

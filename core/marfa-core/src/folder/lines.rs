@@ -32,6 +32,37 @@ pub(super) struct EdgeWork {
     pub refused_lookups: BTreeMap<String, String>,
 }
 
+impl EdgeWork {
+    /// The names this file's links and lines may ask the server about, each
+    /// in the spellings `resolve_reference` tries, but for a name whose
+    /// lookup the server refused while the file was as it is.
+    pub fn lookup_names(&self, types: &EdgeTypes) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut take = |typed: Typed| {
+            names.push(typed.name);
+            names.push(typed.raw);
+        };
+        self.links
+            .iter()
+            .map(|raw| Typed::new(raw))
+            .for_each(&mut take);
+        for (key, value) in &self.front {
+            if types.named(key).is_none() {
+                continue;
+            }
+            if let Ok(typed) = edge_types::typed(value) {
+                typed.into_iter().for_each(&mut take);
+            }
+        }
+        names.retain(|name| {
+            !self
+                .refused_lookups
+                .contains_key(&crate::names::folded(name.trim()))
+        });
+        names
+    }
+}
+
 pub(super) struct Outcome {
     pub links: Vec<String>,
     /// The file items the body's embeds name, kept apart from `links`.
@@ -54,7 +85,7 @@ pub(super) struct Outcome {
 struct Unresolved<'w> {
     /// Refusals kept from an earlier judgment of the file as it is.
     known: &'w BTreeMap<String, String>,
-    /// The server could not be reached.
+    /// A lookup could not be completed and can be retried.
     waiting: bool,
     unmatched: bool,
     refused: BTreeMap<String, String>,

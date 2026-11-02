@@ -1404,6 +1404,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     for said in trashed_lines(report)
         .into_iter()
         .chain(unsure_lines(report))
+        .chain(lookup_line(report))
     {
         line.push('\n');
         line.push_str(&said);
@@ -1434,6 +1435,13 @@ pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         )
     });
     registry.chain(unsure).collect()
+}
+
+/// What stands while the server does not answer the folder's title lookups.
+/// A watch says it when it changes, apart from the other standing lines, so a
+/// held file or an excluded secret does not say it again.
+pub fn lookup_line(report: &marfa_core::ScanReport) -> Option<String> {
+    report.lookup_refused.clone()
 }
 
 /// Says each conflicted edit once, with the file it was for and the file its
