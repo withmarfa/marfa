@@ -4572,9 +4572,9 @@ While another process watches a folder, the CLI MUST answer `folders status` wit
 
 ### `folders/status-watch-other-build`
 
-When `folders status` runs while a current entry in the record of folder watches lists the folder as watched and that entry’s `marfa_version` differs from the CLI’s own version or is absent, the CLI MUST report the entry’s `pid`, its `marfa_version` and the CLI’s own version.
+When `folders status` runs while a current entry in the record of folder watches lists the folder as watched and that entry’s `build_version` differs from the CLI’s own version or is absent, the CLI MUST report `watch_other_build` with the entry’s `pid`, its `build_version` and the CLI’s own version in `this_version`.
 
-**Reason:** A person who upgraded sees that the watch of the folder still runs the earlier build. In JSON the report carries `watch_other_build`, which is `null` otherwise.
+**Reason:** A person who upgraded sees that the watch of the folder still runs the earlier build.
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
 
@@ -4910,7 +4910,7 @@ If a watch of every folder is interrupted before the server answers a folder’s
 
 ## The record of folder watches
 
-A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `marfa_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
+A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `build_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
 
 ### `folders/watch-record-location`
 
@@ -4976,7 +4976,7 @@ While several watch processes run on one machine, a device MUST keep one entry i
 
 ### `folders/watch-record-version`
 
-While a watch process runs, a device MUST set `marfa_version` in the process’s entry in the record to the version of the build that runs it, as `marfa --version` prints it.
+While a watch process runs, a device MUST set `build_version` in the process’s entry in the record to the version of the build that runs it, as `marfa --version` prints it.
 
 **Reason:** After an upgrade, a watch started earlier goes on running the build it was started with, and a program reading the record tells it from one on the build installed now.
 
@@ -5554,7 +5554,7 @@ Where `folders watch` runs with `--exit-on-new-build`, when the path the command
 
 **Reason:** An upgrade installs a new build at the path the agent names, by moving a link, as Homebrew does, or by replacing the file, and a watch left running the old build goes on with it until the person logs out. The service manager starts the watch again only after a failure, so the watch ends with one, between passes, so that no change it was sending is cut off. A change it has not reached stays in the folder for the new build to send. A copy of the same version counts as a new build, since the watch cannot tell it from its own.
 
-**Tests:** `device/folders-new-build.test.ts › ends with exit status 3 once a link it was started through moves to a new build, naming both versions, and the next watch sends what it had not`, `device/folders-new-build.test.ts › ends for a file replaced in place by a new build, as an install that writes the file does`, `device/folders-new-build.test.ts › says once that the path leads to no build, or to a file that is not one, and goes on syncing, and ends for a copy of its build but not for the build itself put back`.
+**Tests:** `device/folders-new-build.test.ts › ends with exit status 3 once a link it was started through moves to a new build, naming both versions, and the next watch sends what it had not`, `device/folders-new-build.test.ts › ends with exit status 3 for a new build only once the create under way is answered, as a watch of every folder that autostart runs, and the next watch sends what was made meanwhile, once`, `device/folders-new-build.test.ts › ends for a file replaced in place by a new build, as an install that writes the file does`, `device/folders-new-build.test.ts › says once that the path leads to no build, or to a file that is not one, and goes on syncing, and ends for a copy of its build but not for the build itself put back`.
 
 ### `folders/watch-new-build-said`
 
@@ -5580,21 +5580,13 @@ When the path `folders watch` was run by leads to no file, or to a file that pri
 
 **Tests:** `device/folders-new-build.test.ts › says once that the path leads to no build, or to a file that is not one, and goes on syncing, and ends for a copy of its build but not for the build itself put back`.
 
-### `folders/watch-new-build-term`
-
-Where `folders watch` runs with `--exit-on-new-build`, when it receives `SIGTERM`, the CLI MUST end with exit status 0.
-
-**Reason:** A watch the service manager stopped stays stopped (`folders/watch-terminate`).
-
-**Tests:** `device/folders-new-build.test.ts › ends with exit status 0 for SIGTERM, though it ends with 3 for a new build`.
-
 ### `folders/watch-terminate`
 
 When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds with exit status 0.
 
 **Reason:** A service manager stops a watch with `SIGTERM`, and a watch that ends with a failure would be started again.
 
-**Tests:** `device/folders-autostart.test.ts › ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched`.
+**Tests:** `device/folders-autostart.test.ts › ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched`, `device/folders-new-build.test.ts › ends with exit status 0 for SIGTERM, though it ends with 3 for a new build`.
 
 ### `folders/watch-terminate-telemetry`
 

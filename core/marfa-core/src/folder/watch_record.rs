@@ -71,9 +71,9 @@ struct Process {
     pid: u32,
     /// The version of the build running the watch, which a program reading
     /// the record compares with its own. `None` in an entry a build written
-    /// before the field wrote, whose entry is still kept.
+    /// before the field wrote, or rewrote, and such an entry is still kept.
     #[serde(default)]
-    marfa_version: Option<String>,
+    build_version: Option<String>,
     started_at: String,
     heartbeat_at: String,
     heartbeat_interval_seconds: u64,
@@ -461,7 +461,7 @@ impl WatchRecord {
     fn process(&self, inner: &Inner) -> Process {
         Process {
             pid: self.pid,
-            marfa_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            build_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             started_at: self.started_at.clone(),
             heartbeat_at: String::new(),
             heartbeat_interval_seconds: self.heartbeat.as_secs().max(1),
@@ -647,7 +647,7 @@ mod tests {
         let raw: serde_json::Value =
             serde_json::from_slice(&std::fs::read(temp.path().join(FILE_NAME)).unwrap()).unwrap();
         assert_eq!(
-            raw["processes"][0]["marfa_version"],
+            raw["processes"][0]["build_version"],
             serde_json::json!(env!("CARGO_PKG_VERSION"))
         );
     }
@@ -673,7 +673,7 @@ mod tests {
         let file = read(&path);
         let pids: Vec<u32> = file.processes.iter().map(|process| process.pid).collect();
         assert_eq!(pids, vec![31, 11]);
-        assert_eq!(only(&file, 31).marfa_version, None);
+        assert_eq!(only(&file, 31).build_version, None);
     }
 
     #[test]
@@ -829,7 +829,7 @@ mod tests {
             processes: vec![
                 Process {
                     pid: 30,
-                    marfa_version: None,
+                    build_version: None,
                     started_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
@@ -838,7 +838,7 @@ mod tests {
                 },
                 Process {
                     pid: 31,
-                    marfa_version: None,
+                    build_version: None,
                     started_at: store::now_iso(),
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,
@@ -848,7 +848,7 @@ mod tests {
                 // A heartbeat still to come is no heartbeat.
                 Process {
                     pid: 32,
-                    marfa_version: None,
+                    build_version: None,
                     started_at: store::now_iso(),
                     heartbeat_at: "2999-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
@@ -859,7 +859,7 @@ mod tests {
                 // ended and whose id came round again.
                 Process {
                     pid: 11,
-                    marfa_version: None,
+                    build_version: None,
                     started_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,

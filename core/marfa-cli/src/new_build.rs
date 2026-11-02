@@ -6,6 +6,7 @@
 
 use std::io::Read as _;
 use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,21 +113,24 @@ pub fn running() -> &'static str {
 #[derive(Debug, PartialEq, Serialize)]
 pub struct OtherBuild {
     pub pid: u32,
-    /// `None` for a build too early to write its version in the record.
-    pub marfa_version: Option<String>,
+    /// `None` when the entry has no version: a build written before the field
+    /// wrote it, or an earlier build rewrote the file without it.
+    pub build_version: Option<String>,
     pub this_version: &'static str,
 }
 
 impl OtherBuild {
+    /// Says nothing of the watch moving by itself: an agent written before
+    /// `--exit-on-new-build` existed keeps running the build it started.
     pub fn describe(&self) -> String {
-        let runs = match &self.marfa_version {
+        let runs = match &self.build_version {
             Some(version) => format!("marfa {version}"),
-            None => "an earlier build of marfa".to_string(),
+            None => "a build of marfa that does not record its version".to_string(),
         };
         format!(
             "the watch of this folder (process {}) runs {runs}, and this command is marfa {}; \
-             a watch `marfa folders autostart on` set up moves to a new build installed at its path \
-             within a minute, and any other watch moves once it is started again",
+             run `marfa folders autostart on` again so the watch started at login moves to each \
+             new build by itself, or start a watch you run yourself again",
             self.pid, self.this_version
         )
     }
@@ -161,9 +165,9 @@ fn other_build_in(
                 .iter()
                 .any(|folder| folder.watching && same(&folder.dir))
     })?;
-    (process.marfa_version.as_deref() != Some(this_version)).then(|| OtherBuild {
+    (process.build_version.as_deref() != Some(this_version)).then(|| OtherBuild {
         pid: process.pid,
-        marfa_version: process.marfa_version.clone(),
+        build_version: process.build_version.clone(),
         this_version,
     })
 }
@@ -312,6 +316,10 @@ impl Tracker {
     }
 }
 
+/// What of a binary's answer to `--version` is kept; the rest is read and
+/// dropped.
+const SAID_KEPT: usize = 4096;
+
 /// The version the binary at `binary` reports for `--version`, as
 /// `marfa 0.0.56`, within `wait`. One that takes longer is stopped.
 fn version_of(binary: &Path, wait: Duration) -> Result<String, String> {
@@ -325,8 +333,43 @@ fn version_of(binary: &Path, wait: Duration) -> Result<String, String> {
             std::io::ErrorKind::ExecutableFileBusy => BUSY.to_string(),
             _ => error.to_string(),
         })?;
+    // Read while waiting and never to the end of the pipe: a process the
+    // binary started can hold the pipe open long after the binary ended.
+    let mut stdout = child.stdout.take();
+    if let Some(stdout) = &stdout {
+        // SAFETY: the descriptor is the pipe `stdout` owns, open until it is
+        // dropped.
+        let nonblocking = unsafe {
+            let fd = stdout.as_raw_fd();
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            flags != -1 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) != -1
+        };
+        if !nonblocking {
+            let error = std::io::Error::last_os_error();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error.to_string());
+        }
+    }
+    let mut said = Vec::new();
+    let mut read_now = |stdout: &mut Option<std::process::ChildStdout>| {
+        let mut chunk = [0u8; 1024];
+        while let Some(pipe) = stdout {
+            match pipe.read(&mut chunk) {
+                Ok(0) => *stdout = None,
+                Ok(read) => {
+                    let room = SAID_KEPT.saturating_sub(said.len());
+                    said.extend_from_slice(&chunk[..read.min(room)]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(_) => *stdout = None,
+            }
+        }
+    };
     let until = Instant::now() + wait;
     let status = loop {
+        read_now(&mut stdout);
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
@@ -345,16 +388,13 @@ fn version_of(binary: &Path, wait: Duration) -> Result<String, String> {
             }
         }
     };
-    let mut said = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        stdout
-            .read_to_string(&mut said)
-            .map_err(|error| error.to_string())?;
-    }
+    // What the binary wrote before it ended is in the pipe already.
+    read_now(&mut stdout);
     if !status.success() {
         return Err(format!("`--version` ended with {status}"));
     }
-    said.lines()
+    String::from_utf8_lossy(&said)
+        .lines()
         .next()
         .and_then(|line| line.strip_prefix("marfa "))
         .map(str::trim)
@@ -603,6 +643,19 @@ mod tests {
     }
 
     #[test]
+    fn a_binary_that_leaves_a_process_holding_its_output_is_read_within_the_wait() {
+        let temp = tempfile::tempdir().unwrap();
+        let wait = Duration::from_secs(5);
+        let leaves = script(temp.path(), "leaves", "echo marfa 0.0.56; sleep 8 &");
+        let started = Instant::now();
+        assert_eq!(asked(&leaves, wait), Ok("0.0.56".into()));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the read waited on the process left behind"
+        );
+    }
+
+    #[test]
     fn status_names_a_current_watch_of_the_folder_that_runs_another_build() {
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join("notes");
@@ -619,7 +672,7 @@ mod tests {
                 "folders": [{ "dir": dir, "watching": watching, "reason": null }],
             });
             if let Some(version) = version {
-                entry["marfa_version"] = json!(version);
+                entry["build_version"] = json!(version);
             }
             entry
         };
@@ -634,7 +687,7 @@ mod tests {
             other(&older, &folder),
             Some(OtherBuild {
                 pid: 7,
-                marfa_version: Some("0.0.55".into()),
+                build_version: Some("0.0.55".into()),
                 this_version: "0.0.56",
             })
         );
@@ -646,9 +699,14 @@ mod tests {
                 .describe()
                 .contains("runs marfa 0.0.55, and this command is marfa 0.0.56")
         );
-        // A build that wrote no version is an earlier one.
         let unnamed = file(vec![entry(7, None, &beat, &folder, true)]);
-        assert_eq!(other(&unnamed, &folder).unwrap().marfa_version, None);
+        let unnamed = other(&unnamed, &folder).unwrap();
+        assert_eq!(unnamed.build_version, None);
+        assert!(
+            unnamed
+                .describe()
+                .contains("runs a build of marfa that does not record its version, and this command is marfa 0.0.56; run `marfa folders autostart on` again")
+        );
 
         let same = file(vec![entry(7, Some("0.0.56"), &beat, &folder, true)]);
         assert_eq!(other(&same, &folder), None);

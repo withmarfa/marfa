@@ -142,9 +142,14 @@ fn live(command: &str, settings: &Settings) -> Option<Live> {
 /// stopped with Ctrl-C did not: it ended `canceled`, or, as a command that
 /// runs until it is stopped does, with the status of an interrupt. Whether
 /// Ctrl-C arrived does not decide it, so an error that comes in the same
-/// moment as an interrupt is still a failure.
-fn failed(status: u8, error: Option<&CliError>) -> bool {
-    status != 0 && status != INTERRUPTED && !error.is_some_and(|error| error.code() == "canceled")
+/// moment as an interrupt is still a failure. A watch that ended so the
+/// service manager starts a new build did not fail either, though its status
+/// says so to the manager.
+fn failed(status: u8, error: Option<&CliError>, ended_for_new_build: bool) -> bool {
+    status != 0
+        && status != INTERRUPTED
+        && !(ended_for_new_build && error.is_none())
+        && !error.is_some_and(|error| error.code() == "canceled")
 }
 
 /// The status a process leaves with when a panic unwinds out of `main`.
@@ -172,7 +177,7 @@ impl Run {
     /// pending. Waits no longer than the timeout, and changes nothing the
     /// command has said or will exit with.
     pub fn finish(self, status: u8, error: Option<&CliError>) {
-        let failure = failed(status, error);
+        let failure = failed(status, error, crate::new_build::ended_for_it());
         let fault = error.filter(|error| error.is_fault()).map(Fault::Error);
         self.end(status, failure, error.map(CliError::code), fault);
     }
@@ -233,19 +238,28 @@ mod tests {
     fn a_stopped_command_is_not_a_failed_one() {
         let canceled = CliError::from(marfa_core::CoreError::Canceled);
         let refused = CliError::Usage("x".into());
-        assert!(failed(3, Some(&refused)));
-        assert!(failed(3, None));
-        assert!(!failed(0, None));
-        assert!(!failed(INTERRUPTED, None));
-        assert!(!failed(3, Some(&canceled)));
+        assert!(failed(3, Some(&refused), false));
+        assert!(failed(3, None, false));
+        assert!(!failed(0, None, false));
+        assert!(!failed(INTERRUPTED, None, false));
+        assert!(!failed(3, Some(&canceled), false));
         // The witness: a real failure is one whether or not Ctrl-C came with
         // it, since the rule takes no account of the signal.
         let credential = CliError::from(marfa_core::CoreError::SignedOut {
             origin: "https://marfa.example".into(),
         });
         let local = CliError::from(marfa_core::CoreError::NoCursor);
-        assert!(failed(5, Some(&credential)));
-        assert!(failed(4, Some(&local)));
+        assert!(failed(5, Some(&credential), false));
+        assert!(failed(4, Some(&local), false));
+    }
+
+    #[test]
+    fn a_watch_that_ended_for_a_new_build_did_not_fail() {
+        assert!(!failed(3, None, true));
+        // The witness: the same status without the new build is a failure,
+        // and so is an error that came while the watch was ending for one.
+        assert!(failed(3, None, false));
+        assert!(failed(3, Some(&CliError::Usage("x".into())), true));
     }
 
     fn started(pairs: &[(&str, &str)]) -> Run {

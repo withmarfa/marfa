@@ -1079,7 +1079,7 @@ pub(crate) struct RecordFile {
 pub(crate) struct RecordProcess {
     pub(crate) pid: u32,
     #[serde(default)]
-    pub(crate) marfa_version: Option<String>,
+    pub(crate) build_version: Option<String>,
     heartbeat_at: String,
     heartbeat_interval_seconds: u64,
     ended_at: Option<String>,
@@ -1692,7 +1692,7 @@ mod tests {
     fn an_entry_is_current_by_the_record_reader_rule() {
         let entry = |beat: &str, ended: Option<&str>| RecordProcess {
             pid: 1,
-            marfa_version: None,
+            build_version: None,
             heartbeat_at: beat.into(),
             heartbeat_interval_seconds: 5,
             ended_at: ended.map(str::to_string),

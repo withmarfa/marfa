@@ -112,7 +112,7 @@ function said(watch: HeldCommand): Said[] {
 
 interface Entry {
   pid: number;
-  marfa_version?: string;
+  build_version?: string;
   heartbeat_at: string;
   ended_at: string | null;
   folders: Array<{ dir: string; watching: boolean; reason: string | null }>;
@@ -162,7 +162,7 @@ describe("a watch and a new build at the path it was started by", () => {
       ),
     );
     await watching(harness, watch);
-    expect(entryOf(harness, watch.pid())?.marfa_version).toBe(running());
+    expect(entryOf(harness, watch.pid())?.build_version).toBe(running());
     put(harness, "Sent before.md", "---\ntitle: Sent before\n---\nfirst\n");
     await vi.waitFor(
       () => expect(sentTitles(harness)).toContain("Sent before"),
@@ -204,6 +204,69 @@ describe("a watch and a new build at the path it was started by", () => {
         ]),
       WAIT,
     );
+    expect(after.running()).toBe(true);
+  });
+
+  it("ends with exit status 3 for a new build only once the create under way is answered, as a watch of every folder that autostart runs, and the next watch sends what was made meanwhile, once", async () => {
+    const harness = await folderHarness("new-build-every");
+    made.push(harness);
+    let release = (): void => undefined;
+    const answered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let creates = 0;
+    scriptFolderWrites(harness, {
+      creating: (answer) =>
+        ++creates === 1
+          ? { kind: "gated", until: answered, then: answer }
+          : answer,
+    });
+    const dir = scratchDir("every");
+    const link = join(dir, "marfa");
+    symlinkSync(requireBinary(), link);
+    const folder = through(harness, link);
+    const argv = ["folders", "watch", "--exit-on-new-build"];
+
+    const watch = hold(folder.hold(argv, LOOK));
+    await watching(harness, watch);
+    put(harness, "Held.md", "---\ntitle: Held\n---\nanswered late\n");
+    await vi.waitFor(() => expect(creates).toBe(1), WAIT);
+
+    retarget(link, script(dir, "marfa-next", says(NEXT)));
+    await vi.waitFor(
+      () =>
+        expect(said(watch)).toEqual([
+          { new_build: NEXT, running: running(), restarting: true },
+        ]),
+      WAIT,
+    );
+    put(
+      harness,
+      "Made while ending.md",
+      "---\ntitle: Made while ending\n---\nafter the stop\n",
+    );
+    // Several looks later, the watch still waits on the create under way.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(watch.running(), watch.stderr).toBe(true);
+
+    release();
+    await watch.exited();
+    expect(watch.exitCode(), watch.stderr).toBe(3);
+
+    retarget(link, requireBinary());
+    const after = hold(folder.hold(argv, LOOK));
+    await vi.waitFor(
+      () =>
+        expect(sentTitles(harness).sort()).toEqual([
+          "Held",
+          "Made while ending",
+        ]),
+      WAIT,
+    );
+    // Several passes later, nothing has been sent again.
+    await watching(harness, after);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(sentTitles(harness).sort()).toEqual(["Held", "Made while ending"]);
     expect(after.running()).toBe(true);
   });
 
@@ -352,7 +415,7 @@ describe("a watch and a new build at the path it was started by", () => {
       processes: [
         {
           pid: process.pid,
-          ...(version === undefined ? {} : { marfa_version: version }),
+          ...(version === undefined ? {} : { build_version: version }),
           started_at: new Date().toISOString(),
           heartbeat_at: new Date().toISOString(),
           heartbeat_interval_seconds: 5,
@@ -378,7 +441,7 @@ describe("a watch and a new build at the path it was started by", () => {
       const report = await harness.folder.device().root<{
         watch_other_build: {
           pid: number;
-          marfa_version: string | null;
+          build_version: string | null;
           this_version: string;
         } | null;
       }>(["folders", "status", harness.dir]);
@@ -398,17 +461,20 @@ describe("a watch and a new build at the path it was started by", () => {
     writeFileSync(recordPath(harness), JSON.stringify(entry("0.0.1")));
     expect(await status()).toEqual({
       pid: process.pid,
-      marfa_version: "0.0.1",
+      build_version: "0.0.1",
       this_version: running(),
     });
     expect(await text()).toContain(
-      `the watch of this folder (process ${process.pid}) runs marfa 0.0.1, and this command is marfa ${running()}`,
+      `the watch of this folder (process ${process.pid}) runs marfa 0.0.1, and this command is marfa ${running()}; run \`marfa folders autostart on\` again so the watch started at login moves to each new build by itself, or start a watch you run yourself again`,
     );
 
-    // An entry from a build too early to write its version.
+    // An entry without a version: from a build too early to write it, or
+    // rewritten by one.
     writeFileSync(recordPath(harness), JSON.stringify(entry(undefined)));
-    expect(await status()).toMatchObject({ marfa_version: null });
-    expect(await text()).toContain("runs an earlier build of marfa");
+    expect(await status()).toMatchObject({ build_version: null });
+    expect(await text()).toContain(
+      `runs a build of marfa that does not record its version, and this command is marfa ${running()}`,
+    );
 
     // The witness above shows what a watch on this build would hide.
     writeFileSync(recordPath(harness), JSON.stringify(entry(running())));
