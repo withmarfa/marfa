@@ -4031,6 +4031,78 @@ describe("embedded files", () => {
     });
   });
 
+  describe("a pull over an attached file the server refuses to show", () => {
+    const refusals: Array<[string, Answer]> = [
+      [
+        "a conflict",
+        {
+          kind: "json",
+          status: 409,
+          body: { error: { code: "conflict", message: "scripted" } },
+        },
+      ],
+      [
+        "an invalid request",
+        {
+          kind: "json",
+          status: 400,
+          body: { error: { code: "invalid_request", message: "scripted" } },
+        },
+      ],
+    ];
+
+    it.each(refusals)(
+      "writes the other files, reports the attachment and asks for it again, when its read is %s",
+      async (_, refusal) => {
+        const made = await placedEmbeds(
+          "folder-pull-refused-attachment",
+          [
+            { id: host, properties: { title: "Host", body: "A note.\n" } },
+            { id: other, properties: { title: "Other", body: "Another.\n" } },
+            fileRow(pic, "pic.png", png(5)),
+          ],
+          [attached("01a00000-0000-7000-8000-00000000e3f2", pic, host)],
+          { [host]: "Host.md", [other]: "Other.md", [pic]: "pic.png" },
+          ["core.note"],
+        );
+        harness = made.harness;
+        scriptBlob(harness.server, png(5));
+        made.unread.set(pic, refusal);
+
+        const pulled = await harness.folder.pull();
+        expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+        if (!pulled.ok) return;
+        expect(
+          readdirSync(harness.dir)
+            .filter((name) => !name.startsWith("."))
+            .sort(),
+          "a refused read of one attachment stopped the files after it",
+        ).toEqual(["Host.md", "Other.md"]);
+        const held = pulled.value.embeds.filter(
+          (embed) => embed.flag === "attachment",
+        );
+        expect(held.map((embed) => [embed.path, embed.item])).toEqual([
+          ["Host.md", pic],
+        ]);
+        expect(held[0]?.reason).toContain(pic);
+        expect(held[0]?.reason).toContain("cannot be read");
+
+        // Not marked done: the next pull asks again, and writes the file
+        // once the server shows it.
+        made.unread.delete(pic);
+        const again = await harness.folder.pull();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(again.value.embeds).toEqual([]);
+        expect(
+          readdirSync(harness.dir)
+            .filter((name) => !name.startsWith("."))
+            .sort(),
+        ).toEqual(["Host.md", "Other.md", "pic.png"]);
+      },
+    );
+  });
+
   it("removes the reference of an embed taken out between two scans before a push", async () => {
     harness = await folderHarness("folder-embed-two-scans");
     const edges = new EdgeDoor();

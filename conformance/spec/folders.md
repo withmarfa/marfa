@@ -2656,6 +2656,28 @@ When a pull writes a file attached to documents in more than one directory of a 
 
 **Tests:** `device/folders-frontmatter.test.ts › is written once, beside the first of its documents in path order, and the other is reported`.
 
+### `folders/attachment-unread-held`
+
+If a pull's read of an item attached to a document the folder writes fails for a reason other than that the server does not hold the item, will not show it or ends the drain, then a device MUST write every other file of the pull.
+
+**Reason:** One bad item stays contained: a server that answers one attachment with a conflict or an invalid request must not stop every later pull of the folder, and the files of every other item still reach the directory. A failure that ends the drain ends the pull instead, since it is no one item's: a refused credential, which ends the copy, a renewal of the credential that fails other than by an environmental failure, no sign-in or no keychain, a redirect, an answer naming another contract, a full store, an expired copy, a stream cut short, or a stopped run. An environmental failure leaves the item unread for the next pull.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes the other files, reports the attachment and asks for it again, when its read is %s`.
+
+### `folders/attachment-unread-reported`
+
+If a pull does not write an attached item's file because the read of the item failed for a reason other than that the server does not hold it or will not show it, an environmental failure or one that ends the drain, then a device MUST report the document the item is attached to in `embeds` with the flag `attachment`, naming the item and the reason.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes the other files, reports the attachment and asks for it again, when its read is %s`.
+
+### `folders/attachment-unread-asked-again`
+
+If a pull did not write an attached item's file because the read of the item failed, then a device MUST read the item again at the next pull.
+
+**Reason:** A pull records an item it has read as held, and one it could not read is recorded as nothing, so it is not taken as done.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes the other files, reports the attachment and asks for it again, when its read is %s`.
+
 ### `folders/attachment-embedded-once`
 
 When a document comes to embed an attachment whose file is already written beside it, a device MUST keep that one file and write no second copy.
