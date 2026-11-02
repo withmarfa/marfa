@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { refusal } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
-import { idIn, put, scriptFolderWrites } from "./folders.shared.js";
+import { edit, idIn, put, scriptFolderWrites } from "./folders.shared.js";
 
 /**
  * A folder takes the writes the server answered out of its queue once it has
@@ -47,8 +47,14 @@ describe("a folder's answered writes", () => {
       const pushed = await harness.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     }
+    put(harness, "Edited.md", "edited last\n");
     put(harness, "Refused.md", "refused words\n");
-    put(harness, "Tagged.md", "---\ntags: [refused]\n---\ntagged\n");
+    edit(
+      harness,
+      "Tagged.md",
+      "tier: library\n",
+      "tier: library\ntags:\n  - refused\n",
+    );
     const refused = await harness.folder.push();
     expect(refused.ok, JSON.stringify(refused)).toBe(true);
     const before = await harness.folder.device().queue();

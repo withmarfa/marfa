@@ -85,7 +85,8 @@ pub struct Scripted {
     port: u16,
     script: Arc<Mutex<Script>>,
     stopping: Arc<AtomicBool>,
-    open: Arc<Mutex<Vec<TcpStream>>>,
+    /// Each connection still being answered, by the order it came in.
+    open: Arc<Mutex<HashMap<u64, TcpStream>>>,
 }
 
 impl Scripted {
@@ -101,7 +102,7 @@ impl Scripted {
             answers.insert("/".into(), vec![root(INSTANCE)]);
         }
         let stopping = Arc::new(AtomicBool::new(false));
-        let open = Arc::new(Mutex::new(Vec::new()));
+        let open = Arc::new(Mutex::new(HashMap::new()));
         {
             let (script, stopping, open) = (
                 Arc::clone(&script),
@@ -109,16 +110,25 @@ impl Scripted {
                 Arc::clone(&open),
             );
             thread::spawn(move || {
-                for stream in listener.incoming() {
+                for (n, stream) in (0u64..).zip(listener.incoming()) {
                     if stopping.load(Ordering::Relaxed) {
                         break;
                     }
                     let Ok(stream) = stream else { continue };
                     if let Ok(clone) = stream.try_clone() {
-                        open.lock().unwrap().push(clone);
+                        open.lock().unwrap().insert(n, clone);
                     }
-                    let (script, stopping) = (Arc::clone(&script), Arc::clone(&stopping));
-                    thread::spawn(move || serve(stream, &script, &stopping));
+                    let (script, stopping, open) = (
+                        Arc::clone(&script),
+                        Arc::clone(&stopping),
+                        Arc::clone(&open),
+                    );
+                    thread::spawn(move || {
+                        serve(stream, &script, &stopping);
+                        // A test that sends hundreds of requests would
+                        // otherwise run out of file descriptors.
+                        open.lock().unwrap().remove(&n);
+                    });
                 }
             });
         }
@@ -173,7 +183,7 @@ impl Scripted {
 impl Drop for Scripted {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Relaxed);
-        for stream in self.open.lock().unwrap().drain(..) {
+        for (_, stream) in self.open.lock().unwrap().drain() {
             let _ = stream.shutdown(Shutdown::Both);
         }
         // The accept loop is blocked on the next connection; this is it.

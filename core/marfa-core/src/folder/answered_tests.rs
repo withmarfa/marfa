@@ -25,9 +25,33 @@ fn item_of(folder: &Folder, path: &str) -> String {
         .item_id
 }
 
-/// Writes the note's body as `body`, and scans.
+/// Writes the note's body as `body` below the frontmatter the folder wrote,
+/// and scans.
 fn edited(dir: &Path, folder: &Folder, name: &str, body: &str) {
-    std::fs::write(dir.join(name), format!("---\ntitle: {name}\n---\n{body}\n")).unwrap();
+    let path = dir.join(name);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let end = text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.find("\n---\n"))
+        .unwrap_or_else(|| panic!("{name} has no frontmatter: {text}"));
+    let frontmatter = &text[..end + "---\n".len() + "\n---\n".len()];
+    std::fs::write(&path, format!("{frontmatter}{body}\n")).unwrap();
+    folder.scan().unwrap();
+}
+
+/// Gives the note the tag `tag` in the frontmatter the folder wrote, keeping
+/// its version line, and scans.
+fn tagged(dir: &Path, folder: &Folder, name: &str, tag: &str) {
+    let path = dir.join(name);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let rest = text
+        .strip_prefix("---\n")
+        .unwrap_or_else(|| panic!("{name} has no frontmatter: {text}"));
+    let rest: String = rest
+        .split_inclusive('\n')
+        .filter(|line| !line.starts_with("tags:"))
+        .collect();
+    std::fs::write(&path, format!("---\ntags: [{tag}]\n{rest}")).unwrap();
     folder.scan().unwrap();
 }
 
@@ -152,8 +176,11 @@ fn a_drain_reads_the_writes_its_files_wait_on_by_id_not_the_whole_queue() {
         .unwrap()
         .unwrap();
     assert!(
-        edit.iter()
-            .all(|write| bound.writes.queued.iter().all(|queued| queued.id != write.id)),
+        edit.iter().all(|write| bound
+            .writes
+            .queued
+            .iter()
+            .all(|queued| queued.id != write.id)),
         "{:?}",
         bound.writes.queued
     );
@@ -163,12 +190,7 @@ fn a_drain_reads_the_writes_its_files_wait_on_by_id_not_the_whole_queue() {
 fn a_refused_edit_keeps_its_words_and_a_refused_tag_its_reason_once_the_answers_are_cleared() {
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
     edited(dir.path(), &folder, "a.md", "words the server refused");
-    std::fs::write(
-        dir.path().join("b.md"),
-        "---\ntitle: b.md\ntags: [kept]\n---\nbody\n",
-    )
-    .unwrap();
-    folder.scan().unwrap();
+    tagged(dir.path(), &folder, "b.md", "kept");
     let refused = answered(&folder, Verdict::Refused, None);
     assert!(
         refused.iter().any(|row| row.kind == WriteKind::AddTag),
@@ -224,7 +246,7 @@ fn a_conflicted_copy_stays_with_its_original_once_the_conflicted_edit_is_cleared
             .map(|item| item.id)
             .collect::<Vec<_>>()
     };
-    assert_eq!(copies(&folder), [copy.clone()]);
+    assert_eq!(copies(&folder), std::slice::from_ref(&copy));
 
     folder.drain().unwrap();
     folder.drain().unwrap();
@@ -234,7 +256,7 @@ fn a_conflicted_copy_stays_with_its_original_once_the_conflicted_edit_is_cleared
             .any(|row| row.verdict == Some(Verdict::Conflicted)),
         "the witness: the conflicted edit left the queue"
     );
-    assert_eq!(copies(&folder), [copy.clone()]);
+    assert_eq!(copies(&folder), std::slice::from_ref(&copy));
     assert_eq!(
         folder.core.original_of_conflicted_copy(&copy).unwrap(),
         Some(original)
@@ -272,12 +294,7 @@ fn a_store_holding_thousands_of_answered_writes_is_cleared_on_its_first_pass_wit
 #[test]
 fn an_answer_recorded_before_the_folder_read_it_stays_until_the_file_records_it() {
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
-    std::fs::write(
-        dir.path().join("a.md"),
-        "---\ntitle: a.md\ntags: [kept]\n---\nbody\n",
-    )
-    .unwrap();
-    folder.scan().unwrap();
+    tagged(dir.path(), &folder, "a.md", "kept");
     // A drain recorded the refusal and the process ended before the folder
     // read it.
     let refused = answered(&folder, Verdict::Refused, None);
@@ -304,12 +321,7 @@ fn an_answer_recorded_before_the_folder_read_it_stays_until_the_file_records_it(
 #[test]
 fn a_drain_cut_short_by_a_rate_limit_records_its_answers_before_they_leave_the_queue() {
     let (dir, folder, server, _passes) = watched_notes(&["a.md", "b.md"]);
-    std::fs::write(
-        dir.path().join("a.md"),
-        "---\ntitle: a.md\ntags: [kept]\n---\nbody\n",
-    )
-    .unwrap();
-    folder.scan().unwrap();
+    tagged(dir.path(), &folder, "a.md", "kept");
     let refused = answered(&folder, Verdict::Refused, None);
     edited(dir.path(), &folder, "b.md", "sent later");
     let b = item_of(&folder, "b.md");

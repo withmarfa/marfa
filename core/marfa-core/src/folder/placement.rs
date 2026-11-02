@@ -451,9 +451,7 @@ impl Folder {
     pub(super) fn awaiting_give_way(&self, conn: &rusqlite::Connection) -> Result<HashSet<String>> {
         Ok(give_way_candidates(conn)?
             .into_iter()
-            .filter(|row| {
-                gives_way(row) && row.target_id.as_deref() == Some(self.folder.as_str())
-            })
+            .filter(|row| gives_way(row) && row.target_id.as_deref() == Some(self.folder.as_str()))
             .map(|row| row.id)
             .collect())
     }
@@ -1014,7 +1012,8 @@ mod tests {
         let _ = folder.settle_placements(&mut drained(reported(&folder)), false);
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 1, "a later drain did not finish giving way");
         assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
         assert!(
@@ -1072,7 +1071,8 @@ mod tests {
             assert_eq!(
                 folder
                     .settle_placements(&mut drained(Vec::new()), false)
-                    .unwrap().0,
+                    .unwrap()
+                    .0,
                 1
             );
             assert_eq!(held_path(&folder).as_deref(), Some("First/Plan.md"));
@@ -1138,7 +1138,8 @@ mod tests {
         memo_moved_and_refused_as_stale(&folder);
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 0);
         assert!(
             server.seen("/items/memo/edges").is_empty(),
@@ -1147,7 +1148,8 @@ mod tests {
         // The witness: the next drain reads for both and gives way twice.
         let gave_way = folder
             .settle_placements(&mut drained(Vec::new()), false)
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(gave_way, 2);
         assert_eq!(server.seen("/items/memo/edges").len(), 1);
         let memo = store::edge_by_id(&folder.core.conn().unwrap(), "memo-placed")
@@ -1219,7 +1221,8 @@ mod tests {
         assert_eq!(
             folder
                 .settle_placements(&mut drained(Vec::new()), false)
-                .unwrap().0,
+                .unwrap()
+                .0,
             1
         );
     }

@@ -2299,7 +2299,10 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
 
 /// The writes the queue holds of those `ids` names, in queue order, each
 /// found through the index on its id.
-pub fn queued_writes_named(conn: &Connection, ids: &[String]) -> Result<Vec<QueuedWrite>, CoreError> {
+pub fn queued_writes_named(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<Vec<QueuedWrite>, CoreError> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }

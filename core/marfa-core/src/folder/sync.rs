@@ -414,10 +414,7 @@ mod tests {
         };
         // `cleared` has left the queue as an answered write the folder
         // recorded, not as a write giving way withdrew.
-        let mut first = drained(
-            vec![told("kept"), told("withdrawn"), told("cleared")],
-            &[],
-        );
+        let mut first = drained(vec![told("kept"), told("withdrawn"), told("cleared")], &[]);
         first.absorb(drained(vec![told("later")], &["withdrawn"]));
         assert_eq!(
             first

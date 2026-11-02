@@ -161,7 +161,10 @@ impl Folder {
             Ok(!crate::store::read_writes(
                 &*self.core.conn()?,
                 "WHERE edge_id = ?1 AND kind = ?2 AND verdict IS NULL",
-                [edge.id.as_str(), crate::model::WriteKind::CreateEdge.as_str()],
+                [
+                    edge.id.as_str(),
+                    crate::model::WriteKind::CreateEdge.as_str(),
+                ],
             )?
             .is_empty())
         };
