@@ -300,9 +300,9 @@ enum Command {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,
     },
-    /// Processes that write on a key's behalf: registered, heard from, and
-    /// reporting their runs. A key registers itself; `connectors.manage` sees
-    /// every registration and may remove one.
+    /// Programs outside the server that register under a key of their own:
+    /// registered, heard from, and reporting their runs. A key registers
+    /// itself; `connectors.manage` sees every registration and may remove one.
     Connectors {
         #[command(subcommand)]
         command: connectors::ConnectorsCommand,
