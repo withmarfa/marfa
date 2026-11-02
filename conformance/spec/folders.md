@@ -3784,11 +3784,11 @@ When a person deletes a bound file that a device holds because a name on one of 
 
 ### `folders/missing-refused-edit-unchanged`
 
-When a person deletes a bound file whose edit the server refused, a device MUST retain the journaled deletion while the item has not changed in content the file showed, counting the refused edit as unchanged while the item is still at the version the file showed.
+When a person deletes a bound file whose edit the server refused, a device MUST retain the journaled deletion while the item has not changed in content the file showed, counting the refused edit as unchanged while the item is still at the version the file showed and no other write of the device's to the item waits.
 
-**Reason:** The refused edit never reached the item, and the device reads back the item's row in its place, so its absence from what the device would write now is no change made elsewhere. Counted as one, a pull would write the file back inside the grace and the person's delete of their own file would never stand. A refused edit spends no version, so any other change to the item's content moves its version and brings the file back under `folders/missing-file-changed-revives`. Tags and edges, which another device changes without a version step, are still compared, a refused tag change aside.
+**Reason:** The refused edit never reached the item, and the device reads back the item's row in its place, so its absence from what the device would write now is no change made elsewhere. Counted as one, a pull would write the file back inside the grace and the person's delete of their own file would never stand. A refused edit spends no version, so a change another device makes to the item's properties moves its version and brings the file back under `folders/missing-file-changed-revives`. The server changes tags, state and edges without a version step, so they are still compared, a refused tag or state change aside. A write of the device's own that the server has not answered sits in the working copy at the version it was based on, so while one waits the whole item is compared.
 
-**Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file whose edit the server refused`.
+**Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file whose edit the server refused`, `› writes back a deleted file whose edit the server refused when another device archives its item`.
 
 ### `folders/pull-missing-file-not-written`
 

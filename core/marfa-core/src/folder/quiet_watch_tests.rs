@@ -519,10 +519,7 @@ fn deleted_after_refusal(door: &str, change: impl FnOnce(&Path)) -> (ScannedDir,
 
 #[test]
 fn a_deleted_file_held_for_its_refused_edit_goes_to_the_bin() {
-    let (dir, folder, _server) = deleted_after_refusal("", |path| {
-        let text = std::fs::read_to_string(path).unwrap();
-        std::fs::write(path, format!("{text}their own edit\n")).unwrap();
-    });
+    let (dir, folder, _server) = deleted_after_refusal("", their_own_edit);
     goes_to_the_bin(&dir, &folder);
 }
 
@@ -531,6 +528,65 @@ fn a_deleted_file_held_for_its_refused_tag_goes_to_the_bin() {
     let (dir, folder, _server) =
         deleted_after_refusal("/tags", |path| with_line(path, "tags: [kept-out]"));
     goes_to_the_bin(&dir, &folder);
+}
+
+#[test]
+fn a_deleted_file_held_for_its_refused_state_goes_to_the_bin() {
+    let (dir, folder, _server) =
+        deleted_after_refusal("/transition", |path| with_line(path, "state: archived"));
+    goes_to_the_bin(&dir, &folder);
+}
+
+/// Appends a line to the note at `path`.
+fn their_own_edit(path: &Path) {
+    let text = std::fs::read_to_string(path).unwrap();
+    std::fs::write(path, format!("{text}their own edit\n")).unwrap();
+}
+
+#[test]
+fn a_deleted_file_held_for_its_refused_edit_comes_back_once_its_item_is_archived_elsewhere() {
+    let (dir, folder, _server) = deleted_after_refusal("", their_own_edit);
+    let id = bound(&folder, "A.md").unwrap().item_id;
+    // The server archives an item without a version step.
+    let archived = folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE items SET state = 'archived' WHERE id = ?1 AND state = 'active'",
+            [id.as_str()],
+        )
+        .unwrap();
+    assert_eq!(archived, 1, "the witness: the item was active");
+    let text = comes_back(&dir, &folder, &id);
+    assert!(text.contains("state: archived"), "{text}");
+}
+
+#[test]
+fn a_deleted_file_held_for_its_refused_edit_comes_back_once_this_copy_edits_its_item() {
+    let (dir, folder, _server) = deleted_after_refusal("", their_own_edit);
+    let id = bound(&folder, "A.md").unwrap().item_id;
+    let item = folder.core.get(&id).unwrap().unwrap();
+    let mut properties = item.properties.clone();
+    properties.insert("body".into(), Value::String("written here\n".into()));
+    folder
+        .core
+        .update_item(
+            &id,
+            &crate::model::Edit {
+                properties,
+                base_version: Some(item.version),
+                ..crate::model::Edit::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        folder.core.get(&id).unwrap().unwrap().version,
+        item.version,
+        "the witness: the unanswered write sits in the copy at the same version"
+    );
+    let text = comes_back(&dir, &folder, &id);
+    assert!(text.contains("written here"), "{text}");
 }
 
 #[test]

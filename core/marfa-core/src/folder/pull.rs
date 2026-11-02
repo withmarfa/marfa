@@ -2015,8 +2015,10 @@ impl Folder {
         }
         let mut set_aside = agreed.clone();
         // Still at the version line the file showed, the item moved nowhere
-        // but in its tags and edges, which move without a version step.
-        if line == Some(item.version) {
+        // but in its tags, state and edges, which move without a version
+        // step, unless another write of this copy's waits: the copy holds it
+        // at the version it was based on.
+        if line == Some(item.version) && !self.another_write_waits(item, bound)? {
             set_aside = set_aside.with_body(presented.body());
             let named: std::collections::BTreeSet<&String> = agreed
                 .front()
@@ -2024,10 +2026,31 @@ impl Folder {
                 .chain(presented.front().keys())
                 .collect();
             for field in named {
-                if field != fields::TAGS_FIELD && !edge_types.is_name(field) {
+                if field != fields::TAGS_FIELD
+                    && field != fields::STATE_FIELD
+                    && !edge_types.is_name(field)
+                {
                     set_aside = set_aside.with(field, presented.front().get(field).cloned());
                 }
             }
+        }
+        // A refused state change shows in the file but never reached the item.
+        let refused_state =
+            bound
+                .writes
+                .refused
+                .iter()
+                .rev()
+                .find_map(|refused| match refused.change {
+                    state::Change::State(shown) => Some(shown),
+                    _ => None,
+                });
+        if let Some(shown) = refused_state
+            && shown_state(agreed.front()) == Some(shown)
+        {
+            let undone = (shown == ItemState::Active)
+                .then(|| Value::String(ItemState::Archived.as_str().into()));
+            set_aside = set_aside.with(fields::STATE_FIELD, undone);
         }
         // A refused tag change shows in the file but never reached the item.
         let refused_tags: Vec<(&String, bool)> = bound
@@ -2056,6 +2079,19 @@ impl Folder {
             set_aside = set_aside.with(fields::TAGS_FIELD, tags);
         }
         self.untaken_lines_set_aside(&set_aside, presented, item, bound, edge_types)
+    }
+
+    /// Whether a write to `item` waits in the queue that is not one of the
+    /// file's own.
+    fn another_write_waits(&self, item: &Item, bound: &state::Bound) -> Result<bool> {
+        let waiting = crate::store::waiting_writes_for_item(&*self.core.conn()?, &item.id)?;
+        Ok(waiting.iter().any(|write| {
+            !bound
+                .writes
+                .queued
+                .iter()
+                .any(|queued| queued.id == write.id)
+        }))
     }
 
     /// The agreed presentation of a file showing bytes its item never took,

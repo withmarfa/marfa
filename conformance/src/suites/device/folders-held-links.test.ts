@@ -92,7 +92,8 @@ async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
   /** As another device's change reaches the server and its event stream. */
   const elsewhere = (
     item: WireItemOptions,
-    event: "item.created" | "item.updated" | "item.deleted",
+    event:
+      "item.created" | "item.updated" | "item.state_changed" | "item.deleted",
   ) => {
     if (event === "item.created") rows["core.note"]!.push({ item });
     frames.push(
@@ -519,11 +520,13 @@ describe("a held file the person deletes", () => {
     expect(await writtenBack()).toContain("[[Other]]");
   });
 
-  it("trashes the item of a deleted file whose edit the server refused", async () => {
-    const { itemDoor } = await seed([ticket]);
+  /** Ticket.md given an edit the server refused, then deleted, and scanned
+   *  once since. Answers the version line the file showed. */
+  async function deletedRefusedTicket() {
+    const seeded = await seed([ticket]);
     await push();
-    const own = itemDoor.update.bind(itemDoor);
-    itemDoor.update = (item, sent, options) =>
+    const own = seeded.itemDoor.update.bind(seeded.itemDoor);
+    seeded.itemDoor.update = (item, sent, options) =>
       item === ticket.id
         ? refusal(422, "validation_error", "Not a body this server takes")
         : own(item, sent, options);
@@ -531,11 +534,33 @@ describe("a held file the person deletes", () => {
     await push();
     const refused = await fileAt("Ticket.md");
     expect(refused.flag, JSON.stringify(refused)).toBe("refused");
-    expect(readFileSync(path(), "utf8")).toContain("Their own edit.");
+    const text = readFileSync(path(), "utf8");
+    expect(text).toContain("Their own edit.");
+    const version = Number(/^marfa_version: (\d+)$/m.exec(text)?.[1]);
+    expect(version, text).toBeGreaterThan(0);
     rmSync(path());
     const scanned = await folder!.folder.scan();
     expect(scanned.ok && scanned.value.missing).toBe(1);
+    return { ...seeded, version };
+  }
+
+  it("trashes the item of a deleted file whose edit the server refused", async () => {
+    await deletedRefusedTicket();
     await sweptUnwritten();
     expect(await deletesQueued()).toEqual([ticket.id]);
+  });
+
+  it("writes back a deleted file whose edit the server refused when another device archives its item", async () => {
+    const { elsewhere, version } = await deletedRefusedTicket();
+    // The server changes an item's state without a version step.
+    elsewhere({ ...ticket, version, state: "archived" }, "item.state_changed");
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    const pulled = await folder!.folder.pull();
+    expect(pulled.ok && pulled.value.revived).toBe(1);
+    const text = readFileSync(path(), "utf8");
+    expect(text).toContain("state: archived");
+    expect(text).toMatch(new RegExp(`^marfa_version: ${version}$`, "m"));
+    expect(await deletesQueued()).toEqual([]);
   });
 });
