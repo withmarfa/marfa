@@ -34,7 +34,7 @@ const TitlesRequestSchema = z.strictObject({
     .array(z.string().max(MAX_NAME_UNITS))
     .max(MAX_NAMES)
     .describe(
-      `The titles to look for, at most ${String(MAX_NAMES)}, each at most ${String(MAX_NAME_UNITS)} UTF-16 code units.`,
+      `The titles to look for, at most ${String(MAX_NAMES)}, each at most ${String(MAX_NAME_UNITS)} UTF-16 code units. Case, Unicode form and surrounding white space do not matter.`,
     ),
 });
 
@@ -53,6 +53,7 @@ const TitledItemSchema = z
         "`true` if the item's `blob_ref` property holds a blob digest.",
       ),
   })
+  .describe("An item whose title matches a name.")
   .openapi("TitledItem");
 
 const TitlesResponseSchema = z.object({
@@ -82,7 +83,7 @@ const titlesRoute = createRoute({
   tags: ["Items"],
   summary: "Find items by title",
   description:
-    "Finds the active and archived items titled by each of up to 200 names. A name matches a title that is equal to it once both have their surrounding white space removed and are put in Unicode NFC and lowercased one character at a time, so a capital letter with an accent matches the small letter in either Unicode form. An item's title is the property its type's `display_hints.title_field` names, or `title`. `system.*` items and items you can't read are left out.",
+    "Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` items and items you can't read are left out.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

@@ -92,6 +92,7 @@ const DATA_PLANE = [
   "POST /items/bulk-actions",
   "POST /items/bulk-get",
   "POST /items/lookup",
+  "POST /items/titles",
   "POST /items/tombstones",
   "POST /items/trash",
   "POST /items/trash-preview",

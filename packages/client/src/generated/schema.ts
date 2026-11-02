@@ -207,7 +207,7 @@ export interface paths {
         put?: never;
         /**
          * Find items by title
-         * @description Finds the active and archived items titled by each of up to 200 names. A name matches a title that is equal to it once both have their surrounding white space removed and are put in Unicode NFC and lowercased one character at a time, so `Straße` and `STRASSE` differ and `É` matches `e` plus a combining acute accent. An item's title is the property its type's `display_hints.title_field` names, or `title`. `system.*` items and items you can't read are left out.
+         * @description Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` items and items you can't read are left out.
          */
         post: operations["findItemsByTitle"];
         delete?: never;
@@ -3736,6 +3736,7 @@ export interface components {
                 };
             };
         };
+        /** @description An item whose title matches a name. */
         TitledItem: {
             /** @description The item's ID. */
             id: string;
@@ -9207,7 +9208,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The titles to look for, at most 200, each at most 1000 UTF-16 code units. */
+                    /** @description The titles to look for, at most 200, each at most 1000 UTF-16 code units. Case, Unicode form and surrounding white space do not matter. */
                     names: string[];
                 };
             };
