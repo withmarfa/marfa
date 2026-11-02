@@ -798,8 +798,9 @@ mod tests {
         std::thread::scope(|scope| {
             scope.spawn(|| record.keep(|_| {}));
             let _end = Finishing(&record);
-            let until = Instant::now() + Duration::from_millis(1500);
-            while Instant::now() < until {
+            // Waits for the beats, so a stall under load only delays them.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while beats.lock().unwrap().len() < 4 && Instant::now() < deadline {
                 if let Ok(bytes) = std::fs::read(temp.path().join(FILE_NAME))
                     && let Ok(file) = serde_json::from_slice::<File>(&bytes)
                 {
