@@ -743,7 +743,6 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
     add_columns(conn, &behind)?;
     conn.execute_batch(SCHEMA)?;
-    hold_triggers(conn)?;
     // Only when absent: writing it on every open would make a reading command
     // take a write lock.
     if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
@@ -768,14 +767,39 @@ pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
 /// Each table's statement as SQLite recorded it, keyed by table.
 type Shape = HashMap<String, String>;
 
-/// Without comments or whitespace, so a comment or a line break in
-/// `schema.sql` is no change of shape. SQLite records a table's statement as
-/// it was written, comments inside its parentheses included.
+/// Without comments or whitespace outside its quoted strings and names, so
+/// a comment or a line break in `schema.sql` is no change of shape, and a
+/// change inside a string is. SQLite records a statement as it was written,
+/// comments inside it included.
 fn statement(sql: &str) -> String {
-    sql.lines()
-        .flat_map(|line| line.split("--").next().unwrap_or_default().chars())
-        .filter(|character| !character.is_whitespace())
-        .collect()
+    let mut kept = String::with_capacity(sql.len());
+    let mut rest = sql.chars().peekable();
+    while let Some(character) = rest.next() {
+        let closing = match character {
+            '\'' | '"' | '`' => Some(character),
+            '[' => Some(']'),
+            _ => None,
+        };
+        if let Some(closing) = closing {
+            kept.push(character);
+            for inside in rest.by_ref() {
+                kept.push(inside);
+                if inside == closing {
+                    break;
+                }
+            }
+        } else if character == '-' && rest.peek() == Some(&'-') {
+            rest.by_ref().find(|&skipped| skipped == '\n');
+        } else if character == '/' && rest.peek() == Some(&'*') {
+            rest.next();
+            let mut last = ' ';
+            rest.by_ref()
+                .find(|&skipped| std::mem::replace(&mut last, skipped) == '*' && skipped == '/');
+        } else if !character.is_whitespace() {
+            kept.push(character);
+        }
+    }
+    kept
 }
 
 fn held_shape(conn: &Connection) -> rusqlite::Result<Shape> {
@@ -783,13 +807,14 @@ fn held_shape(conn: &Connection) -> rusqlite::Result<Shape> {
 }
 
 /// Each statement of `kind`, `table` or `trigger`, that SQLite records, keyed
-/// by name.
+/// by name in lowercase, since SQLite folds the case of ASCII letters in a
+/// name.
 fn held_statements(conn: &Connection, kind: &str) -> rusqlite::Result<Shape> {
     let mut query =
         conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = ?1 AND sql IS NOT NULL")?;
     let rows = query.query_map([kind], |row| {
         Ok((
-            row.get::<_, String>(0)?,
+            row.get::<_, String>(0)?.to_ascii_lowercase(),
             statement(&row.get::<_, String>(1)?),
         ))
     })?;
@@ -822,31 +847,33 @@ fn built_shape() -> Result<&'static Shape, CoreError> {
     Ok(&built()?.tables)
 }
 
-/// The triggers this build makes that the store holds in another form, by
-/// name.
+/// The triggers the store holds that are not this build's, by name: each
+/// this build makes in another form, and each it does not make. Every
+/// trigger in a store is one `schema.sql` made, of this build or another.
 fn triggers_behind(conn: &Connection) -> Result<Vec<String>, CoreError> {
-    let held = held_statements(conn, "trigger")?;
-    let mut behind: Vec<String> = built()?
-        .triggers
-        .iter()
-        .filter(|(name, made)| held.get(*name).is_some_and(|statement| statement != *made))
-        .map(|(name, _)| name.clone())
+    let made = &built()?.triggers;
+    let mut behind: Vec<String> = held_statements(conn, "trigger")?
+        .into_iter()
+        .filter(|(name, held)| made.get(name) != Some(held))
+        .map(|(name, _)| name)
         .collect();
     behind.sort();
     Ok(behind)
 }
 
-/// Makes again, in one transaction, each trigger the store holds differently
-/// from this build, which `CREATE TRIGGER IF NOT EXISTS` leaves as it
-/// is. A store already holding this build's triggers is not written to.
-fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
+/// Gives the store this build's triggers, in one transaction: each it holds
+/// in another form is made again, which `CREATE TRIGGER IF NOT EXISTS`
+/// leaves as it is, and each this build does not make is dropped. Only the
+/// writer may call it. A store already holding this build's triggers is not
+/// written to.
+pub(crate) fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
     if triggers_behind(conn)?.is_empty() {
         return Ok(());
     }
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     // Another program may have made them again between the read and the lock.
     for name in triggers_behind(&tx)? {
-        tx.execute_batch(&format!("DROP TRIGGER \"{name}\";"))?;
+        tx.execute_batch(&format!("DROP TRIGGER \"{}\";", name.replace('"', "\"\"")))?;
     }
     tx.execute_batch(SCHEMA)?;
     if let Some(name) = triggers_behind(&tx)?.first() {
@@ -8898,10 +8925,19 @@ mod tests {
         }
     }
 
+    /// Each trigger the store holds, by name as SQLite records it, with its
+    /// statement exactly as recorded.
+    fn held_triggers(conn: &Connection) -> Vec<(String, String)> {
+        conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
     #[test]
-    fn a_store_holding_an_earlier_builds_trigger_is_given_this_builds_when_opened_to_write() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("older.sqlite");
+    fn a_store_holding_an_earlier_builds_trigger_is_given_this_builds_only_by_its_writer() {
         let answered_leaves = |conn: &Connection| {
             conn.execute(
                 "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict)
@@ -8914,37 +8950,80 @@ mod tests {
                 .unwrap();
             last_change(conn, Changes::Items).unwrap() != before
         };
-        {
-            let conn = open(&path).unwrap();
-            assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
-            conn.execute_batch(
+        let earlier_change_delete = |name: &str| {
+            format!(
                 "DROP TRIGGER queue_change_delete;
-                 CREATE TRIGGER queue_change_delete AFTER DELETE ON queue BEGIN
+                 CREATE TRIGGER {name} AFTER DELETE ON queue BEGIN
                    INSERT INTO copy_changes (item_id, seq)
                      SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
                      FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
                      ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
-                 END;",
+                 END;"
             )
-            .unwrap();
-            assert_eq!(triggers_behind(&conn).unwrap(), ["queue_change_delete"]);
-            assert!(answered_leaves(&conn), "the witness: the earlier trigger");
-        }
-        let reading = read_connection(
-            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap(),
-            &path,
-        )
-        .unwrap();
-        assert_eq!(
-            triggers_behind(&reading).unwrap(),
-            ["queue_change_delete"],
-            "a reader wrote the schema"
-        );
-        drop(reading);
+        };
+        let earlier: [(&str, String, &[&str]); 4] = [
+            (
+                "a statement",
+                earlier_change_delete("queue_change_delete"),
+                &["queue_change_delete"],
+            ),
+            (
+                "a name in other case",
+                earlier_change_delete("Queue_Change_Delete"),
+                &["queue_change_delete"],
+            ),
+            (
+                "whitespace inside a string",
+                "DROP TRIGGER queue_revise_delete;
+                 CREATE TRIGGER queue_revise_delete AFTER DELETE ON queue
+                   WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked ', 'dead') BEGIN
+                   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+                     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+                 END;"
+                    .into(),
+                &["queue_revise_delete"],
+            ),
+            (
+                "a trigger this build does not make",
+                "CREATE TRIGGER left_by_another_build AFTER DELETE ON queue BEGIN
+                   INSERT INTO meta (key, value) VALUES ('left', '1');
+                 END;"
+                    .into(),
+                &["left_by_another_build"],
+            ),
+        ];
+        for (what, sql, behind) in earlier {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("older.sqlite");
+            let writer = crate::Core::open(&path, None).unwrap();
+            let made = held_triggers(&writer.conn().unwrap());
+            {
+                let conn = writer.conn().unwrap();
+                assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
+                conn.execute_batch(&sql).unwrap();
+                assert_eq!(triggers_behind(&conn).unwrap(), behind, "{what}");
+                if behind == ["queue_change_delete"] {
+                    assert!(answered_leaves(&conn), "the witness: the earlier trigger");
+                }
+            }
+            let earlier = held_triggers(&writer.conn().unwrap());
 
-        let conn = open(&path).unwrap();
-        assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
-        assert!(!answered_leaves(&conn));
+            // The ordinary second opener, and a reader by its own door.
+            let second = crate::Core::open(&path, None).unwrap();
+            assert_eq!(second.handle(), crate::Handle::Reader, "{what}");
+            let reader = crate::Core::open_reader(&path).unwrap();
+            assert_eq!(
+                held_triggers(&writer.conn().unwrap()),
+                earlier,
+                "a reading handle wrote the schema: {what}"
+            );
+            drop((second, reader, writer));
+
+            let writer = crate::Core::open(&path, None).unwrap();
+            let conn = writer.conn().unwrap();
+            assert_eq!(held_triggers(&conn), made, "{what}");
+            assert!(!answered_leaves(&conn), "{what}");
+        }
     }
 
     #[test]
@@ -9840,24 +9919,41 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "85d53350e6c6415a",
+            "d3541678b8af07e2",
             "the shape of a table changed, which refuses every store made before it"
         );
-        // The comment strip reads `--` alone, so a block comment would ride
-        // through it and change the shape by its prose.
-        assert!(!SCHEMA.contains("/*"), "schema.sql grew a block comment");
     }
 
     #[test]
     fn a_comment_or_a_line_break_is_no_change_of_shape() {
         assert_eq!(
-            statement("CREATE TABLE t (\n  -- why\n  a TEXT, -- more\n  b INTEGER\n)"),
+            statement(
+                "CREATE TABLE t (\n  -- why's\n  a TEXT, /* more\n \"here\" */ b INTEGER -- end\n)"
+            ),
             statement("CREATE TABLE t (a TEXT, b INTEGER)")
         );
         assert_ne!(
             statement("CREATE TABLE t (a TEXT)"),
             statement("CREATE TABLE t (a INTEGER)")
         );
+    }
+
+    #[test]
+    fn what_a_string_or_a_quoted_name_holds_is_a_change_of_shape() {
+        for (one, other) in [
+            ("'porter unicode61'", "'porter  unicode61'"),
+            ("'a -- b'", "'a'"),
+            ("'it''s here'", "'it''shere'"),
+            ("\"a b\"", "\"ab\""),
+            ("`a b`", "`ab`"),
+            ("[a b]", "[ab]"),
+        ] {
+            assert_ne!(
+                statement(&format!("CREATE TABLE t (a TEXT DEFAULT {one})")),
+                statement(&format!("CREATE TABLE t (a TEXT DEFAULT {other})")),
+                "{one}"
+            );
+        }
     }
 
     #[test]
