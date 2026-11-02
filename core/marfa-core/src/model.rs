@@ -381,6 +381,7 @@ impl SortField {
             return Err(CoreError::Validation {
                 code: "validation_error".into(),
                 message: format!("Invalid sort property field \"{name}\"; expected ^[a-z0-9_]+$"),
+                details: None,
             });
         }
         Ok(SortField::Property(name.to_string()))
@@ -402,6 +403,7 @@ impl FromStr for SortField {
                     message: format!(
                         "Invalid sort field \"{other}\"; expected one of created_at, updated_at, occurred_at or properties.<field>"
                     ),
+                    details: None,
                 }),
             },
         }

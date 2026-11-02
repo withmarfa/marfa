@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn refuses_as_a_validation_error_with_the_servers_message() {
         match decode_filter("tags eq \"x\"".into()) {
-            Err(MarfaError::Validation { code, message }) => {
+            Err(MarfaError::Validation { code, message, .. }) => {
                 assert_eq!(code, "validation_error");
                 assert_eq!(
                     message,

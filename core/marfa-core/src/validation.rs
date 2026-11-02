@@ -116,6 +116,7 @@ pub(crate) fn id(field: &str, id: &str) -> Result<(), CoreError> {
         Err(CoreError::Validation {
             code: "invalid_id".into(),
             message: format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase"),
+            details: None,
         })
     }
 }
@@ -127,6 +128,7 @@ fn refuse(errors: Vec<String>) -> Result<(), CoreError> {
         Err(CoreError::Validation {
             code: "validation_error".into(),
             message: errors.join("; "),
+            details: None,
         })
     }
 }
@@ -164,6 +166,7 @@ pub(crate) fn properties(
         Err(CoreError::Validation {
             code: "invalid_properties".into(),
             message: errors.join("; "),
+            details: None,
         })
     }
 }

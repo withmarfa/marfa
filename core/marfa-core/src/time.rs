@@ -17,6 +17,7 @@ pub(crate) fn invalid(field: &str, reason: &str) -> CoreError {
     CoreError::Validation {
         code: "validation_error".into(),
         message: format!("Invalid {field}: {reason}"),
+        details: None,
     }
 }
 

@@ -370,7 +370,7 @@ pub struct CatchUpReport {
 /// A catch-up that failed. The copy keeps the catalog a catch-up took
 /// whatever ends it, so `catalog_changed` says whether the types changed
 /// though the catch-up did not finish.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+#[derive(Debug, Clone, PartialEq, uniffi::Error)]
 pub enum CatchUpError {
     Failed {
         error: MarfaError,
@@ -1334,7 +1334,7 @@ pub struct DrainReport {
 
 /// Every variant carries `message`, the core's own sentence for it, because
 /// UniFFI renders an error's description by reflection otherwise.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+#[derive(Debug, Clone, PartialEq, uniffi::Error)]
 pub enum MarfaError {
     NotFound {
         code: String,
@@ -1351,6 +1351,12 @@ pub enum MarfaError {
     Validation {
         code: String,
         message: String,
+        /// The server's `error.details` for the same refusal, on each
+        /// `edge_constraint_violation` and `edge_cycle` the copy gives
+        /// itself, such as its `constraint`; `nil` on every other refusal.
+        /// Shaped as a refused write's `answer` holds them, under
+        /// `error.details`.
+        details: Option<JsonValue>,
     },
     UnknownType {
         message: String,
@@ -1597,7 +1603,11 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::NotFound { code, .. } => MarfaError::NotFound { code, message },
             E::Unauthorized { code, .. } => MarfaError::Unauthorized { code, message },
             E::Forbidden { code, .. } => MarfaError::Forbidden { code, message },
-            E::Validation { code, .. } => MarfaError::Validation { code, message },
+            E::Validation { code, details, .. } => MarfaError::Validation {
+                code,
+                message,
+                details: details.map(|details| JsonValue::from(*details)),
+            },
             E::UnknownType { .. } => MarfaError::UnknownType { message },
             E::RateLimited {
                 code,
@@ -2110,7 +2120,7 @@ pub struct Thumbnail {
 /// What a held stream changed in the copy, what became of the server, or
 /// what became of the queue it drained then. `cursor` is the cursor held
 /// after it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum Change {
     /// An event the stream applied, by the event's type, with the item or
     /// edge it was about.
@@ -2780,6 +2790,18 @@ impl Core {
         Ok(self.inner.check_edge(&draft)?)
     }
 
+    /// Throws the error `update_edge` would throw for a move of edge `id`'s
+    /// end now, whatever version the edit would carry, and queues nothing. A
+    /// move onto the end the edge holds already changes nothing and returns.
+    /// Returning is not the server's verdict, which a queued move still meets.
+    pub fn check_edge_move(&self, id: String, moves: EdgeMove) -> Result<(), MarfaError> {
+        let end = match moves.end {
+            EdgeEnd::Source => marfa_core::End::Source,
+            EdgeEnd::Target => marfa_core::End::Target,
+        };
+        Ok(self.inner.check_edge_move(&id, end, &moves.to)?)
+    }
+
     /// Links two items. An edge is its own write.
     pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::EdgeDraft {
@@ -3146,6 +3168,7 @@ mod tests {
             E::Validation {
                 code: text(),
                 message: text(),
+                details: None,
             },
             E::UnknownType { message: text() },
             E::RateLimited {
@@ -3492,6 +3515,7 @@ mod tests {
                 E::Validation {
                     code: text(),
                     message: text(),
+                    details: None,
                 }
                 .into(),
                 "Validation",
@@ -4861,7 +4885,8 @@ mod tests {
             .item_id
             .unwrap()
         };
-        let (first, second, child) = (note("first"), note("second"), note("child"));
+        let (first, second, third, child) =
+            (note("first"), note("second"), note("third"), note("child"));
         let edge = core
             .create_edge(EdgeDraft {
                 source_id: first.clone(),
@@ -4911,6 +4936,59 @@ mod tests {
                 Err(MarfaError::Validation { code: refused, .. }) => assert_eq!(refused, code),
                 other => panic!("a move the server refuses was answered {other:?}"),
             }
+            let moves = EdgeMove { end, to: to.into() };
+            match core.check_edge_move(edge.clone(), moves) {
+                Err(MarfaError::Validation { code: refused, .. }) => assert_eq!(refused, code),
+                other => panic!("the check of a move the server refuses was answered {other:?}"),
+            }
+        }
+        let parent = |source: &str| EdgeDraft {
+            source_id: source.into(),
+            target_id: child.clone(),
+            edge_type: "parent-of".into(),
+            properties: JsonObject::default(),
+            id: None,
+        };
+        for (source, details) in [
+            (
+                &second,
+                serde_json::json!({
+                    "edge_type": "parent-of",
+                    "source_id": second,
+                    "target_id": child,
+                    "constraint": "duplicate",
+                }),
+            ),
+            (
+                &third,
+                serde_json::json!({
+                    "edge_type": "parent-of",
+                    "target_id": child,
+                    "constraint": "cardinality",
+                }),
+            ),
+        ] {
+            match core.check_edge(parent(source)) {
+                Err(MarfaError::Validation {
+                    code,
+                    details: Some(carried),
+                    ..
+                }) => {
+                    assert_eq!(code, "edge_constraint_violation");
+                    assert_eq!(carried, JsonValue::from(details));
+                }
+                other => panic!("a second parent was answered {other:?}"),
+            }
+        }
+        for to in [&second, &third] {
+            core.check_edge_move(
+                edge.clone(),
+                EdgeMove {
+                    end: EdgeEnd::Source,
+                    to: to.clone(),
+                },
+            )
+            .expect("the check refused a move the update takes");
         }
         assert_eq!(core.queue().unwrap().len(), queued);
     }

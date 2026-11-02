@@ -1363,7 +1363,7 @@ impl Http {
     fn type_refusal(refused: CoreError) -> Result<(String, String), CoreError> {
         match refused {
             error if error.is_environmental() => Err(error),
-            CoreError::Validation { code, message }
+            CoreError::Validation { code, message, .. }
             | CoreError::Forbidden { code, message }
             | CoreError::NotFound { code, message }
             | CoreError::Server { code, message, .. } => Ok((code, message)),
@@ -1942,7 +1942,11 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
             reason: INSTANCE_CHANGED.into(),
         },
         400 if code == "unknown_type" => CoreError::UnknownType { message },
-        400 | 422 => CoreError::Validation { code, message },
+        400 | 422 => CoreError::Validation {
+            code,
+            message,
+            details: None,
+        },
         401 => CoreError::Unauthorized { code, message },
         403 => CoreError::Forbidden { code, message },
         404 => CoreError::NotFound { code, message },

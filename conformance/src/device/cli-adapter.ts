@@ -816,6 +816,23 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<{ refused: false }>(edgeDraftArgs("check", edge));
   }
 
+  async checkEdgeMove(
+    id: string,
+    to: { source_id: string } | { target_id: string },
+  ): Promise<Outcome<{ refused: false }>> {
+    const [flag, end] =
+      "source_id" in to
+        ? ["--source", to.source_id]
+        : ["--target", to.target_id];
+    return this.json<{ refused: false }>([
+      "edges",
+      "check-move",
+      id,
+      flag,
+      end,
+    ]);
+  }
+
   async updateEdge(
     id: string,
     edit: {

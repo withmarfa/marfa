@@ -95,6 +95,7 @@ fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
             code: "validation_error".into(),
             message: "updated_after orders by updated_at, ascending; leave out sort and direction"
                 .into(),
+            details: None,
         }),
         (Some(sort), _) => Ok(sort),
     }
@@ -233,12 +234,14 @@ pub(crate) fn narrow_by_types(
         return Err(CoreError::Validation {
             code: "validation_error".into(),
             message: "The type filter names no type. Name a type, or leave the filter out.".into(),
+            details: None,
         });
     }
     if entries.len() > MAX_TYPE_ENTRIES {
         return Err(CoreError::Validation {
             code: "validation_error".into(),
             message: format!("Too many types in filter (max {MAX_TYPE_ENTRIES})"),
+            details: None,
         });
     }
     let mut alternatives = Vec::new();
@@ -247,6 +250,7 @@ pub(crate) fn narrow_by_types(
             return Err(CoreError::Validation {
                 code: "validation_error".into(),
                 message: format!("Invalid type identifier: {declared}"),
+                details: None,
             });
         }
         narrow_by_type(catalog, Some(declared), &mut alternatives, values)?;
@@ -275,12 +279,14 @@ pub(crate) fn narrow_by_states(
                 code: "validation_error".into(),
                 message: "The state filter names no state. Name a state, or leave the filter out."
                     .into(),
+                details: None,
             });
         }
         Some(_) if all_states => {
             return Err(CoreError::Validation {
                 code: "validation_error".into(),
                 message: "The state filter names states beside every state. Name the states, or ask for every state, not both.".into(),
+                details: None,
             });
         }
         Some(states) => {
@@ -336,6 +342,7 @@ pub(crate) fn narrow_by_type(
         return Err(crate::error::CoreError::Validation {
             code: "validation_error".into(),
             message: format!("Invalid type identifier: {declared}"),
+            details: None,
         });
     }
     let root = Catalog::root(declared);

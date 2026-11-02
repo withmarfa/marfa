@@ -6205,24 +6205,20 @@ mod tests {
         folder.scan().unwrap();
         assert_eq!(edges_to(&folder, SHELF), 1);
         let refuse = |folder: &Folder| {
-            let ids: Vec<String> = folder
+            let rows: Vec<_> = folder
                 .core
                 .queue()
                 .unwrap()
                 .into_iter()
                 .filter(|row| row.kind == WriteKind::CreateEdge && row.verdict.is_none())
-                .map(|row| row.id)
                 .collect();
-            for id in ids {
-                crate::store::record_verdict(
+            for row in rows {
+                crate::store::record_refusal(
                     &folder.core.conn().unwrap(),
-                    &id,
-                    &crate::store::Answered {
-                        verdict: crate::Verdict::Refused,
-                        reason: Some("validation_error"),
-                        answer: None,
-                        conflicted_copy_id: None,
-                    },
+                    &row,
+                    "validation_error",
+                    None,
+                    false,
                 )
                 .unwrap();
             }

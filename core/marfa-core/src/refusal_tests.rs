@@ -263,7 +263,7 @@ fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
             .create_item(&bookmark(serde_json::json!({ "url": refused })))
             .unwrap_err();
         assert!(
-            matches!(&error, CoreError::Validation { code, message }
+            matches!(&error, CoreError::Validation { code, message, .. }
                 if code == "invalid_properties" && message == "url: Must be a valid URL"),
             "{refused:?}: {error:?}"
         );
@@ -296,7 +296,7 @@ fn an_event_status_outside_the_fixed_list_is_refused_naming_the_field() {
     };
     let error = core.create_item(&event("rescheduled")).unwrap_err();
     assert!(
-        matches!(&error, CoreError::Validation { code, message }
+        matches!(&error, CoreError::Validation { code, message, .. }
             if code == "invalid_properties" && message.starts_with("status: ")),
         "{error:?}"
     );
@@ -319,7 +319,7 @@ fn task(properties: serde_json::Value) -> crate::Draft {
 fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_changes_it() {
     let core = copy(&Scripted::start());
     let undeclared = |error: CoreError| {
-        matches!(&error, CoreError::Validation { code, message }
+        matches!(&error, CoreError::Validation { code, message, .. }
             if code == "invalid_properties"
                 && message == "status: Must be a status word the type declares: not_started, in_progress, completed, canceled")
     };
@@ -415,7 +415,7 @@ fn a_stale_keyed_create_judges_the_status_word_against_the_row_it_lands_on() {
         base_version: Some(1),
         ..task(properties)
     };
-    let Err(CoreError::Validation { code, message }) = core.create_item(&keyed(
+    let Err(CoreError::Validation { code, message, .. }) = core.create_item(&keyed(
         serde_json::json!({ "title": "Old", "status": "waiting" }),
     )) else {
         panic!("a stale keyed create changing the word to an undeclared one was taken");
@@ -461,7 +461,8 @@ fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
     };
     let waiting = held("waiting");
     let queued = core.queue().unwrap().len();
-    let Err(CoreError::Validation { code, message }) = core.update_item(&waiting, &to_task) else {
+    let Err(CoreError::Validation { code, message, .. }) = core.update_item(&waiting, &to_task)
+    else {
         panic!("a move into a type that does not declare the row's word was taken");
     };
     assert_eq!(code, "invalid_properties");
@@ -497,7 +498,8 @@ fn a_subtype_adds_status_words_after_the_ones_it_inherits() {
     for taken in ["waiting", "not_started", "completed"] {
         core.create_item(&chore(taken)).unwrap();
     }
-    let Err(CoreError::Validation { code, message }) = core.create_item(&chore("pending")) else {
+    let Err(CoreError::Validation { code, message, .. }) = core.create_item(&chore("pending"))
+    else {
         panic!("a word neither type declares was taken");
     };
     assert_eq!(code, "invalid_properties");
@@ -648,7 +650,7 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
         ] {
             let result = core.create_item(&bookmark(properties));
             if let Some(kept_as) = refused {
-                let Err(CoreError::Validation { code, message }) = result else {
+                let Err(CoreError::Validation { code, message, .. }) = result else {
                     panic!("{value} at {field} was not refused");
                 };
                 assert_eq!(code, "invalid_properties");

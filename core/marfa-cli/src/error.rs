@@ -489,7 +489,9 @@ impl CliError {
                 CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
                 CoreError::Forbidden { code, .. } => Some((Some(403), Some(code), None)),
                 // The variant folds 400 and 422 together, so no status.
-                CoreError::Validation { code, .. } => Some((None, Some(code), None)),
+                CoreError::Validation { code, details, .. } => {
+                    Some((None, Some(code), details.as_deref()))
+                }
                 CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
@@ -1012,9 +1014,21 @@ mod tests {
         let validation = CliError::Core(CoreError::Validation {
             code: "invalid_properties".into(),
             message: "body is required".into(),
+            details: None,
         });
         assert!(validation.envelope()["error"]["server"]["status"].is_null());
+        assert!(validation.envelope()["error"]["server"]["details"].is_null());
         assert_eq!(validation.envelope()["exit"], 1);
+
+        let edge = CliError::Core(CoreError::Validation {
+            code: "edge_constraint_violation".into(),
+            message: "Edge \"supersedes\" already exists between these items".into(),
+            details: Some(Box::new(serde_json::json!({ "constraint": "duplicate" }))),
+        });
+        assert_eq!(
+            edge.envelope()["error"]["server"]["details"]["constraint"],
+            "duplicate"
+        );
 
         let direct = CliError::Refused {
             status: 422,

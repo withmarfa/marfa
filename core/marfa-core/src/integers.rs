@@ -55,6 +55,7 @@ fn refusal(path: &[String], source: &str) -> CoreError {
     CoreError::Validation {
         code: "invalid_properties".into(),
         message: refusal_message(path, source),
+        details: None,
     }
 }
 
@@ -245,7 +246,7 @@ mod tests {
             "ok": 9_007_199_254_740_991_i64,
             "list": [1, { "deep": -9_007_199_254_740_993_i64 }],
         });
-        let Err(CoreError::Validation { code, message }) =
+        let Err(CoreError::Validation { code, message, .. }) =
             refuse_in_value(properties.as_object().unwrap())
         else {
             panic!("expected a refusal");

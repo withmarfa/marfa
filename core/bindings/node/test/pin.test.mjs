@@ -199,7 +199,7 @@ test("reads every edge of one type the copy holds in one call", async (t) => {
   await core.hydrateWith(["core.note"], SliceTier.Library, ["parent-of"]);
   core.createEdge({
     sourceId: "note",
-    targetId: "inner",
+    targetId: "outer",
     edgeType: "parent-of",
     properties: {},
   });

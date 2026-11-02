@@ -3582,6 +3582,25 @@ marfa device edges check [OPTIONS] --source <ID> --target <ID> --type <TYPE>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device edges check-move
+
+Say whether `edges update` would refuse moving one end of an edge now, from what the copy holds, and queue nothing. A move onto the end the edge holds already changes nothing. The server still judges a move the copy finds nothing against.
+
+```text
+marfa device edges check-move [OPTIONS] <--source <ID>|--target <ID>> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The edge id. |
+
+| Option | Description |
+| --- | --- |
+| `--source <ID>` | Move the edge to this source. |
+| `--target <ID>` | Move the edge to this target. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device edges update
 
 Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.

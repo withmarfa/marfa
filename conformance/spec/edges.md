@@ -1,6 +1,6 @@
 # Edges
 
-An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Ten edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
+An edge is a typed, directed relationship from a source item to a target item, with its own id, properties and version. An edge type says how edges of that type behave: how many an item holds, which item types they join and what a delete does to the other end. Eleven edge types ship, and a key registers more. Every edge type names both ends: its `label` names the source end and its `reverse_label` the target end.
 
 ## Shipped edge types
 

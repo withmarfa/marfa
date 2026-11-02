@@ -678,6 +678,19 @@ pub enum EdgesCommand {
         #[arg(long)]
         id: Option<String>,
     },
+    /// Say whether `edges update` would refuse moving one end of an edge now, from what the copy holds, and queue nothing. A move onto the end the edge holds already changes nothing. The server still judges a move the copy finds nothing against.
+    #[command(name = "check-move")]
+    #[command(group(clap::ArgGroup::new("end").required(true).args(["source", "target"])))]
+    CheckMove {
+        /// The edge id.
+        id: String,
+        /// Move the edge to this source.
+        #[arg(long, value_name = "ID")]
+        source: Option<String>,
+        /// Move the edge to this target.
+        #[arg(long, value_name = "ID")]
+        target: Option<String>,
+    },
     /// Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
     Update {
         /// The edge id.
@@ -1696,6 +1709,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     core.check_edge(&draft)?;
                     output::report(&serde_json::json!({ "refused": false }), json, || {
                         "the copy finds nothing to refuse; the server judges the edge once it is sent"
+                            .to_string()
+                    })
+                }
+                EdgesCommand::CheckMove { id, source, target } => {
+                    let (end, to) = match (source, target) {
+                        (Some(source), None) => (marfa_core::End::Source, source),
+                        (None, Some(target)) => (marfa_core::End::Target, target),
+                        _ => unreachable!("clap requires exactly one end"),
+                    };
+                    core.check_edge_move(&id, end, &to)?;
+                    output::report(&serde_json::json!({ "refused": false }), json, || {
+                        "the copy finds nothing to refuse; the server judges the move once it is sent"
                             .to_string()
                     })
                 }

@@ -1807,6 +1807,7 @@ impl Core {
                     "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
                     held.state.as_str()
                 ),
+                details: None,
             });
         }
         if !waiting.is_empty() {
@@ -2103,12 +2104,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_whole(&conn)?;
-        let Some(held) = store::edge_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "edge_not_found".into(),
-                message: format!("{id} is not an edge this copy holds"),
-            });
-        };
+        let held = held_edge(&conn, id)?;
         let Some(base) = edit.base_version else {
             return Err(CoreError::Invalid(format!(
                 "an update to edge {id} carries no version; name the version the edit was based on"
@@ -2120,17 +2116,7 @@ impl Core {
                 held.version
             )));
         }
-        // The server judges a named end against the edge it holds, which an
-        // earlier waiting move may not leave where the copy shows it, so an
-        // end the copy holds already is not sent.
-        let mut edit = edit.clone();
-        if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
-            edit.source_id = None;
-        }
-        if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
-            edit.target_id = None;
-        }
-        let edit = &edit;
+        let edit = &ends_moved(&held, edit);
         refuse_edge_move(&conn, &held, edit)?;
         integers::refuse_in_value(&edit.properties)?;
         if edit.is_empty() {
@@ -2176,6 +2162,29 @@ impl Core {
         )?;
         tx.commit()?;
         Ok(Some(queued))
+    }
+
+    /// Answers the refusal `update_edge` would give a move of edge `id`'s
+    /// `end` to item `to` now, without queueing anything and whatever
+    /// version the edit would carry. A move onto the end the edge holds
+    /// already changes nothing and is refused nothing. `Ok` is not the
+    /// server's verdict, which the queued write still meets.
+    pub fn check_edge_move(&self, id: &str, end: End, to: &str) -> Result<()> {
+        let conn = self.conn()?;
+        store::refuse_unless_whole(&conn)?;
+        let held = held_edge(&conn, id)?;
+        let to = Some(to.to_string());
+        let edit = match end {
+            End::Source => EdgeEdit {
+                source_id: to,
+                ..EdgeEdit::default()
+            },
+            End::Target => EdgeEdit {
+                target_id: to,
+                ..EdgeEdit::default()
+            },
+        };
+        refuse_edge_move(&conn, &held, &ends_moved(&held, &edit))
     }
 
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
@@ -3496,6 +3505,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
                 "{} cannot start in the revoked state; use active, archived or trashed",
                 draft.r#type
             ),
+            details: None,
         });
     }
     for (name, value) in [
@@ -3506,6 +3516,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
             return Err(CoreError::Validation {
                 code: "validation_error".into(),
                 message: format!("{name} must be a number"),
+                details: None,
             });
         }
     }
@@ -3519,7 +3530,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
         for target in targets {
             validation::id("edges", target)?;
             if draft.id.as_deref() == Some(target.as_str()) {
-                refuse_self_loop(target, target)?;
+                refuse_self_loop(edge_type, target, target)?;
             }
         }
     }
@@ -3636,22 +3647,22 @@ fn queue_create(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let source_id = target.as_ref().map_or(id.as_str(), |held| held.id.as_str());
-    for (edge_type, targets) in &draft.edges {
-        for target_id in targets {
-            edge_rules::refuse_unwritable_edge(
-                tx,
-                &edge_rules::Proposed {
-                    edge_type,
-                    source: edge_rules::Source::Made {
-                        id: source_id,
-                        r#type: &draft.r#type,
-                    },
-                    target_id,
-                    replacing: None,
+    let inline: Vec<_> = draft
+        .edges
+        .iter()
+        .flat_map(|(edge_type, targets)| {
+            targets.iter().map(|target_id| edge_rules::Proposed {
+                edge_type,
+                source: edge_rules::Source::Made {
+                    id: source_id,
+                    r#type: &draft.r#type,
                 },
-            )?;
-        }
-    }
+                target_id,
+                replacing: None,
+            })
+        })
+        .collect();
+    edge_rules::refuse_unwritable_edges(tx, &inline)?;
     let payload = draft.payload(&id)?;
     let mut row = draft.wire(&id);
     row.tier = shown_tier.map(|tier| tier.as_str().into());
@@ -3886,6 +3897,7 @@ fn queue_update(
         return Err(CoreError::Validation {
             code: "invalid_properties".into(),
             message: required.join("; "),
+            details: None,
         });
     }
     let mut payload = edit.payload(base)?;
@@ -3998,14 +4010,30 @@ fn queue_update(
     Ok(queued)
 }
 
-fn refuse_self_loop(source_id: &str, target_id: &str) -> Result<()> {
+fn refuse_self_loop(edge_type: &str, source_id: &str, target_id: &str) -> Result<()> {
     if source_id == target_id {
         return Err(CoreError::Validation {
             code: "edge_cycle".into(),
             message: format!("an edge from {source_id} to itself closes a cycle"),
+            details: Some(Box::new(serde_json::json!({ "edge_type": edge_type }))),
         });
     }
     Ok(())
+}
+
+/// The edit with each end it names that the edge already holds left out.
+/// The server judges a named end against the edge it holds, which an
+/// earlier waiting move may not leave where the copy shows it, so an end
+/// the copy holds already is not sent.
+fn ends_moved(held: &model::Edge, edit: &EdgeEdit) -> EdgeEdit {
+    let mut edit = edit.clone();
+    if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
+        edit.source_id = None;
+    }
+    if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
+        edit.target_id = None;
+    }
+    edit
 }
 
 /// Refuses what the server refuses of every such move whatever the rows
@@ -4023,6 +4051,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                     "an update moves one end of edge {} at a time; delete it and create the edge wanted",
                     held.id
                 ),
+                details: None,
             });
         }
         (Some(source), None) => (catalog::End::Source, source, held.target_id.as_str()),
@@ -4036,20 +4065,21 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                     "{} is {}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one",
                     held.edge_type, edge_type.cardinality
                 ),
+                details: None,
             });
         }
         Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
         Err(error) => return Err(error),
     }
-    refuse_self_loop(source_id, target_id)?;
-    edge_rules::refuse_unwritable_edge(
+    refuse_self_loop(&held.edge_type, source_id, target_id)?;
+    edge_rules::refuse_unwritable_edges(
         conn,
-        &edge_rules::Proposed {
+        &[edge_rules::Proposed {
             edge_type: &held.edge_type,
             source: edge_rules::Source::Held(source_id),
             target_id,
             replacing: Some(&held.id),
-        },
+        }],
     )
 }
 
@@ -4060,7 +4090,7 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     if let Some(id) = &draft.id {
         validation::id("id", id)?;
     }
-    refuse_self_loop(&draft.source_id, &draft.target_id)?;
+    refuse_self_loop(&draft.edge_type, &draft.source_id, &draft.target_id)?;
     integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
         conn,
@@ -4074,14 +4104,14 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
             edge_type = draft.edge_type,
         )));
     }
-    edge_rules::refuse_unwritable_edge(
+    edge_rules::refuse_unwritable_edges(
         conn,
-        &edge_rules::Proposed {
+        &[edge_rules::Proposed {
             edge_type: &draft.edge_type,
             source: edge_rules::Source::Held(&draft.source_id),
             target_id: &draft.target_id,
-            replacing: None,
-        },
+            replacing: draft.id.as_deref(),
+        }],
     )
 }
 
@@ -4465,7 +4495,7 @@ mod tests {
             draft.properties.insert(field.into(), value);
             let failure = core.create_item(&draft).unwrap_err();
             assert!(
-                matches!(&failure, CoreError::Validation {code, message} if code == "invalid_properties" && message.contains(field)),
+                matches!(&failure, CoreError::Validation {code, message, .. } if code == "invalid_properties" && message.contains(field)),
                 "{failure:?}"
             );
             assert_eq!(core.queue().unwrap(), before);
@@ -4548,7 +4578,7 @@ mod tests {
             ];
             for (door, failure) in failures {
                 assert!(
-                    matches!(&failure, CoreError::Validation { code, message }
+                    matches!(&failure, CoreError::Validation { code, message, .. }
                         if code == "validation_error" && message.contains(reason)),
                     "{door} with {named}: {failure:?}"
                 );
@@ -4618,7 +4648,7 @@ mod tests {
                 .unwrap_err(),
         ] {
             assert!(
-                matches!(&failure, CoreError::Validation { code, message }
+                matches!(&failure, CoreError::Validation { code, message, .. }
                     if code == "validation_error" && message.contains("property name")),
                 "{failure:?}"
             );
@@ -5078,7 +5108,8 @@ mod tests {
             ..clear(3, &["notes"])
         };
         let before = core.get("row").unwrap();
-        let Err(CoreError::Validation { code, message }) = core.update_item("row", &both) else {
+        let Err(CoreError::Validation { code, message, .. }) = core.update_item("row", &both)
+        else {
             panic!("a property both set and cleared was queued");
         };
         assert_eq!(code, "validation_error");
@@ -5459,7 +5490,7 @@ mod tests {
             ..EdgeEdit::default()
         };
         let refused = |result: Result<()>, where_: &str| match result {
-            Err(CoreError::Validation { code, message }) => {
+            Err(CoreError::Validation { code, message, .. }) => {
                 assert_eq!(code, "invalid_properties", "{where_}");
                 assert!(
                     message.contains("Must be a whole number that Marfa serves back"),
@@ -7202,7 +7233,7 @@ mod tests {
         }
         let queued = core
             .create_edge(&EdgeDraft {
-                source_id: "second".into(),
+                source_id: "root".into(),
                 target_id: "first".into(),
                 edge_type: "in-thread".into(),
                 ..Default::default()

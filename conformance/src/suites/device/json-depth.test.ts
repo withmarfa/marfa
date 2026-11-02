@@ -31,6 +31,8 @@ it("accepts 64 containers and refuses 65 without changing the queue or held rows
       rows: { "core.note": [{ item: { id: "held", version: 3 } }] },
     });
     const { device, server } = harness;
+    // Each edge create names a target of its own, so none repeats a triple.
+    let targets = 0;
     const edge =
       value(
         await device.createEdge({
@@ -59,7 +61,7 @@ it("accepts 64 containers and refuses 65 without changing the queue or held rows
         write: (properties: Record<string, unknown>) =>
           device.createEdge({
             source: "held",
-            target: "other",
+            target: `other-${(targets += 1)}`,
             type: "references",
             properties,
           }),
