@@ -1403,7 +1403,8 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     }
     for said in trashed_lines(report)
         .into_iter()
-        .chain(standing_lines(report))
+        .chain(unsure_lines(report))
+        .chain(lookup_line(report))
     {
         line.push('\n');
         line.push_str(&said);
@@ -1421,10 +1422,9 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         .collect()
 }
 
-/// What stands while other folders cannot be read, or while the server does
-/// not answer the folder's title lookups, as opposed to what happened in one
-/// pass.
-pub fn standing_lines(report: &marfa_core::ScanReport) -> Vec<String> {
+/// What stands while other folders cannot be read, as opposed to what
+/// happened in one pass.
+pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")
     });
@@ -1434,10 +1434,14 @@ pub fn standing_lines(report: &marfa_core::ScanReport) -> Vec<String> {
             file.path, file.reason
         )
     });
-    registry
-        .chain(unsure)
-        .chain(report.lookup_refused.iter().cloned())
-        .collect()
+    registry.chain(unsure).collect()
+}
+
+/// What stands while the server does not answer the folder's title lookups.
+/// A watch says it when it changes, apart from the other standing lines, so a
+/// held file or an excluded secret does not say it again.
+pub fn lookup_line(report: &marfa_core::ScanReport) -> Option<String> {
+    report.lookup_refused.clone()
 }
 
 /// Says each conflicted edit once, with the file it was for and the file its

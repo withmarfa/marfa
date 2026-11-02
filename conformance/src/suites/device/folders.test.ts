@@ -4532,6 +4532,43 @@ describe("what a folder takes", () => {
     ).toBe(1);
   });
 
+  it("says a refused title lookup once while another notice changes and other passes report", async () => {
+    // A server older than `POST /items/titles` answers it as no route.
+    harness = await folderHarness("folder-lookup-refused-watch", {
+      lookup: () => refusal(404, "not_found", "Not found"),
+    });
+    scriptFolderWrites(harness);
+    put(harness, "Ticket.md", "See [[Target]].\n");
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("no title lookup"),
+        { timeout: 20_000, interval: 100 },
+      );
+      // A notice of another kind changes, with the refusal still standing.
+      put(harness, ".env", "TOKEN=not-a-real-one\n");
+      await vi.waitFor(
+        () => expect(watching.stdout, watching.stdout).toContain(".env: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const passes = () => watching.stdout.split(" created, ").length - 1;
+      const before = passes();
+      // A pass that reports something, with the refusal still standing.
+      put(harness, "fresh.md", "---\ntitle: Fresh\n---\nbody\n");
+      await vi.waitFor(
+        () => expect(passes(), watching.stdout).toBeGreaterThan(before),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.stdout.split("no title lookup").length - 1,
+      `a watch said the standing refusal again: ${watching.stdout}`,
+    ).toBe(1);
+  });
+
   const keptId = "01a00000-0000-7000-8000-0000000055a5";
   const otherId = "01a00000-0000-7000-8000-0000000055a6";
 
