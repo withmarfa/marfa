@@ -401,6 +401,8 @@ impl Folder {
         if completeness != crate::model::Completeness::Complete {
             return Err(CoreError::HydrationIncomplete);
         }
+        #[cfg(test)]
+        super::tests::READ_ITEMS.with(|read| read.set(read.get() + items.len()));
         let bound_items: HashSet<String> = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -767,15 +769,7 @@ impl Folder {
             }
         }
         context.same_copy(&*self.core.conn()?)?;
-        self.remove_departed(
-            &members,
-            narrow.as_ref().map(|narrow| &narrow.reached),
-            &settings,
-            &lists,
-            &refused,
-            &rendering,
-            report,
-        )?;
+        self.remove_departed(&members, &settings, &lists, &refused, &rendering, report)?;
         if crate::fault::named("copy-changes-after-pull-effects").is_some() {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
@@ -912,6 +906,10 @@ impl Folder {
             } {
                 crate::reach::pins_changed(&*self.core.conn()?)?;
             }
+        }
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "folder-pull-copy-changes") {
+            crate::reach::pins_changed(&*self.core.conn()?)?;
         }
         rendering.context.borrow().check(&*self.core.conn()?)?;
         let Placing {
@@ -1849,7 +1847,6 @@ impl Folder {
     fn remove_departed(
         &self,
         members: &HashSet<String>,
-        only: Option<&HashSet<String>>,
         settings: &Settings,
         lists: &Lists,
         refused: &HashSet<String>,
@@ -1864,7 +1861,7 @@ impl Folder {
         let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
             if refused.contains(&crate::names::folded(&row.path))
-                || only.is_some_and(|only| !only.contains(&row.item_id))
+                || rendering.pick.is_some_and(|pick| pick.leaves(&row.item_id))
             {
                 continue;
             }

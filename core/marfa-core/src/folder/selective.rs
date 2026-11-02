@@ -70,6 +70,15 @@ struct Baseline {
     shown: HashSet<String>,
 }
 
+/// What changed since the last pull began: the items, those bound since to
+/// another path or none, and those whose binding changed in what it records
+/// of its own file alone.
+struct Changes {
+    changed: HashSet<String>,
+    moved: HashSet<String>,
+    rebound: HashSet<String>,
+}
+
 /// One pull's choice.
 pub(super) struct Pick {
     change: i64,
@@ -77,6 +86,8 @@ pub(super) struct Pick {
     bound: HashMap<String, state::Bound>,
     /// The items a change reaches; `None` where every file renders.
     reached: Option<HashSet<String>>,
+    /// Whether the pull reads only the items in `reached`.
+    narrow: bool,
     /// Every file renders, and one the choice would have left is noted
     /// where it is rewritten.
     checking: bool,
@@ -113,6 +124,7 @@ impl Selection {
                 .map(|bound| (bound.path.clone(), bound))
                 .collect(),
             reached: None,
+            narrow: false,
             checking: false,
             settled_before: HashSet::new(),
             settled: RefCell::default(),
@@ -128,15 +140,9 @@ impl Selection {
             .filter(|last| last.generation == pick.generation && last.settings == *settings)
     }
 
-    /// The items changed since the last pull began, those bound since to
-    /// another path or none, and those whose binding changed in what it
-    /// records of its own file alone; `None` where more changed than a
-    /// choice is worth, or the types did.
-    fn changes(
-        folder: &Folder,
-        last: &Baseline,
-        pick: &Pick,
-    ) -> Result<Option<(HashSet<String>, HashSet<String>, HashSet<String>)>> {
+    /// What changed since the last pull began; `None` where more changed
+    /// than a choice is worth, or the types did.
+    fn changes(folder: &Folder, last: &Baseline, pick: &Pick) -> Result<Option<Changes>> {
         let changed = {
             let conn = folder.core.conn()?;
             crate::store::changed_since(
@@ -166,7 +172,11 @@ impl Selection {
                 }
             }
         }
-        Ok(Some((changed, moved, rebound)))
+        Ok(Some(Changes {
+            changed,
+            moved,
+            rebound,
+        }))
     }
 
     /// Each changed item and each item at the other end of one of its edges,
@@ -207,7 +217,12 @@ impl Selection {
             return Ok(None);
         }
         let last = self.last.as_ref().expect("a baseline that holds");
-        let Some((mut changed, moved, rebound)) = Self::changes(folder, last, pick)? else {
+        let Some(Changes {
+            mut changed,
+            moved,
+            rebound,
+        }) = Self::changes(folder, last, pick)?
+        else {
             return Ok(None);
         };
         let renamed: BTreeSet<String> = changed.iter().chain(&moved).cloned().collect();
@@ -287,6 +302,7 @@ impl Selection {
             .collect();
         self.owed.extend(reached.iter().cloned());
         pick.reached = Some(reached.clone());
+        pick.narrow = true;
         pick.settled_before = last.settled.clone();
         Ok(Some(Narrow {
             reached,
@@ -320,7 +336,12 @@ impl Selection {
         let Some(last) = self.holding(pick, settings) else {
             return Ok(());
         };
-        let Some((mut changed, moved, rebound)) = Self::changes(folder, last, pick)? else {
+        let Some(Changes {
+            mut changed,
+            moved,
+            rebound,
+        }) = Self::changes(folder, last, pick)?
+        else {
             return Ok(());
         };
         changed.extend(moved);
@@ -418,6 +439,15 @@ impl Pick {
             .as_ref()
             .is_some_and(|reached| !reached.contains(item_id))
             && self.settled_before.contains(item_id)
+    }
+
+    /// Whether the pull reads only what a change reaches, and not this item.
+    pub(super) fn leaves(&self, item_id: &str) -> bool {
+        self.narrow
+            && self
+                .reached
+                .as_ref()
+                .is_some_and(|reached| !reached.contains(item_id))
     }
 
     /// Whether the pull leaves the item's file unrendered.

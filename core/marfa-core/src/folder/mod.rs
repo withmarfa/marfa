@@ -3844,6 +3844,104 @@ mod tests {
         assert_eq!(before, files_of(dir));
     }
 
+    thread_local! {
+        /// How many items this thread's pulls read from the copy.
+        pub(super) static READ_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// How many items this thread's pulls read since the last call.
+    fn read_items() -> usize {
+        READ_ITEMS.with(|read| read.replace(0))
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_pull_after_a_one_file_change_reads_only_what_the_change_reaches() {
+        let paths: Vec<String> = (0..40).map(|n| format!("n{n:02}.md")).collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let (dir, folder, _server, _) = watched_notes(&paths);
+        referenced_on_the_server(&folder, "edge-0-1", "n00.md", "n01.md");
+        changed_on_the_server(&folder, "n00.md", "[[n01.md]]");
+        let linking = id_at(&folder, "n00.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        // The witness: a pull of every item reads the whole copy.
+        read_items();
+        folder.pull().unwrap();
+        assert!(read_items() >= paths.len());
+        let text = |path: &str| std::fs::read_to_string(dir.path().join(path)).unwrap_or_default();
+        for case in [
+            "edit",
+            "server change",
+            "rename",
+            "delete",
+            "relink after a retitle",
+            "copy changed",
+        ] {
+            match case {
+                "edit" => {
+                    std::fs::write(dir.path().join("n05.md"), text("n05.md") + "\nedited\n")
+                        .unwrap();
+                    folder.scan().unwrap();
+                }
+                "server change" => changed_on_the_server(&folder, "n06.md", "from the server"),
+                "rename" => {
+                    std::fs::rename(dir.path().join("n07.md"), dir.path().join("seventh.md"))
+                        .unwrap();
+                    folder.scan().unwrap();
+                }
+                "delete" => {
+                    let id = id_at(&folder, "n08.md");
+                    folder.core.conn().unwrap().execute(
+                        "UPDATE items SET state = 'trashed', version = version + 1 WHERE id = ?1",
+                        [&id],
+                    ).unwrap();
+                }
+                "relink after a retitle" => {
+                    renamed_on_the_server(&folder, "n01.md", "bee", "bee.md");
+                }
+                "copy changed" => {
+                    // Another item answering to the name the link uses reaches
+                    // the linking file through the names alone, which the
+                    // failed attempts brought up to date.
+                    let id = id_at(&folder, "n09.md");
+                    folder.core.conn().unwrap().execute(
+                        "UPDATE items SET properties = json_set(properties, '$.title', 'bee'), version = version + 1 WHERE id = ?1",
+                        [&id],
+                    ).unwrap();
+                    let failing = crate::fault::fail_on_this_thread("folder-pull-copy-changes");
+                    let error = folder.pull_selecting(&mut selection).unwrap_err();
+                    assert!(copy_changed(&error), "{error}");
+                    drop(failing);
+                }
+                _ => unreachable!(),
+            }
+            read_items();
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            let read = read_items();
+            assert!(read > 0 && read < paths.len() / 4, "{case}: read {read} items");
+            let rendered = rendered_items();
+            assert!(rendered.len() < paths.len() / 4, "{case}: {rendered:?}");
+            match case {
+                "edit" => assert!(text("n05.md").ends_with("\nedited\n"), "{}", text("n05.md")),
+                "server change" => assert!(text("n06.md").ends_with("from the server")),
+                "rename" => {
+                    assert!(!dir.path().join("n07.md").exists());
+                    assert!(!text("seventh.md").is_empty());
+                }
+                "delete" => assert!(!dir.path().join("n08.md").exists()),
+                "relink after a retitle" => {
+                    assert!(text("n00.md").contains("[[bee]]"), "{}", text("n00.md"));
+                }
+                "copy changed" => assert!(rendered.contains(&linking), "{rendered:?}"),
+                _ => unreachable!(),
+            }
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
     #[test]
     fn a_title_another_item_takes_reaches_the_file_of_an_edge_not_its_own() {
         let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
