@@ -196,6 +196,8 @@ pub struct Folder {
     /// The status a watch's health observation last computed, with what it
     /// was computed from.
     health_status: std::sync::Mutex<Option<health::Computed>>,
+    /// What the scans of this open last read of each file, by path.
+    last_reads: std::sync::Mutex<HashMap<String, health::LastRead>>,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -415,6 +417,7 @@ impl Folder {
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -541,6 +544,7 @@ impl Folder {
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced,
         })
     }
@@ -585,6 +589,7 @@ impl Folder {
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
         })
     }

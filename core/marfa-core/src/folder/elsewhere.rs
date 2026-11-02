@@ -126,6 +126,7 @@ impl Peer {
                 refused_renames: std::sync::Mutex::new(Default::default()),
                 barred: std::sync::Mutex::new(None),
                 health_status: std::sync::Mutex::new(None),
+                last_reads: std::sync::Mutex::default(),
                 replaced: None,
             })
         });

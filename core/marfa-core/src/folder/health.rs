@@ -276,6 +276,97 @@ pub(super) struct Computed {
     conflicts: u64,
 }
 
+/// A file as a scan last read it: its identity and its size and time, taken
+/// before the read, and the hash of the bytes read.
+#[derive(Debug, Clone)]
+pub(super) struct LastRead {
+    identity: Option<String>,
+    stat: String,
+    hash: String,
+}
+
+impl LastRead {
+    pub(super) fn of(captured: &Captured, stat: &str, hash: &str) -> LastRead {
+        LastRead {
+            identity: identity::of(&captured.metadata.borrow()).map(|found| found.key()),
+            stat: stat.to_string(),
+            hash: hash.to_string(),
+        }
+    }
+}
+
+/// What a status found of one file: the hash of its bytes, where they could
+/// be read, and the bytes themselves only once something asked for them.
+pub(super) struct Found<'a> {
+    captured: Option<&'a Captured>,
+    hash: Option<std::result::Result<String, String>>,
+    read: std::cell::OnceCell<Option<std::io::Result<Vec<u8>>>>,
+}
+
+impl<'a> Found<'a> {
+    /// Takes the hash from the scan's last read of the file where its
+    /// identity, size and time are as they were then, as a quick scan
+    /// trusts them; reads the file otherwise.
+    pub(super) fn of(folder: &Folder, key: &str, captured: Option<&'a Captured>) -> Found<'a> {
+        let found = Found {
+            captured,
+            hash: None,
+            read: std::cell::OnceCell::new(),
+        };
+        let Some(captured) = captured else {
+            return found;
+        };
+        if let Some(hash) = folder.last_read_hash(key, captured) {
+            return Found {
+                hash: Some(Ok(hash)),
+                ..found
+            };
+        }
+        let hash = found.read().map(|read| match read {
+            Ok(bytes) => Ok(state::hash(bytes)),
+            Err(error) => Err(error.to_string()),
+        });
+        Found { hash, ..found }
+    }
+
+    pub(super) fn hash(&self) -> Option<&str> {
+        self.hash.as_ref()?.as_deref().ok()
+    }
+
+    /// Reads the file the first time it is asked.
+    fn read(&self) -> Option<&std::io::Result<Vec<u8>>> {
+        self.read
+            .get_or_init(|| {
+                self.captured.map(|captured| {
+                    #[cfg(test)]
+                    tests::FILES_READ.with(|read| read.set(read.get() + 1));
+                    captured.read()
+                })
+            })
+            .as_ref()
+    }
+
+    pub(super) fn bytes(&self) -> Option<&[u8]> {
+        self.read()?.as_ref().ok().map(Vec::as_slice)
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        match &self.hash {
+            Some(Ok(hash)) => {
+                digest.update([1]);
+                part(&mut digest, hash.as_bytes());
+            }
+            Some(Err(error)) => {
+                digest.update([2]);
+                part(&mut digest, error.as_bytes());
+            }
+            None => digest.update([0]),
+        }
+        digest.finalize().into()
+    }
+}
+
 /// The disk input as a status read it, built from the same reads.
 #[derive(Default)]
 pub(super) struct Reads {
@@ -284,18 +375,18 @@ pub(super) struct Reads {
 }
 
 impl Reads {
-    pub(super) fn note(&mut self, path: &Path, read: Option<&std::io::Result<Vec<u8>>>) {
-        self.files.insert(path.to_path_buf(), read_digest(read));
+    pub(super) fn note(&mut self, path: &Path, found: &Found<'_>) {
+        self.files.insert(path.to_path_buf(), found.digest());
     }
 
     /// A file the status did not read is read here: what it reports does not
     /// depend on those bytes.
     pub(super) fn finish(&mut self, folder: &Folder, walked: &Walked) {
         let files = &mut self.files;
-        self.disk = folder.disk_input(walked, |path, captured| {
+        self.disk = folder.disk_input(walked, |path, key, captured| {
             files
                 .remove(path)
-                .unwrap_or_else(|| read_digest(captured.map(Captured::read).as_ref()))
+                .unwrap_or_else(|| Found::of(folder, key, captured).digest())
         });
     }
 }
@@ -303,22 +394,6 @@ impl Reads {
 fn part(digest: &mut Sha256, bytes: &[u8]) {
     digest.update((bytes.len() as u64).to_le_bytes());
     digest.update(bytes);
-}
-
-fn read_digest(read: Option<&std::io::Result<Vec<u8>>>) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    match read {
-        Some(Ok(bytes)) => {
-            digest.update([1]);
-            part(&mut digest, bytes);
-        }
-        Some(Err(error)) => {
-            digest.update([2]);
-            part(&mut digest, error.to_string().as_bytes());
-        }
-        None => digest.update([0]),
-    }
-    digest.finalize().into()
 }
 
 fn observed_downloads(pull: &PullReport) -> (u64, Vec<Problem>) {
@@ -522,26 +597,36 @@ impl Folder {
         state.save(&conn)
     }
 
+    /// The conflicted copies the folder holds a file of, or holds the
+    /// original of: rows outside the bin tagged `conflicted-copy` with a
+    /// `derived-from` edge, either end of which is bound.
     fn current_conflicts(&self) -> Result<u64> {
-        let bounds = state::every_bound(&*self.core.conn()?)?;
-        let mut copies = HashSet::new();
-        for bound in bounds {
-            if self
-                .core
-                .get(&bound.item_id)?
-                .is_some_and(|item| item.state != crate::model::ItemState::Trashed)
-                && self
-                    .core
-                    .original_of_conflicted_copy(&bound.item_id)?
-                    .is_some()
-            {
-                copies.insert(bound.item_id.clone());
-            }
-            for copy in self.core.conflicted_copies_of(&bound.item_id)? {
-                copies.insert(copy.id);
-            }
+        let conn = self.core.conn()?;
+        let read = conn.unchecked_transaction()?;
+        let bound: i64 = read.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
+        if bound == 0 {
+            return Ok(0);
         }
-        Ok(count(copies.len()))
+        store::refuse_unless_usable(&read)?;
+        let sources = {
+            let mut statement = read.prepare(
+                "SELECT DISTINCT source_id FROM edges WHERE edge_type = ?1
+                 AND (source_id IN (SELECT item_id FROM folder_files)
+                      OR target_id IN (SELECT item_id FROM folder_files))",
+            )?;
+            statement
+                .query_map([crate::CONFLICTED_COPY_EDGE], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?
+        };
+        let copies = store::items_by_ids(&read, &sources)?
+            .into_iter()
+            .filter(|item| {
+                item.state != crate::model::ItemState::Trashed
+                    && item.tags.iter().any(|tag| tag == crate::CONFLICTED_COPY_TAG)
+            })
+            .count();
+        read.commit()?;
+        Ok(count(copies))
     }
 
     fn health_status(&self, reuse: bool) -> (Result<Local>, Result<u64>) {
@@ -600,10 +685,22 @@ impl Folder {
         }
         let store = self.store_input()?;
         let walked = self.walked(&self.settings().ok()?.lists().ok()?);
-        let disk = self.disk_input(&walked, |_, captured| {
-            read_digest(captured.map(Captured::read).as_ref())
+        let disk = self.disk_input(&walked, |_, key, captured| {
+            Found::of(self, key, captured).digest()
         })?;
         Some(Inputs { store, disk })
+    }
+
+    /// The hash the scan last read `key` at, where the file is still as it
+    /// was then.
+    fn last_read_hash(&self, key: &str, captured: &Captured) -> Option<String> {
+        let metadata = captured.metadata.borrow();
+        let stat = super::stat_metadata(&metadata)?;
+        let identity = identity::of(&metadata).map(|found| found.key());
+        let last = self.last_reads.lock().expect("last reads lock");
+        last.get(key)
+            .filter(|last| last.identity.is_some() && last.identity == identity && last.stat == stat)
+            .map(|last| last.hash.clone())
     }
 
     fn store_input(&self) -> Option<[u8; 32]> {
@@ -637,14 +734,12 @@ impl Folder {
     fn disk_input(
         &self,
         walked: &Walked,
-        mut read: impl FnMut(&PathBuf, Option<&Captured>) -> [u8; 32],
+        mut read: impl FnMut(&PathBuf, &str, Option<&Captured>) -> [u8; 32],
     ) -> Option<[u8; 32]> {
         let mut digest = Sha256::new();
         for path in &walked.files {
-            part(
-                &mut digest,
-                identity::relative(&self.root, path).ok()?.as_bytes(),
-            );
+            let key = identity::relative(&self.root, path).ok()?;
+            part(&mut digest, key.as_bytes());
             let captured = walked.opened.get(path);
             let identity = captured
                 .and_then(|captured| identity::of(&captured.metadata.borrow()))
@@ -656,7 +751,7 @@ impl Folder {
                     .unwrap_or_default()
                     .as_bytes(),
             );
-            digest.update(read(path, captured));
+            digest.update(read(path, &key, captured));
         }
         digest.update([0xff]);
         for directory in &walked.directories {
@@ -816,8 +911,50 @@ mod tests {
             const { std::cell::Cell::new(0) };
     }
 
+    thread_local! {
+        pub(super) static FILES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     fn status_computed() -> usize {
         STATUS_COMPUTED.with(|computed| computed.replace(0))
+    }
+
+    fn files_read() -> usize {
+        FILES_READ.with(|read| read.replace(0))
+    }
+
+    #[test]
+    fn a_status_after_a_scan_takes_the_files_it_read_from_the_scan() {
+        let names = ["a.md", "b.md", "c.md", "d.md", "e.md"];
+        let (dir, folder, server, mut passes) = super::super::tests::watched_notes(&names);
+        passes.run(&folder, true).unwrap();
+        // The server is gone, so each edit stays to be sent and no pull
+        // writes a file after the scan.
+        drop(server);
+        for (full, name) in [(true, "a.md"), (false, "b.md")] {
+            let path = dir.path().join(name);
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, format!("{text}\nedited\n")).unwrap();
+            status_computed();
+            files_read();
+            passes.run(&folder, full).unwrap();
+            assert!(status_computed() > 0, "{name}: the pass reused the status");
+            assert_eq!(files_read(), 0, "{name}: the status read files the scan had read");
+            let observed = folder.observed_health().unwrap();
+            let waiting = if full { 1 } else { 2 };
+            assert_eq!(observed.pending_uploads, waiting, "{name}: {observed:?}");
+
+            // The witness: with nothing kept from the scan, the status reads
+            // every file, and finds what it took from the scan.
+            let (taken, _) = folder.health_status(false);
+            assert_eq!(files_read(), 0);
+            folder.last_reads.lock().unwrap().clear();
+            let (read, _) = folder.health_status(false);
+            assert_eq!(files_read(), names.len(), "{name}");
+            assert_eq!(taken.unwrap(), read.unwrap(), "{name}");
+            status_computed();
+            passes.run(&folder, true).unwrap();
+        }
     }
 
     /// Asserts that what a reusing observation would take as the folder's
@@ -1331,6 +1468,7 @@ mod tests {
             refused_renames: std::sync::Mutex::new(Default::default()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
             root_dir,
             state_dir,

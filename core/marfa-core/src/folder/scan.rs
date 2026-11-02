@@ -1187,6 +1187,29 @@ impl Folder {
     fn record_stats(&self, scan: &ScanState) -> Result<()> {
         let conn = self.core.conn()?;
         state::set_stats(&conn, &scan.stats, scan.full)?;
+        let stats: HashMap<&str, &str> = scan
+            .stats
+            .iter()
+            .map(|(key, stat)| (key.as_str(), stat.as_str()))
+            .collect();
+        let mut last = self.last_reads.lock().expect("last reads lock");
+        if scan.full {
+            last.clear();
+        }
+        for file in &scan.files {
+            last.remove(&file.key);
+            if file.deferred || file.folded {
+                continue;
+            }
+            if let Some(stat) = stats.get(file.key.as_str())
+                && let Some(captured) = scan.walked.opened.get(&file.path)
+            {
+                last.insert(
+                    file.key.clone(),
+                    super::health::LastRead::of(captured, stat, &file.hash),
+                );
+            }
+        }
         Ok(())
     }
 
