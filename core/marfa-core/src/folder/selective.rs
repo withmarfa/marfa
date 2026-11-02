@@ -249,6 +249,10 @@ impl Selection {
         self.owed.extend(differing.iter().cloned());
         let differing: HashSet<String> = differing.into_iter().collect();
         self.owed.extend(Self::with_neighbors(folder, &differing)?);
+        // A refused placement the key's restored grant or the settings no
+        // longer withhold, which no change to the copy announces.
+        let withheld = folder.withheld()?;
+        self.owed.extend(folder.take_released()?);
         changed.extend(moved);
         changed.extend(differing);
         let mut reached = Self::with_neighbors(folder, &changed)?;
@@ -301,7 +305,7 @@ impl Selection {
                     .map(|bound| bound.item_id.clone()),
             );
         }
-        read.extend(folder.withheld()?.into_keys());
+        read.extend(withheld.into_keys());
         // Where an attachment's file goes rests on every document it is
         // attached to, so a pull reads them all together.
         if !attached_together(folder, &mut read)? {

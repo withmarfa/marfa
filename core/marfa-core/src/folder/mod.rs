@@ -185,6 +185,9 @@ pub struct Folder {
     /// Placement writes whose give-way read failed in a watch, by queue id,
     /// and when.
     unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
+    /// Items whose refused placement is no longer withheld, which a narrow
+    /// pull sends: nothing in the copy says that the key's grant came back.
+    released: std::sync::Mutex<std::collections::BTreeSet<String>>,
     permissions: std::sync::OnceLock<bool>,
     /// Renames to follow a title that the file system refused, by item: the
     /// path the file kept and the one refused, not tried again while both
@@ -413,6 +416,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
@@ -540,6 +544,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
@@ -585,6 +590,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
@@ -4085,6 +4091,55 @@ mod tests {
             settle_selecting(&folder, &mut selection);
             assert_a_full_pull_changes_nothing(dir.path(), &folder);
         }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_narrow_pull_sends_a_refused_placement_once_the_key_is_granted_again() {
+        let key = |grant: &str| {
+            crate::scripted::json(
+                200,
+                &format!(r#"{{"id":"key","edge_permissions":{{"{grant}":"write"}}}}"#),
+            )
+        };
+        let paths: Vec<String> = (0..12).map(|n| format!("n{n:02}.md")).collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let (_dir, folder, server, _) = watched_notes(&paths);
+        server.on("/keys/current", vec![key("references")]);
+        let id = id_at(&folder, "n00.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+
+        // The server refused the placement, which the copy took back, and the
+        // key's grant has not changed since.
+        folder.withhold(&id, "n00.md").unwrap();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "DELETE FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+                [&id, PLACEMENT_EDGE],
+            )
+            .unwrap();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder.placement(&id).unwrap().is_none(),
+            "a placement was sent under the refusal that withholds it"
+        );
+
+        server.on("/keys/current", vec![key("*")]);
+        *folder.key.lock().unwrap() = None;
+        read_items();
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(
+            read_items() < paths.len(),
+            "the witness for a narrow pull: it read every item"
+        );
+        assert!(
+            folder.placement(&id).unwrap().is_some(),
+            "a narrow pull left a refused placement unsent after the key's grant was restored"
+        );
     }
 
     #[test]

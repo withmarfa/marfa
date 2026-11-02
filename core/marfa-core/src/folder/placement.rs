@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -205,18 +205,40 @@ impl Folder {
         };
         let before = refused.placements.len();
         let mut kept = Withheld::new();
+        let mut moved_on = Vec::new();
         for (item, held) in std::mem::take(&mut refused.placements) {
             // A purged item has no file left to place.
             if store::item_held(&*self.core.conn()?, &item)? && self.placement_at(&item)? == held.at
             {
                 kept.insert(item, held);
+            } else {
+                moved_on.push(item);
             }
         }
         refused.placements = kept;
         if refused.placements.len() != before {
             self.keep_refused(&refused)?;
+            self.release(moved_on)?;
         }
         Ok(refused.placements)
+    }
+
+    /// Notes that these items are no longer withheld, so the next narrow pull
+    /// sends their placements: no change to the copy says that the key's
+    /// grant came back.
+    fn release(&self, items: impl IntoIterator<Item = String>) -> Result<()> {
+        self.released
+            .lock()
+            .map_err(|_| CoreError::Store("the released placements were poisoned".into()))?
+            .extend(items);
+        Ok(())
+    }
+
+    /// The items released since the last call.
+    pub(super) fn take_released(&self) -> Result<BTreeSet<String>> {
+        Ok(std::mem::take(&mut *self.released.lock().map_err(
+            |_| CoreError::Store("the released placements were poisoned".into()),
+        )?))
     }
 
     /// A create not yet answered, at version 0, has landed nowhere.
@@ -256,15 +278,21 @@ impl Folder {
         };
         let refused: Option<Refused> = serde_json::from_str(&json).ok();
         let settings = self.settings_version()?;
-        let Some(mut refused) = refused.filter(|refused| Some(refused.settings) == settings) else {
+        let Some(mut refused) = refused else {
             store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
             return Ok(None);
         };
+        if Some(refused.settings) != settings {
+            store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
+            self.release(refused.placements.into_keys())?;
+            return Ok(None);
+        }
         // A key that cannot be read is unchanged; one unread at the refusal is
         // the key it was refused to once it can be.
         match (&refused.key, self.key_state()) {
             (Some(recorded), Ok(current)) if *recorded != current => {
                 store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
+                self.release(refused.placements.into_keys())?;
                 Ok(None)
             }
             (None, Ok(current)) => {
@@ -523,6 +551,18 @@ impl Folder {
                 .failed(&self.core, error)
                 .unwrap_or_else(|error| error)
         })
+    }
+
+    /// Remembers a refusal of the item's placement at `path`, as a drain does.
+    #[cfg(test)]
+    pub(super) fn withhold(&self, item_id: &str, path: &str) -> Result<()> {
+        self.remember_refused(vec![(
+            item_id.to_string(),
+            Held {
+                path: path.to_string(),
+                at: None,
+            },
+        )])
     }
 
     fn remember_refused(&self, placements: Vec<(String, Held)>) -> Result<()> {
