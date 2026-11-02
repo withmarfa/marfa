@@ -501,13 +501,13 @@ impl Folder {
             // Every item but the folder's own that no file here shows and the
             // query does not hold, counted without reading them.
             Some(_) => {
-                let unbound: usize = self.core.conn()?.query_row(
+                let unbound: i64 = self.core.conn()?.query_row(
                     "SELECT COUNT(*) FROM items WHERE type != ?1
                       AND id NOT IN (SELECT item_id FROM folder_files)",
                     [FOLDER_TYPE],
                     |row| row.get(0),
                 )?;
-                unbound.saturating_sub(
+                usize::try_from(unbound).unwrap_or_default().saturating_sub(
                     members
                         .iter()
                         .filter(|id| !bound_items.contains(*id))
