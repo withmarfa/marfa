@@ -453,3 +453,79 @@ fn the_body_write_a_waiting_link_edge_was_read_from_stays() {
     let left: Vec<String> = queue(&folder).into_iter().map(|row| row.id).collect();
     assert_eq!(left, [ids[0].clone(), "link".to_string()]);
 }
+
+#[test]
+fn a_folder_opened_at_an_origin_it_cannot_confirm_clears_nothing() {
+    let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
+    let (a, b) = (item_of(&folder, "a.md"), item_of(&folder, "b.md"));
+    let long_ago = sent_long_ago(&folder, &b, 3);
+    // A write still to be sent, so the drain asks the new origin who it is.
+    edited(dir.path(), &folder, "a.md", "edited");
+    {
+        let conn = folder.core.conn().unwrap();
+        store::meta_set(&conn, store::META_SERVER_ORIGIN, "http://127.0.0.1:8").unwrap();
+        store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+        // As the body rule pins a linked item until the write naming it is
+        // answered.
+        store::pin(&conn, &a).unwrap();
+        conn.execute("INSERT INTO body_pins (item_id) VALUES (?1)", [&a])
+            .unwrap();
+    }
+    let pins = |folder: &Folder| {
+        let conn = folder.core.conn().unwrap();
+        (
+            store::pinned(&conn, &a).unwrap(),
+            conn.query_row("SELECT count(*) FROM body_pins", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        )
+    };
+    assert_eq!(pins(&folder), (true, 1));
+    let before = queue(&folder);
+    assert!(
+        long_ago
+            .iter()
+            .all(|id| before.iter().any(|row| row.id == *id)),
+        "{before:?}"
+    );
+    drop(folder);
+
+    let moved = crate::scripted::Scripted::start();
+    moved.on("/", vec![crate::scripted::json(503, "{}")]);
+    let server = crate::Server {
+        url: moved.url(),
+        key: "fixture".into(),
+    };
+    let folder = Folder::open(dir.path(), Some(server)).unwrap();
+    let drained = folder.drain().unwrap();
+    assert!(drained.report.unavailable.is_some(), "{drained:?}");
+    assert!(
+        !moved.seen("/").is_empty(),
+        "the identity read was not asked"
+    );
+    assert_eq!(queue(&folder), before, "a write left the queue");
+    assert_eq!(pins(&folder), (true, 1), "the pinned item was let go");
+    let conn = folder.core.conn().unwrap();
+    assert_eq!(
+        store::meta_get(&conn, store::META_SERVER_ORIGIN)
+            .unwrap()
+            .as_deref(),
+        Some("http://127.0.0.1:8")
+    );
+    drop(conn);
+
+    // The witness: once the origin confirms the copy's instance, the
+    // answered writes clear.
+    assert_eq!(folder.clear_answered().unwrap(), 0);
+    moved.on("/", vec![crate::scripted::root(crate::scripted::INSTANCE)]);
+    folder.core.http().unwrap().confirm_origin().unwrap();
+    assert_eq!(folder.clear_answered().unwrap(), long_ago.len());
+    let left = queue(&folder);
+    assert!(
+        long_ago
+            .iter()
+            .all(|id| left.iter().all(|row| row.id != *id)),
+        "{left:?}"
+    );
+}

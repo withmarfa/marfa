@@ -24,10 +24,19 @@ impl Folder {
     }
 
     /// Clears the answered writes as `store::forget_answered` does, but for
-    /// each whose answer the folder has yet to record. Answers how many
+    /// each whose answer the folder has yet to record. Clears nothing until
+    /// the server's origin is the copy's, as a drain changes nothing before
+    /// it is (`device/origin-unconfirmed-keeps-copy`). Answers how many
     /// writes left the queue.
     pub(super) fn clear_answered(&self) -> Result<usize> {
         self.core.lock.refuse_unless_writer()?;
+        if !self
+            .core
+            .http()
+            .is_ok_and(crate::http::Http::origin_admitted)
+        {
+            return Ok(0);
+        }
         let mut conn = self.core.conn()?;
         let tx = conn.transaction()?;
         crate::body::rule::after_answers_in(&tx, None)?;
