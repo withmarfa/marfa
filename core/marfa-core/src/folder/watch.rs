@@ -545,20 +545,16 @@ impl Folder {
         drop(progress);
         let refused = credential_refused(&drain);
         let wait = rate_limit_wait(&drain.report);
+        // Only what time alone moves on keeps the ticks running. A file that
+        // stays missing, a held delete, a file waiting on another folder or a
+        // directory that cannot be read stands as it is until a file event,
+        // a server change or the next full pass, and a pass a second would
+        // only find it again.
         telling.at_rest = wait.is_none()
             && refused.is_none()
-            && problem.is_none()
-            && !telling.unreachable
             && !stirred(&settings, &scan, &drain, &pull)
             && scan.settling.is_empty()
-            && scan.missing == 0
-            && scan.waiting == 0
-            && scan.paused == 0
-            && scan.unsure.is_empty()
-            && scan.directories.is_empty()
-            && pull.paused == 0
-            && pull.kept == 0
-            && pull.elsewhere == 0
+            && !self.grace_running()?
             && drain.rebased == 0
             && drain.report.unavailable.is_none()
             && drain.report.stopped.is_none()
@@ -904,8 +900,11 @@ struct Pulled {
 }
 
 /// Whether a pass's settings step, scan and drain found nothing to do and
-/// nothing still on its way: a file settling, missing or waiting on an
-/// answer, or a write the server has not taken.
+/// nothing still on its way: a file settling or waiting on an answer, or a
+/// write the server has not taken. A file that stays missing, a held
+/// removal, an unsure delete or a directory that cannot be read is not on
+/// its way: each stands in the folder's record, which a pull's mark covers,
+/// or in the disk, which its barred paths cover.
 fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> bool {
     !settings.sent
         && !settings.written
@@ -917,14 +916,10 @@ fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> b
             + scan.deleted
             + scan.moved_away
             + scan.requeued
-            + scan.missing
             + scan.waiting
-            + scan.paused
             == 0
         && scan.trashed.is_empty()
         && scan.settling.is_empty()
-        && scan.unsure.is_empty()
-        && scan.directories.is_empty()
         && drain.report.answered
             + drain.report.held
             + drain.report.undelivered

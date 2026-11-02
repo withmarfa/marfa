@@ -195,6 +195,19 @@ fn millis_of(stamp: &str) -> Option<i64> {
 }
 
 impl Folder {
+    /// Whether a missing file's grace has yet to run out, which only the
+    /// passing of time moves on: the sweep acts on it once it has. A stamp
+    /// this cannot read never runs out, so nothing waits on it.
+    pub(super) fn grace_running(&self) -> Result<bool> {
+        let Some(now) = millis_of(&crate::store::iso_at(crate::clock::system_time())) else {
+            return Ok(false);
+        };
+        let grace = RENAME_GRACE.as_millis() as i64;
+        Ok(state::journaled(&*self.core.conn()?)?.iter().any(|row| {
+            millis_of(&row.missing_since).is_some_and(|since| now.saturating_sub(since) < grace)
+        }))
+    }
+
     pub fn scan(&self) -> Result<ScanReport> {
         self.scan_as(true, None, Files::Write)
     }

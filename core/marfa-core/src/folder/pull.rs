@@ -481,7 +481,12 @@ impl Folder {
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
         // Read, not looked for in the other folders: one arriving there is
         // counted, so a watch pulls again at its next pass.
-        let kept: HashMap<String, (String, state::Kept)> = state::journaled(&*self.core.conn()?)?
+        let journal = state::journaled(&*self.core.conn()?)?;
+        let deleted: HashSet<(String, String)> = journal
+            .iter()
+            .map(|row| (row.path.clone(), row.item_id.clone()))
+            .collect();
+        let kept: HashMap<String, (String, state::Kept)> = journal
             .into_iter()
             .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
             .collect();
@@ -496,11 +501,15 @@ impl Folder {
                 state::bound_to_item(&conn, &item.id)?
             };
             // Bytes the server or this copy did not take are the person's to
-            // mend, so the file stays as they wrote it.
-            if bound
-                .as_ref()
-                .is_some_and(|bound| bound.held.is_some() || bound.holds_refusal())
-            {
+            // mend, so the file stays as they wrote it. Once the person has
+            // deleted the file there is nothing left to mend: the delete
+            // stands or a change made elsewhere brings the file back, as for
+            // any other file.
+            if bound.as_ref().is_some_and(|bound| {
+                (bound.held.is_some() || bound.holds_refusal())
+                    && !(deleted.contains(&(bound.path.clone(), item.id.clone()))
+                        && !self.exists(self.root.join(&bound.path)))
+            }) {
                 continue;
             }
             // Gone from the disk it is the scan's to journal; written back,
@@ -1967,22 +1976,90 @@ impl Folder {
         } else {
             document::read_body(&text)
         };
-        Ok(bound.presentation.as_ref().is_some_and(|agreed| {
-            // A file deleted before the folder first wrote its own lines into
-            // it never showed them.
-            let presented = [
-                fields::ID_FIELD,
-                fields::VERSION_FIELD,
-                fields::TYPE_FIELD,
-                fields::TIER_FIELD,
-            ]
-            .into_iter()
-            .filter(|field| !agreed.front().contains_key(*field))
-            .fold(presented.presentation(), |presented, field| {
-                presented.with(field, None)
-            });
-            agreed.agrees(&presented, edge_types)
-        }))
+        let Some(agreed) = &bound.presentation else {
+            return Ok(false);
+        };
+        // A file deleted before the folder first wrote its own lines into it
+        // never showed them.
+        let presented = [
+            fields::ID_FIELD,
+            fields::VERSION_FIELD,
+            fields::TYPE_FIELD,
+            fields::TIER_FIELD,
+        ]
+        .into_iter()
+        .filter(|field| !agreed.front().contains_key(*field))
+        .fold(presented.presentation(), |presented, field| {
+            presented.with(field, None)
+        });
+        let agreed = self.untaken_lines_set_aside(agreed, &presented, item, bound, edge_types)?;
+        Ok(agreed.agrees(&presented, edge_types))
+    }
+
+    /// The agreed presentation of a file held for its edge lines, showing
+    /// each such line as the item renders it where the line differs only by
+    /// names the item never took (`folders/missing-held-line-unchanged`):
+    /// the item shows no name the file did not, and still has every edge the
+    /// folder last recorded for the line. An item made since under a held
+    /// name does not count: the line never reached the item.
+    fn untaken_lines_set_aside(
+        &self,
+        agreed: &document::Presentation,
+        presented: &document::Presentation,
+        item: &Item,
+        bound: &state::Bound,
+        edge_types: &EdgeTypes,
+    ) -> Result<document::Presentation> {
+        let held = bound.held.as_deref().unwrap_or_default();
+        if !held.starts_with(state::EDGES) && !held.starts_with(state::EDGES_WAITING) {
+            return Ok(agreed.clone());
+        }
+        let named_in = |value: Option<&Value>| -> Option<HashSet<String>> {
+            let Some(value) = value else {
+                return Some(HashSet::new());
+            };
+            super::edge_types::typed(value).ok().map(|targets| {
+                targets
+                    .iter()
+                    .map(|target| crate::names::folded(&target.raw))
+                    .collect()
+            })
+        };
+        let edges = self.edges_at(&item.id)?;
+        let mut set_aside = agreed.clone();
+        for (field, value) in agreed.front() {
+            let Some((edge_type, end)) = edge_types.named(field) else {
+                continue;
+            };
+            let shown = presented.front().get(field);
+            let (Some(showed), Some(shows)) = (named_in(Some(value)), named_in(shown)) else {
+                continue;
+            };
+            if !shows.is_subset(&showed) {
+                continue;
+            }
+            let kept = bound
+                .lines
+                .iter()
+                .filter(|line| line.edge_type == edge_type.id && line.end == end)
+                .all(|line| {
+                    edges.iter().any(|edge| {
+                        edge.edge_type == edge_type.id
+                            && match end {
+                                crate::catalog::End::Source => {
+                                    edge.source_id == item.id && edge.target_id == line.other
+                                }
+                                crate::catalog::End::Target => {
+                                    edge.target_id == item.id && edge.source_id == line.other
+                                }
+                            }
+                    })
+                });
+            if kept {
+                set_aside = set_aside.with(field, shown.cloned());
+            }
+        }
+        Ok(set_aside)
     }
 
     /// The binding of a departing file this folder never wrote but found as
