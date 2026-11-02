@@ -1403,7 +1403,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     }
     for said in trashed_lines(report)
         .into_iter()
-        .chain(unsure_lines(report))
+        .chain(standing_lines(report))
     {
         line.push('\n');
         line.push_str(&said);
@@ -1421,9 +1421,10 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         .collect()
 }
 
-/// What stands while other folders cannot be read, as opposed to what
-/// happened in one pass.
-pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
+/// What stands while other folders cannot be read, or while the server does
+/// not answer the folder's title lookups, as opposed to what happened in one
+/// pass.
+pub fn standing_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")
     });
@@ -1433,7 +1434,10 @@ pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
             file.path, file.reason
         )
     });
-    registry.chain(unsure).collect()
+    registry
+        .chain(unsure)
+        .chain(report.lookup_refused.iter().cloned())
+        .collect()
 }
 
 /// Says each conflicted edit once, with the file it was for and the file its

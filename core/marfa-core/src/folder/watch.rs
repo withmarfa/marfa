@@ -1031,6 +1031,7 @@ struct Standing {
     registry: Option<String>,
     unsure: Vec<Unsure>,
     paused: (usize, usize),
+    lookup_refused: Option<String>,
 }
 
 impl Standing {
@@ -1038,6 +1039,7 @@ impl Standing {
     fn same_notices(&self, other: &Standing) -> bool {
         self.registry == other.registry
             && self.unsure == other.unsure
+            && self.lookup_refused == other.lookup_refused
             && self.paused == other.paused
             && self.uncarried == other.uncarried
             && self.directories == other.directories
@@ -1100,6 +1102,15 @@ impl Telling {
         drain: Drained,
         pull: PullReport,
     ) -> Option<WatchEvent> {
+        // A quick pass judges no unchanged file's links, so asks the server
+        // no name, and a refused lookup stands as the last full pass found it.
+        let mut scan = scan;
+        if !full
+            && scan.lookup_refused.is_none()
+            && let Some(before) = &self.standing
+        {
+            scan.lookup_refused = before.lookup_refused.clone();
+        }
         let happened = stirred(&settings, &scan, &drain, &pull);
         let flagged = super::merged_flagged(&scan.flagged, &pull.flagged);
         let mut embeds: Vec<Flagged> = Vec::new();
@@ -1149,6 +1160,7 @@ impl Telling {
             embeds: embeds.clone(),
             registry: scan.registry.clone(),
             unsure: scan.unsure.clone(),
+            lookup_refused: scan.lookup_refused.clone(),
         };
         let before = self.standing.replace(now.clone());
         let changed = before.as_ref() != Some(&now);
@@ -1779,6 +1791,42 @@ mod tests {
         assert!(more.notices_changed, "a second secret is news");
         let cleared = pass_of(&mut telling, held(&[], 0)).unwrap();
         assert!(cleared.notices_changed, "a notice that clears is told");
+    }
+
+    #[test]
+    fn a_refused_title_lookup_is_told_once_while_it_stands_and_again_when_it_clears() {
+        let mut telling = Telling::default();
+        let refused = || ScanReport {
+            lookup_refused: Some("links by name wait".into()),
+            ..ScanReport::default()
+        };
+        let passed = |telling: &mut Telling, full: bool, scan: ScanReport| match telling.passed(
+            full,
+            SettingsFileReport::default(),
+            scan,
+            drained(),
+            PullReport::default(),
+        ) {
+            Some(WatchEvent::Passed(pass)) => Some(*pass),
+            _ => None,
+        };
+        let first = passed(&mut telling, true, refused()).unwrap();
+        assert!(first.notices_changed, "the refusal was not told");
+        assert_eq!(
+            first.scan.lookup_refused.as_deref(),
+            Some("links by name wait")
+        );
+        assert!(
+            passed(&mut telling, true, refused()).is_none(),
+            "a full pass told the standing refusal again"
+        );
+        // A quick pass asks no name, so the refusal still stands.
+        assert!(
+            passed(&mut telling, false, ScanReport::default()).is_none(),
+            "a quick pass took the refusal as cleared"
+        );
+        let cleared = passed(&mut telling, true, ScanReport::default()).unwrap();
+        assert!(cleared.notices_changed, "a cleared refusal was not told");
     }
 
     #[test]

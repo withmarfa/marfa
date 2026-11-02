@@ -137,6 +137,12 @@ pub(crate) struct Resolver<'a> {
     cache: HashMap<String, Resolved>,
     /// What the server said about each name asked, by folded name.
     looked: HashMap<String, Looked>,
+    /// Whether the server answers `POST /items/titles`. One that does not is
+    /// asked no more names this pass.
+    offered: bool,
+    /// Why the server refused a title lookup as a whole this pass, where it
+    /// did: the refusal named no one name, so the names it carried wait.
+    refused_call: Option<String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -149,7 +155,15 @@ impl<'a> Resolver<'a> {
             names: None,
             cache: HashMap::new(),
             looked: HashMap::new(),
+            offered: true,
+            refused_call: None,
         }
+    }
+
+    /// Why the names this pass asked of the server wait though it answered:
+    /// it refused a title lookup as a whole, or has none.
+    pub fn refused_call(&self) -> Option<&str> {
+        self.refused_call.as_deref()
     }
 
     fn names(&mut self) -> Result<&Names> {
@@ -287,8 +301,10 @@ impl<'a> Resolver<'a> {
 
     /// Sends the names, each with its folded key, in calls of
     /// `TITLE_LOOKUP_NAMES`. A call that fails leaves its names with the
-    /// failure and the others as they were: after a failure of the network
-    /// no more are sent, and any other refusal is that call's alone.
+    /// failure and the others as they were: after a failure of the network,
+    /// or an answer that the server has no title lookup, no more are sent.
+    /// A refusal names no name, so only a call that carried one name alone
+    /// leaves it refused; the names of any other refused call wait.
     fn ask(&mut self, asked: Vec<(String, String)>) {
         let (past, asked): (Vec<_>, Vec<_>) = asked
             .into_iter()
@@ -304,7 +320,7 @@ impl<'a> Resolver<'a> {
             );
         }
         for page in asked.chunks(TITLE_LOOKUP_NAMES) {
-            if !self.online {
+            if !self.online || !self.offered {
                 return;
             }
             let sent: Vec<String> = page.iter().map(|(_, sent)| sent.clone()).collect();
@@ -322,13 +338,38 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Err(error) => {
-                    let failure = self.failure(error);
+                    let failure = self.call_failure(error, page.len());
                     for (key, _) in page {
                         self.looked.insert(key.clone(), failure.clone());
                     }
                 }
             }
         }
+    }
+
+    /// What a failed title lookup of `names` names leaves each of them.
+    fn call_failure(&mut self, error: crate::error::CoreError, names: usize) -> Looked {
+        let unoffered = matches!(
+            error,
+            crate::error::CoreError::NotFound { .. }
+                | crate::error::CoreError::Server { status: 405, .. }
+        );
+        if error.is_environmental() || (names == 1 && !unoffered) {
+            return self.failure(error);
+        }
+        if unoffered {
+            self.offered = false;
+            self.refused_call = Some(format!(
+                "links by name wait, since the server has no title lookup ({error}); they are looked up again at each scan, so they resolve once the server is upgraded"
+            ));
+        } else {
+            self.refused_call.get_or_insert_with(|| {
+                format!(
+                    "links by name wait, since the server refused a title lookup of several names ({error}); they are looked up again at the next scan"
+                )
+            });
+        }
+        Looked::Waiting
     }
 
     /// What the server says of `name`: what it said already, or else its
@@ -339,7 +380,7 @@ impl<'a> Resolver<'a> {
         if let Some(held) = self.looked.get(&key) {
             return held.clone();
         }
-        if !self.online {
+        if !self.online || !self.offered {
             return Looked::Waiting;
         }
         if key.is_empty() {
@@ -889,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_call_leaves_only_its_names_unanswered() {
+    fn a_refused_call_of_several_names_leaves_only_its_names_waiting_and_says_why() {
         let server = crate::scripted::Scripted::start();
         let dir = tempfile::tempdir().unwrap();
         let core = copy_holding(&server, dir.path(), &[]);
@@ -905,14 +946,82 @@ mod tests {
         let mut resolver = resolver(&core, &catalog);
         resolver.prefetch(names.iter().map(String::as_str)).unwrap();
         assert_eq!(server.seen("/items/titles").len(), 2);
+        // The refusal names none of the 200, so none is refused for good.
         assert!(matches!(
             resolver.resolve("Name 199").unwrap(),
-            Resolved::Unanswered(_)
+            Resolved::Waiting
         ));
         assert!(matches!(
             resolver.resolve("Name 200").unwrap(),
             Resolved::Unmatched
         ));
+        assert_eq!(server.seen("/items/titles").len(), 2);
+        let why = resolver.refused_call().expect("the refusal is told");
+        assert!(
+            why.contains("several names") && why.contains("type_not_permitted"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_refused_call_of_one_name_leaves_that_name_unanswered() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::refusal(403, "type_not_permitted")],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Ada"]).unwrap();
+        assert!(matches!(
+            resolver.resolve("Ada").unwrap(),
+            Resolved::Unanswered(why) if why.contains("type_not_permitted")
+        ));
+        assert_eq!(resolver.refused_call(), None);
+    }
+
+    #[test]
+    fn a_server_without_the_title_lookup_is_asked_no_more_and_every_name_waits() {
+        for (status, code) in [(404, "not_found"), (405, "method_not_allowed")] {
+            let server = crate::scripted::Scripted::start();
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy_holding(&server, dir.path(), &["Held"]);
+            let catalog = catalog_of(&core);
+            server.on(
+                "/items/titles",
+                vec![crate::scripted::refusal(status, code)],
+            );
+            let mut names: Vec<String> = (0..450).map(|at| format!("Name {at}")).collect();
+            names.push("Held".into());
+            let mut resolver = resolver(&core, &catalog);
+            resolver.prefetch(names.iter().map(String::as_str)).unwrap();
+            for name in ["Name 0", "Name 449", "Held", "Late"] {
+                assert!(
+                    matches!(resolver.resolve(name).unwrap(), Resolved::Waiting),
+                    "{status}: {name}"
+                );
+            }
+            assert_eq!(server.seen("/items/titles").len(), 1, "{status}");
+            let why = resolver.refused_call().expect("the missing lookup is told");
+            assert!(why.contains("no title lookup"), "{why}");
+        }
+        // A call of one name to such a server is no refusal of that name.
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::refusal(404, "not_found")],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        assert!(matches!(
+            resolver.resolve("Ada").unwrap(),
+            Resolved::Waiting
+        ));
+        assert!(resolver.refused_call().is_some());
     }
 
     #[test]

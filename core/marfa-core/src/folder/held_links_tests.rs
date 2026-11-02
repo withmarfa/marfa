@@ -190,6 +190,61 @@ fn a_name_the_server_refused_to_look_up_is_not_asked_again_while_the_file_is_unc
     assert_eq!(lookups(&server), asked, "a refused lookup was asked again");
 }
 
+#[test]
+fn names_a_lookup_refused_as_a_whole_carried_wait_and_resolve_at_the_next_scan_unedited() {
+    // A server older than the title lookup answers it 404; a refusal of
+    // several names names none of them.
+    for (status, code, said, shown) in [
+        (404, "not_found", "no title lookup", "not found"),
+        (
+            403,
+            "type_not_permitted",
+            "several names",
+            "type_not_permitted",
+        ),
+    ] {
+        let (dir, folder, server) = online_folder(refusal(status, code));
+        std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+        std::fs::write(dir.path().join("A.md"), "See [[B]] and [[C]].\n").unwrap();
+        let first = folder.scan().unwrap();
+        assert_eq!(first.created, 2, "{first:?}");
+        let flagged = flags(&first);
+        assert_eq!(flagged.len(), 1, "{first:?}");
+        assert_eq!((flagged[0].0, flagged[0].1), ("A.md", "edges"), "{first:?}");
+        assert!(
+            flagged[0]
+                .2
+                .contains("[[B]] in its body is looked up once the server can be asked")
+                && !flagged[0].2.contains("could not be looked up"),
+            "{first:?}"
+        );
+        assert!(
+            first
+                .lookup_refused
+                .as_deref()
+                .is_some_and(|why| why.contains(said) && why.contains(shown)),
+            "{first:?}"
+        );
+        assert_eq!(lookups(&server), 1, "{status}");
+
+        // The server now answers; neither file has changed.
+        server.on("/items/titles", vec![nothing_found()]);
+        let second = folder.scan().unwrap();
+        assert_eq!(second.lookup_refused, None, "{second:?}");
+        assert!(
+            lookups(&server) > 1,
+            "{status}: the names were not asked again"
+        );
+        let (a, b) = (item_at(&folder, "A.md"), item_at(&folder, "B.md"));
+        assert_eq!(edges_of(&folder, &a, LINK_EDGE), [b], "{status}");
+        let still = held(&folder, "A.md").unwrap();
+        assert!(
+            still.contains("[[C]] in its body matches no item") && !still.contains("[[B]]"),
+            "{still}"
+        );
+    }
+}
+
 /// Sets when the file at `path` is judged again, as a store written before
 /// that was recorded holds it with `None`.
 fn set_rejudge(folder: &Folder, path: &str, rejudge: Option<state::Rejudge>) {

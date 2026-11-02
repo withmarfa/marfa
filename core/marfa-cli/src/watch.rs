@@ -633,7 +633,7 @@ fn passed(
         .map(|reason| format!("the drain stopped: {reason}"));
     // What stands is said when it changes; what happened, every time.
     let standing: Vec<String> = if *notices_changed {
-        folders::unsure_lines(scanned)
+        folders::standing_lines(scanned)
             .into_iter()
             .chain(folders::uncarried_line(&pulled.uncarried))
             .chain((scanned.paused > 0).then(|| folders::paused_line(scanned.paused, false)))

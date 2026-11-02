@@ -2010,17 +2010,41 @@ When the server becomes reachable after a name lookup waited, a device MUST retr
 
 ### `folders/edge-lookup-refused`
 
-If the server refuses a lookup, then a device MUST flag each file naming a name that call carried with the refusal, and no file whose names another call answered.
+If the server refuses a name lookup that carried one name, then a device MUST flag each file naming that name with the refusal.
 
-**Reason:** the server refuses a lookup as a whole, as it does a key that reads no type, so every name in that call is left unanswered; the rest of the scan goes on.
+**Reason:** only a refusal of a call that carried one name says which name was refused.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags the files whose names a refused lookup carried, and goes on with the push`.
+**Tests:** `device/folders-held-links.test.ts › does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal`.
 
 ### `folders/edge-lookup-no-repeat`
 
-While a file with a refused name lookup is unchanged, a device MUST NOT repeat that lookup.
+While a file naming a name flagged under `folders/edge-lookup-refused` is unchanged, a device MUST NOT repeat that lookup.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags the files whose names a refused lookup carried, and goes on with the push`, `device/folders-held-links.test.ts › does not ask again for names a refused lookup carried, and the file stays flagged with the refusal`.
+**Tests:** `device/folders-held-links.test.ts › does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal`.
+
+### `folders/edge-lookup-call-refused`
+
+If the server refuses a name lookup that carried more than one name, or answers it as a route it does not have, then a device MUST flag each file naming a name that call carried as waiting for lookup.
+
+**Reason:** a refusal of the call as a whole names none of its names, and a server older than the title lookup refuses every call, so the refusal says nothing about any one name.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+
+### `folders/edge-lookup-call-retried`
+
+When a scan follows one in which the server refused a name lookup under `folders/edge-lookup-call-refused`, a device MUST look up the names that call carried again, whether or not the files naming them changed.
+
+**Reason:** the condition that refused the call, such as a server not yet upgraded, can clear with no change to the folder.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+
+### `folders/edge-lookup-call-told`
+
+When the server refuses a name lookup under `folders/edge-lookup-call-refused`, a device MUST report the refusal once for the folder's scan rather than in each flagged file's reason.
+
+**Reason:** the refusal is a standing condition of the server, not of any file, and a folder of thousands of linked notes would repeat it in each.
+
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
 
 ### `folders/create-before-links`
 
@@ -2036,7 +2060,7 @@ When the working copy has changed since a file was flagged `edges` because a nam
 
 **Reason:** The target may since have been created on this device, pulled in from another, or one of two namesakes moved to the bin. The working copy changes with every write sent or taken in, local or pulled.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› does not ask again for names a refused lookup carried, and the file stays flagged with the refusal`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› creates and links two documents that link each other, A.md written a pass before B.md`, `› creates and links two documents that link each other, B.md written a pass before A.md`, `› never guesses between two items of one name, and resolves once one goes to the bin`.
 
 ### `folders/edge-held-quiet`
 
@@ -2050,7 +2074,7 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› does not ask again for names a refused lookup carried, and the file stays flagged with the refusal`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
 
 ### `folders/edge-held-never-guessed`
 

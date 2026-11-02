@@ -232,6 +232,10 @@ pub struct ScanReport {
     pub warnings: Vec<Flagged>,
     /// Why the pass read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
+    /// Why links by name wait though the server answered, where they do: it
+    /// refused a title lookup as a whole, naming none of its names, or has
+    /// none. Said once for the folder, not for each file.
+    pub lookup_refused: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

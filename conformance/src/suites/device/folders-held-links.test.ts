@@ -18,7 +18,7 @@ import {
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
-import type { SseFrame } from "../../device/scripted-server.js";
+import type { Answer, SseFrame } from "../../device/scripted-server.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
@@ -31,9 +31,11 @@ import {
 // its name matched no item, or more than one, is resolved again once the
 // working copy changes (`folders/create-before-links`,
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
-// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`), while a
-// name whose lookup the server refused is not asked again
-// (`folders/edge-lookup-no-repeat`). A held file the person deletes, or one
+// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`). A name
+// the server refused to look up on its own is not asked again
+// (`folders/edge-lookup-no-repeat`), while the names of a lookup it refused
+// as a whole wait and are asked again at the next scan
+// (`folders/edge-lookup-call-retried`). A held file the person deletes, or one
 // whose edit the server refused, goes to the bin unless another device
 // changed its item (`folders/missing-held-line-unchanged`,
 // `folders/missing-refused-edit-unchanged`).
@@ -56,9 +58,13 @@ const put = (name: string, text: string) => {
 };
 
 /** A folder of notes whose server holds `items`, takes the folder's writes
- *  as the real one does, refuses a lookup that carries a name in `refused`, and
- *  serves the event frames `elsewhere` and `edgeElsewhere` add. */
-async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
+ *  as the real one does, answers a title lookup that carries a name `lookup`
+ *  answers with that answer, and serves the event frames `elsewhere` and
+ *  `edgeElsewhere` add. */
+async function seed(
+  items: WireItemOptions[] = [],
+  lookup?: (name: string) => Answer | undefined,
+) {
   const rows: Record<string, { item: WireItemOptions }[]> = {
     "core.note": items.map((item) => ({ item })),
   };
@@ -66,10 +72,7 @@ async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
   folder = await folderHarness("held-links", {
     rows,
     edges: { "parent-of": [], "attached-to": [] },
-    lookup: (text) =>
-      refused.includes(text)
-        ? refusal(403, "forbidden", "This key may not list here")
-        : undefined,
+    lookup,
     events: [
       (request) =>
         copyReplay(
@@ -336,34 +339,76 @@ describe("links held until their target exists", () => {
     expect(titleCalls().flat()).toEqual(["Absent"]);
   });
 
-  it("does not ask again for names a refused lookup carried, and the file stays flagged with the refusal", async () => {
-    await seed([], ["Denied"]);
-    put("Ticket.md", "See [[Decision]] and [[Denied]].\n");
+  it("does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal", async () => {
+    await seed([], (name) =>
+      name === "Denied"
+        ? refusal(403, "forbidden", "This key may not list here")
+        : undefined,
+    );
+    put("Ticket.md", "See [[Denied]].\n");
     const first = await push();
+    expect(titleCalls()).toEqual([["Denied"]]);
     expect(first.flagged.map((file) => [file.path, file.flag])).toEqual([
       ["Ticket.md", "edges"],
     ]);
-    // The server refuses a lookup as a whole, so each name it carried is
-    // left as the refusal.
     expect(first.flagged[0]?.reason).toContain(
-      "[[Decision]] in its body could not be looked up",
+      "[[Denied]] in its body could not be looked up (forbidden",
     );
-    expect(first.flagged[0]?.reason).toContain(
-      "[[Denied]] in its body could not be looked up",
-    );
-    const asked = lookups();
-    expect(asked, "the first push did not ask the server").toBeGreaterThan(0);
+    expect(first.lookup_refused).toBeNull();
 
+    // The witness that the copy changed: a new note is made, and its name
+    // is no lookup the held file makes.
     put("Decision.md", "The decision.\n");
     const second = await push();
     expect(second.created).toBe(1);
-    expect(edges()).toEqual([]);
     const ticket = await fileAt("Ticket.md");
     expect(ticket.status).toBe("held");
     expect(ticket.reason).toContain(
       "[[Denied]] in its body could not be looked up",
     );
-    expect(lookups(), "the refused names were asked again").toBe(asked);
+    expect(titleCalls(), "the refused name was asked again").toEqual([
+      ["Denied"],
+    ]);
+  });
+
+  it("holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited", async () => {
+    // A server older than `POST /items/titles` answers it as no route.
+    let upgraded = false;
+    await seed([note(1, "Target")], () =>
+      upgraded ? undefined : refusal(404, "not_found", "Not found"),
+    );
+    put("Ticket.md", "See [[Target]] and [[Decision]].\n");
+    put("Decision.md", "The decision.\n");
+    const old = await push();
+    expect(old.created).toBe(2);
+    expect(lookups(), "the old server was asked more than once").toBe(1);
+    expect(old.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    const reason = old.flagged[0]?.reason ?? "";
+    expect(reason).toContain(
+      "[[Target]] in its body is looked up once the server can be asked",
+    );
+    expect(reason).toContain(
+      "[[Decision]] in its body is looked up once the server can be asked",
+    );
+    expect(reason, "each file was told the server's refusal").not.toContain(
+      "not_found",
+    );
+    expect(old.lookup_refused).toContain("no title lookup");
+    expect(edges()).toEqual([]);
+
+    upgraded = true;
+    const now = await push();
+    expect(now.flagged).toEqual([]);
+    expect(now.lookup_refused).toBeNull();
+    expect(edges()).toEqual(
+      [
+        `create ${created("Ticket")} references ${id(1)}`,
+        `create ${created("Ticket")} references ${created("Decision")}`,
+      ].sort(),
+    );
+    expect((await fileAt("Ticket.md")).status).not.toBe("held");
   });
 
   it("holds a link as waiting while the server is out of reach, and resolves it once it answers", async () => {

@@ -792,7 +792,7 @@ describe("edges in frontmatter", () => {
     expect(sentEdgeWrites(harness)).toHaveLength(1);
   });
 
-  it("flags the files whose names a refused lookup carried, and goes on with the push", async () => {
+  it("leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push", async () => {
     const back = "01a00000-0000-7000-8000-00000000e10b";
     harness = await folderHarness("folder-edge-lookup-fails", {
       rows: edgeRows(
@@ -815,8 +815,9 @@ describe("edges in frontmatter", () => {
       `a lookup the server could not answer ended the push: ${JSON.stringify(pushed)}`,
     ).toBe(true);
     if (!pushed.ok) return;
-    // The server refuses a lookup as a whole: each name its call carried is
-    // left as the refusal, and the files are made and kept as typed.
+    // The server refuses a lookup of several names, which names none of
+    // them: each name the call carried waits, and the files are made and
+    // kept as typed.
     expect(sentEdgeWrites(harness)).toEqual([]);
     expect(
       pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
@@ -826,21 +827,25 @@ describe("edges in frontmatter", () => {
       ["Two.md", "edges"],
     ]);
     for (const flagged of pushed.value.scan.flagged) {
-      expect(flagged.reason).toContain("forbidden");
+      expect(flagged.reason).toContain("once the server can be asked");
+      expect(flagged.reason).not.toContain("forbidden");
     }
+    expect(pushed.value.scan.lookup_refused).toContain("several names");
+    expect(pushed.value.scan.lookup_refused).toContain("forbidden");
     expect(
       frontOf(harness, "Two.md"),
       "a line that was refused was erased by the pull",
     ).toContain("[[Alpha]]");
 
-    // A refusal is an answer: it is not asked again until the file changes.
+    // No name was refused on its own, so each is asked again at the next
+    // push, though no file changed.
     const asked = () =>
       harness!.server.requests.filter(
         (request) => request.pathname === "/items/titles",
       ).length;
     const before = asked();
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(asked()).toBe(before);
+    expect(asked()).toBeGreaterThan(before);
   });
 
   it("flags a new target for an end whose edge the file never showed, and deletes nothing", async () => {
