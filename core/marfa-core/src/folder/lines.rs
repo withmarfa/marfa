@@ -142,12 +142,9 @@ impl Resolved {
     }
 }
 
-/// The items a group's line names.
 #[derive(Default)]
 struct Desired {
-    /// The items the names that resolved name.
     found: Vec<String>,
-    /// The names that did not, which the line holds.
     held: Vec<Typed>,
 }
 

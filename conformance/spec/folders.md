@@ -2086,7 +2086,7 @@ If a held edge name still matches more than one item when it is looked up again,
 
 When an edge line holds a name under `folders/edge-name-unmatched`, `folders/edge-name-ambiguous`, `folders/edge-lookup-waits` or `folders/edge-lookup-refused`, a device MUST create the edge for each other name on the line that resolves to one item.
 
-**Reason:** a name held says nothing of the others on its line. Left unwritten, a document naming an item that exists and one that does not would link to neither, and a person reading the item in an app would see no link to the one that exists. The file stays flagged `edges` for the held name and keeps its line as typed.
+**Reason:** A held name says nothing about the other names on its line. Leaving their edges unwritten would hide links to existing items from a person reading the document in an app.
 
 **Tests:** `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one that matches no item, and adds the other once it exists`, `device/folders-held-links.test.ts › writes the edge of each name on a line that resolves while it holds one matching two items, and never guesses the other`, `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`.
 
@@ -2100,7 +2100,7 @@ When a name held on an edge line resolves to one item, a device MUST NOT write a
 
 When a person takes a name out of an edge line that holds another name, a device MUST delete the edge that name made, unless a name the line holds may name that edge's item.
 
-**Reason:** an item in the bin, or one the device cannot read, matches no name, though the line may still name it. Its edge is not a name taken out, and deleting it would lose what the person did not remove.
+**Reason:** An item in the bin, or one the device cannot read, matches no name, though the line may still name it. Deleting its edge would remove a link the person kept.
 
 **Tests:** `device/folders-frontmatter.test.ts › changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none`, `device/folders-held-links.test.ts › keeps the edge of a name that matches no item because its item is in the bin, and takes out the edge of a name removed from the line`.
 
