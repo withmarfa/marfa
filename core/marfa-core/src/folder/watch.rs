@@ -608,17 +608,32 @@ impl Passes {
 
     /// Runs what a second's tick of a watch that hears no file event and no
     /// server change runs: a full pass once a minute, and otherwise a quick
-    /// pass only where the last pass left the folder short of rest.
-    pub(super) fn tick(&mut self, folder: &Folder) -> Result<(), CoreError> {
+    /// pass only where the last pass left the folder short of rest. Answers
+    /// whether a pass ran.
+    pub(super) fn tick(&mut self, folder: &Folder) -> Result<bool, CoreError> {
         self.ticks += 1;
         let full = self.ticks >= FULL_PASS.as_secs() / TICK.as_secs();
         if self.telling.rests(full, false) {
-            return Ok(());
+            return Ok(false);
         }
         if full {
             self.ticks = 0;
         }
-        self.run(folder, full)
+        self.run(folder, full).map(|()| true)
+    }
+
+    /// Runs what the watch runs when its follow says the server's reach was
+    /// lost, with why, or is back. Answers whether a pass ran.
+    pub(super) fn reach(
+        &mut self,
+        folder: &Folder,
+        lost: Option<String>,
+    ) -> Result<bool, CoreError> {
+        self.telling.reach(lost);
+        if self.telling.rests(false, true) {
+            return Ok(false);
+        }
+        self.run(folder, false).map(|()| true)
     }
 
     /// The pulls the passes ran rather than reused since the last call.

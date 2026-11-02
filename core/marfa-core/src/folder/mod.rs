@@ -2688,7 +2688,11 @@ mod tests {
 
     /// A folder over a fresh directory, listed in the registry this thread
     /// already has, whose copy holds the folder item `id` with `settings`.
-    fn folder_with(id: &str, settings: Value, types: Option<Value>) -> (tempfile::TempDir, Folder) {
+    pub(super) fn folder_with(
+        id: &str,
+        settings: Value,
+        types: Option<Value>,
+    ) -> (tempfile::TempDir, Folder) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let folder = folder_over(dir.path(), id, settings, types);
         (dir, folder)
@@ -3450,7 +3454,7 @@ mod tests {
     // The settle time for `scan_watching`, which only a file that is not a
     // document waits on. No server answers in these tests, so a bound note
     // whose write is unanswered counts as `waiting`, not `unchanged`.
-    const QUICK: Duration = Duration::from_secs(3600);
+    pub(super) const QUICK: Duration = Duration::from_secs(3600);
 
     #[test]
     fn a_quick_pass_does_not_reread_an_unchanged_bound_document() {
@@ -4520,7 +4524,7 @@ mod tests {
         assert_eq!(aged, 1, "{path} is not journaled");
     }
 
-    fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {
+    pub(super) fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {
         state::journaled(&folder.core.conn().unwrap())
             .unwrap()
             .into_iter()
