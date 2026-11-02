@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -10,6 +10,11 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 let server: FreshServer;
 let client: MarfaClient;
+// The server outlives a retry and keeps the types the failed attempt
+// registered, so each attempt names its own.
+let attempt = 0;
+const id = (name: string) =>
+  `custom.${name}${attempt === 0 ? "" : `_retry${String(attempt)}`}`;
 beforeAll(async () => {
   server = await bootFreshServer("write-order", DISK_ONLY);
   client = new MarfaClient({
@@ -17,6 +22,9 @@ beforeAll(async () => {
     apiKey: server.workingKey,
   });
 }, FRESH_SERVER_TIMEOUT_MS);
+beforeEach(({ task }) => {
+  attempt = task.result?.retryCount ?? 0;
+});
 afterEach(async () => {
   await server.clearFault();
 });
@@ -99,16 +107,16 @@ it("judges an exact item update after a move against the current version", async
 });
 
 it("judges an item update after retyping against the current type", async () => {
-  await register("custom.order_before");
-  await register("custom.order_after");
-  const item = await note("before retype", "custom.order_before");
+  await register(id("order_before"));
+  await register(id("order_after"));
+  const item = await note("before retype", id("order_before"));
   const minted = await client.createKey({
     label: "write-order-limited",
     source: "write-order-limited",
     permissions: [],
     type_permissions: {
-      "custom.order_before": "write",
-      "custom.order_after": "read",
+      [id("order_before")]: "write",
+      [id("order_after")]: "read",
     },
   });
   expect(minted.status).toBe(201);
@@ -134,7 +142,7 @@ it("judges an item update after retyping against the current type", async () => 
     (
       await client.updateItem(item.id, {
         version: 2,
-        type: "custom.order_after",
+        type: id("order_after"),
         retype: true,
       })
     ).status,
@@ -149,80 +157,76 @@ it("judges an item update after retyping against the current type", async () => 
 });
 
 it("refuses a child whose parent was deleted while registration waited", async () => {
-  await register("custom.order_parent");
+  await register(id("order_parent"));
   await server.setFault("hold:write=type.register@1");
   const pending = client.registerType({
-    id: "custom.order_child",
-    parent: "custom.order_parent",
+    id: id("order_child"),
+    parent: id("order_parent"),
     fields: {},
   });
   await server.waitForHold("hold:write");
-  expect((await client.deleteType("custom.order_parent")).status).toBe(200);
+  expect((await client.deleteType(id("order_parent"))).status).toBe(200);
   await server.clearFault("hold:write");
   const refused = await pending;
   expect(refused.status).toBe(400);
   expect(refused.error?.error.code).toBe("validation_error");
-  expect((await client.getType("custom.order_child")).status).toBe(404);
-  await register("custom.order_parent");
-  await register("custom.order_child", "custom.order_parent");
+  expect((await client.getType(id("order_child"))).status).toBe(404);
+  await register(id("order_parent"));
+  await register(id("order_child"), id("order_parent"));
 });
 
 it("refuses a parent deletion after a child registers", async () => {
-  await register("custom.order_delete_parent");
+  await register(id("order_delete_parent"));
   await server.setFault("hold:write=type.delete@1");
-  const pending = client.deleteType("custom.order_delete_parent");
+  const pending = client.deleteType(id("order_delete_parent"));
   await server.waitForHold("hold:write");
-  await register("custom.order_delete_child", "custom.order_delete_parent");
+  await register(id("order_delete_child"), id("order_delete_parent"));
   await server.clearFault("hold:write");
   const refused = await pending;
   expect(refused.status).toBe(409);
   expect(refused.error?.error.code).toBe("type_has_subtypes");
-  expect((await client.deleteType("custom.order_delete_child")).status).toBe(
-    200,
-  );
-  expect((await client.deleteType("custom.order_delete_parent")).status).toBe(
-    200,
-  );
+  expect((await client.deleteType(id("order_delete_child"))).status).toBe(200);
+  expect((await client.deleteType(id("order_delete_parent"))).status).toBe(200);
 });
 
 it("refuses the second reparent that would close a loop", async () => {
-  await register("custom.order_loop_a");
-  await register("custom.order_loop_b");
+  await register(id("order_loop_a"));
+  await register(id("order_loop_b"));
   await server.setFault("hold:write=type.replace@1");
-  const pending = client.replaceType("custom.order_loop_a", {
+  const pending = client.replaceType(id("order_loop_a"), {
     fields,
-    parent: "custom.order_loop_b",
+    parent: id("order_loop_b"),
   });
   await server.waitForHold("hold:write");
   expect(
     (
-      await client.replaceType("custom.order_loop_b", {
+      await client.replaceType(id("order_loop_b"), {
         fields,
-        parent: "custom.order_loop_a",
+        parent: id("order_loop_a"),
       })
     ).status,
   ).toBe(200);
   await server.clearFault("hold:write");
   expect((await pending).status).toBe(400);
   expect(
-    (await client.replaceType("custom.order_loop_b", { fields })).status,
+    (await client.replaceType(id("order_loop_b"), { fields })).status,
   ).toBe(200);
   expect(
     (
-      await client.replaceType("custom.order_loop_a", {
+      await client.replaceType(id("order_loop_a"), {
         fields,
-        parent: "custom.order_loop_b",
+        parent: id("order_loop_b"),
       })
     ).status,
   ).toBe(200);
 });
 
 it("counts an item that lands before a waiting type deletion", async () => {
-  await register("custom.order_in_use");
+  await register(id("order_in_use"));
   await server.setFault("hold:write=type.delete@1");
-  const pending = client.deleteType("custom.order_in_use");
+  const pending = client.deleteType(id("order_in_use"));
   await server.waitForHold("hold:write");
-  await note("count me", "custom.order_in_use");
+  await note("count me", id("order_in_use"));
   await server.clearFault("hold:write");
   const refused = await pending;
   expect(refused.status).toBe(409);
@@ -230,34 +234,34 @@ it("counts an item that lands before a waiting type deletion", async () => {
 });
 
 it("refuses an item whose type was deleted before its write starts", async () => {
-  await register("custom.order_gone");
-  await server.setFault("hold:write=1");
+  await register(id("order_gone"));
+  await server.setFault("hold:write=item.create@1");
   const pending = client.createItem({
-    type: "custom.order_gone",
+    type: id("order_gone"),
     properties: { body: "too late" },
   });
   await server.waitForHold("hold:write");
-  expect((await client.deleteType("custom.order_gone")).status).toBe(200);
+  expect((await client.deleteType(id("order_gone"))).status).toBe(200);
   await server.clearFault("hold:write");
   const refused = await pending;
   expect(refused.status).toBe(400);
   expect(refused.error?.error.code).toBe("unknown_type");
-  await register("custom.order_gone");
-  await note("too late", "custom.order_gone");
+  await register(id("order_gone"));
+  await note("too late", id("order_gone"));
 });
 
 it("refuses edge creation after its source is retyped outside write reach", async () => {
-  await register("custom.edge_before");
-  await register("custom.edge_after");
-  const source = await note("edge source", "custom.edge_before");
+  await register(id("edge_before"));
+  await register(id("edge_after"));
+  const source = await note("edge source", id("edge_before"));
   const target = await note("edge target");
   const minted = await client.createKey({
     label: "edge-order",
     source: "edge-order",
     permissions: [],
     type_permissions: {
-      "custom.edge_before": "write",
-      "custom.edge_after": "read",
+      [id("edge_before")]: "write",
+      [id("edge_after")]: "read",
       "core.note": "read",
     },
     edge_permissions: { references: "write" },
@@ -282,7 +286,7 @@ it("refuses edge creation after its source is retyped outside write reach", asyn
     (
       await client.updateItem(source.id, {
         version: source.version,
-        type: "custom.edge_after",
+        type: id("edge_after"),
         retype: true,
       })
     ).status,
@@ -347,9 +351,9 @@ it("announces the moved endpoints when a waiting delete removes the edge", async
 });
 
 it("clears a write hold across restart and can arm it again", async () => {
-  await register("custom.order_before_restart");
+  await register(id("order_before_restart"));
   await server.setFault("hold:write=type.delete@1");
-  const interrupted = client.deleteType("custom.order_before_restart");
+  const interrupted = client.deleteType(id("order_before_restart"));
   await server.waitForHold("hold:write");
   const ended = await server.restart();
   expect(ended.code).toBe(0);
@@ -359,9 +363,9 @@ it("clears a write hold across restart and can arm it again", async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  await register("custom.order_restart");
+  await register(id("order_restart"));
   await server.setFault("hold:write=type.delete@1");
-  const pending = client.deleteType("custom.order_restart");
+  const pending = client.deleteType(id("order_restart"));
   await server.waitForHold("hold:write");
   await server.clearFault();
   expect((await pending).status).toBe(200);
@@ -376,7 +380,7 @@ it(
         baseUrl: own.apiUrl,
         apiKey: own.workingKey,
       });
-      await own.setFault("hold:write=1");
+      await own.setFault("hold:write=item.create@1");
       const pending = writer.createItem({
         type: "core.note",
         properties: { body: "held at teardown" },

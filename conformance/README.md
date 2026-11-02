@@ -385,6 +385,12 @@ to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
 A reserve of zero disables these checks. `<bytes>` is a decimal integer from
 0 through 9007199254740991.
 
+A bare number in `hold:write` counts every outer audited transaction the target
+makes, the housekeeping jobs' own included. Those first run seconds after boot
+and again on their cadences, so a bare number can be taken by a job instead of
+the request a fixture means. A fixture that means one request's write names its
+action.
+
 Every caller selected by a hold waits, and `waiting` in the fault's
 listing counts them. An uncounted hold selects every caller. A hold does not suspend a stream's head-read budget or
 a read snapshot's lifetime. A target told to stop releases its faults as the
