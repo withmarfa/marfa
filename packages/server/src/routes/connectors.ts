@@ -126,7 +126,7 @@ const ConnectorSchema = z
       ),
   })
   .describe(
-    "A connector is a process outside Marfa that registers under an API key, sends heartbeats and reports its runs.",
+    "A connector is a program outside Marfa that registers under an API key of its own, sends heartbeats and reports its runs.",
   )
   .openapi("Connector");
 

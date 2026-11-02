@@ -4943,7 +4943,7 @@ export interface components {
                 };
             };
         };
-        /** @description A connector is a process outside Marfa that registers under an API key, sends heartbeats and reports its runs. */
+        /** @description A connector is a program outside Marfa that registers under an API key of its own, sends heartbeats and reports its runs. */
         Connector: {
             /** @description Unique identifier for the connector. */
             id: string;

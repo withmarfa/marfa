@@ -1,6 +1,6 @@
 # Connectors
 
-A connector is a process outside the server that registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under.
+A connector is a program outside the server that has a connector registration: it registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under. An app or a script that acts with a key or through OAuth but has no registration is not a connector.
 
 The source-owned inbound endpoints a current registration exposes are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
 

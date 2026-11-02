@@ -5306,7 +5306,7 @@ When a caller reads a view that holds a `layouts` setting, a device MUST order a
 
 ### `device/view-incomplete`
 
-If hydration is incomplete, or its copy is stale, then a device MUST refuse to evaluate a view's items or groups with `hydration_incomplete`.
+If hydration is incomplete, or its copy is stale, then a device MUST refuse to evaluate a view's items, groups or search with `hydration_incomplete`.
 
 **Reason:** partial or out-of-date rows or totals would misrepresent the saved view.
 
