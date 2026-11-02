@@ -6134,11 +6134,11 @@ While the key, saved folder settings and placement used by a refused placement w
 
 ### `folders/clears-recorded-answers`
 
-When a folder's drain begins while the folder's queue holds a write not yet sent or more than 100 answered writes, a device MUST take out of the folder's queue each write that clearing the answered writes takes out (`queue-and-verdicts/clear-answered`, `queue-and-verdicts/clear-withdrawn-leftovers`), other than a write whose answer a file's record still waits on, a body edit whose links the device has yet to finish checking, a link rewrite the folder has yet to settle, or a placement refused as a duplicate that the folder has yet to give way on.
+When a folder's drain begins, a device MUST take out of the folder's queue each write that clearing the answered writes takes out (`queue-and-verdicts/clear-answered`, `queue-and-verdicts/clear-withdrawn-leftovers`), other than a write whose answer a file's record still waits on or a link rewrite the folder has yet to settle.
 
-**Reason:** a folder sends a write for each edit it reads. Kept after the folder had recorded its answer, every write it ever sent stayed in the queue, and every drain read them all, so a quiet folder cost more with each edit. Taking a write out changes the copy, which the folder's next pass reads again, so a drain with nothing to send leaves a few answers for the next drain that sends something, and a quiet folder stays quiet.
+**Reason:** a folder sends a write for each edit it reads. Kept after the folder had recorded its answer, every write it ever sent stayed in the queue, and every drain read them all, so a quiet folder cost more with each edit. An answered write is laid over no row of the working copy, so taking it out changes nothing a pull reads, and a quiet folder stays quiet (`folders/watch-pull-renders-reached`).
 
-**Tests:** `device/folders-cleared-answers.test.ts › clears the writes it recorded when it next sends, and keeps a refused edit's words and every refusal it shows`.
+**Tests:** `device/folders-cleared-answers.test.ts › clears the writes it recorded as its next drain begins, and keeps a refused edit's words and every refusal it shows`.
 
 ### `folders/conflict-file-report`
 

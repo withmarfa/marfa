@@ -6,7 +6,7 @@
 //! sync makes do not come through here.
 
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -1542,22 +1542,6 @@ fn lost_on_body(conn: &Connection, write: &str) -> Result<bool> {
     let catalog = Catalog::load(conn)?;
     let body = fields::body_field(&catalog, &item.r#type);
     Ok(fields.iter().any(|field| field == body))
-}
-
-/// The writes whose answer the rule has yet to read, by id: each edge create
-/// it tracks and the body write that edge was read from, which decides
-/// whether the edge goes (`lost_body`), and each edit whose body it reads
-/// again once answered.
-pub(crate) fn awaited_writes(conn: &Connection) -> Result<HashSet<String>> {
-    let mut statement = conn.prepare(
-        "SELECT write_id FROM body_edges
-         UNION SELECT body_write FROM body_edges WHERE body_write IS NOT NULL
-         UNION SELECT write_id FROM body_checks",
-    )?;
-    let ids = statement
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(ids)
 }
 
 /// Reads back what the queue answered of the writes the rule follows: an

@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("a folder's answered writes", () => {
-  it("clears the writes it recorded when it next sends, and keeps a refused edit's words and every refusal it shows", async () => {
+  it("clears the writes it recorded as its next drain begins, and keeps a refused edit's words and every refusal it shows", async () => {
     harness = await folderHarness("folder-clears-answered");
     let door: FolderDoor | undefined;
     scriptFolderWrites(harness, {
@@ -62,7 +62,7 @@ describe("a folder's answered writes", () => {
     expect(
       answered.ok &&
         answered.value.filter((write) => write.verdict === "accepted"),
-      "the witness: a push's answers stay until a drain sends something",
+      "the witness: a push's answers stay until the next drain begins",
     ).not.toEqual([]);
 
     put(harness, "Edited.md", "edited again\n");
@@ -80,11 +80,14 @@ describe("a folder's answered writes", () => {
       ["update_item", editedId, "accepted"],
     ]);
 
-    // A push with nothing to send leaves the queue as it was.
+    // A push with nothing to send clears the last push's answer too.
     const quiet = await harness.folder.push();
     expect(quiet.ok, JSON.stringify(quiet)).toBe(true);
     const after = await harness.folder.device().queue();
-    expect(after.ok && after.value).toEqual(left);
+    expect(
+      after.ok &&
+        after.value.map((write) => [write.kind, write.item_id, write.verdict]),
+    ).toEqual([["update_item", refusedId, "refused"]]);
 
     const status = await harness.folder.status();
     expect(status.ok, JSON.stringify(status)).toBe(true);

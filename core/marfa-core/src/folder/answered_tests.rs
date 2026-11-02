@@ -9,12 +9,6 @@ use super::*;
 use crate::model::{QueuedWrite, Verdict, WriteKind};
 use crate::store::{self, Answered, ROWS_READ};
 
-/// Has each drain on this thread clear, as one with a write to send does,
-/// where a test answers the writes itself before the drain.
-fn every_drain_clears() {
-    super::answered::QUIET_CLEARS_AT_HERE.with(|at| at.set(Some(0)));
-}
-
 /// The queue rows this thread read since the last call.
 fn rows_read() -> usize {
     ROWS_READ.with(|read| read.replace(0))
@@ -121,7 +115,6 @@ fn refused_in_status(folder: &Folder, path: &str) -> bool {
 
 #[test]
 fn a_folder_that_sent_hundreds_of_edits_keeps_only_what_it_still_needs() {
-    every_drain_clears();
     let (dir, folder, _server, _passes) = watched_notes(&["a.md"]);
     for n in 0..300 {
         edited(dir.path(), &folder, "a.md", &format!("edit {n}"));
@@ -141,7 +134,6 @@ fn a_folder_that_sent_hundreds_of_edits_keeps_only_what_it_still_needs() {
 
 #[test]
 fn the_rows_a_drain_reads_do_not_grow_with_the_writes_the_folder_sent() {
-    every_drain_clears();
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
     let mut sent = 0;
     let mut reads_after = |edits: usize| {
@@ -196,7 +188,6 @@ fn a_drain_reads_the_writes_its_files_wait_on_by_id_not_the_whole_queue() {
 
 #[test]
 fn a_refused_edit_keeps_its_words_and_a_refused_tag_its_reason_once_the_answers_are_cleared() {
-    every_drain_clears();
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
     edited(dir.path(), &folder, "a.md", "words the server refused");
     tagged(dir.path(), &folder, "b.md", "kept");
@@ -230,7 +221,6 @@ fn a_refused_edit_keeps_its_words_and_a_refused_tag_its_reason_once_the_answers_
 
 #[test]
 fn a_conflicted_copy_stays_with_its_original_once_the_conflicted_edit_is_cleared() {
-    every_drain_clears();
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
     let (original, copy) = (item_of(&folder, "a.md"), item_of(&folder, "b.md"));
     edited(dir.path(), &folder, "a.md", "kept on the copy");
@@ -303,7 +293,6 @@ fn a_store_holding_thousands_of_answered_writes_is_cleared_on_its_first_pass_wit
 
 #[test]
 fn an_answer_recorded_before_the_folder_read_it_stays_until_the_file_records_it() {
-    every_drain_clears();
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
     tagged(dir.path(), &folder, "a.md", "kept");
     // A drain recorded the refusal and the process ended before the folder
@@ -364,23 +353,58 @@ fn a_drain_cut_short_by_a_rate_limit_records_its_answers_before_they_leave_the_q
 }
 
 #[test]
-fn a_drain_with_nothing_to_send_leaves_a_few_answers_and_the_copy_as_they_were() {
+fn a_drain_with_nothing_to_send_clears_the_answers_and_leaves_the_copy_as_it_was() {
     let (dir, folder, _server, _passes) = watched_notes(&["a.md"]);
     edited(dir.path(), &folder, "a.md", "edited");
-    answered(&folder, Verdict::Accepted, None);
+    let edit = answered(&folder, Verdict::Accepted, None);
+    // The file's record waits on the answer, so this drain keeps it.
     folder.drain().unwrap();
-    let revision = || store::copy_revision(&folder.core.conn().unwrap()).unwrap();
-    let (held, at) = (queue(&folder), revision());
-    assert!(!held.is_empty(), "the witness: the answer is in the queue");
+    assert!(
+        queue(&folder).iter().any(|row| row.id == edit[0].id),
+        "the witness: the answer is in the queue"
+    );
+    let marks = || {
+        let conn = folder.core.conn().unwrap();
+        (
+            store::copy_revision(&conn).unwrap(),
+            store::last_change(&conn, store::Changes::Items).unwrap(),
+        )
+    };
+    let before = marks();
 
-    folder.drain().unwrap();
-    assert_eq!(queue(&folder), held);
-    assert_eq!(revision(), at, "a quiet drain changed the copy");
-
-    // The witness: past the bound, a drain with nothing to send clears.
-    sent_long_ago(&folder, &item_of(&folder, "a.md"), 100);
     folder.drain().unwrap();
     assert_eq!(queue(&folder), []);
+    assert_eq!(marks(), before, "clearing an answer changed the copy");
+}
+
+#[test]
+fn clearing_an_answered_edit_renders_its_file_no_more() {
+    let (dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
+    let (a, b) = (item_of(&folder, "a.md"), item_of(&folder, "b.md"));
+    edited(dir.path(), &folder, "a.md", "edited");
+    let edit = answered(&folder, Verdict::Accepted, None);
+    // The pass reads the answer and renders the file its answer reached;
+    // the file's record waited on it, so the pass kept it in the queue.
+    passes.run(&folder, false).unwrap();
+    assert!(
+        queue(&folder).iter().any(|row| row.id == edit[0].id),
+        "the witness: the answer is in the queue"
+    );
+    super::tests::rendered();
+
+    edited(dir.path(), &folder, "b.md", "edited too");
+    answered(&folder, Verdict::Accepted, None);
+    passes.run(&folder, false).unwrap();
+    assert!(
+        !queue(&folder).iter().any(|row| row.id == edit[0].id),
+        "the pass kept the answer"
+    );
+    let rendered = super::tests::rendered_items();
+    assert!(
+        !rendered.contains(&a),
+        "a.md was rendered again: {rendered:?}"
+    );
+    assert!(rendered.iter().all(|id| *id == b), "{rendered:?}");
 }
 
 #[test]
@@ -410,11 +434,12 @@ fn the_body_write_a_waiting_link_edge_was_read_from_stays() {
     let ids = sent_long_ago(&folder, &host, 2);
     {
         let conn = folder.core.conn().unwrap();
+        // As `body::rule::derive` queues it: waiting on the body write.
         conn.execute(
-            "INSERT INTO queue (id, kind, item_id, target_id, idempotency_key, payload, queued_at)
+            "INSERT INTO queue (id, kind, item_id, target_id, idempotency_key, payload, queued_at, depends_on)
              VALUES ('link', 'create_edge', ?1, ?2, 'link', '{\"edge_type\":\"references\"}',
-                     '2026-01-01T00:00:02Z')",
-            [&host, &other],
+                     '2026-01-01T00:00:02Z', json_array(?3))",
+            [&host, &other, &ids[0]],
         )
         .unwrap();
         conn.execute(

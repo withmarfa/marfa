@@ -2681,7 +2681,7 @@ mod tests {
     }
 
     /// The items whose file this thread rendered since the last call.
-    fn rendered_items() -> std::collections::BTreeSet<String> {
+    pub(super) fn rendered_items() -> std::collections::BTreeSet<String> {
         RENDERED.with(|rendered| rendered.set(0));
         RENDERED_ITEMS.with(|rendered| std::mem::take(&mut *rendered.borrow_mut()))
     }

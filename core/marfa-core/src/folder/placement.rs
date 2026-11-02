@@ -445,17 +445,6 @@ impl Folder {
         Ok((gave_way, withdrawn))
     }
 
-    /// The answered writes `give_way` has yet to read for, by id. Each
-    /// refused edge create to this folder that gives way counts, whatever its
-    /// edge type, since reading the type takes another connection.
-    pub(super) fn awaiting_give_way(&self, conn: &rusqlite::Connection) -> Result<HashSet<String>> {
-        Ok(give_way_candidates(conn)?
-            .into_iter()
-            .filter(|row| gives_way(row) && row.target_id.as_deref() == Some(self.folder.as_str()))
-            .map(|row| row.id)
-            .collect())
-    }
-
     /// Whether a queued write is one of this folder's placements: an
     /// `in-folder` edge to it, and not another edge to the same row.
     fn places_by(&self, row: &QueuedWrite) -> Result<bool> {

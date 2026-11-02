@@ -743,6 +743,7 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
     add_columns(conn, &behind)?;
     conn.execute_batch(SCHEMA)?;
+    hold_triggers(conn)?;
     // Only when absent: writing it on every open would make a reading command
     // take a write lock.
     if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
@@ -778,9 +779,15 @@ fn statement(sql: &str) -> String {
 }
 
 fn held_shape(conn: &Connection) -> rusqlite::Result<Shape> {
-    let mut query = conn
-        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL")?;
-    let rows = query.query_map([], |row| {
+    held_statements(conn, "table")
+}
+
+/// Each statement of `kind`, `table` or `trigger`, that SQLite records, keyed
+/// by name.
+fn held_statements(conn: &Connection, kind: &str) -> rusqlite::Result<Shape> {
+    let mut query =
+        conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = ?1 AND sql IS NOT NULL")?;
+    let rows = query.query_map([kind], |row| {
         Ok((
             row.get::<_, String>(0)?,
             statement(&row.get::<_, String>(1)?),
@@ -789,18 +796,66 @@ fn held_shape(conn: &Connection) -> rusqlite::Result<Shape> {
     rows.collect()
 }
 
-/// The shape this build makes, read from SQLite rather than from the file so
-/// it is compared as SQLite records it.
-fn built_shape() -> Result<&'static Shape, CoreError> {
-    static BUILT: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
+/// The tables and the triggers this build makes, read from SQLite rather
+/// than from the file so they are compared as SQLite records them.
+struct Built {
+    tables: Shape,
+    triggers: Shape,
+}
+
+fn built() -> Result<&'static Built, CoreError> {
+    static BUILT: std::sync::OnceLock<Built> = std::sync::OnceLock::new();
     if let Some(built) = BUILT.get() {
         return Ok(built);
     }
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(META_TABLE)?;
     conn.execute_batch(SCHEMA)?;
-    let built = held_shape(&conn)?;
+    let built = Built {
+        tables: held_shape(&conn)?,
+        triggers: held_statements(&conn, "trigger")?,
+    };
     Ok(BUILT.get_or_init(|| built))
+}
+
+fn built_shape() -> Result<&'static Shape, CoreError> {
+    Ok(&built()?.tables)
+}
+
+/// The triggers this build makes that the store holds in another form, by
+/// name.
+fn triggers_behind(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let held = held_statements(conn, "trigger")?;
+    let mut behind: Vec<String> = built()?
+        .triggers
+        .iter()
+        .filter(|(name, made)| held.get(*name).is_some_and(|statement| statement != *made))
+        .map(|(name, _)| name.clone())
+        .collect();
+    behind.sort();
+    Ok(behind)
+}
+
+/// Makes again, in one transaction, each trigger the store holds as an
+/// earlier build made it, which `CREATE TRIGGER IF NOT EXISTS` leaves as it
+/// is. A store already holding this build's triggers is not written to.
+fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
+    if triggers_behind(conn)?.is_empty() {
+        return Ok(());
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    // Another program may have made them again between the read and the lock.
+    for name in triggers_behind(&tx)? {
+        tx.execute_batch(&format!("DROP TRIGGER \"{name}\";"))?;
+    }
+    tx.execute_batch(SCHEMA)?;
+    if let Some(name) = triggers_behind(&tx)?.first() {
+        return Err(CoreError::Store(format!(
+            "making the trigger {name} again did not give the statement this build makes"
+        )));
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// Each column added to the end of a table since a table last changed in a
@@ -1088,10 +1143,14 @@ fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 }
 
 /// The writes in the queue that a folder's file state names as waiting on
-/// their answer, by id.
-#[cfg(unix)]
+/// their answer, by id. A record that is not JSON is read, and refused.
 pub(crate) fn awaited_by_files(conn: &Connection) -> Result<HashSet<String>, CoreError> {
-    let mut statement = match conn.prepare("SELECT writes FROM main.folder_files") {
+    let mut statement = match conn.prepare(
+        "SELECT writes FROM main.folder_files
+          WHERE NOT json_valid(writes)
+             OR json_array_length(writes, '$.queued') > 0
+             OR json_array_length(writes, '$.landing.before.writes.queued') > 0",
+    ) {
         Ok(statement) => statement,
         // A store with no folder record of this kind records no file.
         Err(error) => {
@@ -1137,7 +1196,6 @@ pub(crate) fn awaited_by_files(conn: &Connection) -> Result<HashSet<String>, Cor
     Ok(held)
 }
 
-#[cfg(unix)]
 fn queued_in_main(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM main.queue WHERE id = ?1)",
@@ -5551,6 +5609,26 @@ pub fn forget_answered_except(
     forget_answered_inner(conn, None, Some(&except), true)
 }
 
+/// Whether the queue holds a write `forget_answered` may clear: one the
+/// server answered, but a refused write that carried content, which leaves
+/// only by `discard`. Read through the index on the verdict.
+pub fn holds_clearable_answers(conn: &Connection) -> Result<bool, CoreError> {
+    let free = content_free_kinds();
+    Ok(conn.query_row(
+        &format!(
+            "SELECT EXISTS (SELECT 1 FROM queue
+              WHERE verdict IN (?1, ?2, ?3) OR (verdict = ?4 AND kind IN ({free})))"
+        ),
+        [
+            Verdict::Accepted.as_str(),
+            Verdict::Merged.as_str(),
+            Verdict::Conflicted.as_str(),
+            Verdict::Refused.as_str(),
+        ],
+        |row| row.get(0),
+    )?)
+}
+
 /// `only` is a JSON array of the ids to clear, or `None` for any; `except` a
 /// JSON array of the ids to keep, or `None` for none.
 fn forget_answered_inner(
@@ -8682,7 +8760,7 @@ mod tests {
         (
             "queue",
             "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at) VALUES ('w', 'update_item', 'k', '{}', '2026-01-01T00:00:00Z')",
-            "UPDATE queue SET verdict = 'accepted' WHERE id = 'w'",
+            "UPDATE queue SET item_id = 'held' WHERE id = 'w'",
             "DELETE FROM queue WHERE id = 'w'",
         ),
     ];
@@ -8775,6 +8853,98 @@ mod tests {
         conn.execute("UPDATE items SET version = 2 WHERE id = 'row'", [])
             .unwrap();
         assert_eq!(copy_revision(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn only_a_write_laid_over_the_copy_changes_it_as_it_leaves_the_queue() {
+        let conn = conn();
+        let marks = |conn: &Connection| {
+            (
+                copy_revision(conn).unwrap(),
+                last_change(conn, Changes::Items).unwrap(),
+            )
+        };
+        for (verdict, laid_over) in [
+            (None, true),
+            (Some(Verdict::Blocked), true),
+            (Some(Verdict::Dead), true),
+            (Some(Verdict::Accepted), false),
+            (Some(Verdict::Merged), false),
+            (Some(Verdict::Conflicted), false),
+            (Some(Verdict::Refused), false),
+        ] {
+            conn.execute(
+                "INSERT INTO queue (id, kind, item_id, target_id, idempotency_key, payload, queued_at, verdict)
+                 VALUES ('w', 'create_edge', 'a', 'b', 'k', '{}', '2026-01-01T00:00:00Z', ?1)",
+                [verdict.map(Verdict::as_str)],
+            )
+            .unwrap();
+            let (revision, change) = marks(&conn);
+            assert_eq!(
+                conn.execute("DELETE FROM queue WHERE id = 'w'", [])
+                    .unwrap(),
+                1
+            );
+            if laid_over {
+                assert_eq!(marks(&conn), (revision + 1, change + 1), "{verdict:?}");
+                assert_eq!(
+                    changed_since(&conn, Changes::Items, change, 8).unwrap(),
+                    Some(["a".to_string(), "b".to_string()].into()),
+                    "{verdict:?}"
+                );
+            } else {
+                assert_eq!(marks(&conn), (revision, change), "{verdict:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_store_holding_an_earlier_builds_trigger_is_given_this_builds_when_opened_to_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("older.sqlite");
+        let answered_leaves = |conn: &Connection| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict)
+                 VALUES ('w', 'update_item', 'a', 'k', '{}', '2026-01-01T00:00:00Z', 'accepted')",
+                [],
+            )
+            .unwrap();
+            let before = last_change(conn, Changes::Items).unwrap();
+            conn.execute("DELETE FROM queue WHERE id = 'w'", [])
+                .unwrap();
+            last_change(conn, Changes::Items).unwrap() != before
+        };
+        {
+            let conn = open(&path).unwrap();
+            assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
+            conn.execute_batch(
+                "DROP TRIGGER queue_change_delete;
+                 CREATE TRIGGER queue_change_delete AFTER DELETE ON queue BEGIN
+                   INSERT INTO copy_changes (item_id, seq)
+                     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
+                     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
+                     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
+                 END;",
+            )
+            .unwrap();
+            assert_eq!(triggers_behind(&conn).unwrap(), ["queue_change_delete"]);
+            assert!(answered_leaves(&conn), "the witness: the earlier trigger");
+        }
+        let reading = read_connection(
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap(),
+            &path,
+        )
+        .unwrap();
+        assert_eq!(
+            triggers_behind(&reading).unwrap(),
+            ["queue_change_delete"],
+            "a reader wrote the schema"
+        );
+        drop(reading);
+
+        let conn = open(&path).unwrap();
+        assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
+        assert!(!answered_leaves(&conn));
     }
 
     #[test]
