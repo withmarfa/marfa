@@ -1189,6 +1189,7 @@ impl Folder {
             }
         }
         report.lookup_refused = resolver.refused_call().map(str::to_string);
+        report.lookup_answered = resolver.answered();
 
         Ok(())
     }

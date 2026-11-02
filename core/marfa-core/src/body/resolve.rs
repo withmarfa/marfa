@@ -143,6 +143,8 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
+    /// Whether a title lookup call was answered with its results this pass.
+    answered: bool,
 }
 
 impl<'a> Resolver<'a> {
@@ -157,6 +159,7 @@ impl<'a> Resolver<'a> {
             looked: HashMap::new(),
             offered: true,
             refused_call: None,
+            answered: false,
         }
     }
 
@@ -164,6 +167,12 @@ impl<'a> Resolver<'a> {
     /// it refused a title lookup as a whole, or has none.
     pub fn refused_call(&self) -> Option<&str> {
         self.refused_call.as_deref()
+    }
+
+    /// Whether the server answered a title lookup call this pass, which a
+    /// refusal told earlier no longer stands against.
+    pub fn answered(&self) -> bool {
+        self.answered
     }
 
     fn names(&mut self) -> Result<&Names> {
@@ -327,6 +336,7 @@ impl<'a> Resolver<'a> {
             let answers = self.core.http().and_then(|http| http.item_titles(&sent));
             match answers {
                 Ok(answers) => {
+                    self.answered = true;
                     for ((key, _), answer) in page.iter().zip(answers) {
                         self.looked.insert(
                             key.clone(),
@@ -1007,21 +1017,58 @@ mod tests {
             let why = resolver.refused_call().expect("the missing lookup is told");
             assert!(why.contains("no title lookup"), "{why}");
         }
-        // A call of one name to such a server is no refusal of that name.
-        let server = crate::scripted::Scripted::start();
-        let dir = tempfile::tempdir().unwrap();
-        let core = copy_holding(&server, dir.path(), &[]);
-        let catalog = catalog_of(&core);
-        server.on(
-            "/items/titles",
-            vec![crate::scripted::refusal(404, "not_found")],
-        );
-        let mut resolver = resolver(&core, &catalog);
-        assert!(matches!(
-            resolver.resolve("Ada").unwrap(),
-            Resolved::Waiting
+        // A call of one name to such a server is a refusal of the call, not
+        // of that name, so the name waits whatever the number it carried.
+        for (status, code) in [(404, "not_found"), (405, "method_not_allowed")] {
+            let server = crate::scripted::Scripted::start();
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy_holding(&server, dir.path(), &[]);
+            let catalog = catalog_of(&core);
+            server.on(
+                "/items/titles",
+                vec![crate::scripted::refusal(status, code)],
+            );
+            let mut resolver = resolver(&core, &catalog);
+            for name in ["Ada", "Grace"] {
+                assert!(
+                    matches!(resolver.resolve(name).unwrap(), Resolved::Waiting),
+                    "{status}: {name}"
+                );
+            }
+            assert_eq!(server.seen("/items/titles").len(), 1, "{status}");
+            let why = resolver.refused_call().expect("the missing lookup is told");
+            assert!(why.contains("no title lookup"), "{status}: {why}");
+        }
+    }
+
+    #[test]
+    fn a_pass_has_the_server_answered_only_where_a_title_lookup_call_was() {
+        let answered_after = |replies: Vec<crate::scripted::Answer>, names: &[&str]| {
+            let server = crate::scripted::Scripted::start();
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy_holding(&server, dir.path(), &[]);
+            let catalog = catalog_of(&core);
+            server.on("/items/titles", replies);
+            let mut resolver = resolver(&core, &catalog);
+            resolver.prefetch(names.iter().copied()).unwrap();
+            resolver.answered()
+        };
+        assert!(answered_after(vec![nothing_for(2)], &["Ada", "Grace"]));
+        // A call the network failed, one refused, and one the server has no
+        // route for are no answer; neither is a pass that asked nothing.
+        assert!(!answered_after(
+            vec![crate::scripted::refusal(503, "unavailable")],
+            &["Ada", "Grace"]
         ));
-        assert!(resolver.refused_call().is_some());
+        assert!(!answered_after(
+            vec![crate::scripted::refusal(403, "forbidden")],
+            &["Ada", "Grace"]
+        ));
+        assert!(!answered_after(
+            vec![crate::scripted::refusal(404, "not_found")],
+            &["Ada"]
+        ));
+        assert!(!answered_after(Vec::new(), &[]));
     }
 
     #[test]

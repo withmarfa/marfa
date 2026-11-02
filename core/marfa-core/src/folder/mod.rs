@@ -236,6 +236,11 @@ pub struct ScanReport {
     /// refused a title lookup as a whole, naming none of its names, or has
     /// none. Said once for the folder, not for each file.
     pub lookup_refused: Option<String>,
+    /// Whether the server answered a title lookup call in the pass. A watch
+    /// takes the refusal it told earlier as lifted only on this, and keeps it
+    /// where the pass made no call or a call failed with no answer.
+    #[serde(skip)]
+    pub lookup_answered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
