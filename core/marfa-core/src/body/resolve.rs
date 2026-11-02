@@ -82,6 +82,79 @@ impl Names {
         }
         found
     }
+
+    /// Brings the names of `ids` to what `load` would read now, given
+    /// `paths`, the path of each file bound to one of them, and answers what
+    /// `differing` would answer against the names as they were.
+    pub fn refresh(
+        &mut self,
+        conn: &Connection,
+        catalog: &Catalog,
+        ids: &BTreeSet<String>,
+        paths: &[(String, String)],
+    ) -> Result<BTreeSet<String>> {
+        let mut now: Vec<(String, String)> = Vec::new();
+        let listed: Vec<&String> = ids.iter().collect();
+        for chunk in listed.chunks(500) {
+            let mut statement = conn.prepare(&format!(
+                "SELECT id, type, properties FROM items WHERE id IN ({}) AND state IN ('active', 'archived') AND type NOT LIKE 'system.%'",
+                vec!["?"; chunk.len()].join(", ")
+            ))?;
+            let rows = statement.query_map(rusqlite::params_from_iter(chunk), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, r#type, properties) = row?;
+                let properties: Map<String, Value> =
+                    serde_json::from_str(&properties).unwrap_or_default();
+                if let Some(title) = properties
+                    .get(fields::title_field(catalog, &r#type))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                {
+                    now.push((folded(title), id));
+                }
+            }
+        }
+        for (path, id) in paths {
+            for name in file_names(path) {
+                now.push((name, id.clone()));
+            }
+        }
+        let mut before: HashMap<String, BTreeSet<String>> = HashMap::new();
+        for (name, holders) in &mut self.ids {
+            if holders.iter().any(|id| ids.contains(id)) {
+                before.insert(name.clone(), holders.clone());
+                holders.retain(|id| !ids.contains(id));
+            }
+        }
+        for (name, _) in &now {
+            if !before.contains_key(name) {
+                before.insert(
+                    name.clone(),
+                    self.ids.get(name).cloned().unwrap_or_default(),
+                );
+            }
+        }
+        for (name, id) in now {
+            self.ids.entry(name).or_default().insert(id);
+        }
+        self.ids.retain(|_, holders| !holders.is_empty());
+        let mut found = BTreeSet::new();
+        for (name, earlier) in before {
+            let later = self.ids.get(&name);
+            if later != Some(&earlier) && !(later.is_none() && earlier.is_empty()) {
+                found.extend(earlier);
+                found.extend(later.into_iter().flatten().cloned());
+            }
+        }
+        Ok(found)
+    }
 }
 
 /// A path as the names it answers to, folded.

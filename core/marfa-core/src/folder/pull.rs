@@ -308,7 +308,15 @@ impl Folder {
         loop {
             let mut report = PullReport::default();
             match self.pull_into(None, &mut report, selection.as_deref_mut()) {
-                Ok(()) => {
+                // A pull of only what a change reaches met a path that only
+                // a pull of every item settles; that pull is no new attempt.
+                Ok(false) => {
+                    earlier.add_writes(&report);
+                    if let Some(selection) = selection.as_deref_mut() {
+                        selection.widen();
+                    }
+                }
+                Ok(true) => {
                     // A body rewritten for a retitled link reaches its file
                     // in one more pass.
                     if std::mem::take(&mut relinking) && self.relink(&mut report)? {
@@ -332,15 +340,19 @@ impl Folder {
 
     /// With `planning`, stops where each file's path is chosen and counts the
     /// files it would write, leaving the directory as it is.
+    ///
+    /// With `selection`, reads only the items a change since the last pull
+    /// reaches where it can, and answers false, having written nothing, where
+    /// one of them wants a path an item it did not read holds.
     pub(super) fn pull_into(
         &self,
         planning: Option<&mut PullPlan>,
         report: &mut PullReport,
-        selection: Option<&mut Selection>,
-    ) -> Result<()> {
+        mut selection: Option<&mut Selection>,
+    ) -> Result<bool> {
         if let Some(gone) = self.root_gone() {
             report.root_gone = Some(gone);
-            return Ok(());
+            return Ok(true);
         }
         let context = crate::reach::Context::capture(&*self.core.conn()?)?;
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
@@ -350,25 +362,45 @@ impl Folder {
         };
         let settings = self.settings()?;
         let lists = settings.lists()?;
-        let mut members = self.members(&settings)?;
-        let listed = self.core.list(
-            &crate::model::ListFilters {
-                all_states: true,
-                ..Default::default()
-            },
-            crate::model::Sort::default(),
-        )?;
-        // A row a partial copy has not been given yet, or one a stale copy
-        // still holds, says nothing of what the server deleted, so the pass
-        // waits for a whole copy.
-        if listed.completeness != crate::model::Completeness::Complete {
-            return Err(CoreError::HydrationIncomplete);
-        }
-        let items = listed.rows;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
+        let narrow = match (selection.as_deref_mut(), pick.as_mut()) {
+            (Some(selection), Some(pick)) if planning.is_none() => {
+                selection.narrow(self, pick, &settings, &catalog)?
+            }
+            _ => None,
+        };
+        let (mut members, query_members, items, completeness) = match &narrow {
+            Some(narrow) => {
+                let conn = self.core.conn()?;
+                let reached: Vec<String> = narrow.reached.iter().cloned().collect();
+                (
+                    narrow.members.union(&narrow.shown).cloned().collect(),
+                    narrow.members.clone(),
+                    crate::store::items_by_ids(&conn, &reached)?,
+                    crate::store::read_completeness(&conn)?,
+                )
+            }
+            None => {
+                let members = self.members(&settings)?;
+                let listed = self.core.list(
+                    &crate::model::ListFilters {
+                        all_states: true,
+                        ..Default::default()
+                    },
+                    crate::model::Sort::default(),
+                )?;
+                (members.clone(), members, listed.rows, listed.completeness)
+            }
+        };
+        // A row a partial copy has not been given yet, or one a stale copy
+        // still holds, says nothing of what the server deleted, so the pass
+        // waits for a whole copy.
+        if completeness != crate::model::Completeness::Complete {
+            return Err(CoreError::HydrationIncomplete);
+        }
         let bound_items: HashSet<String> = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -389,8 +421,10 @@ impl Folder {
         // bin, is kept current as a member's is and flagged; it never gets a
         // new file.
         let outside: Vec<String> = bound_items
-            .into_iter()
-            .filter(|id| !members.contains(id))
+            .iter()
+            .filter(|id| !members.contains(*id))
+            .filter(|id| narrow.as_ref().is_none_or(|narrow| narrow.reached.contains(*id)))
+            .cloned()
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
@@ -463,11 +497,40 @@ impl Folder {
                 .filter(|(item, _)| embedded.at.contains_key(&item.id))
                 .map(|(item, _)| item.id.clone()),
         );
-        report.skipped = skipped.iter().filter(|id| !members.contains(*id)).count();
-        // After the pins, so a line names a target the copy now holds.
-        let names = Names::load(&*self.core.conn()?, &catalog, &BoundFiles)?;
-        if let (Some(selection), Some(pick)) = (&selection, &mut pick) {
-            selection.choose(self, pick, &settings, &names)?;
+        report.skipped = match &narrow {
+            // Every item but the folder's own that no file here shows and the
+            // query does not hold, counted without reading them.
+            Some(_) => {
+                let unbound: usize = self.core.conn()?.query_row(
+                    "SELECT COUNT(*) FROM items WHERE type != ?1
+                      AND id NOT IN (SELECT item_id FROM folder_files)",
+                    [FOLDER_TYPE],
+                    |row| row.get(0),
+                )?;
+                unbound.saturating_sub(
+                    members
+                        .iter()
+                        .filter(|id| !bound_items.contains(*id))
+                        .count(),
+                )
+            }
+            None => skipped.iter().filter(|id| !members.contains(*id)).count(),
+        };
+        let shown: HashSet<String> = members.difference(&query_members).cloned().collect();
+        // After the pins, so a line names a target the copy now holds. A
+        // narrow pull renders by the names the last pull kept, which it
+        // brought up to date for what it reads.
+        let loaded = match &narrow {
+            Some(_) => None,
+            None => Some(Names::load(&*self.core.conn()?, &catalog, &BoundFiles)?),
+        };
+        let names = match (&loaded, selection.as_deref()) {
+            (Some(names), _) => names,
+            (None, Some(selection)) => selection.names().expect("a narrow pull's baseline"),
+            (None, None) => unreachable!("a narrow pull has a selection"),
+        };
+        if let (Some(selection), Some(pick), None) = (selection.as_deref(), &mut pick, &narrow) {
+            selection.choose(self, pick, &settings, names)?;
         }
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
@@ -603,6 +666,9 @@ impl Folder {
                 taken,
             });
         }
+        if narrow.is_some() && self.wants_a_path_held_elsewhere(&placing)? {
+            return Ok(false);
+        }
         // Ranked by what the server holds, so every machine gives a shared
         // path to the same item; stable, so the listing orders the rest.
         placing.sort_by(|a, b| a.rank.cmp(&b.rank));
@@ -653,7 +719,7 @@ impl Folder {
                     plan.left += 1;
                 }
             }
-            return Ok(());
+            return Ok(true);
         }
         // Paths whose file moves away in this pass: an item wanting one waits
         // until it has.
@@ -674,7 +740,7 @@ impl Folder {
             context: std::cell::RefCell::new(filesystem),
             catalog: &catalog,
             edge_types: &edge_types,
-            names: &names,
+            names,
             lists: &lists,
             peers: &peers,
             members: &members,
@@ -701,7 +767,15 @@ impl Folder {
             }
         }
         context.same_copy(&*self.core.conn()?)?;
-        self.remove_departed(&members, &settings, &lists, &refused, &rendering, report)?;
+        self.remove_departed(
+            &members,
+            narrow.as_ref().map(|narrow| &narrow.reached),
+            &settings,
+            &lists,
+            &refused,
+            &rendering,
+            report,
+        )?;
         if crate::fault::named("copy-changes-after-pull-effects").is_some() {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
@@ -752,10 +826,31 @@ impl Folder {
         context.same_copy(&*self.core.conn()?)?;
         report.settings = self.write_settings_if_moved()?;
         drop(rendering);
-        if let (Some(selection), Some(pick)) = (selection, pick) {
-            selection.end(pick, &settings, names);
+        if let Some(narrow) = &narrow {
+            report.unchanged += narrow.unread;
         }
-        Ok(())
+        if let (Some(selection), Some(pick)) = (selection, pick) {
+            match loaded {
+                Some(names) => selection.end(pick, &settings, names, query_members, shown),
+                None => selection.end_narrow(pick, shown),
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether an item a narrow pull places wants the path of a file bound
+    /// to an item it did not read, which only a pull ranking every item
+    /// settles.
+    fn wants_a_path_held_elsewhere(&self, placing: &[Placing<'_>]) -> Result<bool> {
+        let placed: HashSet<&str> = placing.iter().map(|entry| entry.item.id.as_str()).collect();
+        let held: HashMap<String, String> = state::bound_paths(&*self.core.conn()?)?
+            .into_iter()
+            .filter(|(_, item_id)| !placed.contains(item_id.as_str()))
+            .map(|(path, item_id)| (crate::names::folded(&path), item_id))
+            .collect();
+        Ok(placing
+            .iter()
+            .any(|entry| held.contains_key(&crate::names::folded(&entry.want))))
     }
 
     /// Leaves a file changed since the scan read it alone: the permission is
@@ -1754,6 +1849,7 @@ impl Folder {
     fn remove_departed(
         &self,
         members: &HashSet<String>,
+        only: Option<&HashSet<String>>,
         settings: &Settings,
         lists: &Lists,
         refused: &HashSet<String>,
@@ -1767,7 +1863,9 @@ impl Folder {
         };
         let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
-            if refused.contains(&crate::names::folded(&row.path)) {
+            if refused.contains(&crate::names::folded(&row.path))
+                || only.is_some_and(|only| !only.contains(&row.item_id))
+            {
                 continue;
             }
             match self.departing(&row, members, settings, lists)? {

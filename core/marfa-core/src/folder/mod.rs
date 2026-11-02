@@ -3963,7 +3963,8 @@ mod tests {
             pick.settle(&id_at(&folder, p));
         }
         changed_on_the_server(&folder, "a.md", "arrived during pull");
-        selection.end(pick, &settings, names);
+        let members = folder.members(&settings).unwrap();
+        selection.end(pick, &settings, names, members, HashSet::new());
         folder.pull_selecting(&mut selection).unwrap();
         assert!(
             std::fs::read_to_string(dir.path().join("a.md"))

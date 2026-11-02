@@ -1,17 +1,23 @@
-//! Which files a folder watch's pull renders: those a change since its last
-//! pull reaches, and every file once an hour, which checks that choice.
+//! Which items a folder watch's pull reads and which files it renders: those
+//! a change since its last pull reaches, and every file once an hour, which
+//! checks that choice.
 //!
 //! A file renders from its item, the item's edges, each item at their other
 //! ends, the names the copy's items answer to, the types, the folder's
 //! settings and its own binding. A change to any of these marks the items it
 //! touches; a pull renders each marked item's file and each file whose item
 //! has an edge to a marked item, other than a placement, which no file shows.
+//!
+//! A narrow pull reads only those items, with the items whose file a pull
+//! goes over every time it runs: those it did not leave as they render, and
+//! those bound here that the query does not hold. Every other item's file is
+//! as the last pull left it, so the pull leaves it unread.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use super::{Folder, Names, PLACEMENT_EDGE, Result, Settings, state};
+use super::{Catalog, Folder, Names, PLACEMENT_EDGE, Result, Settings, state};
 
 /// Past this many changed items a pull renders every file, which costs less
 /// than finding each one's neighbors.
@@ -29,6 +35,13 @@ pub(super) struct Selection {
     /// Files the last full render rewrote that the choice would have left,
     /// each as its path, for the watch to tell.
     missed: Vec<String>,
+    /// The items narrow pulls reached that did not run to their end, which
+    /// the next pull reaches too: the names they brought up to date no
+    /// longer differ.
+    owed: HashSet<String>,
+    /// Whether the next pull reads every item, where a narrow one met what
+    /// only a pull of every item settles.
+    widen: bool,
 }
 
 impl std::fmt::Debug for Selection {
@@ -50,6 +63,11 @@ struct Baseline {
     names: Names,
     /// The items whose file the pull found or left as their item renders.
     settled: HashSet<String>,
+    /// The items the folder's query holds.
+    members: HashSet<String>,
+    /// The items the query does not hold whose file is here as a document's
+    /// embed or attachment.
+    shown: HashSet<String>,
 }
 
 /// One pull's choice.
@@ -65,6 +83,21 @@ pub(super) struct Pick {
     settled_before: HashSet<String>,
     settled: RefCell<HashSet<String>>,
     missed: RefCell<Vec<String>>,
+}
+
+/// What a narrow pull reads by.
+pub(super) struct Narrow {
+    /// The items it reads: every other item's file is as the last pull
+    /// left it.
+    pub(super) reached: HashSet<String>,
+    /// The items the query holds.
+    pub(super) members: HashSet<String>,
+    /// The items the query does not hold whose file the last pulls kept
+    /// here as a document's embed or attachment, other than those reached.
+    pub(super) shown: HashSet<String>,
+    /// How many items the last pull left as they render that this one does
+    /// not read, which a full pull counts unchanged.
+    pub(super) unread: usize,
 }
 
 impl Selection {
@@ -87,22 +120,23 @@ impl Selection {
         })
     }
 
-    /// Called once the pull has read the copy and held the ends of its
-    /// edges, with the names it renders by.
-    pub(super) fn choose(
-        &self,
-        folder: &Folder,
-        pick: &mut Pick,
-        settings: &Settings,
-        names: &Names,
-    ) -> Result<()> {
-        let Some(last) = self
-            .last
+    /// The last pull's baseline where it still holds: the same generation
+    /// and settings.
+    fn holding(&self, pick: &Pick, settings: &Settings) -> Option<&Baseline> {
+        self.last
             .as_ref()
             .filter(|last| last.generation == pick.generation && last.settings == *settings)
-        else {
-            return Ok(());
-        };
+    }
+
+    /// The items changed since the last pull began, those bound since to
+    /// another path or none, and those whose binding changed in what it
+    /// records of its own file alone; `None` where more changed than a
+    /// choice is worth, or the types did.
+    fn changes(
+        folder: &Folder,
+        last: &Baseline,
+        pick: &Pick,
+    ) -> Result<Option<(HashSet<String>, HashSet<String>, HashSet<String>)>> {
         let changed = {
             let conn = folder.core.conn()?;
             crate::store::changed_since(
@@ -112,12 +146,13 @@ impl Selection {
                 MOST_CHANGED,
             )?
         };
-        let Some(mut changed) = changed else {
-            return Ok(());
+        let Some(changed) = changed else {
+            return Ok(None);
         };
         // Another file shows an item by the path its file is at, so a
         // binding that changed only in what it records of its own file
         // reaches that file alone.
+        let mut moved = HashSet::new();
         let mut rebound = HashSet::new();
         for path in last.bound.keys().chain(pick.bound.keys()) {
             match (last.bound.get(path), pick.bound.get(path)) {
@@ -127,21 +162,171 @@ impl Selection {
                     }
                 }
                 (before, now) => {
-                    changed.extend(before.into_iter().chain(now).map(|b| b.item_id.clone()));
+                    moved.extend(before.into_iter().chain(now).map(|b| b.item_id.clone()));
                 }
             }
         }
-        changed.extend(names.differing(&last.names));
+        Ok(Some((changed, moved, rebound)))
+    }
+
+    /// Each changed item and each item at the other end of one of its edges,
+    /// other than a placement.
+    fn with_neighbors(folder: &Folder, changed: &HashSet<String>) -> Result<HashSet<String>> {
         let mut reached = changed.clone();
         if !neighbors_left_out() {
             let conn = folder.core.conn()?;
-            for id in &changed {
+            for id in changed {
                 for (source, target) in crate::store::edge_neighbors(&conn, id, PLACEMENT_EDGE)? {
                     reached.insert(source);
                     reached.insert(target);
                 }
             }
         }
+        Ok(reached)
+    }
+
+    /// Chooses a narrow pull, which reads only what a change reaches, where
+    /// the last pull's baseline holds, no check of the choice is due, and
+    /// nothing outside the changed items and their neighbors decides which
+    /// items the query holds. Brings the baseline's names and members up to
+    /// date for what it reaches.
+    pub(super) fn narrow(
+        &mut self,
+        folder: &Folder,
+        pick: &mut Pick,
+        settings: &Settings,
+        catalog: &Catalog,
+    ) -> Result<Option<Narrow>> {
+        // `beneath` walks edges from its root down, so an edge changed
+        // above an item takes it in or leaves it out.
+        if std::mem::take(&mut self.widen)
+            || self.full_render_due()
+            || settings.query.beneath.is_some()
+            || self.holding(pick, settings).is_none()
+        {
+            return Ok(None);
+        }
+        let last = self.last.as_ref().expect("a baseline that holds");
+        let Some((mut changed, moved, rebound)) = Self::changes(folder, last, pick)? else {
+            return Ok(None);
+        };
+        let renamed: BTreeSet<String> = changed.iter().chain(&moved).cloned().collect();
+        let paths: Vec<(String, String)> = pick
+            .bound
+            .values()
+            .filter(|bound| renamed.contains(&bound.item_id))
+            .map(|bound| (bound.path.clone(), bound.item_id.clone()))
+            .collect();
+        let last = self.last.as_mut().expect("a baseline that holds");
+        let differing =
+            last.names
+                .refresh(&*folder.core.conn()?, catalog, &renamed, &paths)?;
+        changed.extend(moved);
+        changed.extend(differing);
+        let mut reached = Self::with_neighbors(folder, &changed)?;
+        reached.extend(rebound);
+        reached.extend(self.owed.iter().cloned());
+        let last = self.last.as_mut().expect("a baseline that holds");
+        let ids: Vec<String> = reached.iter().cloned().collect();
+        let held = folder.core.held_among(settings, &ids)?;
+        for id in &ids {
+            if held.contains(id) {
+                last.members.insert(id.clone());
+            } else {
+                last.members.remove(id);
+            }
+        }
+        // What every pull goes over whatever changed: an item whose file it
+        // did not leave as it renders, a file here the query does not hold
+        // but as a document's embed or attachment, and a file the folder
+        // keeps unmatched, a refused placement or a journaled delete names.
+        let bound_items: HashSet<&String> = pick.bound.values().map(|b| &b.item_id).collect();
+        for id in last.members.iter().chain(bound_items.iter().copied()) {
+            if !last.settled.contains(id)
+                || !last.members.contains(id) && !last.shown.contains(id)
+            {
+                reached.insert(id.clone());
+            }
+        }
+        {
+            let conn = folder.core.conn()?;
+            reached.extend(state::unmatched(&conn)?);
+            reached.extend(state::journaled(&conn)?.into_iter().map(|row| row.item_id));
+        }
+        reached.extend(folder.withheld()?.into_keys());
+        {
+            let conn = folder.core.conn()?;
+            let paused: HashSet<String> =
+                state::paused(&conn, state::Removal::Pull)?.into_iter().collect();
+            reached.extend(
+                pick.bound
+                    .values()
+                    .filter(|bound| paused.contains(&bound.path))
+                    .map(|bound| bound.item_id.clone()),
+            );
+        }
+        // Where an attachment's file goes rests on every document it is
+        // attached to, so a pull reads them all together.
+        if !attached_together(folder, &mut reached)? {
+            return Ok(None);
+        }
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "folder-selection-narrow") {
+            reached.clear();
+        }
+        let unread = last
+            .settled
+            .iter()
+            .filter(|id| !reached.contains(*id))
+            .count();
+        let shown = last
+            .shown
+            .iter()
+            .filter(|id| !reached.contains(*id))
+            .cloned()
+            .collect();
+        self.owed.extend(reached.iter().cloned());
+        pick.reached = Some(reached.clone());
+        pick.settled_before = last.settled.clone();
+        Ok(Some(Narrow {
+            reached,
+            members: last.members.clone(),
+            shown,
+            unread,
+        }))
+    }
+
+    /// The names a narrow pull renders by: the baseline's, brought up to
+    /// date.
+    pub(super) fn names(&self) -> Option<&Names> {
+        self.last.as_ref().map(|last| &last.names)
+    }
+
+    /// Called where a narrow pull met what only a pull of every item
+    /// settles, so the next one reads every item.
+    pub(super) fn widen(&mut self) {
+        self.widen = true;
+    }
+
+    /// Called once the pull has read the copy and held the ends of its
+    /// edges, with the names it renders by.
+    pub(super) fn choose(
+        &self,
+        folder: &Folder,
+        pick: &mut Pick,
+        settings: &Settings,
+        names: &Names,
+    ) -> Result<()> {
+        let Some(last) = self.holding(pick, settings) else {
+            return Ok(());
+        };
+        let Some((mut changed, moved, rebound)) = Self::changes(folder, last, pick)? else {
+            return Ok(());
+        };
+        changed.extend(moved);
+        changed.extend(names.differing(&last.names));
+        changed.extend(self.owed.iter().cloned());
+        let mut reached = Self::with_neighbors(folder, &changed)?;
         reached.extend(rebound);
         #[cfg(debug_assertions)]
         if crate::fault::fails(|| "folder-selection-narrow") {
@@ -154,11 +339,21 @@ impl Selection {
         Ok(())
     }
 
-    /// Called where the pull ran to its end, with what it rendered by.
-    pub(super) fn end(&mut self, pick: Pick, settings: &Settings, names: Names) {
+    /// Called where a pull that read every item ran to its end, with what it
+    /// rendered by: the names, the items the query holds and those it shows
+    /// as embeds or attachments only.
+    pub(super) fn end(
+        &mut self,
+        pick: Pick,
+        settings: &Settings,
+        names: Names,
+        members: HashSet<String>,
+        shown: HashSet<String>,
+    ) {
         if pick.reached.is_none() || pick.checking {
             self.rendered_all_at = Some(crate::clock::now());
         }
+        self.owed.clear();
         self.missed.extend(pick.missed.into_inner());
         self.last = Some(Baseline {
             change: pick.change,
@@ -167,13 +362,33 @@ impl Selection {
             bound: pick.bound,
             names,
             settled: pick.settled.into_inner(),
+            members,
+            shown,
         });
+    }
+
+    /// Called where a narrow pull ran to its end, with the items it found
+    /// shown as embeds or attachments only.
+    pub(super) fn end_narrow(&mut self, pick: Pick, shown: HashSet<String>) {
+        self.owed.clear();
+        let Some(last) = self.last.as_mut() else {
+            return;
+        };
+        let reached = pick.reached.unwrap_or_default();
+        last.settled.retain(|id| !reached.contains(id));
+        last.settled.extend(pick.settled.into_inner());
+        last.shown.retain(|id| !reached.contains(id));
+        last.shown.extend(shown);
+        last.change = pick.change;
+        last.generation = pick.generation;
+        last.bound = pick.bound;
     }
 
     /// Where the folder's directory went, what the files were rendered from
     /// says nothing of what is on the disk when it comes back.
     pub(super) fn forget(&mut self) {
         self.last = None;
+        self.owed.clear();
     }
 
     /// Whether the next pull renders every file, to check the choice, even
@@ -224,6 +439,40 @@ impl Pick {
     pub(super) fn settle(&self, item_id: &str) {
         self.settled.borrow_mut().insert(item_id.to_string());
     }
+}
+
+/// Past this many items, a narrow pull would read more than the choice
+/// saves.
+const MOST_ATTACHED: usize = 4096;
+
+/// Adds to `reached` every item joined to one in it by attachments, each
+/// document with its attachments and each attachment with its documents;
+/// false where that passes `MOST_ATTACHED`.
+fn attached_together(folder: &Folder, reached: &mut HashSet<String>) -> Result<bool> {
+    let conn = folder.core.conn()?;
+    let mut statement = conn.prepare_cached(
+        "SELECT source_id, target_id FROM edges
+          WHERE (source_id = ?1 OR target_id = ?1) AND edge_type = ?2",
+    )?;
+    let mut next: Vec<String> = reached.iter().cloned().collect();
+    while let Some(id) = next.pop() {
+        let ends = statement
+            .query_map(rusqlite::params![id, super::ATTACHMENT_EDGE], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (source, target) in ends {
+            for end in [source, target] {
+                if reached.insert(end.clone()) {
+                    next.push(end);
+                }
+            }
+        }
+        if reached.len() > MOST_ATTACHED {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
