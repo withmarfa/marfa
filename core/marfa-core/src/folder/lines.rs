@@ -15,7 +15,7 @@ use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolv
 use crate::body::text::{self, Typed};
 use crate::catalog::Catalog;
 use crate::catalog::{EdgeType, End, WrittenAt};
-use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
+use crate::model::{Edge, EdgeDraft, EdgeEdit, EdgeOp, Item};
 
 /// A file's links and lines, read once every file in the scan is bound.
 pub(super) struct EdgeWork {
@@ -147,6 +147,27 @@ struct Group<'t> {
     edge_type: &'t EdgeType,
     end: End,
     typed: Option<std::result::Result<Vec<Typed>, String>>,
+}
+
+/// An edge write a file's lines ask for, and what its answer changes.
+struct Planned {
+    op: EdgeOp,
+    effect: Effect,
+}
+
+enum Effect {
+    /// A create; the line is refused if the copy refuses the edge.
+    Created(Line),
+    /// A move of one end, which a refusal leaves where it was: `to` is the
+    /// end shown for the group `group`, `from` the end it stays at.
+    Moved {
+        refused: Line,
+        group: usize,
+        to: String,
+        from: String,
+    },
+    /// A delete, and the line a retype's removal reports once it is queued.
+    Removed(Option<Line>),
 }
 
 impl Folder {
@@ -562,6 +583,10 @@ impl Folder {
         }
 
         let mut lines: Vec<Line> = Vec::new();
+        // The file's edge writes are made together once every group is
+        // judged, in one transaction: all of them or none.
+        let mut batch: Vec<Planned> = Vec::new();
+        let mut shown_by_group: Vec<(String, End, Vec<String>)> = Vec::new();
         for ((edge_type, end), group) in &groups {
             let (edge_type, end) = (edge_type.as_str(), *end);
             let other_of = |edge: &Edge| match end {
@@ -626,7 +651,7 @@ impl Folder {
             }
             // An embed's attachment is made, never recorded as a line, so
             // taking the embed out leaves it.
-            let mut shown = desired;
+            let shown = desired;
             if embeds_group {
                 for id in &attach {
                     if !wanted.contains(id) {
@@ -663,12 +688,14 @@ impl Folder {
                 },
             };
             let moves = group.edge_type.one_at(end) && adds.len() == 1 && !current.is_empty();
-            if let Some(removed) = removals.as_deref_mut() {
+            if removals.is_some() {
                 // A move keeps its edge, and is the whole pass's to make.
                 if !moves {
                     for edge in removes {
-                        queued.push(self.core.delete_edge(&edge.id)?.id);
-                        removed.push(line_of(edge_type, end, &other_of(edge)));
+                        batch.push(Planned {
+                            op: EdgeOp::Delete(edge.id.clone()),
+                            effect: Effect::Removed(Some(line_of(edge_type, end, &other_of(edge)))),
+                        });
                     }
                 }
                 continue;
@@ -705,40 +732,79 @@ impl Folder {
                 // The end moved to differs from the one the edge holds, so
                 // the edit is always a write. Refused, the edge stays where it
                 // was, and the record names it there.
-                match self.core.update_edge(&old.id, &edit) {
-                    Err(error) if local_admission_refusal(&error) => {
-                        refused.push((
-                            line_of(edge_type, end, adds[0]),
-                            local_refusal_reason(&error),
-                        ));
-                        let (to, from) = (adds[0].clone(), other_of(old));
-                        for shown in &mut shown {
+                batch.push(Planned {
+                    op: EdgeOp::Update {
+                        id: old.id.clone(),
+                        edit,
+                    },
+                    effect: Effect::Moved {
+                        refused: line_of(edge_type, end, adds[0]),
+                        group: shown_by_group.len(),
+                        to: adds[0].clone(),
+                        from: other_of(old),
+                    },
+                });
+                removes.retain(|edge| edge.id != old.id);
+            } else {
+                for other in adds {
+                    batch.push(Planned {
+                        op: EdgeOp::Create(draft(other)),
+                        effect: Effect::Created(line_of(edge_type, end, other)),
+                    });
+                }
+            }
+            for edge in removes {
+                batch.push(Planned {
+                    op: EdgeOp::Delete(edge.id.clone()),
+                    effect: Effect::Removed(None),
+                });
+            }
+            shown_by_group.push((edge_type.to_string(), end, shown));
+        }
+
+        if !batch.is_empty() {
+            let (ops, effects): (Vec<EdgeOp>, Vec<Effect>) = batch
+                .into_iter()
+                .map(|planned| (planned.op, planned.effect))
+                .unzip();
+            let results = self.core.queue_edge_ops(&ops, local_admission_refusal)?;
+            for (effect, result) in effects.into_iter().zip(results) {
+                match (effect, result) {
+                    (Effect::Created(line), Err(error)) => {
+                        refused.push((line, local_refusal_reason(&error)));
+                    }
+                    // Refused, the edge stays where it was, and the record
+                    // names it there.
+                    (
+                        Effect::Moved {
+                            refused: line,
+                            group,
+                            to,
+                            from,
+                        },
+                        Err(error),
+                    ) => {
+                        refused.push((line, local_refusal_reason(&error)));
+                        for shown in &mut shown_by_group[group].2 {
                             if *shown == to {
                                 shown.clone_from(&from);
                             }
                         }
                     }
-                    other => queued.extend(other?.map(|write| write.id)),
-                }
-                removes.retain(|edge| edge.id != old.id);
-            } else {
-                for other in adds {
-                    match self.core.create_edge(&draft(other)) {
-                        Err(error) if local_admission_refusal(&error) => {
-                            refused.push((
-                                line_of(edge_type, end, other),
-                                local_refusal_reason(&error),
-                            ));
+                    (Effect::Removed(_), Err(error)) => return Err(error),
+                    (Effect::Removed(line), Ok(written)) => {
+                        queued.extend(written.map(|write| write.id));
+                        if let (Some(line), Some(removed)) = (line, removals.as_deref_mut()) {
+                            removed.push(line);
                         }
-                        written => queued.push(written?.id),
                     }
+                    (_, Ok(written)) => queued.extend(written.map(|write| write.id)),
                 }
             }
-            for edge in removes {
-                queued.push(self.core.delete_edge(&edge.id)?.id);
-            }
+        }
+        for (edge_type, end, shown) in shown_by_group {
             lines.extend(shown.into_iter().map(|other| Line {
-                edge_type: edge_type.to_string(),
+                edge_type: edge_type.clone(),
                 end,
                 other,
             }));

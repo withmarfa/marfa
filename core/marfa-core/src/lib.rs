@@ -126,11 +126,11 @@ pub use integers::refuse_inexact_integers;
 pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
-    Completeness, Draft, Edge, EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel,
-    HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure, ListFilters,
-    MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters, SearchHit,
-    Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
-    Verdict, WriteKind,
+    Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
+    GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
+    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters,
+    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
+    UnregisteredType, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
@@ -2089,14 +2089,51 @@ impl Core {
         refuse_unqueueable_edge(&conn, draft)
     }
 
+    /// Queues the edge writes in order, in one transaction with its statement
+    /// journals in memory, each judged on the copy as the ones before it left
+    /// it. A result is the write queued, `None` for an edit that changes
+    /// nothing, or an error `tolerated` says the copy may refuse a create or
+    /// an edit with: that operation leaves no trace and the rest go on. Any
+    /// other error, and any error of a delete, fails the batch, and none of it
+    /// is queued.
+    pub fn queue_edge_ops(
+        &self,
+        ops: &[EdgeOp],
+        tolerated: impl Fn(&CoreError) -> bool,
+    ) -> Result<Vec<std::result::Result<Option<QueuedWrite>, CoreError>>> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_whole(&conn)?;
+        store::with_journals_in_memory(&mut conn, |tx| {
+            let mut results = Vec::with_capacity(ops.len());
+            for op in ops {
+                tx.execute_batch("SAVEPOINT edge_op")?;
+                let done = match op {
+                    EdgeOp::Create(draft) => queue_edge(tx, draft, &[]).map(Some),
+                    EdgeOp::Update { id, edit } => update_edge_in(tx, id, edit),
+                    EdgeOp::Delete(id) => delete_edge_in(tx, id).map(Some),
+                };
+                match done {
+                    Ok(queued) => {
+                        tx.execute_batch("RELEASE edge_op")?;
+                        results.push(Ok(queued));
+                    }
+                    Err(error) if !matches!(op, EdgeOp::Delete(_)) && tolerated(&error) => {
+                        tx.execute_batch("ROLLBACK TO edge_op; RELEASE edge_op")?;
+                        results.push(Err(error));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(results)
+        })
+    }
+
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_whole(&conn)?;
-        let tx = conn.transaction()?;
-        let queued = queue_edge(&tx, draft, &[])?;
-        tx.commit()?;
-        Ok(queued)
+        store::with_journals_in_memory(&mut conn, |tx| queue_edge(tx, draft, &[]))
     }
 
     /// A move of an end goes in the same write as the properties, so the
@@ -2109,64 +2146,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_whole(&conn)?;
-        let held = held_edge(&conn, id)?;
-        let Some(base) = edit.base_version else {
-            return Err(CoreError::Invalid(format!(
-                "an update to edge {id} carries no version; name the version the edit was based on"
-            )));
-        };
-        if base != held.version {
-            return Err(CoreError::Invalid(format!(
-                "the update to edge {id} is based on version {base} and this copy holds version {}; read it again",
-                held.version
-            )));
-        }
-        let edit = &ends_moved(&held, edit);
-        refuse_edge_move(&conn, &held, edit)?;
-        integers::refuse_in_value(&edit.properties)?;
-        if edit.is_empty() {
-            return Ok(None);
-        }
-        let payload = edit.payload(base)?;
-        let mut depends_on = store::untaken_create_for_edge(&conn, id)?;
-        let mut next = held.clone();
-        for (key, value) in &edit.properties {
-            next.properties.insert(key.clone(), value.clone());
-        }
-        if let Some(source) = &edit.source_id {
-            next.source_id = source.clone();
-        }
-        if let Some(target) = &edit.target_id {
-            next.target_id = target.clone();
-        }
-        // An end moved to is an item the server has to hold first.
-        for moved in [&edit.source_id, &edit.target_id].into_iter().flatten() {
-            for waited in store::untaken_creates_for_item(&conn, moved)? {
-                if !depends_on.contains(&waited) {
-                    depends_on.push(waited);
-                }
-            }
-        }
-        let tx = conn.transaction()?;
-        store::hold_beneath_edge(&tx, id)?;
-        store::upsert_edge(&tx, &next.as_wire())?;
-        let queued = store::enqueue(
-            &tx,
-            &store::NewWrite {
-                kind: WriteKind::UpdateEdge,
-                item_id: Some(&held.source_id),
-                target_id: Some(&held.target_id),
-                edge_id: Some(id),
-                namespace: None,
-                tag: None,
-                blob: None,
-                base_version: Some(base),
-                payload: &payload,
-                depends_on: &depends_on,
-            },
-        )?;
-        tx.commit()?;
-        Ok(Some(queued))
+        store::with_journals_in_memory(&mut conn, |tx| update_edge_in(tx, id, edit))
     }
 
     /// Answers the refusal `update_edge` would give a move of edge `id`'s
@@ -2196,11 +2176,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_whole(&conn)?;
-        let held = held_edge(&conn, id)?;
-        let tx = conn.transaction()?;
-        let queued = queue_edge_delete(&tx, &held, &[])?;
-        tx.commit()?;
-        Ok(queued)
+        store::with_journals_in_memory(&mut conn, |tx| delete_edge_in(tx, id))
     }
 
     pub fn add_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
@@ -4152,6 +4128,72 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
             depends_on: &depends_on,
         },
     )
+}
+
+/// Queues an edit to edge `id`, or nothing for one that changes nothing.
+fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<QueuedWrite>> {
+    let held = held_edge(tx, id)?;
+    let Some(base) = edit.base_version else {
+        return Err(CoreError::Invalid(format!(
+            "an update to edge {id} carries no version; name the version the edit was based on"
+        )));
+    };
+    if base != held.version {
+        return Err(CoreError::Invalid(format!(
+            "the update to edge {id} is based on version {base} and this copy holds version {}; read it again",
+            held.version
+        )));
+    }
+    let edit = &ends_moved(&held, edit);
+    refuse_edge_move(tx, &held, edit)?;
+    integers::refuse_in_value(&edit.properties)?;
+    if edit.is_empty() {
+        return Ok(None);
+    }
+    let payload = edit.payload(base)?;
+    let mut depends_on = store::untaken_create_for_edge(tx, id)?;
+    let mut next = held.clone();
+    for (key, value) in &edit.properties {
+        next.properties.insert(key.clone(), value.clone());
+    }
+    if let Some(source) = &edit.source_id {
+        next.source_id = source.clone();
+    }
+    if let Some(target) = &edit.target_id {
+        next.target_id = target.clone();
+    }
+    // An end moved to is an item the server has to hold first.
+    for moved in [&edit.source_id, &edit.target_id].into_iter().flatten() {
+        for waited in store::untaken_creates_for_item(tx, moved)? {
+            if !depends_on.contains(&waited) {
+                depends_on.push(waited);
+            }
+        }
+    }
+    store::hold_beneath_edge(tx, id)?;
+    store::upsert_edge(tx, &next.as_wire())?;
+    let queued = store::enqueue(
+        tx,
+        &store::NewWrite {
+            kind: WriteKind::UpdateEdge,
+            item_id: Some(&held.source_id),
+            target_id: Some(&held.target_id),
+            edge_id: Some(id),
+            namespace: None,
+            tag: None,
+            blob: None,
+            base_version: Some(base),
+            payload: &payload,
+            depends_on: &depends_on,
+        },
+    )?;
+    Ok(Some(queued))
+}
+
+/// Queues the removal of edge `id`.
+fn delete_edge_in(tx: &Connection, id: &str) -> Result<QueuedWrite> {
+    let held = held_edge(tx, id)?;
+    queue_edge_delete(tx, &held, &[])
 }
 
 fn conflicted_copies_in(
@@ -6738,6 +6780,185 @@ mod tests {
         }
     }
 
+    /// A copy holding `row` and `count` more notes, `n0` onward.
+    fn copy_with_notes(count: usize) -> Core {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            for number in 0..count {
+                let id = format!("n{number}");
+                let note = store::testing::note(&id, &id, "body", "2026-01-01T00:00:00Z");
+                store::put_server_item(&conn, &note, None, &crate::catalog::Catalog::empty())
+                    .unwrap();
+            }
+        }
+        core
+    }
+
+    fn reference(source: &str, target: &str) -> EdgeDraft {
+        EdgeDraft {
+            source_id: source.into(),
+            target_id: target.into(),
+            edge_type: "references".into(),
+            ..EdgeDraft::default()
+        }
+    }
+
+    /// The write transactions `work` commits on the copy's connection.
+    fn commits_in(core: &Core, work: impl FnOnce()) -> usize {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COMMITS: AtomicUsize = AtomicUsize::new(0);
+        COMMITS.store(0, Ordering::SeqCst);
+        let _ = core.conn().unwrap().commit_hook(Some(|| {
+            COMMITS.fetch_add(1, Ordering::SeqCst);
+            false
+        }));
+        work();
+        let _ = core.conn().unwrap().commit_hook(None::<fn() -> bool>);
+        COMMITS.load(Ordering::SeqCst)
+    }
+
+    fn edge_ops(count: usize) -> Vec<EdgeOp> {
+        (0..count)
+            .map(|number| EdgeOp::Create(reference("row", &format!("n{number}"))))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_of_edges_is_queued_in_one_transaction() {
+        let one_by_one = copy_with_notes(20);
+        let separate = commits_in(&one_by_one, || {
+            for op in edge_ops(20) {
+                let EdgeOp::Create(draft) = op else {
+                    unreachable!()
+                };
+                one_by_one.create_edge(&draft).unwrap();
+            }
+        });
+        assert_eq!(separate, 20, "witness: each edge alone commits alone");
+
+        let batched = copy_with_notes(20);
+        let mut results = Vec::new();
+        let together = commits_in(&batched, || {
+            results = batched.queue_edge_ops(&edge_ops(20), |_| false).unwrap();
+        });
+        assert_eq!(together, 1);
+        assert_eq!(results.len(), 20);
+        let written: Vec<_> = results
+            .iter()
+            .map(|result| result.as_ref().unwrap().as_ref().unwrap().clone())
+            .collect();
+        let queue = batched.queue().unwrap();
+        assert_eq!(
+            queue.iter().map(|write| &write.id).collect::<Vec<_>>(),
+            written.iter().map(|write| &write.id).collect::<Vec<_>>(),
+            "the queue holds the writes in the order of the operations"
+        );
+        assert_eq!(
+            batched.edges_from("row").unwrap().len(),
+            21,
+            "the copy shows each edge"
+        );
+    }
+
+    #[test]
+    fn a_batch_decides_each_operation_on_what_the_ones_before_it_wrote() {
+        let core = copy_with_notes(2);
+        let first = reference("row", "n0");
+        let id = uuid::Uuid::now_v7().to_string();
+        let made = EdgeDraft {
+            id: Some(id.clone()),
+            ..reference("row", "n1")
+        };
+        let results = core
+            .queue_edge_ops(
+                &[
+                    EdgeOp::Create(first),
+                    EdgeOp::Create(made),
+                    EdgeOp::Delete(id.clone()),
+                ],
+                |_| false,
+            )
+            .unwrap();
+        let queued: Vec<QueuedWrite> = results
+            .into_iter()
+            .map(|result| result.unwrap().unwrap())
+            .collect();
+        assert_eq!(queued[2].kind, WriteKind::DeleteEdge);
+        assert_eq!(
+            queued[2].depends_on,
+            vec![queued[1].id.clone()],
+            "a delete waits on the create of the edge it removes"
+        );
+        assert_eq!(queued[2].follows, Some(queued[1].id.clone()));
+        assert!(core.edges_from("row").unwrap().iter().all(|e| e.id != id));
+    }
+
+    #[test]
+    fn a_failure_part_way_through_a_batch_leaves_none_of_it() {
+        let core = copy_with_notes(3);
+        let before = core.queue().unwrap();
+        let held = core.edges_from("row").unwrap();
+        let mut ops = edge_ops(3);
+        ops.push(EdgeOp::Delete("no-such-edge".into()));
+        let failure = core.queue_edge_ops(&ops, |_| false).unwrap_err();
+        assert!(
+            matches!(&failure, CoreError::NotFound { code, .. } if code == "edge_not_found"),
+            "{failure:?}"
+        );
+        assert_eq!(
+            core.queue().unwrap(),
+            before,
+            "part of the batch was queued"
+        );
+        assert_eq!(core.edges_from("row").unwrap(), held);
+
+        // The witness: without the failing operation the same batch queues.
+        let results = core.queue_edge_ops(&edge_ops(3), |_| false).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(core.queue().unwrap().len(), before.len() + 3);
+    }
+
+    #[test]
+    fn an_edge_the_copy_refuses_in_a_batch_is_reported_and_the_others_queue() {
+        let core = copy_with_notes(2);
+        let ops = vec![
+            EdgeOp::Create(reference("row", "n0")),
+            EdgeOp::Create(reference("n0", "n0")),
+            EdgeOp::Create(reference("row", "n1")),
+        ];
+        let admission = |error: &CoreError| matches!(error, CoreError::Validation { code, .. } if code == "edge_cycle");
+        let results = core.queue_edge_ops(&ops, admission).unwrap();
+        assert!(matches!(results[0], Ok(Some(_))));
+        assert!(matches!(&results[1], Err(error) if admission(error)));
+        assert!(matches!(results[2], Ok(Some(_))));
+        assert_eq!(core.queue().unwrap().len(), 2);
+        assert!(core.edges_from("n0").unwrap().is_empty());
+
+        // The witness: a refusal the caller does not tolerate fails the batch.
+        assert!(core.queue_edge_ops(&ops, |_| false).is_err());
+        assert_eq!(core.queue().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_in_a_batch_queues_nothing() {
+        let core = movable_link();
+        let results = core
+            .queue_edge_ops(
+                &[EdgeOp::Update {
+                    id: "link".into(),
+                    edit: EdgeEdit {
+                        base_version: Some(1),
+                        ..EdgeEdit::default()
+                    },
+                }],
+                |_| false,
+            )
+            .unwrap();
+        assert!(matches!(results[0], Ok(None)));
+        assert!(core.queue().unwrap().is_empty());
+    }
+
     #[test]
     fn an_edge_move_the_server_always_refuses_is_refused_before_it_is_queued() {
         let core = movable_link();
@@ -7759,6 +7980,12 @@ mod tests {
                 reader.update_edge("x", &EdgeEdit::default()).unwrap_err(),
             ),
             ("delete_edge", reader.delete_edge("x").unwrap_err()),
+            (
+                "queue_edge_ops",
+                reader
+                    .queue_edge_ops(&[EdgeOp::Delete("x".into())], |_| false)
+                    .unwrap_err(),
+            ),
             ("add_tag", reader.add_tag("x", "t").unwrap_err()),
             ("remove_tag", reader.remove_tag("x", "t").unwrap_err()),
             (
@@ -7960,7 +8187,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            53,
+            54,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

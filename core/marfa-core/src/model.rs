@@ -1725,6 +1725,14 @@ pub struct Added {
     pub item: QueuedWrite,
 }
 
+/// One edge write of a batch (`Core::queue_edge_ops`).
+#[derive(Debug, Clone)]
+pub enum EdgeOp {
+    Create(EdgeDraft),
+    Update { id: String, edit: EdgeEdit },
+    Delete(String),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EdgeEdit {
     pub properties: Map<String, Value>,
