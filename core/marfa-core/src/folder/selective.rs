@@ -105,7 +105,7 @@ pub(super) struct Narrow {
     /// The items the query holds.
     pub(super) members: HashSet<String>,
     /// The items the query does not hold whose file the last pulls kept
-    /// here as a document's embed or attachment, other than those reached.
+    /// here as a document's embed or attachment, other than those it reads.
     pub(super) shown: HashSet<String>,
     /// How many items the last pull left as they render that this one does
     /// not read, which a full pull counts unchanged.
@@ -472,16 +472,16 @@ impl Pick {
 /// saves.
 const MOST_ATTACHED: usize = 4096;
 
-/// Adds to `reached` every item joined to one in it by attachments, each
+/// Adds to `read` every item joined to one in it by attachments, each
 /// document with its attachments and each attachment with its documents;
 /// false where that passes `MOST_ATTACHED`.
-fn attached_together(folder: &Folder, reached: &mut HashSet<String>) -> Result<bool> {
+fn attached_together(folder: &Folder, read: &mut HashSet<String>) -> Result<bool> {
     let conn = folder.core.conn()?;
     let mut statement = conn.prepare_cached(
         "SELECT source_id, target_id FROM edges
           WHERE (source_id = ?1 OR target_id = ?1) AND edge_type = ?2",
     )?;
-    let mut next: Vec<String> = reached.iter().cloned().collect();
+    let mut next: Vec<String> = read.iter().cloned().collect();
     while let Some(id) = next.pop() {
         let ends = statement
             .query_map(rusqlite::params![id, super::ATTACHMENT_EDGE], |row| {
@@ -490,12 +490,12 @@ fn attached_together(folder: &Folder, reached: &mut HashSet<String>) -> Result<b
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for (source, target) in ends {
             for end in [source, target] {
-                if reached.insert(end.clone()) {
+                if read.insert(end.clone()) {
                     next.push(end);
                 }
             }
         }
-        if reached.len() > MOST_ATTACHED {
+        if read.len() > MOST_ATTACHED {
             return Ok(false);
         }
     }

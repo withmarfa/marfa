@@ -683,10 +683,11 @@ impl Folder {
         (local, conflicts)
     }
 
-    /// The inputs as they are now, with the walk that found them. `None` where a status could not be
-    /// computed from them alone: the folder's directory is gone or replaced,
-    /// a store or settings input cannot be read, or a crash cut off a write
-    /// whose file the status reads wherever it is.
+    /// The inputs as they are now, with the walk that found them. `None`
+    /// where a status could not be computed from them alone: the folder's
+    /// directory is gone or replaced, a store or settings input cannot be
+    /// read, or a crash cut off a write whose file the status reads wherever
+    /// it is.
     fn status_inputs(&self) -> Option<(Inputs, Walked)> {
         if self.root_gone().is_some() {
             return None;

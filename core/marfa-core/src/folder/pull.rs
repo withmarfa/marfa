@@ -342,7 +342,7 @@ impl Folder {
     /// files it would write, leaving the directory as it is.
     ///
     /// With `selection`, reads only the items a change since the last pull
-    /// reaches where it can, and answers false, having written nothing, where
+    /// reaches where it can, and answers false, having placed no file, where
     /// one of them wants a path an item it did not read holds.
     pub(super) fn pull_into(
         &self,

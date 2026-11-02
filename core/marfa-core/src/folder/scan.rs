@@ -1183,7 +1183,8 @@ impl Folder {
         Ok(())
     }
 
-    /// Records the size and time each file had before its read.
+    /// Records the size and time each file had before its read, and keeps
+    /// them with the hash of the bytes read, for health.
     fn record_stats(&self, scan: &ScanState) -> Result<()> {
         let conn = self.core.conn()?;
         state::set_stats(&conn, &scan.stats, scan.full)?;
