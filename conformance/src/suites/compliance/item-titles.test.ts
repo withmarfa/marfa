@@ -238,6 +238,31 @@ describe("POST /items/titles", () => {
     expect(tooLong.status).toBe(400);
   });
 
+  it("matches no name to a title longer than 1,000 UTF-16 code units after trimming", async () => {
+    // A decomposed `é` is two UTF-16 code units and folds to the composed
+    // one, so a name of fewer units than the limit folds to a title past it.
+    const stem = `${uuidv7()} `;
+    const decomposed = (count: number) => `${stem}${"e\u0301".repeat(count)}`;
+    const composed = (count: number) => `${stem}${"\u00e9".repeat(count)}`;
+    const count = (1000 - stem.length) >> 1;
+
+    const within = `${decomposed(count)}${"x".repeat(1000 - stem.length - 2 * count)}`;
+    expect(within).toHaveLength(1000);
+    const withinId = await note(`  ${within}  `);
+    expect(
+      await idsFor(
+        `${composed(count)}${"x".repeat(1000 - stem.length - 2 * count)}`,
+      ),
+      "a title of 1,000 units once trimmed was not found",
+    ).toEqual([withinId]);
+
+    const past = decomposed(count + 1);
+    expect(past.length).toBeGreaterThan(1000);
+    await note(past);
+    expect(composed(count + 1).length).toBeLessThanOrEqual(1000);
+    expect(await idsFor(composed(count + 1))).toEqual([]);
+  });
+
   it("refuses a body that is not a list of names", async () => {
     for (const body of [
       {},

@@ -726,7 +726,7 @@ When a key sends `POST /items/titles`, the server MUST read an item's title from
 
 ### `items/titles-scope`
 
-When a key sends `POST /items/titles`, the server MUST leave out every item that `GET /items` would leave out for that key.
+When a key sends `POST /items/titles`, the server MUST leave out every item that the key could not list through `GET /items` in any state.
 
 **Reason:** a name looked up must not tell a key that an item exists which it may not list.
 
@@ -743,6 +743,14 @@ If the key sending `POST /items/titles` reaches no type, then the server MUST an
 If `POST /items/titles` names more than 200 names, or a name longer than 1,000 UTF-16 code units, or is not a list of names, or carries a key the operation does not declare, then the server MUST answer `400` with `validation_error`.
 
 **Tests:** `compliance/item-titles.test.ts › takes at most 200 names of at most 1,000 UTF-16 code units`, `› refuses a body that is not a list of names`.
+
+### `items/titles-long-title`
+
+When an item's title is longer than 1,000 UTF-16 code units once the Unicode `White_Space` at its ends is removed, the server MUST match no name sent to `POST /items/titles` to that item.
+
+**Reason:** a name sent is at most 1,000 UTF-16 code units (`items/titles-limits`), yet a shorter name can fold to a longer title, and a title past that limit is a body typed into the wrong field, not a name anyone links by.
+
+**Tests:** `compliance/item-titles.test.ts › matches no name to a title longer than 1,000 UTF-16 code units after trimming`.
 
 ### `items/titles-list`
 
