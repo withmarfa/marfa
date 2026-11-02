@@ -701,6 +701,11 @@ impl Folder {
                 settings.check_types(&Catalog::load(&*self.core.conn()?)?)?;
                 Ok(settings)
             }
+            // A copy that has not hydrated may not have the row yet, which
+            // says nothing of what the key can read.
+            None if !crate::store::hydrated(&*self.core.conn()?)? => {
+                Err(CoreError::HydrationIncomplete)
+            }
             None => Err(CoreError::Invalid(format!(
                 "this folder's copy does not hold its settings, the {FOLDER_TYPE} {}; hydrate it again with a key holding `{FOLDER_TYPE}:read`",
                 self.folder

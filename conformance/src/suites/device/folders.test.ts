@@ -6033,6 +6033,57 @@ describe("a folder that cannot reach the server", () => {
   });
 });
 
+describe("a watch started straight after a folder is added", () => {
+  const id = "01a00000-0000-7000-8000-0000000000c4";
+
+  it("waits for the first hydration instead of ending on a copy without the folder's settings", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A confirmed add hydrates nothing, so the watch's follow does it, and
+    // the server is slow to answer the first read of a hydration, before the
+    // copy marks itself in progress.
+    harness = await folderHarness("folder-watch-first-hydration", {
+      hydrate: false,
+      statsHeldUntil: slow,
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "first", body: "from the server" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watch();
+    try {
+      // Past the watch's first passes, which run while the hydration waits.
+      // A watch that ends on one cannot exit while its follow waits on the
+      // held read, so what shows it is the state after the release.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      release();
+      await vi.waitFor(
+        () =>
+          expect(
+            existsSync(join(harness!.dir, "first.md")),
+            `the folder's first item never became a file: ${watching.stderr}`,
+          ).toBe(true),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(read(harness, "first.md")).toContain("from the server");
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      release();
+      await watching.stop();
+    }
+  });
+});
+
 describe("a folder's first sync", () => {
   const remoteA = "01a00000-0000-7000-8000-0000000005a1";
   const remoteB = "01a00000-0000-7000-8000-0000000005a2";
