@@ -840,7 +840,7 @@ describe("starting on a database at schema version 9", () => {
     state = "active",
   ): Promise<void> {
     await client.execute({
-      sql: "INSERT INTO items (id, type, state, properties, created_at, updated_at) VALUES (?, ?, ?, jsonb(?), 't', 't')",
+      sql: "INSERT INTO items (id, type, state, properties, occurred_at, created_at, updated_at) VALUES (?, ?, ?, jsonb(?), 't', 't', 't')",
       args: [id, type, state, JSON.stringify(properties)],
     });
   }
@@ -891,7 +891,7 @@ describe("starting on a database at schema version 9", () => {
     await insertItem(client, "t4", "core.note", { title: "x".repeat(1001) });
     await insertItem(client, "t5", "core.note", { title: "y".repeat(1000) });
     await client.execute(
-      "INSERT INTO items (id, type, properties, created_at, updated_at) VALUES ('bad', 'core.note', x'01', 't', 't')",
+      "INSERT INTO items (id, type, properties, occurred_at, created_at, updated_at) VALUES ('bad', 'core.note', x'01', 't', 't', 't')",
     );
     client.close();
 
