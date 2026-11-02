@@ -78,6 +78,24 @@ impl StateFilter {
     }
 }
 
+/// The server's `state` list for the states given, or none when `--state` was
+/// not. `any` already reaches every state, so beside another it is refused here
+/// as the server refuses it, before a request is made.
+pub fn state_list(states: &[StateFilter]) -> Result<Option<String>, CliError> {
+    if states.len() > 1 && states.contains(&StateFilter::Any) {
+        return Err(CliError::Usage(
+            "--state takes `any` alone: it already answers every state, so give it without the others, or name the states you want".into(),
+        ));
+    }
+    Ok((!states.is_empty()).then(|| {
+        states
+            .iter()
+            .map(|state| state.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }))
+}
+
 #[derive(Debug, Default, Args)]
 pub struct PageArgs {
     /// How many at most.

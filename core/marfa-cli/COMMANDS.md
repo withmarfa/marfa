@@ -445,7 +445,7 @@ marfa items list [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | One state, or `any`. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--tier <TIER>` | One tier, or `all`. One of `library`, `feed`, `all`. |
 | `--tag <TAG>` | Items must carry every tag given. |
@@ -1432,7 +1432,7 @@ marfa search [OPTIONS] <QUERY>
 | Option | Description |
 | --- | --- |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | One state, or `any`. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers the active state; the bin is never searched. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--tier <TIER>` | One tier, or `all`. One of `library`, `feed`, `all`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
@@ -1913,7 +1913,7 @@ marfa export [OPTIONS]
 | `--format <FORMAT>` | `ndjson` for items one per line, `archive` for the whole instance. One of `ndjson`, `archive`. |
 | `--output <PATH>` | Where to write. Omitted, the export goes to stdout. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | One state, or `any`. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |

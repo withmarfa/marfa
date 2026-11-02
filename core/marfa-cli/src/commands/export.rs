@@ -5,7 +5,7 @@ use clap::{Args, ValueEnum};
 use flate2::write::GzDecoder;
 use serde_json::{Value, json};
 
-use super::StateFilter;
+use super::{StateFilter, state_list};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -25,9 +25,10 @@ pub struct ExportArgs {
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
-    /// One state, or `any`.
-    #[arg(long)]
-    pub state: Option<StateFilter>,
+    /// A state to answer; repeat it or separate states with commas. `any` is
+    /// every state, and is given alone. Unset answers every state but the bin.
+    #[arg(long, value_delimiter = ',')]
+    pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
     pub source: Option<String>,
@@ -54,19 +55,19 @@ impl ExportFormat {
     }
 }
 
-pub fn request(args: &ExportArgs) -> Request {
-    Request::get(&["export"])
+pub fn request(args: &ExportArgs) -> Result<Request, CliError> {
+    Ok(Request::get(&["export"])
         .query_opt("format", args.format.map(ExportFormat::as_str))
         .query_opt("type", args.type_.clone())
-        .query_opt("state", args.state.map(StateFilter::as_str))
+        .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
-        .streamed()
+        .streamed())
 }
 
 pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let (content_type, reader) = remote.stream(&request(&args))?;
+    let (content_type, reader) = remote.stream(&request(&args)?)?;
     let mut reader = ManifestTap::new(reader, args.format == Some(ExportFormat::Archive));
     match &args.output {
         Some(path) => {
