@@ -6,7 +6,7 @@
   "fields": {
     "kind": {
       "type": "enum",
-      "description": "The kind of connection. Only app exists.",
+      "description": "The kind of connection.",
       "enum_values": [
         "app"
       ]
@@ -17,7 +17,7 @@
     },
     "name": {
       "type": "string",
-      "description": "Your own name for this app's sign-in. Unset, the app's registered name is used."
+      "description": "Your own name for this app's sign-in. Without one, the app's registered name is used."
     },
     "scopes": {
       "type": "array",

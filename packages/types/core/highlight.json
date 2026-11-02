@@ -1,7 +1,7 @@
 {
   "id": "core.highlight",
   "label": "Highlight",
-  "description": "A passage you highlighted, with your note on it.",
+  "description": "A passage you highlighted, with any note you added.",
   "version": 0,
   "fields": {
     "text": {
@@ -19,16 +19,16 @@
     },
     "locator_type": {
       "type": "enum",
-      "description": "How to read start_location and end_location: offset, page, time, cfi, order or none.",
+      "description": "How to read `start_location` and `end_location`.",
       "enum_values": ["offset", "page", "time", "cfi", "order", "none"]
     },
     "start_location": {
       "type": "string",
-      "description": "Where the highlight starts, read as locator_type says."
+      "description": "Where the highlight starts, read as `locator_type` says."
     },
     "end_location": {
       "type": "string",
-      "description": "Where the highlight ends, read as locator_type says."
+      "description": "Where the highlight ends, read as `locator_type` says."
     }
   },
   "required": ["text"],

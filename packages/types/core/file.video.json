@@ -27,7 +27,7 @@
     },
     "altitude": {
       "type": "number",
-      "description": "Altitude in meters of what the video shows."
+      "description": "The altitude of what the video shows, in meters."
     },
     "language": {
       "type": "string",

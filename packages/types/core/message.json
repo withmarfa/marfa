@@ -14,7 +14,7 @@
     },
     "to": {
       "type": "array",
-      "description": "Who received the message, written the same way as from.",
+      "description": "Who received the message, written the same way as `from`.",
       "items_type": "string"
     }
   },

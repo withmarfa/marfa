@@ -25,13 +25,13 @@
     "media_url": {
       "type": "string",
       "label": "Media URL",
-      "description": "The address of the media file itself, such as a podcast's audio or a film's stream. Not url, which is the web page about the work.",
+      "description": "The address of the media file itself, such as an audio file or a video stream. Unlike `url`, it is not the web page about the work.",
       "format": "url"
     },
     "mime_type": {
       "type": "string",
       "label": "MIME Type",
-      "description": "The MIME type of the file at media_url, such as audio/mpeg or video/mp4."
+      "description": "The MIME type of the file at `media_url`, such as audio/mpeg or video/mp4."
     }
   },
   "required": [],

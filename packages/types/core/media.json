@@ -50,7 +50,7 @@
     },
     "progress": {
       "type": "status",
-      "description": "Where you are with the work: planned, started, finished or abandoned.",
+      "description": "Where you are with the work, such as whether you have started or finished it.",
       "status_values": [
         { "value": "planned", "group": "not_started" },
         { "value": "started", "group": "in_progress" },
@@ -70,7 +70,7 @@
     },
     "thumbnail": {
       "type": "thumbnail",
-      "description": "A small preview of the work, supplied by the writer."
+      "description": "A small preview of the work, supplied by whoever saved it."
     }
   },
   "required": ["title"],

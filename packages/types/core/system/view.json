@@ -15,7 +15,7 @@
     "sort": {
       "type": "array",
       "items_type": "object",
-      "description": "The keys the view sorts by, first key first. Each has a by field and a direction, asc or desc."
+      "description": "The keys the view sorts by, first key first. Each has a `by` field and a `direction`, `asc` or `desc`."
     },
     "group": {
       "type": "object",

@@ -541,7 +541,7 @@
     "starts_at": {
      "type": "datetime",
      "label": "Starts",
-     "description": "When the event starts, as an ISO 8601 instant. The timezone field says which local time it means."
+     "description": "When the event starts, as an ISO 8601 instant. `timezone` says which local time it means."
     },
     "ends_at": {
      "type": "datetime",
@@ -550,7 +550,7 @@
     },
     "duration": {
      "type": "number",
-     "description": "How long the event lasts, in seconds. For a repeating event with no ends_at, it is the length of each occurrence."
+     "description": "How long the event lasts, in seconds. For a repeating event with no `ends_at`, it is the length of each occurrence."
     },
     "place": {
      "type": "string",
@@ -581,7 +581,7 @@
     },
     "status": {
      "type": "enum",
-     "description": "Whether the event will happen: tentative, confirmed or canceled.",
+     "description": "Whether the event will happen.",
      "enum_values": [
       "tentative",
       "confirmed",
@@ -599,7 +599,7 @@
     },
     "all_day": {
      "type": "boolean",
-     "description": "True when the event lasts whole days rather than a span of time. Read the date from starts_at in the event's timezone."
+     "description": "True when the event lasts whole days rather than a span of time. Read the date from `starts_at` in the event's `timezone`."
     },
     "timezone": {
      "type": "string",
@@ -609,7 +609,7 @@
     "end_timezone": {
      "type": "string",
      "label": "End Time Zone",
-     "description": "The IANA time zone the event ends in, when it differs from timezone, such as a flight that lands in another zone."
+     "description": "The IANA time zone the event ends in, when it differs from `timezone`, such as a flight that lands in another zone."
     },
     "attendees": {
      "type": "array",
@@ -884,11 +884,11 @@
     },
     "altitude": {
      "type": "number",
-     "description": "Altitude in meters of what the image shows."
+     "description": "The altitude of what the image shows, in meters."
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the image, supplied by the writer."
+     "description": "A small preview of the image, supplied by whoever saved it."
     }
    },
    "display_hints": {
@@ -984,7 +984,7 @@
     },
     "altitude": {
      "type": "number",
-     "description": "Altitude in meters of what the video shows."
+     "description": "The altitude of what the video shows, in meters."
     }
    },
    "display_hints": {
@@ -1071,7 +1071,7 @@
   {
    "id": "core.highlight",
    "label": "Highlight",
-   "description": "A passage you highlighted, with your note on it.",
+   "description": "A passage you highlighted, with any note you added.",
    "version": 0,
    "fields": {
     "text": {
@@ -1097,7 +1097,7 @@
     },
     "locator_type": {
      "type": "enum",
-     "description": "How to read start_location and end_location: offset, page, time, cfi, order or none.",
+     "description": "How to read `start_location` and `end_location`.",
      "enum_values": [
       "offset",
       "page",
@@ -1109,11 +1109,11 @@
     },
     "start_location": {
      "type": "string",
-     "description": "Where the highlight starts, read as locator_type says."
+     "description": "Where the highlight starts, read as `locator_type` says."
     },
     "end_location": {
      "type": "string",
-     "description": "Where the highlight ends, read as locator_type says."
+     "description": "Where the highlight ends, read as `locator_type` says."
     }
    },
    "display_hints": {
@@ -1179,7 +1179,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1211,7 +1211,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     }
    },
    "display_hints": {
@@ -1277,7 +1277,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1309,11 +1309,11 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "release_type": {
      "type": "string",
-     "description": "The kind of release: album, ep or single."
+     "description": "The kind of release, such as album, ep or single."
     },
     "num_tracks": {
      "type": "integer",
@@ -1386,7 +1386,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1418,7 +1418,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "doi": {
      "type": "string",
@@ -1497,7 +1497,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1529,7 +1529,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "isbn": {
      "type": "string",
@@ -1608,7 +1608,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1640,11 +1640,11 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "medium": {
      "type": "enum",
-     "description": "What the episode is: tv, podcast, radio, video or mixed.",
+     "description": "What kind of episode it is.",
      "enum_values": [
       "tv",
       "podcast",
@@ -1668,12 +1668,12 @@
     "media_url": {
      "type": "url",
      "label": "Media URL",
-     "description": "The address of the media file itself, such as a podcast's audio or a film's stream. Not url, which is the web page about the work."
+     "description": "The address of the media file itself, such as an audio file or a video stream. Unlike `url`, it is not the web page about the work."
     },
     "mime_type": {
      "type": "string",
      "label": "MIME Type",
-     "description": "The MIME type of the file at media_url, such as audio/mpeg or video/mp4."
+     "description": "The MIME type of the file at `media_url`, such as audio/mpeg or video/mp4."
     }
    },
    "display_hints": {
@@ -1738,7 +1738,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1770,7 +1770,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "duration": {
      "type": "number",
@@ -1787,12 +1787,12 @@
     "media_url": {
      "type": "url",
      "label": "Media URL",
-     "description": "The address of the media file itself, such as a podcast's audio or a film's stream. Not url, which is the web page about the work."
+     "description": "The address of the media file itself, such as an audio file or a video stream. Unlike `url`, it is not the web page about the work."
     },
     "mime_type": {
      "type": "string",
      "label": "MIME Type",
-     "description": "The MIME type of the file at media_url, such as audio/mpeg or video/mp4."
+     "description": "The MIME type of the file at `media_url`, such as audio/mpeg or video/mp4."
     }
    },
    "display_hints": {
@@ -1857,7 +1857,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -1889,7 +1889,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "platforms": {
      "type": "array",
@@ -1972,7 +1972,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -2004,11 +2004,11 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "medium": {
      "type": "enum",
-     "description": "What the series is: tv, podcast, radio, video or mixed.",
+     "description": "What kind of series it is.",
      "enum_values": [
       "tv",
       "podcast",
@@ -2019,7 +2019,7 @@
     },
     "status": {
      "type": "enum",
-     "description": "Whether the series is still producing new episodes: ongoing, ended or canceled.",
+     "description": "Whether the series is still producing new episodes.",
      "enum_values": [
       "ongoing",
       "ended",
@@ -2091,7 +2091,7 @@
     },
     "progress": {
      "type": "status",
-     "description": "Where you are with the work: planned, started, finished or abandoned.",
+     "description": "Where you are with the work, such as whether you have started or finished it.",
      "status_values": [
       {
        "value": "planned",
@@ -2123,7 +2123,7 @@
     },
     "thumbnail": {
      "type": "thumbnail",
-     "description": "A small preview of the work, supplied by the writer."
+     "description": "A small preview of the work, supplied by whoever saved it."
     },
     "duration": {
      "type": "number",
@@ -2145,12 +2145,12 @@
     "media_url": {
      "type": "url",
      "label": "Media URL",
-     "description": "The address of the media file itself, such as a podcast's audio or a film's stream. Not url, which is the web page about the work."
+     "description": "The address of the media file itself, such as an audio file or a video stream. Unlike `url`, it is not the web page about the work."
     },
     "mime_type": {
      "type": "string",
      "label": "MIME Type",
-     "description": "The MIME type of the file at media_url, such as audio/mpeg or video/mp4."
+     "description": "The MIME type of the file at `media_url`, such as audio/mpeg or video/mp4."
     }
    },
    "display_hints": {
@@ -2182,7 +2182,7 @@
     },
     "to": {
      "type": "array",
-     "description": "Who received the message, written the same way as from.",
+     "description": "Who received the message, written the same way as `from`.",
      "items_type": "string"
     }
    },
@@ -2294,7 +2294,7 @@
     },
     "priority": {
      "type": "enum",
-     "description": "How important the task is: low, medium, high or urgent.",
+     "description": "How important the task is.",
      "enum_values": [
       "low",
       "medium",
@@ -2342,7 +2342,7 @@
     },
     "recurrence": {
      "type": "array",
-     "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from due_at or, without one, from starts_at.",
+     "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from `due_at` or, without one, from `starts_at`.",
      "items_type": "string"
     }
    },
@@ -2368,7 +2368,7 @@
    "fields": {
     "kind": {
      "type": "enum",
-     "description": "The kind of connection. Only app exists.",
+     "description": "The kind of connection.",
      "required": true,
      "enum_values": [
       "app"
@@ -2380,7 +2380,7 @@
     },
     "name": {
      "type": "string",
-     "description": "Your own name for this app's sign-in. Unset, the app's registered name is used."
+     "description": "Your own name for this app's sign-in. Without one, the app's registered name is used."
     },
     "scopes": {
      "type": "array",
@@ -2429,7 +2429,7 @@
     },
     "defaults": {
      "type": "object",
-     "description": "What a new file gets where its frontmatter leaves a blank: type, tier, properties, tags and edges. It never changes an edit."
+     "description": "What a new file gets where its frontmatter leaves a blank: type, tier, properties, tags and edges. It is never applied to an edited file."
     },
     "include": {
      "type": "array",
@@ -2438,7 +2438,7 @@
     },
     "ignore": {
      "type": "array",
-     "description": "Paths the folder leaves alone, as gitignore patterns relative to its root. It wins over include.",
+     "description": "Paths the folder leaves alone, as gitignore patterns relative to its root. It wins over `include`.",
      "items_type": "string"
     },
     "first_placement": {
@@ -2473,7 +2473,7 @@
     },
     "sort": {
      "type": "array",
-     "description": "The keys the view sorts by, first key first. Each has a by field and a direction, asc or desc.",
+     "description": "The keys the view sorts by, first key first. Each has a `by` field and a `direction`, `asc` or `desc`.",
      "items_type": "object"
     },
     "group": {

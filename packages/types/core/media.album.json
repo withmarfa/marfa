@@ -8,7 +8,7 @@
   "fields": {
     "release_type": {
       "type": "string",
-      "description": "The kind of release: album, ep or single."
+      "description": "The kind of release, such as album, ep or single."
     },
     "num_tracks": {
       "type": "integer",

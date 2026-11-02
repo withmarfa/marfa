@@ -9,12 +9,12 @@
   "fields": {
     "medium": {
       "type": "enum",
-      "description": "What the series is: tv, podcast, radio, video or mixed.",
+      "description": "What kind of series it is.",
       "enum_values": ["tv", "podcast", "radio", "video", "mixed"]
     },
     "status": {
       "type": "enum",
-      "description": "Whether the series is still producing new episodes: ongoing, ended or canceled.",
+      "description": "Whether the series is still producing new episodes.",
       "enum_values": ["ongoing", "ended", "canceled"]
     }
   },

@@ -370,11 +370,12 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
       },
       altitude: {
         type: "number",
-        description: "Altitude in meters of what the image shows.",
+        description: "The altitude of what the image shows, in meters.",
       },
       thumbnail: {
         type: "thumbnail",
-        description: "A small preview of the image, supplied by the writer.",
+        description:
+          "A small preview of the image, supplied by whoever saved it.",
       },
     },
     mergePolicy: { fields: {}, default: "last_writer_wins" },

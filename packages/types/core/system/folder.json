@@ -14,7 +14,7 @@
     },
     "defaults": {
       "type": "object",
-      "description": "What a new file gets where its frontmatter leaves a blank: type, tier, properties, tags and edges. It never changes an edit."
+      "description": "What a new file gets where its frontmatter leaves a blank: type, tier, properties, tags and edges. It is never applied to an edited file."
     },
     "include": {
       "type": "array",
@@ -24,7 +24,7 @@
     "ignore": {
       "type": "array",
       "items_type": "string",
-      "description": "Paths the folder leaves alone, as gitignore patterns relative to its root. It wins over include."
+      "description": "Paths the folder leaves alone, as gitignore patterns relative to its root. It wins over `include`."
     },
     "first_placement": {
       "type": "object",

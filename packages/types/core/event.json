@@ -15,7 +15,7 @@
     "starts_at": {
       "type": "string",
       "label": "Starts",
-      "description": "When the event starts, as an ISO 8601 instant. The timezone field says which local time it means.",
+      "description": "When the event starts, as an ISO 8601 instant. `timezone` says which local time it means.",
       "format": "datetime"
     },
     "ends_at": {
@@ -26,7 +26,7 @@
     },
     "duration": {
       "type": "number",
-      "description": "How long the event lasts, in seconds. For a repeating event with no ends_at, it is the length of each occurrence."
+      "description": "How long the event lasts, in seconds. For a repeating event with no `ends_at`, it is the length of each occurrence."
     },
     "place": {
       "type": "string",
@@ -53,7 +53,7 @@
     },
     "status": {
       "type": "enum",
-      "description": "Whether the event will happen: tentative, confirmed or canceled.",
+      "description": "Whether the event will happen.",
       "enum_values": ["tentative", "confirmed", "canceled"]
     },
     "notes": {
@@ -67,7 +67,7 @@
     },
     "all_day": {
       "type": "boolean",
-      "description": "True when the event lasts whole days rather than a span of time. Read the date from starts_at in the event's timezone."
+      "description": "True when the event lasts whole days rather than a span of time. Read the date from `starts_at` in the event's `timezone`."
     },
     "timezone": {
       "type": "string",
@@ -77,7 +77,7 @@
     "end_timezone": {
       "type": "string",
       "label": "End Time Zone",
-      "description": "The IANA time zone the event ends in, when it differs from timezone, such as a flight that lands in another zone."
+      "description": "The IANA time zone the event ends in, when it differs from `timezone`, such as a flight that lands in another zone."
     },
     "attendees": {
       "type": "array",

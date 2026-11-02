@@ -46,7 +46,7 @@
     },
     "priority": {
       "type": "enum",
-      "description": "How important the task is: low, medium, high or urgent.",
+      "description": "How important the task is.",
       "enum_values": ["low", "medium", "high", "urgent"]
     },
     "place": {
@@ -86,7 +86,7 @@
     "recurrence": {
       "type": "array",
       "items_type": "string",
-      "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from due_at or, without one, from starts_at."
+      "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from `due_at` or, without one, from `starts_at`."
     }
   },
   "required": ["title"],
