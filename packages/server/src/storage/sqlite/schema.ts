@@ -287,7 +287,9 @@ export const item_title_keys = sqliteTable(
       .references(() => items.id, { onDelete: "cascade" }),
     title_key: text("title_key").notNull(),
   },
-  (table) => [index("idx_item_title_keys_key").on(table.title_key, table.item_id)],
+  (table) => [
+    index("idx_item_title_keys_key").on(table.title_key, table.item_id),
+  ],
 );
 
 // The blobs an item's properties name, by the digest rule `collectBlobHashes`

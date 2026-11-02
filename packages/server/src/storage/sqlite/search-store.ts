@@ -166,9 +166,9 @@ export async function reindexChangedTypes(
   for (const [type, shape] of indexShapes(typeId)) {
     const was = before.get(type);
     if (was === shape) continue;
-    const [wasShape, wasTitleField] = (was === undefined
-      ? [undefined, undefined]
-      : JSON.parse(was)) as [string | undefined, string | undefined];
+    const [wasShape, wasTitleField] = (
+      was === undefined ? [undefined, undefined] : JSON.parse(was)
+    ) as [string | undefined, string | undefined];
     const [nowShape, nowTitleField] = JSON.parse(shape) as [string, string];
     // The title keys also cover the bin, which the index does not.
     if (wasTitleField !== nowTitleField) await rekeyType(db, type);

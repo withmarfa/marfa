@@ -196,6 +196,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/titles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find items by title
+         * @description Finds the active and archived items titled by each of up to 200 names. A name matches a title that is equal to it once both have their surrounding white space removed and are put in Unicode NFC and lowercased one character at a time, so `Straße` and `STRASSE` differ and `É` matches `e` plus a combining acute accent. An item's title is the property its type's `display_hints.title_field` names, or `title`. `system.*` items and items you can't read are left out.
+         */
+        post: operations["findItemsByTitle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/items/bulk-get": {
         parameters: {
             query?: never;
@@ -3716,6 +3736,33 @@ export interface components {
                 };
             };
         };
+        TitledItem: {
+            /** @description The item's ID. */
+            id: string;
+            /** @description The item's type. */
+            type: string;
+            /** @description The item's title as it is stored, which the caller can compare itself. */
+            title: string;
+            /** @description `true` if the item's `blob_ref` property holds a blob digest. */
+            has_blob: boolean;
+        };
+        /** @description An error response. */
+        MissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description An item's extension namespaces that you can read. */
         ExtensionsResponse: {
             /** @description The item's extension namespaces that you can read, each mapped to its data. */
@@ -4990,23 +5037,6 @@ export interface components {
             error: string | null;
             /** @description When Marfa recorded the run. */
             reported_at: string;
-        };
-        /** @description An error response. */
-        MissingRequiredFieldOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "missing_required_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description A page holding every connector you can read. */
         ConnectorPage: {
@@ -9060,6 +9090,187 @@ export interface operations {
                 };
             };
             /** @description - `type_not_permitted`: your credential reaches no type, or reads nothing under `type`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    findItemsByTitle: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The titles to look for, at most 200, each at most 1000 UTF-16 code units. */
+                    names: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Returns one result for each name. A name matching nothing, or empty after trimming, has no items. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description One result for each name, in the order the request named them. */
+                        results: {
+                            /** @description The name, as the request sent it. */
+                            name: string;
+                            /** @description The active and archived items you can read whose title matches the name, by ID, at most 20. */
+                            items: components["schemas"]["TitledItem"][];
+                            /** @description `true` if more than 20 items match and `items` holds the first 20. */
+                            more: boolean;
+                        }[];
+                    };
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `names` is missing.
+             *     - `validation_error`: `names` is not a list of strings, has more than 200 names, has a name longer than 1,000 UTF-16 code units, or the body has a field this endpoint doesn't take.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. If it reaches some types, items of the others are left out instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

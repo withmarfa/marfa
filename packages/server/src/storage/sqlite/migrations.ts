@@ -462,7 +462,9 @@ async function titleKeys(db: Writer): Promise<void> {
     const field = schema.display_hints?.title_field;
     stored.set(row.id as string, {
       ...(typeof schema.parent === "string" && { parent: schema.parent }),
-      ...(typeof field === "string" && { display_hints: { title_field: field } }),
+      ...(typeof field === "string" && {
+        display_hints: { title_field: field },
+      }),
     });
   }
   const fields = new Map<string, string>();

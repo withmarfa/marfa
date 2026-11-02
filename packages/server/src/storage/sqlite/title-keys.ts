@@ -143,7 +143,10 @@ export async function rekeyType(db: Executor, type: string): Promise<void> {
  * it, and null where that is not text. A type no `title_field` reaches is
  * titled by `title`, as is one the registry does not hold.
  */
-export function titleTextSql(typeColumn: SQLWrapper, properties: SQLWrapper): SQL {
+export function titleTextSql(
+  typeColumn: SQLWrapper,
+  properties: SQLWrapper,
+): SQL {
   const text = (field: string): SQL => {
     const path = `$.${JSON.stringify(field)}`;
     return sql`CASE WHEN json_type(${properties}, ${path}) = 'text' THEN json_extract(${properties}, ${path}) END`;

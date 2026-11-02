@@ -1,7 +1,7 @@
 /**
  * Items by title, many names to a call.
  *
- *   POST /items/titles — names in, the items outside the bin titled by each.
+ *   POST /items/titles: names in, the items outside the bin titled by each.
  *
  * A device resolving the links of a folder asks here instead of listing the
  * whole instance once per name: the answer to a name is one lookup of the
@@ -16,7 +16,11 @@ import { getTypeFilter, readsSomeType } from "../middleware/auth.js";
 import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
-import { foldName, MAX_NAME_UNITS, trimName } from "../storage/sqlite/title-keys.js";
+import {
+  foldName,
+  MAX_NAME_UNITS,
+  trimName,
+} from "../storage/sqlite/title-keys.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 /** The names one call takes. */
@@ -45,7 +49,9 @@ const TitledItemSchema = z
       ),
     has_blob: z
       .boolean()
-      .describe("`true` if the item's `blob_ref` property holds a blob digest."),
+      .describe(
+        "`true` if the item's `blob_ref` property holds a blob digest.",
+      ),
   })
   .openapi("TitledItem");
 
@@ -76,7 +82,7 @@ const titlesRoute = createRoute({
   tags: ["Items"],
   summary: "Find items by title",
   description:
-    "Finds the active and archived items titled by each of up to 200 names. A name matches a title that is equal to it once both have their surrounding white space removed and are put in Unicode NFC and lowercased one character at a time, so `Straße` and `STRASSE` differ and `É` matches `e` plus a combining acute accent. An item's title is the property its type's `display_hints.title_field` names, or `title`. `system.*` items and items you can't read are left out.",
+    "Finds the active and archived items titled by each of up to 200 names. A name matches a title that is equal to it once both have their surrounding white space removed and are put in Unicode NFC and lowercased one character at a time, so a capital letter with an accent matches the small letter in either Unicode form. An item's title is the property its type's `display_hints.title_field` names, or `title`. `system.*` items and items you can't read are left out.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
