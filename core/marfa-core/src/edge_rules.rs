@@ -17,8 +17,9 @@
 //! refuse a write the server takes, while leaving it out can only let
 //! through a write the server may refuse, which is kept with its verdict.
 //!
-//! Each refusal carries the `details` the server's answer to the same write
-//! carries, so an app reads one refusal one way whichever refused it.
+//! Each `edge_constraint_violation` carries the `details` the server's answer
+//! to the same write carries, so an app reads it one way whichever refused it.
+//! An `edge_cycle` carries none.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;

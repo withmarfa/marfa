@@ -1351,10 +1351,10 @@ pub enum MarfaError {
     Validation {
         code: String,
         message: String,
-        /// The server's `error.details` for the same refusal, where the copy
-        /// refused a write the server would and the server names more than
-        /// its code: an edge refusal's `constraint`, for one. Shaped as a
-        /// refused write's `answer` holds them, under `error.details`.
+        /// The server's `error.details` for the same refusal, on each
+        /// `edge_constraint_violation` the copy gives itself, such as its
+        /// `constraint`; `nil` on every other refusal. Shaped as a refused
+        /// write's `answer` holds them, under `error.details`.
         details: Option<JsonValue>,
     },
     UnknownType {
