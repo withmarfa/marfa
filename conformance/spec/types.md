@@ -1612,7 +1612,7 @@ When the `display_hints.icon` a caller submits to `PUT /types/{id}` equals the o
 
 ### `types/hint-write-back`
 
-When the definition stored for a type sets none of a display hint (`title_field`, `body_field` or `icon`) and the value a caller submits for it to `PUT /types/{id}` equals the value `GET /types/{id}` answers for that hint, the server MUST store no value for that hint.
+When the definition stored for a type sets none of a display hint (`title_field`, `body_field`, `name_from_body` or `icon`) and the value a caller submits for it to `PUT /types/{id}` equals the value `GET /types/{id}` answers for that hint, the server MUST store no value for that hint.
 
 **Reason:** a caller that reads a subtype and writes the answer back sends every hint the subtype takes from an ancestor, and the owner's icon an ancestor shows, as if the subtype had chosen it; storing them would stop the subtype following its ancestor (`types/read-display-hint`), and clearing the owner's icon would leave the subtype showing it. A subtype that sets a hint to a value other than the one it reads as keeps it.
 

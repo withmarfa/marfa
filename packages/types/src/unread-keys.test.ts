@@ -267,6 +267,7 @@ describe("unreadKeys", () => {
     expect(sorted(DISPLAY_HINTS_KEYS)).toEqual([
       "body_field",
       "icon",
+      "name_from_body",
       "title_field",
     ]);
     expect(sorted(VERSION_POLICY_KEYS)).toEqual([

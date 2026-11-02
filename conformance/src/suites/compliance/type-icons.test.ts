@@ -296,7 +296,11 @@ describe("the owner's icon for a type", () => {
 
   it("does not freeze the hints a subtype inherits when its read is written back", async () => {
     const parent = await register({
-      display_hints: { title_field: "heading", icon: "lucide:folder" },
+      display_hints: {
+        title_field: "heading",
+        icon: "lucide:folder",
+        name_from_body: false,
+      },
     });
     const child = `${parent}.kid`;
     const made = await client.registerType({
@@ -312,6 +316,7 @@ describe("the owner's icon for a type", () => {
     expect(read.data.display_hints).toEqual({
       title_field: "heading",
       icon: "lucide:package",
+      name_from_body: false,
     });
     const written = await client.replaceType(child, read.data);
     expect(written.ok, JSON.stringify(written.error)).toBe(true);
@@ -320,13 +325,18 @@ describe("the owner's icon for a type", () => {
     const parentRead = await client.getType(parent);
     const changed = await client.replaceType(parent, {
       ...parentRead.data,
-      display_hints: { title_field: "text", icon: "lucide:folder" },
+      display_hints: {
+        title_field: "text",
+        icon: "lucide:folder",
+        name_from_body: true,
+      },
     });
     expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
     const after = await client.getType(child);
     expect(after.data.display_hints).toEqual({
       title_field: "text",
       icon: "lucide:folder",
+      name_from_body: true,
     });
   });
 
