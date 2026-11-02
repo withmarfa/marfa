@@ -141,7 +141,7 @@ fn deleted_after(
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains(took), "{text}");
     std::fs::write(&path, text.replace(took, line)).unwrap();
-    server.on("/items", vec![certified(lookup)]);
+    server.on("/items/titles", vec![lookup]);
     folder.scan().unwrap();
     answered(&folder);
     assert!(
