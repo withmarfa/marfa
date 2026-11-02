@@ -49,8 +49,8 @@ pub fn copy_changed(error: &CoreError) -> bool {
     matches!(error, CoreError::StreamIncomplete { reason } if reason == "local_copy_changed")
 }
 
-/// Whether a failed read of an attachment ends the pass instead of holding
-/// that one attachment: what ends a drain, a stopped run and a refused
+/// Whether a failed read of an edge's other end ends the pass instead of
+/// holding that one end: what ends a drain, a stopped run and a refused
 /// credential are no one item's.
 fn ends_the_pass(error: &CoreError) -> bool {
     crate::drain::ends_the_drain(error)
@@ -2218,8 +2218,8 @@ impl Folder {
 
     /// Pins the other end of every edge a file here writes, so its line has a
     /// title to show, and every attachment of a document, so an embed can name
-    /// it; the record of them holds each such pin. Answers each attachment
-    /// the server refused to show for a reason other than that it is gone or
+    /// it; the record of them holds each such pin. Answers each end the
+    /// server refused to show for a reason other than that it is gone or
     /// hidden, with why: it is neither pinned nor recorded, so the next pull
     /// asks again. What ends a drain ends the pull instead.
     fn hold_edge_ends(

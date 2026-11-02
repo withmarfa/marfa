@@ -1288,7 +1288,10 @@ export interface StatusReport {
  *  (`folders/walk-directory-gone`). A pull names an item whose file it did not write as
  *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in
  *  (`folders/pull-flagged-items`), and one it could not let go to another folder as
- *  `retained` (`folders/retained-source-reported`). */
+ *  `retained` (`folders/retained-source-reported`). A pull names a document as
+ *  `attachment` where its attached file is written in another directory
+ *  (`folders/attachment-placed-elsewhere-reported`) or could not be read
+ *  (`folders/attachment-unread-reported`). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -1306,7 +1309,8 @@ export interface FlaggedFile {
     | "outside"
     | "unsuited"
     | "absent"
-    | "retained";
+    | "retained"
+    | "attachment";
   reason: string;
   /** The item whose file a pull did not write (`folders/pull-flagged-items`), or could
    *  not let go to another folder (`folders/retained-source-reported`). */
