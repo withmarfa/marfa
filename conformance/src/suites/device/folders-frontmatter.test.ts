@@ -20,7 +20,6 @@ import {
   edgeTypeCatalog,
   copyHeadRead,
   copyItemEvent,
-  itemsPage,
   copyLiveReplay,
   refusal,
   copyReplay,

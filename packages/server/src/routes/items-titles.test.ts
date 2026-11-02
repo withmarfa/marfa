@@ -131,7 +131,7 @@ describe("POST /items/titles", () => {
       [idTwo],
       [],
     ]);
-    expect(results.every((result) => result.more === false)).toBe(true);
+    expect(results.every((result) => !result.more)).toBe(true);
   });
 
   it("answers an empty list with an empty list", async () => {
@@ -267,12 +267,11 @@ describe("POST /items/titles", () => {
 
   it("leaves out a system item whatever it is titled", async () => {
     const name = unique("system");
-    const res = await request(ctx.app, "POST", "/items", {
+    await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "system.connection", properties: { title: name } },
     });
     // Whether the write is admitted or refused, a title lookup does not find it.
-    void res;
     expect(await idsFor(name)).toEqual([]);
   });
 
