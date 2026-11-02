@@ -1359,8 +1359,8 @@ describe("the watch run by a service manager", () => {
 
   // The scheduler gives utility quality of service a priority of 20 and the
   // default class 31, which `ps -M` lists for each thread. The command's own
-  // threads beside the watch, four as the binary is built now with the one
-  // that looks for a new build, stay at the default.
+  // threads beside the watch, three as the binary is built now, stay at the
+  // default.
   //
   // GitHub's hosted Macs clamp every process at utility, launchd's own jobs
   // included, so every thread reads 20 and a thread that is not set requests
@@ -1405,7 +1405,7 @@ describe("the watch run by a service manager", () => {
         ).toBeGreaterThanOrEqual(8);
         expect(
           found.filter((priority) => priority === "31").length,
-        ).toBeLessThanOrEqual(4);
+        ).toBeLessThanOrEqual(3);
         expect(
           found.filter((priority) => priority !== "31" && priority !== "20"),
         ).toEqual([]);

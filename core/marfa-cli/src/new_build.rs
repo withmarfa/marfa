@@ -69,6 +69,7 @@ pub fn look_out(ends: bool, json: bool) {
     let every = check_every();
     let stop = interrupt::stop();
     let _ = interrupt::spawn_apart("new-build", move || {
+        let _lowered = marfa_core::priority::lowered();
         loop {
             let next = Instant::now() + every;
             while Instant::now() < next {
