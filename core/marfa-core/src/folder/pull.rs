@@ -375,11 +375,11 @@ impl Folder {
         let (mut members, query_members, items, completeness) = match &narrow {
             Some(narrow) => {
                 let conn = self.core.conn()?;
-                let reached: Vec<String> = narrow.reached.iter().cloned().collect();
+                let read: Vec<String> = narrow.read.iter().cloned().collect();
                 (
                     narrow.members.union(&narrow.shown).cloned().collect(),
                     narrow.members.clone(),
-                    crate::store::items_by_ids(&conn, &reached)?,
+                    crate::store::items_by_ids(&conn, &read)?,
                     crate::store::read_completeness(&conn)?,
                 )
             }
@@ -425,7 +425,7 @@ impl Folder {
         let outside: Vec<String> = bound_items
             .iter()
             .filter(|id| !members.contains(*id))
-            .filter(|id| narrow.as_ref().is_none_or(|narrow| narrow.reached.contains(*id)))
+            .filter(|id| narrow.as_ref().is_none_or(|narrow| narrow.read.contains(*id)))
             .cloned()
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;

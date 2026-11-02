@@ -86,8 +86,9 @@ pub(super) struct Pick {
     bound: HashMap<String, state::Bound>,
     /// The items a change reaches; `None` where every file renders.
     reached: Option<HashSet<String>>,
-    /// Whether the pull reads only the items in `reached`.
-    narrow: bool,
+    /// Where the pull reads only what a change reaches, the items it reads:
+    /// those in `reached` and those attached to them.
+    read: HashSet<String>,
     /// Every file renders, and one the choice would have left is noted
     /// where it is rewritten.
     checking: bool,
@@ -100,7 +101,7 @@ pub(super) struct Pick {
 pub(super) struct Narrow {
     /// The items it reads: every other item's file is as the last pull
     /// left it.
-    pub(super) reached: HashSet<String>,
+    pub(super) read: HashSet<String>,
     /// The items the query holds.
     pub(super) members: HashSet<String>,
     /// The items the query does not hold whose file the last pulls kept
@@ -124,7 +125,7 @@ impl Selection {
                 .map(|bound| (bound.path.clone(), bound))
                 .collect(),
             reached: None,
-            narrow: false,
+            read: HashSet::new(),
             checking: false,
             settled_before: HashSet::new(),
             settled: RefCell::default(),
@@ -280,32 +281,34 @@ impl Selection {
                     .map(|bound| bound.item_id.clone()),
             );
         }
-        // Where an attachment's file goes rests on every document it is
-        // attached to, so a pull reads them all together.
-        if !attached_together(folder, &mut reached)? {
-            return Ok(None);
-        }
         #[cfg(debug_assertions)]
         if crate::fault::fails(|| "folder-selection-narrow") {
             reached.clear();
         }
+        // Where an attachment's file goes rests on every document it is
+        // attached to, so a pull reads them all together, and renders those
+        // a change did not reach only where their file is not as it renders.
+        let mut read = reached.clone();
+        if !attached_together(folder, &mut read)? {
+            return Ok(None);
+        }
         let unread = last
             .settled
             .iter()
-            .filter(|id| !reached.contains(*id))
+            .filter(|id| !read.contains(*id))
             .count();
         let shown = last
             .shown
             .iter()
-            .filter(|id| !reached.contains(*id))
+            .filter(|id| !read.contains(*id))
             .cloned()
             .collect();
         self.owed.extend(reached.iter().cloned());
-        pick.reached = Some(reached.clone());
-        pick.narrow = true;
+        pick.reached = Some(reached);
+        pick.read = read.clone();
         pick.settled_before = last.settled.clone();
         Ok(Some(Narrow {
-            reached,
+            read,
             members: last.members.clone(),
             shown,
             unread,
@@ -443,11 +446,7 @@ impl Pick {
 
     /// Whether the pull reads only what a change reaches, and not this item.
     pub(super) fn leaves(&self, item_id: &str) -> bool {
-        self.narrow
-            && self
-                .reached
-                .as_ref()
-                .is_some_and(|reached| !reached.contains(item_id))
+        !self.read.is_empty() && !self.read.contains(item_id)
     }
 
     /// Whether the pull leaves the item's file unrendered.
