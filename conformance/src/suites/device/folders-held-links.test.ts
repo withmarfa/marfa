@@ -363,13 +363,14 @@ describe("a held file the person deletes", () => {
       .map((row) => String(row.item_id));
   }
 
-  /** A pull that writes no file, and a sweep once the grace has run out. */
+  /** A pull that leaves Ticket.md deleted, and a sweep once the grace has
+   *  run out. */
   async function sweptUnwritten() {
     const pulled = await folder!.folder.pull();
     expect(pulled.ok).toBe(true);
     if (!pulled.ok) return;
     expect(
-      pulled.value.revived + pulled.value.written + pulled.value.rewritten,
+      pulled.value.revived,
       "the person's delete was written back as a change made elsewhere",
     ).toBe(0);
     expect(existsSync(path())).toBe(false);
@@ -393,6 +394,8 @@ describe("a held file the person deletes", () => {
     const caught = await folder!.folder.device().catchUp();
     expect(caught.ok && caught.value.applied).toBe(1);
     await sweptUnwritten();
+    // The witness that the pull took the new item in.
+    expect(existsSync(join(folder!.dir, "Missing.md"))).toBe(true);
     expect(await deletesQueued()).toEqual([ticket.id]);
   });
 
