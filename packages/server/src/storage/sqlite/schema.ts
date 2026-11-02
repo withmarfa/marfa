@@ -276,7 +276,8 @@ export const item_links = sqliteTable(
 );
 
 // What `POST /items/titles` finds an item by: its title as `foldName` writes
-// it. An item has a row while its type's title property holds text; the
+// it. An item outside `system.*` has a row while its type's title property
+// holds text of at most `MAX_NAME_UNITS` UTF-16 code units once trimmed; the
 // rows are kept in every state, and the lookup reads the state. Kept in
 // step by `syncTitleKey` with every write that can move a title.
 export const item_title_keys = sqliteTable(

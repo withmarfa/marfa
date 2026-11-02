@@ -1193,7 +1193,9 @@ export class SqliteItemStore implements ItemStore {
         .from(item_title_keys)
         .innerJoin(items, eq(items.id, item_title_keys.item_id))
         .where(and(eq(item_title_keys.title_key, key), ...scope))
-        .orderBy(asc(items.id))
+        // By the key index's own column, so a common title stops at the
+        // limit instead of sorting every item that shares it.
+        .orderBy(asc(item_title_keys.item_id))
         .limit(perKey + 1)
         .all();
       out.set(key, {
