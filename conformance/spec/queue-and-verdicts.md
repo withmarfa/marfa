@@ -2540,7 +2540,7 @@ When the create a waiting move names as its new end is answered with another row
 
 If an edge edit moves both ends, or moves an end of a type whose end that stays may hold more than one edge of it where the held catalog names that type, then a device MUST refuse it in the `validation` class carrying the server's code `validation_error`, queueing nothing.
 
-**Reason:** the server refuses either body `400 validation_error` whatever its rows hold (`edges/move-many` and `edges/move-both-ends`). A refusal that turns on rows the copy holds is the copy's to give (`queue-and-verdicts/edge-endpoint-refused` to `queue-and-verdicts/edge-judged-held`); a second edge at the new end, or a new end the server does not hold, is left to the server.
+**Reason:** the server refuses either body `400 validation_error` whatever its rows hold (`edges/move-many` and `edges/move-both-ends`). A refusal that turns on rows the copy holds is the copy's to give (`queue-and-verdicts/edge-endpoint-refused` to `queue-and-verdicts/edge-judged-held`); a new end the copy does not hold is left to the server.
 
 **Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`.
 
