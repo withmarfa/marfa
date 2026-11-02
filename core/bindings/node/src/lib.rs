@@ -2907,6 +2907,21 @@ impl MarfaCore {
             .map_err(|error| failure(env, error))
     }
 
+    /// Throws the error `updateEdge` would throw for a move of edge `id`'s
+    /// end now, whatever version the edit would carry, and queues nothing. A
+    /// move onto the end the edge holds already changes nothing and returns.
+    /// Returning is not the server's verdict, which a queued move still meets.
+    #[napi]
+    pub fn check_edge_move(&self, env: Env, id: String, moves: EdgeMove) -> Result<()> {
+        let end = match moves.end {
+            EdgeEnd::Source => marfa_core::End::Source,
+            EdgeEnd::Target => marfa_core::End::Target,
+        };
+        self.inner
+            .check_edge_move(&id, end, &moves.to)
+            .map_err(|error| failure(env, error))
+    }
+
     /// Links two items. An edge is its own write.
     #[napi]
     pub fn create_edge(&self, env: Env, draft: EdgeDraft) -> Result<QueuedWrite> {

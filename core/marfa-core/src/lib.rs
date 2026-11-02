@@ -2103,12 +2103,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_whole(&conn)?;
-        let Some(held) = store::edge_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "edge_not_found".into(),
-                message: format!("{id} is not an edge this copy holds"),
-            });
-        };
+        let held = held_edge(&conn, id)?;
         let Some(base) = edit.base_version else {
             return Err(CoreError::Invalid(format!(
                 "an update to edge {id} carries no version; name the version the edit was based on"
@@ -2120,17 +2115,7 @@ impl Core {
                 held.version
             )));
         }
-        // The server judges a named end against the edge it holds, which an
-        // earlier waiting move may not leave where the copy shows it, so an
-        // end the copy holds already is not sent.
-        let mut edit = edit.clone();
-        if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
-            edit.source_id = None;
-        }
-        if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
-            edit.target_id = None;
-        }
-        let edit = &edit;
+        let edit = &ends_moved(&held, edit);
         refuse_edge_move(&conn, &held, edit)?;
         integers::refuse_in_value(&edit.properties)?;
         if edit.is_empty() {
@@ -2176,6 +2161,29 @@ impl Core {
         )?;
         tx.commit()?;
         Ok(Some(queued))
+    }
+
+    /// Answers the refusal `update_edge` would give a move of edge `id`'s
+    /// `end` to item `to` now, without queueing anything and whatever
+    /// version the edit would carry. A move onto the end the edge holds
+    /// already changes nothing and is refused nothing. `Ok` is not the
+    /// server's verdict, which the queued write still meets.
+    pub fn check_edge_move(&self, id: &str, end: End, to: &str) -> Result<()> {
+        let conn = self.conn()?;
+        store::refuse_unless_whole(&conn)?;
+        let held = held_edge(&conn, id)?;
+        let to = Some(to.to_string());
+        let edit = match end {
+            End::Source => EdgeEdit {
+                source_id: to,
+                ..EdgeEdit::default()
+            },
+            End::Target => EdgeEdit {
+                target_id: to,
+                ..EdgeEdit::default()
+            },
+        };
+        refuse_edge_move(&conn, &held, &ends_moved(&held, &edit))
     }
 
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
@@ -3636,22 +3644,22 @@ fn queue_create(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let source_id = target.as_ref().map_or(id.as_str(), |held| held.id.as_str());
-    for (edge_type, targets) in &draft.edges {
-        for target_id in targets {
-            edge_rules::refuse_unwritable_edge(
-                tx,
-                &edge_rules::Proposed {
-                    edge_type,
-                    source: edge_rules::Source::Made {
-                        id: source_id,
-                        r#type: &draft.r#type,
-                    },
-                    target_id,
-                    replacing: None,
+    let inline: Vec<_> = draft
+        .edges
+        .iter()
+        .flat_map(|(edge_type, targets)| {
+            targets.iter().map(|target_id| edge_rules::Proposed {
+                edge_type,
+                source: edge_rules::Source::Made {
+                    id: source_id,
+                    r#type: &draft.r#type,
                 },
-            )?;
-        }
-    }
+                target_id,
+                replacing: None,
+            })
+        })
+        .collect();
+    edge_rules::refuse_unwritable_edges(tx, &inline)?;
     let payload = draft.payload(&id)?;
     let mut row = draft.wire(&id);
     row.tier = shown_tier.map(|tier| tier.as_str().into());
@@ -4008,6 +4016,21 @@ fn refuse_self_loop(source_id: &str, target_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The edit with each end it names that the edge already holds left out.
+/// The server judges a named end against the edge it holds, which an
+/// earlier waiting move may not leave where the copy shows it, so an end
+/// the copy holds already is not sent.
+fn ends_moved(held: &model::Edge, edit: &EdgeEdit) -> EdgeEdit {
+    let mut edit = edit.clone();
+    if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
+        edit.source_id = None;
+    }
+    if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
+        edit.target_id = None;
+    }
+    edit
+}
+
 /// Refuses what the server refuses of every such move whatever the rows
 /// hold, judged against the edge as the copy shows it. The type is judged
 /// from the catalog the copy holds; one it does not hold is left to the
@@ -4042,14 +4065,14 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         Err(error) => return Err(error),
     }
     refuse_self_loop(source_id, target_id)?;
-    edge_rules::refuse_unwritable_edge(
+    edge_rules::refuse_unwritable_edges(
         conn,
-        &edge_rules::Proposed {
+        &[edge_rules::Proposed {
             edge_type: &held.edge_type,
             source: edge_rules::Source::Held(source_id),
             target_id,
             replacing: Some(&held.id),
-        },
+        }],
     )
 }
 
@@ -4074,14 +4097,14 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
             edge_type = draft.edge_type,
         )));
     }
-    edge_rules::refuse_unwritable_edge(
+    edge_rules::refuse_unwritable_edges(
         conn,
-        &edge_rules::Proposed {
+        &[edge_rules::Proposed {
             edge_type: &draft.edge_type,
             source: edge_rules::Source::Held(&draft.source_id),
             target_id: &draft.target_id,
-            replacing: None,
-        },
+            replacing: draft.id.as_deref(),
+        }],
     )
 }
 
@@ -7202,7 +7225,7 @@ mod tests {
         }
         let queued = core
             .create_edge(&EdgeDraft {
-                source_id: "second".into(),
+                source_id: "root".into(),
                 target_id: "first".into(),
                 edge_type: "in-thread".into(),
                 ..Default::default()

@@ -2780,6 +2780,18 @@ impl Core {
         Ok(self.inner.check_edge(&draft)?)
     }
 
+    /// Throws the error `update_edge` would throw for a move of edge `id`'s
+    /// end now, whatever version the edit would carry, and queues nothing. A
+    /// move onto the end the edge holds already changes nothing and returns.
+    /// Returning is not the server's verdict, which a queued move still meets.
+    pub fn check_edge_move(&self, id: String, moves: EdgeMove) -> Result<(), MarfaError> {
+        let end = match moves.end {
+            EdgeEnd::Source => marfa_core::End::Source,
+            EdgeEnd::Target => marfa_core::End::Target,
+        };
+        Ok(self.inner.check_edge_move(&id, end, &moves.to)?)
+    }
+
     /// Links two items. An edge is its own write.
     pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::EdgeDraft {
@@ -4861,7 +4873,12 @@ mod tests {
             .item_id
             .unwrap()
         };
-        let (first, second, child) = (note("first"), note("second"), note("child"));
+        let (first, second, third, child) = (
+            note("first"),
+            note("second"),
+            note("third"),
+            note("child"),
+        );
         let edge = core
             .create_edge(EdgeDraft {
                 source_id: first.clone(),
@@ -4911,6 +4928,21 @@ mod tests {
                 Err(MarfaError::Validation { code: refused, .. }) => assert_eq!(refused, code),
                 other => panic!("a move the server refuses was answered {other:?}"),
             }
+            let moves = EdgeMove { end, to: to.into() };
+            match core.check_edge_move(edge.clone(), moves) {
+                Err(MarfaError::Validation { code: refused, .. }) => assert_eq!(refused, code),
+                other => panic!("the check of a move the server refuses was answered {other:?}"),
+            }
+        }
+        for to in [&second, &third] {
+            core.check_edge_move(
+                edge.clone(),
+                EdgeMove {
+                    end: EdgeEnd::Source,
+                    to: to.clone(),
+                },
+            )
+            .expect("the check refused a move the update takes");
         }
         assert_eq!(core.queue().unwrap().len(), queued);
     }
