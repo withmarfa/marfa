@@ -2576,6 +2576,38 @@ If an edge write would leave an end at a row the copy holds in the bin, then a d
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`.
 
+### `queue-and-verdicts/edge-duplicate-refused`
+
+If an edge write would leave a second edge of one type between one source and one target, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation`, queueing nothing.
+
+**Reason:** the server refuses a second edge of a triple (`edges/create-duplicate`). An edge create that names the id of the edge the copy holds with that triple is not a second edge, since the server acknowledges it by its id (`edges/id-repeat`).
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally a duplicate, and an edge onto each end a cardinality holds to one, with the server's code`, `› counts an edge waiting to be sent, and frees the end a waiting delete leaves, as the server does once they reach it`.
+
+### `queue-and-verdicts/edge-cardinality-refused`
+
+If an edge write would leave a second edge of a type at an end the held catalog holds that type to one edge at, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation`, queueing nothing.
+
+**Reason:** the server holds the source of a `one-to-one` or `many-to-one` type to one outbound edge and the target of a `one-to-one` or `one-to-many` type to one inbound edge (`edges/card-source-held`, `edges/card-target-held`, `edges/card-inline` and `edges/move-cardinality`). A move does not count the edge it moves. An item create does not count the edges of a type it names that the row it lands on holds, since the server replaces them.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally a duplicate, and an edge onto each end a cardinality holds to one, with the server's code`, `› counts an edge waiting to be sent, and frees the end a waiting delete leaves, as the server does once they reach it`, `› refuses a move onto a full end, checked or made, and finds nothing against a move onto the edge's own end`.
+
+### `queue-and-verdicts/edge-counted-as-sent`
+
+A device MUST count an edge whose create, move or delete waits to be sent as the server will hold it once the write reaches it, and MUST NOT count an edge whose create the server refused or the device gave up on, when it judges a duplicate, cardinality or a cycle.
+
+**Reason:** the writes ahead of an edge write reach the server first, so a waiting delete frees the end it leaves. An edge whose create the server refused stays shown for the person to take back, but the server does not hold it, and counting it would refuse a write the server takes.
+
+**Tests:** `device/edge-checks-live.test.ts › counts an edge waiting to be sent, and frees the end a waiting delete leaves, as the server does once they reach it`, `› does not count an edge whose create the server refused`.
+
+### `queue-and-verdicts/edge-refusal-order`
+
+When an edge write breaks more than one of the rules in this section, a device MUST give the refusal the server gives first: an end in the bin, an end's type or nesting, then a duplicate, then cardinality, then a cycle.
+
+**Reason:** the server judges an edge in that order (`edges/create-order`), so a device that checks first gives the same answer the write would meet.
+
+**Tests:** `device/edge-checks-live.test.ts › answers a duplicate before a full end, and a full end before a cycle, as the server does`.
+
 ### `queue-and-verdicts/edge-cycle-refused`
 
 If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle`, queueing nothing.
@@ -2600,8 +2632,8 @@ If an item update moves a row to a type that an edge the copy holds at the row w
 
 ### `queue-and-verdicts/edge-check`
 
-When a caller asks whether an edge can be written, a device MUST answer with the refusal an edge create of it would give, or that it finds none, without queuing anything.
+When a caller asks whether an edge can be written, or whether one end of an edge it holds can be moved to an item, a device MUST answer with the refusal the edge create or the move would give, whatever version the move would carry, or that it finds none, without queuing anything.
 
-**Reason:** an app can disable a control before the person tries it, and learns of a refusal without a write to undo.
+**Reason:** an app can disable a control before the person tries it, such as a drop target that would give an item a second parent, and learns of a refusal without a write to undo. A move onto the end the edge holds already changes nothing, so the device finds nothing against it.
 
-**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`.
+**Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`, `› refuses a move onto a full end, checked or made, and finds nothing against a move onto the edge's own end`.

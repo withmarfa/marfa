@@ -729,6 +729,15 @@ export interface DeviceUnderTest {
    */
   checkEdge(edge: EdgeDraft): Promise<Outcome<{ refused: false }>>;
   /**
+   * Judge a move of one of an edge's ends as `updateEdge` would judge it,
+   * whatever version the edit would carry, queueing nothing. It answers `ok`
+   * where the copy finds nothing to refuse.
+   */
+  checkEdgeMove(
+    id: string,
+    to: { source_id: string } | { target_id: string },
+  ): Promise<Outcome<{ refused: false }>>;
+  /**
    * Change an edge's properties, or move one of its ends, in one write. An
    * edit that names no property and no new end queues no write and answers
    * `null`.

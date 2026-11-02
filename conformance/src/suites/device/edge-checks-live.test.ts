@@ -198,6 +198,68 @@ const CONSTRAINT: [string, string] = [
   "edge_constraint_violation",
 ];
 
+/**
+ * The words that tell a device's duplicate from its full end, which share
+ * the class and the code. The server tells them apart by
+ * `details.constraint`, which a device refusal does not carry.
+ */
+const DUPLICATE = "already exists between these items";
+const SOURCE_FULL = "source already has";
+const TARGET_FULL = "target already has";
+
+/** A device refusal as `edge_constraint_violation`, saying `words`. */
+function refusedWith(
+  outcome: Outcome<unknown>,
+  words: string,
+  what: string,
+): void {
+  refusedAs(outcome, CONSTRAINT, what);
+  if (outcome.ok) return;
+  const envelope = JSON.parse(outcome.refusal.raw) as {
+    error: { message: string };
+  };
+  expect(envelope.error.message, what).toContain(words);
+}
+
+/** The server's code and `details.constraint` for a refused write. */
+function servedConstraint(
+  answer: { ok: boolean; error?: { error: { code: string; details?: Record<string, unknown> } } },
+  what: string,
+): [string | undefined, unknown] {
+  expect(answer.ok, `the server took ${what}`).toBe(false);
+  return [answer.error?.error.code, answer.error?.error.details?.constraint];
+}
+
+/**
+ * The check and the create refuse `draft` saying `words`, the create queues
+ * nothing, and the server refuses the same edge for `constraint`.
+ */
+async function constraintAlike(
+  device: CliDevice,
+  draft: EdgeDraft,
+  constraint: "duplicate" | "cardinality",
+  words: string,
+  what: string,
+): Promise<void> {
+  const before = value(await device.queue()).length;
+  refusedWith(await device.checkEdge(draft), words, `${what}, checked`);
+  refusedWith(await device.createEdge(draft), words, what);
+  expect(
+    value(await device.queue()).length,
+    `${what} was queued all the same`,
+  ).toBe(before);
+  const served = await client.createEdge({
+    source_id: draft.source,
+    target_id: draft.target,
+    edge_type: draft.type,
+  });
+  if (served.ok) trackEdge(ctx, served.data.edge.id);
+  expect(
+    servedConstraint(served, what),
+    `the server refused ${what} otherwise`,
+  ).toEqual([CONSTRAINT[1], constraint]);
+}
+
 it("refuses locally each edge the server refuses for its ends, with the server's code", async () => {
   const aboutPeople = await edgeType(
     "checks-people",
@@ -446,6 +508,11 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     ],
   ] as const) {
     refusedAs(
+      await device.checkEdgeMove(id, ends),
+      [...refusal],
+      `${what}, checked`,
+    );
+    refusedAs(
       await device.updateEdge(id, { properties: {}, version, ...ends }),
       [...refusal],
       what,
@@ -457,11 +524,250 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     before,
   );
   // The witness: the same edge moves onto a note.
+  expect(
+    value(await device.checkEdgeMove(link.id, { target_id: third })),
+  ).toEqual({ refused: false });
   value(
     await device.updateEdge(link.id, {
       properties: {},
       version: link.version,
       target_id: third,
     }),
+  );
+});
+
+it("refuses locally a duplicate, and an edge onto each end a cardinality holds to one, with the server's code", async () => {
+  const a = await note("a");
+  const b = await note("b");
+  const c = await note("c");
+  const d = await note("d");
+  await edge(a, b, "references");
+  await edge(a, b, "supersedes");
+  await edge(a, b, "parent-of");
+  await edge(b, a, "in-thread");
+  const device = await hydrated("full-ends", ["core.note"]);
+
+  await constraintAlike(
+    device,
+    { source: a, target: b, type: "references" },
+    "duplicate",
+    DUPLICATE,
+    "a second references edge from a to b",
+  );
+  for (const [draft, words, what] of [
+    [{ source: a, target: c, type: "supersedes" }, SOURCE_FULL, "a second one-to-one edge from a"],
+    [{ source: c, target: b, type: "supersedes" }, TARGET_FULL, "a second one-to-one edge to b"],
+    [{ source: c, target: b, type: "parent-of" }, TARGET_FULL, "a second parent of b"],
+    [{ source: b, target: c, type: "in-thread" }, SOURCE_FULL, "b in a second thread"],
+  ] satisfies Array<[EdgeDraft, string, string]>) {
+    await constraintAlike(device, draft, "cardinality", words, what);
+  }
+
+  // The witnesses: the end each cardinality leaves open takes another edge.
+  await queuedAfterCheck(
+    device,
+    { source: a, target: c, type: "parent-of" },
+    "a second child of a",
+  );
+  await queuedAfterCheck(
+    device,
+    { source: c, target: a, type: "in-thread" },
+    "a second message in a's thread",
+  );
+  await queuedAfterCheck(
+    device,
+    { source: c, target: d, type: "supersedes" },
+    "a one-to-one edge between two free ends",
+  );
+  const drained = value(await device.drain());
+  expect(
+    drained.verdicts.map((row) => row.verdict),
+    "the server refused an edge the copy found nothing against",
+  ).toEqual(["accepted", "accepted", "accepted"]);
+});
+
+it("counts an edge waiting to be sent, and frees the end a waiting delete leaves, as the server does once they reach it", async () => {
+  const a = await note("a");
+  const b = await note("b");
+  const c = await note("c");
+  const d = await note("d");
+  const e = await note("e");
+  const held = await edge(c, d, "supersedes");
+  const device = await hydrated("queued", ["core.note"]);
+  value(await device.createEdge({ source: a, target: b, type: "supersedes" }));
+  const waiting = [
+    [{ source: a, target: b, type: "supersedes" }, "duplicate", DUPLICATE, "the triple of an edge waiting to be sent"],
+    [{ source: a, target: e, type: "supersedes" }, "cardinality", SOURCE_FULL, "a second edge from a, whose first waits to be sent"],
+    [{ source: e, target: b, type: "supersedes" }, "cardinality", TARGET_FULL, "a second edge to b, whose first waits to be sent"],
+  ] satisfies Array<[EdgeDraft, "duplicate" | "cardinality", string, string]>;
+  const before = value(await device.queue()).length;
+  for (const [draft, , words, what] of waiting) {
+    refusedWith(await device.checkEdge(draft), words, `${what}, checked`);
+    refusedWith(await device.createEdge(draft), words, what);
+  }
+  refusedWith(
+    await device.createEdge({ source: c, target: e, type: "supersedes" }),
+    SOURCE_FULL,
+    "a second edge from c while its held edge stands",
+  );
+  expect(value(await device.queue()).length, "a refused edge was queued").toBe(
+    before,
+  );
+
+  value(await device.deleteEdge(held.id));
+  await queuedAfterCheck(
+    device,
+    { source: c, target: e, type: "supersedes" },
+    "an edge from c once the delete of its held edge waits to be sent",
+  );
+  const drained = value(await device.drain());
+  expect(
+    drained.verdicts.map((row) => [row.kind, row.verdict]),
+    "the server refused a write the copy counted as it would",
+  ).toEqual([
+    ["create_edge", "accepted"],
+    ["delete_edge", "accepted"],
+    ["create_edge", "accepted"],
+  ]);
+  // The server now holds what the copy counted, and refuses the same edges.
+  for (const [draft, constraint, , what] of waiting) {
+    const served = await client.createEdge({
+      source_id: draft.source,
+      target_id: draft.target,
+      edge_type: draft.type,
+    });
+    if (served.ok) trackEdge(ctx, served.data.edge.id);
+    expect(
+      servedConstraint(served, what),
+      `the server refused ${what} otherwise`,
+    ).toEqual([CONSTRAINT[1], constraint]);
+  }
+});
+
+it("does not count an edge whose create the server refused", async () => {
+  const a = await note("a");
+  const b = await note("b");
+  const c = await note("c");
+  const e = await note("e");
+  const device = await hydrated("refused", ["core.note"]);
+  const queued = value(
+    await device.createEdge({ source: a, target: b, type: "supersedes" }),
+  );
+  // The server takes another edge from a first, so it refuses the queued one.
+  await edge(a, c, "supersedes");
+  const drained = value(await device.drain());
+  expect(
+    drained.verdicts.map((row) => [row.edge_id, row.verdict, row.reason]),
+  ).toEqual([[queued.edge_id, "refused", "edge_constraint_violation"]]);
+  // The witness: the refused edge is still shown, for the person to take back.
+  expect(
+    value(await device.edgesTo(b)).map((shown) => shown.id),
+    "the copy no longer shows the refused edge, so this proves nothing",
+  ).toEqual([queued.edge_id]);
+
+  await queuedAfterCheck(
+    device,
+    { source: e, target: b, type: "supersedes" },
+    "an edge to b, which only the refused edge reached",
+  );
+  const sent = value(await device.drain());
+  expect(
+    sent.verdicts.map((row) => row.verdict),
+    "the server refused an edge to an end it holds free",
+  ).toEqual(["accepted"]);
+});
+
+it("refuses a move onto a full end, checked or made, and finds nothing against a move onto the edge's own end", async () => {
+  const a = await note("a");
+  const b = await note("b");
+  const c = await note("c");
+  const d = await note("d");
+  const e = await note("e");
+  const link = await edge(a, b, "supersedes");
+  await edge(c, d, "supersedes");
+  const device = await hydrated("move", ["core.note"]);
+  const before = value(await device.queue()).length;
+
+  for (const [ends, words, what] of [
+    [{ target_id: d }, TARGET_FULL, "a move onto d, which c's edge reaches"],
+    [{ source_id: c }, SOURCE_FULL, "a move onto c, whose edge leaves it"],
+  ] as const) {
+    refusedWith(
+      await device.checkEdgeMove(link.id, ends),
+      words,
+      `${what}, checked`,
+    );
+    refusedWith(
+      await device.updateEdge(link.id, {
+        properties: {},
+        version: link.version,
+        ...ends,
+      }),
+      words,
+      what,
+    );
+    const served = await client.updateEdge(link.id, {
+      version: link.version,
+      ...ends,
+    });
+    expect(
+      servedConstraint(served, what),
+      `the server refused ${what} otherwise`,
+    ).toEqual([CONSTRAINT[1], "cardinality"]);
+  }
+
+  // The edge does not count against itself at the ends it holds.
+  for (const ends of [{ target_id: b }, { source_id: a }]) {
+    expect(
+      value(await device.checkEdgeMove(link.id, ends)),
+      `a move onto ${JSON.stringify(ends)}, the edge's own end`,
+    ).toEqual({ refused: false });
+  }
+  // The witness: a move onto a free end.
+  expect(
+    value(await device.checkEdgeMove(link.id, { target_id: e })),
+  ).toEqual({ refused: false });
+  expect(
+    value(await device.queue()).length,
+    "a check or a refused move queued a write",
+  ).toBe(before);
+  const served = await client.updateEdge(link.id, {
+    version: link.version,
+    target_id: b,
+  });
+  expect(
+    served.ok,
+    `the server refused a move onto the edge's own end: ${JSON.stringify(served.error)}`,
+  ).toBe(true);
+});
+
+it("answers a duplicate before a full end, and a full end before a cycle, as the server does", async () => {
+  const top = await note("top");
+  const middle = await note("middle");
+  const bottom = await note("bottom");
+  await edge(top, middle, "parent-of");
+  await edge(middle, bottom, "parent-of");
+  const device = await hydrated("order", ["core.note"]);
+
+  await constraintAlike(
+    device,
+    { source: top, target: middle, type: "parent-of" },
+    "duplicate",
+    DUPLICATE,
+    "a second edge from top to middle, which also gives middle a second parent",
+  );
+  await constraintAlike(
+    device,
+    { source: bottom, target: middle, type: "parent-of" },
+    "cardinality",
+    TARGET_FULL,
+    "a second parent of middle that also closes middle, bottom, middle",
+  );
+  // The witness: a cycle alone is refused as a cycle.
+  await refusedAlike(
+    device,
+    { source: bottom, target: top, type: "parent-of" },
+    ["validation", "edge_cycle"],
+    "the edge that closes top, middle, bottom",
   );
 });
