@@ -1381,6 +1381,10 @@ describe("the working copy belongs to one server", () => {
         })
       ).ok,
     ).toBe(true);
+    // The default budget follows the volume's free bytes, which other
+    // processes change between the two status reads.
+    const fixed = await device.fileBudget("100");
+    expect(fixed.ok, JSON.stringify(fixed)).toBe(true);
     const before = await device.status();
     const queue = await device.queue();
     const rows = await device.list();
