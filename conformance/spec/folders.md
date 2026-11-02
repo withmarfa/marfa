@@ -4312,7 +4312,7 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 While a folder watch runs on a copy whose first hydration has not completed, a device MUST keep watching until the hydration completes.
 
-**Reason:** `folders add` with `--yes` hydrates nothing, and a hydration brings the folder's own `system.folder` row last, so a watch's first passes meet a copy without the folder's settings. That is a hydration still to come, not a folder the key cannot read, and a server slow to answer the first hydration must not end the watch. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
+**Reason:** `folders add` with `--yes` hydrates nothing, so a watch's first passes can meet a copy that does not yet hold the folder's `system.folder` row, which is a hydration still to come and not a folder the key cannot read. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
 
 **Tests:** `device/folders.test.ts › waits for the first hydration instead of ending on a copy without the folder's settings`.
 

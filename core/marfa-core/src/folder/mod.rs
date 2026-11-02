@@ -701,9 +701,8 @@ impl Folder {
                 settings.check_types(&Catalog::load(&*self.core.conn()?)?)?;
                 Ok(settings)
             }
-            // A hydration brings the row last, as a pin, so an added folder's
-            // copy has none until its first hydration ends. Reading it then
-            // must not look like a folder the key cannot read.
+            // A copy that has not hydrated may not have the row yet, which
+            // says nothing of what the key can read.
             None if !crate::store::hydrated(&*self.core.conn()?)? => {
                 Err(CoreError::HydrationIncomplete)
             }
