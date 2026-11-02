@@ -31,7 +31,9 @@ import {
 // its name matched no item, or more than one, is resolved again once the
 // working copy changes (`folders/create-before-links`,
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
-// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`). A name
+// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`), and the
+// names of its line that resolve are written meanwhile
+// (`folders/edge-held-partly-written`). A name
 // the server refused to look up on its own is not asked again
 // (`folders/edge-lookup-no-repeat`), while the names of a lookup it refused
 // as a whole wait and are asked again at the next scan
@@ -242,6 +244,127 @@ describe("links held until their target exists", () => {
     expect(resolved.flagged).toEqual([]);
     expect(edges()).toEqual([`create ${created("Ticket")} about ${id(1)}`]);
     expect((await fileAt("Ticket.md")).status).not.toBe("held");
+  });
+
+  it("writes the edge of each name on a line that resolves while it holds one that matches no item, and adds the other once it exists", async () => {
+    await seed([note(1, "Marfa")]);
+    const text = '---\nabout:\n  - "[[Marfa]]"\n  - "[[Plans]]"\n---\nbody\n';
+    put("Ticket.md", text);
+    const first = await push();
+    expect(first.created).toBe(1);
+    expect(first.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    const reason = first.flagged[0]?.reason ?? "";
+    expect(reason).toContain("[[Plans]]");
+    expect(reason).toContain("matches no item");
+    expect(reason, "the name that resolved was held too").not.toContain(
+      "[[Marfa]]",
+    );
+    const ticket = created("Ticket");
+    expect(edges()).toEqual([`create ${ticket} about ${id(1)}`]);
+    expect((await fileAt("Ticket.md")).status).toBe("held");
+    expect(readFileSync(join(folder!.dir, "Ticket.md"), "utf8")).toBe(text);
+
+    // Held while it is unchanged, the line writes nothing more.
+    await push();
+    await push();
+    expect(edges()).toEqual([`create ${ticket} about ${id(1)}`]);
+
+    put("Plans.md", "The plans.\n");
+    const second = await push();
+    expect(second.created).toBe(1);
+    expect(second.flagged).toEqual([]);
+    expect(
+      edges(),
+      "the first edge was written again, or the other not written",
+    ).toEqual(
+      [
+        `create ${ticket} about ${id(1)}`,
+        `create ${ticket} about ${created("Plans")}`,
+      ].sort(),
+    );
+    const settled = await fileAt("Ticket.md");
+    expect(settled.status).not.toBe("held");
+    expect(settled.flag).toBeUndefined();
+  });
+
+  it("writes the edge of each name on a line that resolves while it holds one matching two items, and never guesses the other", async () => {
+    await seed([note(1, "Marfa"), note(2, "Same"), note(3, "Same")]);
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Same]]"\n---\nbody\n',
+    );
+    const first = await push();
+    expect(first.flagged.map((file) => file.flag)).toEqual(["edges"]);
+    expect(first.flagged[0]?.reason).toContain("more than one item");
+    await push();
+    expect(edges()).toEqual([`create ${created("Ticket")} about ${id(1)}`]);
+  });
+
+  it("keeps the edge of a name that matches no item because its item is in the bin, and takes out the edge of a name removed from the line", async () => {
+    const plans = note(2, "Plans");
+    const { elsewhere } = await seed([
+      note(1, "Marfa"),
+      plans,
+      note(3, "Notes"),
+    ]);
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Plans]]"\n  - "[[Notes]]"\n---\nbody\n',
+    );
+    await push();
+    await push();
+    const ticket = created("Ticket");
+    expect(edges()).toEqual(
+      [1, 2, 3].map((n) => `create ${ticket} about ${id(n)}`),
+    );
+
+    // Plans goes to the bin elsewhere, so its name matches no item though
+    // the line names it; Notes is taken out of the line, beside a new name
+    // that matches no item.
+    plans.state = "trashed";
+    elsewhere({ ...plans, version: 2 }, "item.deleted");
+    await push();
+    await push();
+    // The file of the item in the bin leaves the folder, taking its
+    // placement with it.
+    const deletes = () =>
+      sentEdgeWrites(folder!).filter((write) => write.startsWith("delete "))
+        .length;
+    const leaving = deletes();
+    put(
+      "Ticket.md",
+      '---\nabout:\n  - "[[Marfa]]"\n  - "[[Plans]]"\n  - "[[Ghost]]"\n---\nbody\n',
+    );
+    const held = await push();
+    expect(held.flagged.map((file) => file.flag)).toEqual(["edges"]);
+    await push();
+    expect(
+      deletes() - leaving,
+      "the edge of the name taken out stayed, or the edge of an item in the bin went",
+    ).toBe(1);
+  });
+
+  it("writes none of a line that has room for one item and holds a name", async () => {
+    await seed([note(1, "Marfa")]);
+    put(
+      "Ticket.md",
+      '---\nchild-of:\n  - "[[Marfa]]"\n  - "[[Plans]]"\n---\nbody\n',
+    );
+    const first = await push();
+    expect(first.flagged.map((file) => file.flag)).toEqual(["edges"]);
+    await push();
+    expect(
+      edges(),
+      "a child was given a parent while its line held a name",
+    ).toEqual([]);
+
+    // The witness: the same line, naming one item, makes its edge.
+    put("Ticket.md", '---\nchild-of: "[[Marfa]]"\n---\nbody\n');
+    await push();
+    await push();
+    expect(edges()).toEqual([`create ${id(1)} parent-of ${created("Ticket")}`]);
   });
 
   it("creates and links two new documents that link each other in one pass", async () => {
@@ -613,6 +736,37 @@ describe("a held file the person deletes", () => {
     expect(await deletesQueued()).toEqual([]);
     return text;
   }
+
+  it("trashes the item of a deleted file held beside names its line wrote as edges", async () => {
+    await seed([ticket, parent, note(13, "Other")]);
+    await push();
+    const text = readFileSync(path(), "utf8");
+    writeFileSync(
+      path(),
+      text.replace(
+        /^---\n/,
+        '---\nabout: ["[[Parent]]", "[[Other]]", "[[Missing]]"]\n',
+      ),
+    );
+    const held = await push();
+    expect(held.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    expect(
+      edges(),
+      "the witness: the line wrote the edges of the names that resolved",
+    ).toEqual(
+      [
+        `create ${ticket.id} about ${id(12)}`,
+        `create ${ticket.id} about ${id(13)}`,
+      ].sort(),
+    );
+    rmSync(path());
+    const scanned = await folder!.folder.scan();
+    expect(scanned.ok && scanned.value.missing).toBe(1);
+    await sweptUnwritten();
+    expect(await deletesQueued()).toEqual([ticket.id]);
+  });
 
   it("writes back a deleted held file when another device removes an edge its held line made", async () => {
     const { edgeElsewhere, door } = await deletedHeldLine("child-of");

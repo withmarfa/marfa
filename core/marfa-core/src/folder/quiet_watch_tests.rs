@@ -391,6 +391,30 @@ fn a_deleted_file_held_for_names_whose_lookup_was_refused_goes_to_the_bin() {
 }
 
 #[test]
+fn a_deleted_file_held_beside_names_its_line_wrote_as_edges_goes_to_the_bin() {
+    let (dir, folder, _server, id) = deleted_after(
+        r#"about: "[[B]]""#,
+        r#"about: ["[[B]]", "[[C]]", "[[Ghost]]"]"#,
+        (nothing_found(), "matches no item"),
+        |dir, _| std::fs::write(dir.path().join("C.md"), "C\n").unwrap(),
+    );
+    let targets: Vec<String> = folder
+        .core
+        .edges_from(&id)
+        .unwrap()
+        .into_iter()
+        .filter(|edge| edge.edge_type == "about")
+        .map(|edge| edge.target_id)
+        .collect();
+    assert_eq!(
+        targets.len(),
+        2,
+        "the witness: the line wrote the edge of the name that resolved"
+    );
+    goes_to_the_bin(&dir, &folder);
+}
+
+#[test]
 fn a_deleted_held_file_comes_back_once_another_device_removes_an_edge_its_line_made() {
     let (dir, folder, _server, id) = deleted_after(
         r#"about: "[[B]]""#,

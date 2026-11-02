@@ -142,6 +142,15 @@ impl Resolved {
     }
 }
 
+/// The items a group's line names.
+#[derive(Default)]
+struct Desired {
+    /// The items the names that resolved name.
+    found: Vec<String>,
+    /// The names that did not, which the line holds.
+    held: Vec<Typed>,
+}
+
 struct Group<'t> {
     name: String,
     edge_type: &'t EdgeType,
@@ -614,6 +623,10 @@ impl Folder {
                 }
                 continue;
             };
+            let Desired {
+                found: desired,
+                held: held_names,
+            } = desired;
             let mut wanted: Vec<String> = desired.clone();
             let mut had: Vec<String> = recorded.clone();
             if links_group {
@@ -648,6 +661,25 @@ impl Folder {
                     may_remove && had.contains(&other) && !wanted.contains(&other)
                 })
                 .collect();
+            // A name the line holds may be one it named before, of an item
+            // gone to the bin or out of reach, so its edge is not a name
+            // taken out; it stays, and the line still records it.
+            if !held_names.is_empty() {
+                let mut standing: Vec<&Edge> = Vec::new();
+                for edge in std::mem::take(&mut removes) {
+                    if self.could_name(catalog, &held_names, &other_of(edge))? {
+                        standing.push(edge);
+                    } else {
+                        removes.push(edge);
+                    }
+                }
+                for edge in standing {
+                    let other = other_of(edge);
+                    if recorded.contains(&other) && !shown.contains(&other) {
+                        shown.push(other);
+                    }
+                }
+            }
             let draft = |other: &str| match end {
                 End::Source => EdgeDraft {
                     source_id: item_id.to_string(),
@@ -804,10 +836,10 @@ impl Folder {
         resolver: &mut Resolver<'_>,
         reasons: &mut Vec<String>,
         unresolved: &mut Unresolved<'_>,
-    ) -> Result<Option<Vec<String>>> {
+    ) -> Result<Option<Desired>> {
         let name = &group.name;
         let texts = match &group.typed {
-            None => return Ok(Some(Vec::new())),
+            None => return Ok(Some(Desired::default())),
             Some(Err(why)) => {
                 reasons.push(format!("its {name} line changes nothing: {why}"));
                 return Ok(None);
@@ -815,6 +847,7 @@ impl Folder {
             Some(Ok(texts)) => texts,
         };
         let mut found: Vec<(String, Option<String>)> = Vec::new();
+        let mut held: Vec<Typed> = Vec::new();
         let mut stood_down = false;
         for typed in texts {
             let raw = &typed.raw;
@@ -824,7 +857,7 @@ impl Folder {
             let Some((id, r#type)) =
                 resolved.settled(raw, &format!("{name} line"), reasons, unresolved)
             else {
-                stood_down = true;
+                held.push(typed.clone());
                 continue;
             };
             if id == item_id {
@@ -836,7 +869,11 @@ impl Folder {
                 found.push((id, r#type));
             }
         }
-        if stood_down {
+        // A line that holds a name writes the edges of the names that resolve
+        // (`folders/edge-held-partly-written`), unless none does, or it has
+        // room for one item and the held name could be a second.
+        if stood_down || !held.is_empty() && (found.is_empty() || group.edge_type.one_at(group.end))
+        {
             return Ok(None);
         }
         if group.edge_type.one_at(group.end) && found.len() > 1 {
@@ -868,7 +905,27 @@ impl Folder {
                 }
             }
         }
-        Ok(Some(found.into_iter().map(|(id, _)| id).collect()))
+        Ok(Some(Desired {
+            found: found.into_iter().map(|(id, _)| id).collect(),
+            held,
+        }))
+    }
+
+    /// Whether a name a line holds could be the item `other`, which the line
+    /// then still names: the item is not in the copy, or answers to the name.
+    fn could_name(&self, catalog: &Catalog, held: &[Typed], other: &str) -> Result<bool> {
+        let conn = self.core.conn()?;
+        if crate::store::item_by_id(&conn, other)?.is_none() {
+            return Ok(true);
+        }
+        for typed in held {
+            for text in [&typed.name, &typed.raw] {
+                if resolve::answers_to(&conn, catalog, &BoundFiles, text, other)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Rendering is also used to detect unsaved edits, so it must resolve

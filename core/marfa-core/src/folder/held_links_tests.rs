@@ -328,3 +328,249 @@ fn a_hold_from_a_store_that_never_recorded_when_to_judge_it_again_is_judged_agai
     assert_eq!(held(&folder, "A.md"), None);
     assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
 }
+
+fn about(folder: &Folder, path: &str) -> Vec<String> {
+    let mut targets = edges_of(folder, &item_at(folder, path), "about");
+    targets.sort();
+    targets
+}
+
+/// The edge creates from `item` the copy waits to send.
+fn edge_creates(folder: &Folder, item: &str) -> i64 {
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM queue WHERE kind = 'create_edge' AND item_id = ?1",
+            [item],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn answered(folder: &Folder) {
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute("DELETE FROM queue", [])
+        .unwrap();
+}
+
+const HELD_LINE: &str = "---\nabout:\n  - \"[[B]]\"\n  - \"[[Ghost]]\"\n---\nA\n";
+
+#[test]
+fn a_line_holding_a_name_that_matches_no_item_still_writes_the_edges_of_the_names_that_resolve() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    std::fs::write(dir.path().join("A.md"), HELD_LINE).unwrap();
+    let first = folder.scan().unwrap();
+    assert_eq!(first.created, 2, "{first:?}");
+    let (a, b) = (item_at(&folder, "A.md"), item_at(&folder, "B.md"));
+    assert_eq!(about(&folder, "A.md"), std::slice::from_ref(&b));
+    let flagged = flags(&first);
+    assert_eq!(flagged.len(), 1, "{first:?}");
+    assert_eq!((flagged[0].0, flagged[0].1), ("A.md", "edges"), "{first:?}");
+    assert!(
+        flagged[0]
+            .2
+            .contains("[[Ghost]] in its about line matches no item")
+            && !flagged[0].2.contains("[[B]]"),
+        "{first:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("A.md")).unwrap(),
+        HELD_LINE,
+        "the line was not left as typed"
+    );
+
+    // The name that resolves is not written again while the other waits.
+    let quiet = folder.scan().unwrap();
+    assert_eq!(
+        about(&folder, "A.md"),
+        std::slice::from_ref(&b),
+        "{quiet:?}"
+    );
+    assert!(held(&folder, "A.md").is_some());
+
+    // The witness that the held name makes its edge once an item has it,
+    // and that the edge already made is left as it is.
+    answered(&folder);
+    let edge = folder.core.edges_from(&a).unwrap().pop().unwrap();
+    std::fs::write(dir.path().join("Ghost.md"), "Ghost\n").unwrap();
+    let second = folder.scan().unwrap();
+    assert_eq!(second.created, 1, "{second:?}");
+    let ghost = item_at(&folder, "Ghost.md");
+    let mut both = [b.clone(), ghost];
+    both.sort();
+    assert_eq!(about(&folder, "A.md"), both);
+    assert_eq!(held(&folder, "A.md"), None);
+    assert_eq!(
+        edge_creates(&folder, &a),
+        1,
+        "the edge to B was written again, or the one to Ghost not at all"
+    );
+    assert!(
+        folder
+            .core
+            .edges_from(&a)
+            .unwrap()
+            .iter()
+            .any(|kept| kept.id == edge.id && kept.target_id == b),
+        "the edge to B was replaced"
+    );
+}
+
+#[test]
+fn a_line_holding_a_name_two_items_have_writes_the_edges_of_the_names_that_resolve() {
+    const ELSEWHERE: &str = "01a00000-0000-7000-8000-0000000023b1";
+    let (dir, folder, _server) = online_folder(nothing_found());
+    crate::store::put_server_item(
+        &folder.core.conn().unwrap(),
+        &crate::store::testing::note(ELSEWHERE, "Ghost", "", "2026-01-01T00:00:00Z"),
+        None,
+        &crate::catalog::Catalog::empty(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("Ghost.md"), "Ghost\n").unwrap();
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    std::fs::write(dir.path().join("A.md"), HELD_LINE).unwrap();
+    let first = folder.scan().unwrap();
+    assert_eq!(first.created, 3, "{first:?}");
+    let b = item_at(&folder, "B.md");
+    assert_eq!(about(&folder, "A.md"), std::slice::from_ref(&b));
+    assert!(
+        held(&folder, "A.md").is_some_and(|held| held.contains("more than one item")),
+        "{first:?}"
+    );
+
+    // Never guessed: still two, still only the edge to B.
+    folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), std::slice::from_ref(&b));
+
+    folder.core.delete_item(ELSEWHERE).unwrap();
+    folder.scan().unwrap();
+    let ghost = item_at(&folder, "Ghost.md");
+    let mut both = [b, ghost];
+    both.sort();
+    assert_eq!(about(&folder, "A.md"), both);
+    assert_eq!(held(&folder, "A.md"), None);
+}
+
+#[test]
+fn a_line_holding_a_name_the_server_could_not_look_up_writes_no_edge_for_that_name() {
+    let (dir, folder, _server) = online_folder(refusal(403, "forbidden"));
+    std::fs::write(dir.path().join("A.md"), HELD_LINE).unwrap();
+    let first = folder.scan().unwrap();
+    let a = item_at(&folder, "A.md");
+    assert_eq!(first.created, 1, "{first:?}");
+    assert_eq!(about(&folder, "A.md"), Vec::<String>::new());
+    assert!(held(&folder, "A.md").is_some());
+    assert_eq!(edges_of(&folder, &a, "about"), Vec::<String>::new());
+}
+
+#[test]
+fn a_name_taken_out_of_a_line_holding_another_takes_its_edge_out() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    for name in ["B", "C"] {
+        std::fs::write(dir.path().join(format!("{name}.md")), format!("{name}\n")).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nabout:\n  - \"[[B]]\"\n  - \"[[C]]\"\n---\nA\n",
+    )
+    .unwrap();
+    folder.scan().unwrap();
+    let (b, c) = (item_at(&folder, "B.md"), item_at(&folder, "C.md"));
+    let mut both = [b.clone(), c.clone()];
+    both.sort();
+    assert_eq!(about(&folder, "A.md"), both);
+    assert_eq!(held(&folder, "A.md"), None);
+
+    std::fs::write(dir.path().join("A.md"), HELD_LINE).unwrap();
+    let edited = folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), [b], "{edited:?}");
+    assert!(
+        held(&folder, "A.md").is_some_and(|held| held.contains("[[Ghost]]")),
+        "{edited:?}"
+    );
+}
+
+#[test]
+fn a_name_that_no_longer_resolves_keeps_the_edge_it_made() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    for name in ["B", "C"] {
+        std::fs::write(dir.path().join(format!("{name}.md")), format!("{name}\n")).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nabout:\n  - \"[[B]]\"\n  - \"[[C]]\"\n---\nA\n",
+    )
+    .unwrap();
+    folder.scan().unwrap();
+    let c = item_at(&folder, "C.md");
+    let before = about(&folder, "A.md");
+    assert_eq!(before.len(), 2);
+
+    // C goes to the bin and its file is gone, so its name matches no item,
+    // but the line still names it: the edge to it is not a name taken out.
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute("DELETE FROM folder_files WHERE item_id = ?1", [&c])
+        .unwrap();
+    std::fs::remove_file(dir.path().join("C.md")).unwrap();
+    folder.core.delete_item(&c).unwrap();
+    let held_line = "---\nabout:\n  - \"[[B]]\"\n  - \"[[C]]\"\n  - \"[[Ghost]]\"\n---\nA\n";
+    std::fs::write(dir.path().join("A.md"), held_line).unwrap();
+    let report = folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), before, "{report:?}");
+    assert!(held(&folder, "A.md").is_some());
+}
+
+#[test]
+fn a_line_of_names_that_all_match_nothing_changes_no_edge() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    std::fs::write(dir.path().join("A.md"), "---\nabout: \"[[B]]\"\n---\nA\n").unwrap();
+    folder.scan().unwrap();
+    let b = item_at(&folder, "B.md");
+    assert_eq!(about(&folder, "A.md"), std::slice::from_ref(&b));
+
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nabout:\n  - \"[[Ghost]]\"\n  - \"[[Wraith]]\"\n---\nA\n",
+    )
+    .unwrap();
+    let report = folder.scan().unwrap();
+    assert_eq!(about(&folder, "A.md"), [b], "{report:?}");
+    assert!(held(&folder, "A.md").is_some_and(|held| held.contains("matches no item")));
+}
+
+#[test]
+fn a_line_with_room_for_one_item_holding_a_name_writes_no_part_of_itself() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
+    let typed = "---\nchild-of:\n  - \"[[B]]\"\n  - \"[[Ghost]]\"\n---\nA\n";
+    std::fs::write(dir.path().join("A.md"), typed).unwrap();
+    let first = folder.scan().unwrap();
+    let a = item_at(&folder, "A.md");
+    assert_eq!(first.created, 2, "{first:?}");
+    assert_eq!(
+        folder.core.edges_to(&a).unwrap().len(),
+        0,
+        "a child was given a parent while its line held another name: {first:?}"
+    );
+    assert!(held(&folder, "A.md").is_some_and(|held| held.contains("[[Ghost]]")));
+
+    // The witness: the line, once it names one item, makes its edge.
+    std::fs::write(
+        dir.path().join("A.md"),
+        "---\nchild-of: \"[[B]]\"\n---\nA\n",
+    )
+    .unwrap();
+    folder.scan().unwrap();
+    assert_eq!(folder.core.edges_to(&a).unwrap().len(), 1);
+}

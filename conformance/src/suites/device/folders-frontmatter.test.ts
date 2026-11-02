@@ -400,7 +400,7 @@ describe("edges in frontmatter", () => {
     ).toEqual([]);
   });
 
-  it("changes no edge of a type whose target it cannot resolve", async () => {
+  it("changes the edges of the names it can resolve on a line that holds one it cannot, and none where it can resolve none", async () => {
     const edge = "01a00000-0000-7000-8000-00000000e1e8";
     const made = await edgeHarness(
       "folder-edge-stand-down",
@@ -434,18 +434,25 @@ describe("edges in frontmatter", () => {
     ).toEqual([["Alpha.md", "edges"]]);
     expect(pushed.value.scan.flagged[0]?.reason).toContain("[[Nowhere]]");
     expect(
-      sentEdgeWrites(harness),
-      "an edge type with a name it cannot resolve changed anyway, or a type beside it did not",
-    ).toEqual([`create ${alpha} references ${beta}`]);
+      sentEdgeWrites(harness).sort(),
+      "the name taken out kept its edge, or a line beside it did not write",
+    ).toEqual([`create ${alpha} references ${beta}`, `delete ${edge}`].sort());
     expect(
       read(harness, "Alpha.md"),
       "the pull wrote over a file whose line it could not resolve",
     ).toContain("[[Nowhere]]");
 
-    // The witness: without the name, the same removal lands.
-    edit(harness, "Alpha.md", '  - "[[Nowhere]]"\n', "");
+    // Where none of a line's names resolves, no edge of its type changes:
+    // Beta is not taken out for a name that may be it.
+    const written = sentEdgeWrites(harness).length;
+    edit(
+      harness,
+      "Alpha.md",
+      /about:\n(?: {2}- .*\n)+/,
+      'about: "[[Nowhere]]"\n',
+    );
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(sentEdgeWrites(harness).at(-1)).toBe(`delete ${edge}`);
+    expect(sentEdgeWrites(harness)).toHaveLength(written);
   });
 
   it("writes and reads back by title a link to an item with no file on this Mac", async () => {
