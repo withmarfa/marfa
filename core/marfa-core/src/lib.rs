@@ -3530,7 +3530,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
         for target in targets {
             validation::id("edges", target)?;
             if draft.id.as_deref() == Some(target.as_str()) {
-                refuse_self_loop(target, target)?;
+                refuse_self_loop(edge_type, target, target)?;
             }
         }
     }
@@ -4010,12 +4010,12 @@ fn queue_update(
     Ok(queued)
 }
 
-fn refuse_self_loop(source_id: &str, target_id: &str) -> Result<()> {
+fn refuse_self_loop(edge_type: &str, source_id: &str, target_id: &str) -> Result<()> {
     if source_id == target_id {
         return Err(CoreError::Validation {
             code: "edge_cycle".into(),
             message: format!("an edge from {source_id} to itself closes a cycle"),
-            details: None,
+            details: Some(Box::new(serde_json::json!({ "edge_type": edge_type }))),
         });
     }
     Ok(())
@@ -4071,7 +4071,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
         Err(error) => return Err(error),
     }
-    refuse_self_loop(source_id, target_id)?;
+    refuse_self_loop(&held.edge_type, source_id, target_id)?;
     edge_rules::refuse_unwritable_edges(
         conn,
         &[edge_rules::Proposed {
@@ -4090,7 +4090,7 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     if let Some(id) = &draft.id {
         validation::id("id", id)?;
     }
-    refuse_self_loop(&draft.source_id, &draft.target_id)?;
+    refuse_self_loop(&draft.edge_type, &draft.source_id, &draft.target_id)?;
     integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
         conn,

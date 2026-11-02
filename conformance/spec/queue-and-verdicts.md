@@ -2546,11 +2546,11 @@ If an edge edit moves both ends, or moves an end of a type whose end that stays 
 
 ### `queue-and-verdicts/edge-self-loop`
 
-If an edge create or an edge move would leave the edge running from a row to itself, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle`, queueing nothing.
+If an edge create or an edge move would leave the edge running from a row to itself, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle` and the server's `details` for it, the `edge_type`, queueing nothing.
 
 **Reason:** the server refuses a self-loop `400 edge_cycle` on every edge type, because one edge closes it (`edges/cycle-self-loop` and `edges/move-cycle-self`).
 
-**Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`.
+**Tests:** `device/edge-move.test.ts › refuses a move the server refuses whatever its rows hold, queueing nothing`, `device/edge-checks-live.test.ts › refuses locally an edge that closes a cycle through edges the copy holds, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 
 ## An edge the server would refuse
 
@@ -2610,7 +2610,7 @@ When an edge write breaks more than one of the rules in this section, a device M
 
 ### `queue-and-verdicts/edge-cycle-refused`
 
-If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle`, queueing nothing.
+If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle` and the server's `details` for it, the `edge_type`, `source_id` and `target_id`, queueing nothing.
 
 **Reason:** the server refuses such an edge `400 edge_cycle` (`edges/cycle` and `edges/move-cycle`), and every edge the copy holds is one the server holds or one the copy will send before it.
 

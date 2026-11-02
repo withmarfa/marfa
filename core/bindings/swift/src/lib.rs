@@ -1352,9 +1352,10 @@ pub enum MarfaError {
         code: String,
         message: String,
         /// The server's `error.details` for the same refusal, on each
-        /// `edge_constraint_violation` the copy gives itself, such as its
-        /// `constraint`; `nil` on every other refusal. Shaped as a refused
-        /// write's `answer` holds them, under `error.details`.
+        /// `edge_constraint_violation` and `edge_cycle` the copy gives
+        /// itself, such as its `constraint`; `nil` on every other refusal.
+        /// Shaped as a refused write's `answer` holds them, under
+        /// `error.details`.
         details: Option<JsonValue>,
     },
     UnknownType {

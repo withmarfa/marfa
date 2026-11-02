@@ -177,7 +177,7 @@ function detailsAlike(
 /**
  * The check and the create refuse `draft` as `refusal`, the create queues
  * nothing, and the server refuses the same edge with the same code, and for
- * `edge_constraint_violation` with the same details.
+ * a `validation` refusal with the same details.
  */
 async function refusedAlike(
   device: CliDevice,
@@ -203,7 +203,7 @@ async function refusedAlike(
   expect(serverCode(served, what), `the server refused ${what} otherwise`).toBe(
     refusal[1],
   );
-  if (refusal[1] === CONSTRAINT[1])
+  if (refusal[0] === "validation")
     detailsAlike([checked, created], served, what);
 }
 
@@ -401,6 +401,12 @@ it("refuses locally an edge that closes a cycle through edges the copy holds, wi
     ["validation", "edge_cycle"],
     "the parent-of edge that closes top, middle, bottom",
   );
+  await refusedAlike(
+    device,
+    { source: top, target: top, type: "parent-of" },
+    ["validation", "edge_cycle"],
+    "a parent-of edge from top to itself",
+  );
   // The witness: the same edge of a type that takes a cycle is queued.
   await queuedAfterCheck(
     device,
@@ -563,6 +569,13 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
       ["validation", "edge_cycle"],
       "a move of top to middle onto bottom, closing middle, bottom, middle",
     ],
+    [
+      link.id,
+      link.version,
+      { target_id: first },
+      ["validation", "edge_cycle"],
+      "a move of a notes edge onto its own source",
+    ],
   ] as const) {
     const checked = await device.checkEdgeMove(id, ends);
     const moved = await device.updateEdge(id, {
@@ -574,8 +587,7 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     refusedAs(moved, [...refusal], what);
     const served = await client.updateEdge(id, { version, ...ends });
     expect(serverCode(served, what)).toBe(refusal[1]);
-    if (refusal[1] === CONSTRAINT[1])
-      detailsAlike([checked, moved], served, what);
+    detailsAlike([checked, moved], served, what);
   }
   expect(value(await device.queue()).length, "a refused write was queued").toBe(
     before,

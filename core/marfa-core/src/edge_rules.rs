@@ -23,9 +23,9 @@
 //! refuse, which is kept with its verdict. Once the read lands, the copy
 //! shows the server's row and counts it as it is.
 //!
-//! Each `edge_constraint_violation` carries the `details` the server's answer
-//! to the same write carries, so an app reads it one way whichever refused it.
-//! An `edge_cycle` carries none.
+//! Each `edge_constraint_violation` and `edge_cycle` carries the `details`
+//! the server's answer to the same write carries, so an app reads it one way
+//! whichever refused it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -216,7 +216,11 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
             return Err(CoreError::Validation {
                 code: "edge_cycle".into(),
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
-                details: None,
+                details: Some(Box::new(json!({
+                    "edge_type": edge.edge_type,
+                    "source_id": edge.source.id(),
+                    "target_id": edge.target_id,
+                }))),
             });
         }
     }
@@ -887,6 +891,32 @@ mod tests {
         hold(&core, "ab-loose", NOTE_A, NOTE_B, "mock.loose");
         hold(&core, "bc-loose", NOTE_B, NOTE_C, "mock.loose");
         assert_create_queued(&core, &edge(NOTE_C, NOTE_A, "mock.loose"), "a loose cycle");
+    }
+
+    #[test]
+    fn a_cycle_and_a_self_loop_carry_the_details_the_server_gives_them() {
+        let core = copy();
+        hold(&core, "ab", NOTE_A, NOTE_B, "mock.tree");
+        let cycle = |outcome: crate::Result<()>, what: &str| match outcome {
+            Err(CoreError::Validation { code, details, .. }) if code == "edge_cycle" => {
+                *details.unwrap_or_else(|| panic!("{what}: no details"))
+            }
+            other => panic!("{what}: {other:?}"),
+        };
+        assert_eq!(
+            cycle(
+                core.check_edge(&edge(NOTE_B, NOTE_A, "mock.tree")),
+                "a cycle"
+            ),
+            json!({ "edge_type": "mock.tree", "source_id": NOTE_B, "target_id": NOTE_A }),
+        );
+        assert_eq!(
+            cycle(
+                core.check_edge(&edge(NOTE_A, NOTE_A, "mock.loose")),
+                "a self-loop"
+            ),
+            json!({ "edge_type": "mock.loose" }),
+        );
     }
 
     #[test]
