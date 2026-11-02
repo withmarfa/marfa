@@ -196,7 +196,7 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
 }
 
 /// A `tags` line: a list of tags, tags separated by commas, or nothing.
-fn tags_of(value: &Value) -> Result<Vec<String>, String> {
+pub(super) fn tags_of(value: &Value) -> Result<Vec<String>, String> {
     let split: Vec<Value>;
     let named: Vec<&Value> = match value {
         Value::Null => Vec::new(),

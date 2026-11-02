@@ -156,7 +156,7 @@ impl Folder {
         Ok(Some((at(other), other)))
     }
 
-    fn edges_at(&self, id: &str) -> Result<Vec<Edge>> {
+    pub(super) fn edges_at(&self, id: &str) -> Result<Vec<Edge>> {
         let mut edges = self.core.edges_from(id)?;
         for edge in self.core.edges_to(id)? {
             if !edges.iter().any(|held| held.id == edge.id) {

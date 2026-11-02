@@ -355,10 +355,7 @@ impl Folder {
                 continue;
             }
             let full = full_due(last_full, crate::clock::now());
-            // A tick alone moves nothing on a folder the last pass left at
-            // rest: a pass walks the whole folder, so it is not run to find
-            // out.
-            if !full && !changed && telling.at_rest {
+            if telling.rests(full, changed) {
                 continue;
             }
             changed = false;
@@ -474,6 +471,10 @@ impl Folder {
                 pull
             }
             None => {
+                #[cfg(test)]
+                {
+                    telling.pulls += 1;
+                }
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-pass-pull");
                 let (pull, barred) =
@@ -544,20 +545,16 @@ impl Folder {
         drop(progress);
         let refused = credential_refused(&drain);
         let wait = rate_limit_wait(&drain.report);
+        // Only what time alone moves on keeps the ticks running. A file that
+        // stays missing, a held delete, a file waiting on another folder or a
+        // directory that cannot be read stands as it is until a file event,
+        // a server change or the next full pass, and a pass a second would
+        // only find it again.
         telling.at_rest = wait.is_none()
             && refused.is_none()
-            && problem.is_none()
-            && !telling.unreachable
             && !stirred(&settings, &scan, &drain, &pull)
             && scan.settling.is_empty()
-            && scan.missing == 0
-            && scan.waiting == 0
-            && scan.paused == 0
-            && scan.unsure.is_empty()
-            && scan.directories.is_empty()
-            && pull.paused == 0
-            && pull.kept == 0
-            && pull.elsewhere == 0
+            && !self.grace_running()?
             && drain.rebased == 0
             && drain.report.unavailable.is_none()
             && drain.report.stopped.is_none()
@@ -587,6 +584,8 @@ pub(super) struct Passes {
     health: Mutex<FollowHealth>,
     /// The paths each `Missed` the passes told named.
     pub(super) missed: Vec<String>,
+    /// The ticks since the last full pass.
+    ticks: u64,
 }
 
 #[cfg(test)]
@@ -605,6 +604,41 @@ impl Passes {
             Err(WatchError::Core(error)) => Err(error),
             Err(other) => panic!("the pass ended the watch: {other:?}"),
         }
+    }
+
+    /// Runs what a second's tick of a watch that hears no file event and no
+    /// server change runs: a full pass once a minute, and otherwise a quick
+    /// pass only where the last pass left the folder short of rest. Answers
+    /// whether a pass ran.
+    pub(super) fn tick(&mut self, folder: &Folder) -> Result<bool, CoreError> {
+        self.ticks += 1;
+        let full = self.ticks >= FULL_PASS.as_secs() / TICK.as_secs();
+        if self.telling.rests(full, false) {
+            return Ok(false);
+        }
+        if full {
+            self.ticks = 0;
+        }
+        self.run(folder, full).map(|()| true)
+    }
+
+    /// Runs what the watch runs when its follow says the server's reach was
+    /// lost, with why, or is back. Answers whether a pass ran.
+    pub(super) fn reach(
+        &mut self,
+        folder: &Folder,
+        lost: Option<String>,
+    ) -> Result<bool, CoreError> {
+        self.telling.reach(lost);
+        if self.telling.rests(false, true) {
+            return Ok(false);
+        }
+        self.run(folder, false).map(|()| true)
+    }
+
+    /// The pulls the passes ran rather than reused since the last call.
+    pub(super) fn pulls(&mut self) -> usize {
+        std::mem::take(&mut self.telling.pulls)
     }
 
     /// Makes the next pull render every file, as an hour after the last
@@ -881,8 +915,11 @@ struct Pulled {
 }
 
 /// Whether a pass's settings step, scan and drain found nothing to do and
-/// nothing still on its way: a file settling, missing or waiting on an
-/// answer, or a write the server has not taken.
+/// nothing still on its way: a file settling or waiting on an answer, or a
+/// write the server has not taken. A file that stays missing, a held
+/// removal, an unsure delete or a directory that cannot be read is not on
+/// its way: each stands in the folder's record, which a pull's mark covers,
+/// or in the disk, which its barred paths cover.
 fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> bool {
     !settings.sent
         && !settings.written
@@ -894,14 +931,10 @@ fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> b
             + scan.deleted
             + scan.moved_away
             + scan.requeued
-            + scan.missing
             + scan.waiting
-            + scan.paused
             == 0
         && scan.trashed.is_empty()
         && scan.settling.is_empty()
-        && scan.unsure.is_empty()
-        && scan.directories.is_empty()
         && drain.report.answered
             + drain.report.held
             + drain.report.undelivered
@@ -958,6 +991,18 @@ struct Telling {
     /// file as it was, so pulls nothing.
     pulled: Option<Pulled>,
     selection: Selection,
+    /// The pulls the passes ran rather than reused.
+    #[cfg(test)]
+    pulls: usize,
+}
+
+impl Telling {
+    /// Whether a tick leaves the folder be. A tick alone moves nothing on a
+    /// folder the last pass left at rest: a pass walks the whole folder, so
+    /// it is not run to find out.
+    fn rests(&self, full: bool, changed: bool) -> bool {
+        !full && !changed && self.at_rest
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

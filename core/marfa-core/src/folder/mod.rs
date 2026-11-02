@@ -2357,6 +2357,8 @@ fn typed_title(
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
+mod quiet_watch_tests;
+#[cfg(test)]
 mod relink_tests;
 
 #[cfg(test)]
@@ -2686,7 +2688,11 @@ mod tests {
 
     /// A folder over a fresh directory, listed in the registry this thread
     /// already has, whose copy holds the folder item `id` with `settings`.
-    fn folder_with(id: &str, settings: Value, types: Option<Value>) -> (tempfile::TempDir, Folder) {
+    pub(super) fn folder_with(
+        id: &str,
+        settings: Value,
+        types: Option<Value>,
+    ) -> (tempfile::TempDir, Folder) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let folder = folder_over(dir.path(), id, settings, types);
         (dir, folder)
@@ -3448,7 +3454,7 @@ mod tests {
     // The settle time for `scan_watching`, which only a file that is not a
     // document waits on. No server answers in these tests, so a bound note
     // whose write is unanswered counts as `waiting`, not `unchanged`.
-    const QUICK: Duration = Duration::from_secs(3600);
+    pub(super) const QUICK: Duration = Duration::from_secs(3600);
 
     #[test]
     fn a_quick_pass_does_not_reread_an_unchanged_bound_document() {
@@ -3698,7 +3704,7 @@ mod tests {
 
     /// As if the copy had synced and the server had taken the folder's
     /// create of the file's item, so a pull reaches it, and the item's id.
-    fn landed(folder: &Folder, path: &str) -> String {
+    pub(super) fn landed(folder: &Folder, path: &str) -> String {
         use crate::store::{self, meta_set};
         let conn = folder.core.conn().unwrap();
         meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -4504,7 +4510,7 @@ mod tests {
     }
 
     /// Moves the journaled delete at `path` past the grace.
-    fn past_the_grace(folder: &Folder, path: &str) {
+    pub(super) fn past_the_grace(folder: &Folder, path: &str) {
         let long_ago = crate::store::iso_at(
             crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1),
         );
@@ -4518,7 +4524,7 @@ mod tests {
         assert_eq!(aged, 1, "{path} is not journaled");
     }
 
-    fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {
+    pub(super) fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {
         state::journaled(&folder.core.conn().unwrap())
             .unwrap()
             .into_iter()
@@ -4678,7 +4684,7 @@ mod tests {
         (dir, folder, id, swept)
     }
 
-    fn deletes_queued(folder: &Folder) -> Vec<Option<i64>> {
+    pub(super) fn deletes_queued(folder: &Folder) -> Vec<Option<i64>> {
         folder
             .core
             .queue()
@@ -5706,7 +5712,7 @@ mod tests {
     }
 
     /// As if another device had changed the item's body to `body`.
-    fn changed_elsewhere(folder: &Folder, item_id: &str, body: &str) {
+    pub(super) fn changed_elsewhere(folder: &Folder, item_id: &str, body: &str) {
         folder
             .core
             .conn()
