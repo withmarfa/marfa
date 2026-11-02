@@ -2217,20 +2217,22 @@ pub fn untaken_creates_for_item(
     item_id: &str,
 ) -> Result<Vec<String>, CoreError> {
     // A create refused onto a row no read has found yet still decides where a
-    // later write to its row goes, or whether it goes at all.
-    let landing = pending_landings(conn)?;
-    Ok(read_writes(
+    // later write to its row goes, or whether it goes at all. Each row asks
+    // for its own landing by key, so the answer costs nothing by how many
+    // other creates are waiting to land.
+    let mut waiting = Vec::new();
+    for row in read_writes(
         conn,
         "WHERE item_id = ?1 AND kind = ?2",
         [item_id, WriteKind::CreateItem.as_str()],
-    )?
-    .into_iter()
-    .filter(|row| {
-        matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead))
-            || landing.contains_key(&row.id)
-    })
-    .map(|row| row.id)
-    .collect())
+    )? {
+        if matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead))
+            || pending_landing(conn, &row.id)?.is_some()
+        {
+            waiting.push(row.id);
+        }
+    }
+    Ok(waiting)
 }
 
 /// The store's clock. A debug build moves it by the milliseconds the
@@ -5116,6 +5118,13 @@ fn record_verdict_inner(
     Ok(())
 }
 
+/// The id of the row the refused create `id` waits to land on, where it waits
+/// for a read that finds that row.
+pub fn pending_landing(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(meta_get(conn, &format!("receipt_pending/{id}"))?
+        .and_then(|shape| shape.strip_prefix("land:").map(str::to_owned)))
+}
+
 /// The refused creates whose move onto the row their natural key names waits
 /// for a read that finds the row, each with the id of that row.
 pub fn pending_landings(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
@@ -7852,6 +7861,71 @@ mod tests {
         assert_eq!(forget_answered_ids(&conn, &named(&["landing"])).unwrap(), 0);
         meta_delete(&conn, "receipt_pending/landing").unwrap();
         assert_eq!(forget_answered_ids(&conn, &named(&["landing"])).unwrap(), 1);
+    }
+
+    /// The SQLite virtual-machine steps `work` takes on `conn`.
+    fn steps_of(conn: &Connection, work: impl FnOnce()) -> u64 {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let steps = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&steps);
+        let _ = conn.progress_handler(
+            1,
+            Some(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        );
+        work();
+        let _ = conn.progress_handler(1, None::<fn() -> bool>);
+        steps.load(Ordering::Relaxed)
+    }
+
+    /// The witness for the cost, the asserted answer for the meaning.
+    #[test]
+    fn the_untaken_creates_for_an_item_cost_the_same_however_many_landings_are_pending() {
+        let conn = conn();
+        let create = |id: &str, item: &str, verdict: Option<&str>| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, sent, depends_on, queued_at)
+                 VALUES (?1, 'create_item', ?2, ?1, '{}', ?3, 1, '[]', '2026-01-01T00:00:00Z')",
+                params![id, item, verdict],
+            )
+            .unwrap();
+        };
+        create("refused-onto-a-row", "item", Some("refused"));
+        create("refused-and-unlanded", "other", Some("refused"));
+        create("unanswered", "unanswered-item", None);
+        meta_set(&conn, "receipt_pending/refused-onto-a-row", "land:landed").unwrap();
+        let ask = |item: &str| {
+            let mut found = Vec::new();
+            let steps = steps_of(&conn, || {
+                found = untaken_creates_for_item(&conn, item).unwrap();
+            });
+            (found, steps)
+        };
+        let (few_found, few) = ask("item");
+        assert_eq!(few_found, named(&["refused-onto-a-row"]));
+        assert_eq!(ask("other").0, Vec::<String>::new());
+        assert_eq!(ask("unanswered-item").0, named(&["unanswered"]));
+
+        for n in 0..2_000 {
+            meta_set(
+                &conn,
+                &format!("receipt_pending/waiting-{n}"),
+                &format!("land:row-{n}"),
+            )
+            .unwrap();
+            meta_set(&conn, &format!("unrelated/{n}"), "x").unwrap();
+        }
+        let (many_found, many) = ask("item");
+        assert_eq!(many_found, few_found);
+        assert!(
+            many < few * 2 + 100,
+            "a lookup took {many} steps beside 2000 pending landings and {few} beside one: \
+             it reads every landing, so a folder's first sync pays for each edge by the \
+             size of the store"
+        );
     }
 
     #[test]
