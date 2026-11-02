@@ -471,14 +471,14 @@ fn a_first_install_that_succeeds_warns_once() {
 }
 
 #[test]
-fn the_json_report_says_the_secrets_are_still_unconfirmed_until_an_install_succeeds() {
+fn the_json_report_says_to_keep_the_settings_file_until_an_install_succeeds() {
     let rig = Rig::new("warn-json");
     failed_first_install(&rig);
     let report = |rig: &Rig| {
         let (code, stdout, stderr) = rig.install(&["--json"]);
         assert_eq!(code, 0, "{stderr}");
         let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-        report["secrets_made"].clone()
+        report["keep_settings_file"].clone()
     };
     assert_eq!(report(&rig), true);
     assert_eq!(report(&rig), false);

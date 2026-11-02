@@ -1045,7 +1045,9 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "local_address": local_address(port),
         "access": access.name(),
         "backup": backup_on,
-        "secrets_made": warn_to_keep,
+        // True when this run tells the person to keep the settings file safe:
+        // it made the secrets, or an earlier run did and none has succeeded since.
+        "keep_settings_file": warn_to_keep,
         "settings": if external { "external" } else { "managed" },
         "autostart": autostart,
         "autostart_error": autostart_failed,
