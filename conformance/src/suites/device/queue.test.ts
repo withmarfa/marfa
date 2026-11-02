@@ -8194,11 +8194,12 @@ describe("an edit behind an edit of the same row", () => {
     const id = note.value.item_id ?? "n";
     await edit(device, id, { title: "made here", body: "edited" }, 0);
     await edit(device, keyed.value.item_id ?? "k", { body: "edited" }, 0);
-    // And an edge made here, edited before its create is answered.
+    // And an edge made here, edited before its create is answered, of a type
+    // other than the held edge between the same items.
     const link = await device.createEdge({
       source: HELD.id,
       target: QUIET.id,
-      type: "references",
+      type: "about",
     });
     expect(link.ok).toBe(true);
     if (!link.ok) return;
@@ -8225,6 +8226,7 @@ describe("an edit behind an edit of the same row", () => {
       id: linkId,
       source_id: HELD.id,
       target_id: QUIET.id,
+      edge_type: "about",
       version: 3,
       properties: { weight: 5 },
     };

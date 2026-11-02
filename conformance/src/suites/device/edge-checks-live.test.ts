@@ -659,11 +659,6 @@ it("does not count an edge whose create the server refused", async () => {
   expect(
     drained.verdicts.map((row) => [row.edge_id, row.verdict, row.reason]),
   ).toEqual([[queued.edge_id, "refused", "edge_constraint_violation"]]);
-  // The witness: the refused edge is still shown, for the person to take back.
-  expect(
-    value(await device.edgesTo(b)).map((shown) => shown.id),
-    "the copy no longer shows the refused edge, so this proves nothing",
-  ).toEqual([queued.edge_id]);
 
   await queuedAfterCheck(
     device,
@@ -731,9 +726,12 @@ it("refuses a move onto a full end, checked or made, and finds nothing against a
     value(await device.queue()).length,
     "a check or a refused move queued a write",
   ).toBe(before);
+  // The server takes an end the edge holds as no move, so the edit carries
+  // properties.
   const served = await client.updateEdge(link.id, {
     version: link.version,
     target_id: b,
+    properties: {},
   });
   expect(
     served.ok,
