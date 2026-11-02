@@ -11,25 +11,31 @@
 //! The edges the copy holds are the server's and the copy's own waiting
 //! writes as they leave them: a waiting create or move shows its edge where
 //! it will stand, and a waiting delete shows none, so each counts as the
-//! server will hold it once the writes before this one reach it. An edge
-//! whose create the queue holds refused counts for nothing, though the copy
-//! still shows it until a read of the server's row lands: counting it could
-//! refuse a write the server takes, while leaving it out can only let
-//! through a write the server may refuse, which is kept with its verdict.
+//! server will hold it once the writes before this one reach it.
+//!
+//! A write the server refused while a drain could not read its row back
+//! leaves its effect in the copy until that read lands. While a refused edge
+//! create, move or other edge edit owes the read of its edge, or a refused
+//! item create owes the read of its item, the edge it shows (the item
+//! create's inline edges) counts for nothing in the duplicate, cardinality,
+//! cycle and retype checks: counting it could refuse a write the server
+//! takes, while leaving it out can only let through a write the server may
+//! refuse, which is kept with its verdict. Once the read lands, the copy
+//! shows the server's row and counts it as it is.
 //!
 //! Each `edge_constraint_violation` carries the `details` the server's answer
 //! to the same write carries, so an app reads it one way whichever refused it.
 //! An `edge_cycle` carries none.
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use crate::catalog::{self, EdgeType, End, Lineage};
 use crate::error::CoreError;
-use crate::model::{Verdict, WriteKind};
+use crate::model::{Draft, Subject, Verdict, WriteKind};
+use crate::store;
 
 type Result<T> = std::result::Result<T, CoreError>;
 
@@ -161,6 +167,7 @@ impl Lineages {
 /// counts a batch.
 pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> Result<()> {
     let mut lineages = Lineages::default();
+    let refused = shown_by_unread_refusals(conn)?;
     let mut judged = Vec::with_capacity(edges.len());
     for edge in edges {
         if let Some(edge_type) = held_edge_type(conn, edge.edge_type)? {
@@ -170,7 +177,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
     }
     for (index, (edge, edge_type)) in judged.iter().enumerate() {
         let earlier = || judged[..index].iter().map(|(earlier, _)| *earlier);
-        if holds_triple(conn, edge)?
+        if holds_triple(conn, edge, &refused)?
             || earlier().any(|earlier| {
                 earlier.edge_type == edge.edge_type
                     && earlier.source.id() == edge.source.id()
@@ -198,14 +205,14 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 End::Source => edge.source.id().to_string(),
                 End::Target => edge.target_id.to_string(),
             };
-            if holds_at(conn, edge, end)?
+            if holds_at(conn, edge, end, &refused)?
                 || earlier()
                     .any(|earlier| earlier.edge_type == edge.edge_type && at(earlier) == at(edge))
             {
                 return Err(refused_cardinality(edge_type, end, &at(edge)));
             }
         }
-        if edge_type.acyclic && closes_cycle(conn, edge)? {
+        if edge_type.acyclic && closes_cycle(conn, edge, &refused)? {
             return Err(CoreError::Validation {
                 code: "edge_cycle".into(),
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
@@ -234,37 +241,87 @@ fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> CoreError {
     )
 }
 
-/// That the edge whose id is in `column` is not one whose create the queue
-/// holds refused, which the copy may still show (see the module).
-fn not_refused(column: &str) -> String {
-    format!(
-        "NOT EXISTS (SELECT 1 FROM queue
-                      WHERE queue.edge_id = {column} AND queue.kind = '{}'
-                        AND queue.verdict = '{}')",
-        WriteKind::CreateEdge.as_str(),
-        Verdict::Refused.as_str()
-    )
+/// The edges the copy shows only because of a write the server refused,
+/// while a read of the server's row is owed for it (see the module), as a
+/// JSON array for `json_each`. A refused edge create, move or other edit
+/// shows its edge; a refused item create shows its inline edges, under the
+/// item's own id or, for a keyed create, the row it landed on.
+fn shown_by_unread_refusals(conn: &Connection) -> Result<String> {
+    let mut owed: HashSet<(Subject, String)> = HashSet::new();
+    for read in store::owed_read_backs(conn)? {
+        owed.insert((read.subject, read.id));
+    }
+    if owed.is_empty() {
+        return Ok("[]".into());
+    }
+    let mut statement = conn.prepare_cached(
+        "SELECT id, kind, item_id, edge_id FROM queue
+          WHERE verdict = ?1 AND kind IN (?2, ?3, ?4)",
+    )?;
+    let refused = statement
+        .query_map(
+            params![
+                Verdict::Refused.as_str(),
+                WriteKind::CreateEdge.as_str(),
+                WriteKind::UpdateEdge.as_str(),
+                WriteKind::CreateItem.as_str()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let landings = store::pending_landings(conn)?;
+    let mut shown = Vec::new();
+    for (row, kind, item_id, edge_id) in refused {
+        if kind != WriteKind::CreateItem.as_str() {
+            if let Some(edge_id) = edge_id
+                && owed.contains(&(Subject::Edge, edge_id.clone()))
+            {
+                shown.push(edge_id);
+            }
+            continue;
+        }
+        let Some(item_id) = item_id else {
+            continue;
+        };
+        let read_owed = owed.contains(&(Subject::Item, item_id.clone()))
+            || landings
+                .get(&row)
+                .is_some_and(|landed| owed.contains(&(Subject::Item, landed.clone())));
+        if read_owed {
+            let draft = Draft::from_payload(&store::payload_of(conn, &row)?)?;
+            shown.extend(
+                draft
+                    .projected_edges(&item_id, "")
+                    .into_iter()
+                    .map(|edge| edge.id),
+            );
+        }
+    }
+    Ok(serde_json::to_string(&shown)?)
 }
 
 /// The held edges the write leaves standing beside the proposed one: every
 /// edge of its type but the one the write is, those a create replaces and
-/// those refused.
-static STANDING: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "edge_type = ?1 AND id IS NOT ?2 AND source_id IS NOT ?3 AND {}",
-        not_refused("edges.id")
-    )
-});
+/// those only a refused write shows.
+const STANDING: &str = "edge_type = ?2 AND id IS NOT ?3 AND source_id IS NOT ?4
+    AND id NOT IN (SELECT value FROM json_each(?1))";
 
 /// Whether the copy holds an edge of the proposed triple.
-fn holds_triple(conn: &Connection, edge: &Proposed) -> Result<bool> {
+fn holds_triple(conn: &Connection, edge: &Proposed, refused: &str) -> Result<bool> {
     let mut statement = conn.prepare_cached(&format!(
         "SELECT EXISTS (SELECT 1 FROM edges
-          WHERE {} AND source_id = ?4 AND target_id = ?5)",
-        *STANDING
+          WHERE {STANDING} AND source_id = ?5 AND target_id = ?6)"
     ))?;
     Ok(statement.query_row(
         params![
+            refused,
             edge.edge_type,
             edge.replacing,
             edge.source.replaced(),
@@ -277,17 +334,22 @@ fn holds_triple(conn: &Connection, edge: &Proposed) -> Result<bool> {
 
 /// Whether the copy holds an edge of the proposed type at the proposed
 /// edge's `end`.
-fn holds_at(conn: &Connection, edge: &Proposed, end: End) -> Result<bool> {
+fn holds_at(conn: &Connection, edge: &Proposed, end: End, refused: &str) -> Result<bool> {
     let (column, id) = match end {
         End::Source => ("source_id", edge.source.id()),
         End::Target => ("target_id", edge.target_id),
     };
     let mut statement = conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM edges WHERE {} AND {column} = ?4)",
-        *STANDING
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE {STANDING} AND {column} = ?5)"
     ))?;
     Ok(statement.query_row(
-        params![edge.edge_type, edge.replacing, edge.source.replaced(), id],
+        params![
+            refused,
+            edge.edge_type,
+            edge.replacing,
+            edge.source.replaced(),
+            id
+        ],
         |row| row.get(0),
     )?)
 }
@@ -337,24 +399,26 @@ fn refuse_unfitting_ends(
 }
 
 /// Whether the target reaches the source through the held edges of the type,
-/// those still waiting to be sent among them and those refused left out.
-fn closes_cycle(conn: &Connection, edge: &Proposed) -> Result<bool> {
-    let mut statement = conn.prepare_cached(&format!(
+/// those still waiting to be sent among them and those only a refused write
+/// shows left out.
+fn closes_cycle(conn: &Connection, edge: &Proposed, refused: &str) -> Result<bool> {
+    let mut statement = conn.prepare_cached(
         "WITH RECURSIVE reached(id) AS (
             SELECT ?1
             UNION
             SELECT e.target_id FROM edges e JOIN reached r ON e.source_id = r.id
-             WHERE e.edge_type = ?3 AND e.id IS NOT ?4 AND {}
+             WHERE e.edge_type = ?3 AND e.id IS NOT ?4
+               AND e.id NOT IN (SELECT value FROM json_each(?5))
          )
          SELECT EXISTS (SELECT 1 FROM reached WHERE id = ?2)",
-        not_refused("e.id")
-    ))?;
+    )?;
     Ok(statement.query_row(
         params![
             edge.target_id,
             edge.source.id(),
             edge.edge_type,
-            edge.replacing
+            edge.replacing,
+            refused
         ],
         |row| row.get(0),
     )?)
@@ -372,15 +436,15 @@ pub(crate) fn refuse_retype_breaking_edges(
     let Some(lineage) = lineages.of(conn, next_type)? else {
         return Ok(());
     };
-    let mut statement = conn.prepare_cached(&format!(
+    let refused = shown_by_unread_refusals(conn)?;
+    let mut statement = conn.prepare_cached(
         "SELECT edge_type, source_id = ?1, target_id = ?1 FROM edges
           WHERE (source_id = ?1 OR target_id = ?1) AND source_id != target_id
-            AND {}
+            AND id NOT IN (SELECT value FROM json_each(?2))
           ORDER BY created_at, id",
-        not_refused("edges.id")
-    ))?;
+    )?;
     let edges = statement
-        .query_map([item_id], |row| {
+        .query_map(params![item_id, refused], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, bool>(1)?,
@@ -1190,6 +1254,211 @@ mod tests {
             core.check_edge(&draft)
                 .unwrap_or_else(|error| panic!("{what} once refused: {error:?}"));
         }
+    }
+
+    const MADE: &str = "0190f3a0-0000-7000-8000-0000000000f1";
+
+    /// The read-back of the refused write is still owed, and its row the
+    /// first in the queue.
+    fn assert_refused_and_unread(core: &Core) {
+        let queue = core.queue().unwrap();
+        assert_eq!(queue[0].verdict, Some(crate::Verdict::Refused));
+        assert!(
+            !store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty(),
+            "the read landed"
+        );
+    }
+
+    #[test]
+    fn an_inline_edge_of_a_refused_create_counts_for_nothing_while_its_read_is_owed() {
+        let server = crate::scripted::Scripted::start();
+        let core = copy_served(&server);
+        core.create_item(&Draft {
+            id: Some(MADE.into()),
+            r#type: "core.note".into(),
+            properties: json!({ "title": "made" }).as_object().unwrap().clone(),
+            edges: [("mock.next-note".to_string(), vec![NOTE_B.to_string()])].into(),
+            ..Draft::default()
+        })
+        .unwrap();
+        assert_refused_for(
+            core.check_edge(&edge(NOTE_C, NOTE_B, "mock.next-note")),
+            TARGET_FULL,
+            "another edge to b while the create waits",
+        );
+        server.on(
+            "/items",
+            vec![crate::scripted::refusal(422, "edge_constraint_violation")],
+        );
+        server.on(
+            &format!("/items/{MADE}"),
+            vec![crate::scripted::unnamed(503, "unavailable")],
+        );
+        let report = core.drain().unwrap();
+        assert!(
+            report.unavailable.is_some(),
+            "the read went through: {report:?}"
+        );
+        assert_refused_and_unread(&core);
+        assert!(
+            core.edges_to(NOTE_B)
+                .unwrap()
+                .iter()
+                .any(|shown| shown.source_id == MADE),
+            "the copy put the refused create's edge back before its read landed"
+        );
+        core.check_edge(&edge(NOTE_C, NOTE_B, "mock.next-note"))
+            .unwrap_or_else(|error| panic!("another edge to b once refused: {error:?}"));
+    }
+
+    /// A keyed create the server refused for the row its key names owes the
+    /// read of that row, not of its own id; the drain records it as `land`
+    /// does when that read fails.
+    #[test]
+    fn an_inline_edge_of_a_create_refused_onto_a_keyed_row_counts_for_nothing_while_that_read_is_owed()
+     {
+        let core = copy();
+        let made = core
+            .create_item(&Draft {
+                id: Some(MADE.into()),
+                r#type: "core.note".into(),
+                properties: json!({ "title": "made" }).as_object().unwrap().clone(),
+                edges: [("mock.next-note".to_string(), vec![NOTE_B.to_string()])].into(),
+                ..Draft::default()
+            })
+            .unwrap();
+        let other = edge(NOTE_C, NOTE_B, "mock.next-note");
+        {
+            let conn = core.conn().unwrap();
+            store::record_verdict(
+                &conn,
+                &made.id,
+                &store::Answered {
+                    verdict: crate::Verdict::Refused,
+                    reason: Some("version_conflict"),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            store::meta_set(
+                &conn,
+                &format!("receipt_pending/{}", made.id),
+                &format!("land:{NOTE_D}"),
+            )
+            .unwrap();
+        }
+        // The witness: refused, with no read owed, the edge still counts.
+        assert_refused_for(
+            core.check_edge(&other),
+            TARGET_FULL,
+            "another edge to b before the read is owed",
+        );
+        store::owe_read_back(
+            &core.conn().unwrap(),
+            &store::Owed {
+                subject: crate::model::Subject::Item,
+                id: NOTE_D.into(),
+                source_id: None,
+                edge_type: None,
+                moved: false,
+            },
+        )
+        .unwrap();
+        core.check_edge(&other)
+            .unwrap_or_else(|error| panic!("another edge to b once refused: {error:?}"));
+    }
+
+    #[test]
+    fn a_refused_move_counts_for_nothing_at_either_end_while_its_read_is_owed() {
+        let server = crate::scripted::Scripted::start();
+        let core = copy_served(&server);
+        hold(&core, HELD_EDGE, NOTE_A, NOTE_B, "mock.next-note");
+        core.update_edge(
+            HELD_EDGE,
+            &EdgeEdit {
+                base_version: Some(1),
+                target_id: Some(NOTE_C.into()),
+                ..EdgeEdit::default()
+            },
+        )
+        .unwrap();
+        assert_refused_for(
+            core.check_edge(&edge(NOTE_D, NOTE_C, "mock.next-note")),
+            TARGET_FULL,
+            "another edge to c while the move waits",
+        );
+        server.on(
+            &format!("/edges/{HELD_EDGE}"),
+            vec![
+                crate::scripted::refusal(422, "edge_constraint_violation"),
+                crate::scripted::unnamed(503, "unavailable"),
+            ],
+        );
+        let report = core.drain().unwrap();
+        assert!(
+            report.unavailable.is_some(),
+            "the read went through: {report:?}"
+        );
+        assert_refused_and_unread(&core);
+        assert!(
+            core.edges_to(NOTE_C)
+                .unwrap()
+                .iter()
+                .any(|shown| shown.id == HELD_EDGE),
+            "the copy put the refused move back before its read landed"
+        );
+        core.check_edge(&edge(NOTE_D, NOTE_C, "mock.next-note"))
+            .unwrap_or_else(|error| panic!("another edge to c once refused: {error:?}"));
+    }
+
+    #[test]
+    fn an_edge_made_again_after_its_refusal_was_read_counts() {
+        let server = crate::scripted::Scripted::start();
+        let core = copy_served(&server);
+        let named = || EdgeDraft {
+            id: Some(OTHER_EDGE.into()),
+            ..edge(NOTE_A, NOTE_B, "mock.next-note")
+        };
+        core.create_edge(&named()).unwrap();
+        server.on(
+            "/edges",
+            vec![crate::scripted::refusal(422, "edge_constraint_violation")],
+        );
+        server.on(
+            &format!("/edges/{OTHER_EDGE}"),
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "edge_not_found",
+            ))],
+        );
+        core.drain().unwrap();
+        // The witness: the refusal stays in the queue, and its read landed.
+        assert_eq!(
+            core.queue().unwrap()[0].verdict,
+            Some(crate::Verdict::Refused)
+        );
+        assert!(
+            store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty(),
+            "the read is still owed"
+        );
+        core.create_edge(&named()).unwrap();
+        assert_create_refused_for(
+            &core,
+            &edge(NOTE_A, NOTE_B, "mock.next-note"),
+            DUPLICATE,
+            "the triple of the edge made again",
+        );
+        assert_create_refused_for(
+            &core,
+            &edge(NOTE_A, NOTE_C, "mock.next-note"),
+            SOURCE_FULL,
+            "a second edge from the source of the edge made again",
+        );
     }
 
     #[test]
