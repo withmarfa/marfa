@@ -3863,7 +3863,7 @@ marfa folders remove [OPTIONS] <DIR>
 
 ### marfa folders status
 
-Say where every file in the folder stands, from its own store, asking the server nothing.
+Say where every file in the folder stands, from its own store, asking the server nothing, and whether the watch of the folder runs another build of marfa.
 
 ```text
 marfa folders status [OPTIONS] <DIR>

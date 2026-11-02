@@ -68,7 +68,8 @@ pub enum FoldersCommand {
         dir: PathBuf,
     },
     /// Say where every file in the folder stands, from its own store,
-    /// asking the server nothing.
+    /// asking the server nothing, and whether the watch of the folder runs
+    /// another build of marfa.
     Status {
         /// The folder.
         dir: PathBuf,

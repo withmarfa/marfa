@@ -4978,7 +4978,7 @@ While several watch processes run on one machine, a device MUST keep one entry i
 
 While a watch process runs, a device MUST set `marfa_version` in the process’s entry in the record to the version of the build that runs it, as `marfa --version` prints it.
 
-**Reason:** After an upgrade, a watch started earlier goes on running the build it was started with, and a program reading the record tells it from one on the build installed now. An entry without `marfa_version`, from a build before it, is still read and kept.
+**Reason:** After an upgrade, a watch started earlier goes on running the build it was started with, and a program reading the record tells it from one on the build installed now.
 
 **Tests:** `device/folders-new-build.test.ts › ends with exit status 3 once a link it was started through moves to a new build, naming both versions, and the next watch sends what it had not`.
 
