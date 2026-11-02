@@ -221,6 +221,9 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE INDEX IF NOT EXISTS queue_verdict_seq ON queue (verdict, seq);
 CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
 CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
+-- Numbering a send takes one past the highest `last_sent_seq`, which this
+-- index reads from its end instead of reading the whole queue.
+CREATE INDEX IF NOT EXISTS queue_sent_seq ON queue (last_sent_seq);
 -- No index on `depends_on`: finding rows whose JSON array contains an id is a
 -- scan whatever is indexed, and an index would only make it look cheap.
 
