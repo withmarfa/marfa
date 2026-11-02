@@ -881,6 +881,18 @@ marfa items bulk-get [OPTIONS] <IDS>...
 | --- | --- |
 | `--include <NAME>` | Extra to hydrate onto each item: `edges`, `metadata`. |
 
+### marfa items titles
+
+Find the items titled by each name, in one request.
+
+```text
+marfa items titles [OPTIONS] <NAMES>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAMES>...` | The titles to look for, at most 200. |
+
 ### marfa items lookup
 
 Items by link, natural key or id, in every state, with the tombstones purges left for the keys named.

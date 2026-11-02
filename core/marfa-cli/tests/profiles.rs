@@ -386,6 +386,7 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
     for read in [
         &["--profile", "demo", "items", "get", "i1"][..],
         &["--profile", "demo", "items", "bulk-get", "i1"][..],
+        &["--profile", "demo", "items", "titles", "Ada"][..],
     ] {
         let output = home.run(read, &env);
         assert_eq!(output.status.code(), Some(1), "{}", shown(&output));
@@ -407,7 +408,7 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
             .iter()
             .map(|line| line.split(' ').next().unwrap())
             .collect::<Vec<_>>(),
-        vec!["GET", "POST", "DELETE"]
+        vec!["GET", "POST", "POST", "DELETE"]
     );
 
     // Without a profile, the line names the server alone.

@@ -13,14 +13,6 @@ pub(crate) fn same(one: &str, other: &str) -> bool {
     folded(one) == folded(other)
 }
 
-/// The server compares text as it is sent, so a typed name may be held there
-/// in either form.
-pub(crate) fn forms(name: &str) -> Vec<String> {
-    let mut forms = vec![name.nfc().collect::<String>(), name.nfd().collect()];
-    forms.dedup();
-    forms
-}
-
 pub(crate) fn name_of(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -46,7 +38,5 @@ mod tests {
         assert!(same("PLAN.md", "plan.md"));
         assert!(same("\u{c9}t\u{e9}", "e\u{301}te\u{301}"));
         assert!(!same("plan.md", "plans.md"));
-        assert_eq!(forms(composed), forms(decomposed));
-        assert_eq!(forms("plain").len(), 1);
     }
 }

@@ -2,7 +2,7 @@
 //! file, ignoring case and Unicode form, across what the copy holds and what
 //! the server answers.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -11,7 +11,8 @@ use super::embed::FILE_TYPE;
 use super::text::Typed;
 use crate::catalog::Catalog;
 use crate::folder::fields;
-use crate::names::{folded, forms, name_of, title_of};
+use crate::http::{TITLE_LOOKUP_NAMES, TITLE_LOOKUP_UNITS, TitledItem};
+use crate::names::{folded, name_of, title_of};
 use crate::{Core, Result, store};
 
 /// Where the files of items sit, which a name may name by path or file name:
@@ -116,10 +117,16 @@ pub(crate) enum Resolved {
     Unanswered(String),
 }
 
-/// Lookup pages read for one name and title field, 1,000 items at
-/// `ITEM_PAGE_LIMIT` a page: a name more common than this is named by id
-/// instead.
-const LOOKUP_PAGES: usize = 2;
+/// What the server answered for one name.
+#[derive(Debug, Clone)]
+enum Looked {
+    /// The items it found, and whether it held more than it listed.
+    Titled { items: Vec<TitledItem>, more: bool },
+    /// The server could not be reached.
+    Waiting,
+    /// The server refused the lookup, for this reason.
+    Unanswered(String),
+}
 
 pub(crate) struct Resolver<'a> {
     core: &'a Core,
@@ -128,6 +135,8 @@ pub(crate) struct Resolver<'a> {
     online: bool,
     names: Option<Names>,
     cache: HashMap<String, Resolved>,
+    /// What the server said about each name asked, by folded name.
+    looked: HashMap<String, Looked>,
 }
 
 impl<'a> Resolver<'a> {
@@ -139,6 +148,7 @@ impl<'a> Resolver<'a> {
             online: core.http().is_ok(),
             names: None,
             cache: HashMap::new(),
+            looked: HashMap::new(),
         }
     }
 
@@ -184,32 +194,34 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_name(&mut self, name: &str) -> Result<Resolved> {
-        let mut found: BTreeMap<String, Option<String>> = BTreeMap::new();
         let local: Vec<String> = self
             .names()?
             .of(name)
             .map(|ids| ids.iter().cloned().collect())
             .unwrap_or_default();
+        // The copy already holds two items under the name, and the server
+        // cannot make that one.
+        if local.len() > 1 {
+            return Ok(Resolved::Ambiguous);
+        }
+        let mut found: BTreeMap<String, Option<String>> = BTreeMap::new();
         for id in local {
             let r#type = self.core.get(&id)?.map(|item| item.r#type);
             found.insert(id, r#type);
         }
-        if !self.online {
-            return Ok(if found.len() > 1 {
-                Resolved::Ambiguous
-            } else {
-                Resolved::Waiting
-            });
-        }
-        let (rows, more) = match self.on_server(name, false) {
-            Ok(answered) => answered,
-            Err(error) => return Ok(self.failed(error)),
+        let (items, more) = match self.answer(name) {
+            Looked::Titled { items, more } => (items, more),
+            Looked::Waiting => return Ok(Resolved::Waiting),
+            Looked::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
         };
-        found.extend(rows);
+        let wanted = folded(name.trim());
+        for item in items {
+            if folded(item.title.trim()) == wanted {
+                found.insert(item.id, Some(item.r#type));
+            }
+        }
         Ok(match found.len() {
-            0 | 1 if more => Resolved::Unanswered(format!(
-                "more than {LOOKUP_PAGES} pages of items contain it"
-            )),
+            0 | 1 if more => Resolved::Unanswered(TOO_MANY.to_string()),
             0 => Resolved::Unmatched,
             1 => {
                 let (id, r#type) = found.into_iter().next().expect("one");
@@ -222,11 +234,18 @@ impl<'a> Resolver<'a> {
     /// A failed lookup never ends the pass; after one the network failed, no
     /// later name is asked of the server.
     fn failed(&mut self, error: crate::error::CoreError) -> Resolved {
+        match self.failure(error) {
+            Looked::Unanswered(why) => Resolved::Unanswered(why),
+            _ => Resolved::Waiting,
+        }
+    }
+
+    fn failure(&mut self, error: crate::error::CoreError) -> Looked {
         if error.is_environmental() {
             self.online = false;
-            Resolved::Waiting
+            Looked::Waiting
         } else {
-            Resolved::Unanswered(error.to_string())
+            Looked::Unanswered(error.to_string())
         }
     }
 
@@ -235,26 +254,127 @@ impl<'a> Resolver<'a> {
         Ok(self.names()?.of(name).map_or(0, BTreeSet::len))
     }
 
+    /// Asks the server about every name at once, `TITLE_LOOKUP_NAMES` to a
+    /// call, so the names a pass then resolves are answered from what it
+    /// said. A name the copy holds under two items is left out, as it is
+    /// ambiguous whatever the server holds; so is an id, and a name already
+    /// asked. A name asked later that this left out is asked for alone.
+    pub fn prefetch<'n>(&mut self, names: impl IntoIterator<Item = &'n str>) -> Result<()> {
+        if !self.online {
+            return Ok(());
+        }
+        let mut asked: Vec<(String, String)> = Vec::new();
+        let mut queued: HashSet<String> = HashSet::new();
+        for name in names {
+            if is_id(name) {
+                continue;
+            }
+            let sent = name.trim();
+            let key = folded(sent);
+            if key.is_empty()
+                || self.looked.contains_key(&key)
+                || !queued.insert(key.clone())
+                || self.held_named(sent)? > 1
+            {
+                continue;
+            }
+            asked.push((key, sent.to_string()));
+        }
+        self.ask(asked);
+        Ok(())
+    }
+
+    /// Sends the names, each with its folded key, in calls of
+    /// `TITLE_LOOKUP_NAMES`. A call that fails leaves its names with the
+    /// failure and the others as they were: after a failure of the network
+    /// no more are sent, and any other refusal is that call's alone.
+    fn ask(&mut self, asked: Vec<(String, String)>) {
+        let (past, asked): (Vec<_>, Vec<_>) = asked
+            .into_iter()
+            .partition(|(_, sent)| sent.encode_utf16().count() > TITLE_LOOKUP_UNITS);
+        // A title past the cap has no key, so nothing is titled so.
+        for (key, _) in past {
+            self.looked.insert(
+                key,
+                Looked::Titled {
+                    items: Vec::new(),
+                    more: false,
+                },
+            );
+        }
+        for page in asked.chunks(TITLE_LOOKUP_NAMES) {
+            if !self.online {
+                return;
+            }
+            let sent: Vec<String> = page.iter().map(|(_, sent)| sent.clone()).collect();
+            let answers = self.core.http().and_then(|http| http.item_titles(&sent));
+            match answers {
+                Ok(answers) => {
+                    for ((key, _), answer) in page.iter().zip(answers) {
+                        self.looked.insert(
+                            key.clone(),
+                            Looked::Titled {
+                                items: answer.items,
+                                more: answer.more,
+                            },
+                        );
+                    }
+                }
+                Err(error) => {
+                    let failure = self.failure(error);
+                    for (key, _) in page {
+                        self.looked.insert(key.clone(), failure.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// What the server says of `name`: what it said already, or else its
+    /// answer to a call for the name alone.
+    fn answer(&mut self, name: &str) -> Looked {
+        let sent = name.trim();
+        let key = folded(sent);
+        if let Some(held) = self.looked.get(&key) {
+            return held.clone();
+        }
+        if !self.online {
+            return Looked::Waiting;
+        }
+        if key.is_empty() {
+            return Looked::Titled {
+                items: Vec::new(),
+                more: false,
+            };
+        }
+        self.ask(vec![(key.clone(), sent.to_string())]);
+        self.looked.get(&key).cloned().unwrap_or(Looked::Waiting)
+    }
+
     /// The file item named `name` among those the copy holds, `held`, and
     /// those the server holds under that title.
     pub fn file_named(&mut self, name: &str, held: &[String]) -> Result<Resolved> {
-        if !self.online {
-            return Ok(if held.len() > 1 {
-                Resolved::Ambiguous
-            } else {
-                Resolved::Waiting
-            });
+        if held.len() > 1 {
+            return Ok(Resolved::Ambiguous);
         }
-        let (rows, more) = match self.on_server(name, true) {
-            Ok(answered) => answered,
-            Err(error) => return Ok(self.failed(error)),
+        let (items, more) = match self.answer(name) {
+            Looked::Titled { items, more } => (items, more),
+            Looked::Waiting => return Ok(Resolved::Waiting),
+            Looked::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
         };
-        let mut found: BTreeSet<String> = rows.into_keys().collect();
+        let wanted = folded(name.trim());
+        let mut found: BTreeSet<String> = items
+            .into_iter()
+            .filter(|item| {
+                item.has_blob
+                    && self.catalog.matches(FILE_TYPE, &item.r#type)
+                    && folded(item.title.trim()) == wanted
+            })
+            .map(|item| item.id)
+            .collect();
         found.extend(held.iter().cloned());
         Ok(match found.len() {
-            0 | 1 if more => Resolved::Unanswered(format!(
-                "more than {LOOKUP_PAGES} pages of items contain it"
-            )),
+            0 | 1 if more => Resolved::Unanswered(TOO_MANY.to_string()),
             0 => Resolved::Unmatched,
             1 => Resolved::Found {
                 id: found.into_iter().next().expect("one"),
@@ -263,62 +383,11 @@ impl<'a> Resolver<'a> {
             _ => Resolved::Ambiguous,
         })
     }
-
-    /// The items the server holds under this title, file items alone where
-    /// `files` says, and whether a lookup stopped at its page cap.
-    fn on_server(
-        &self,
-        name: &str,
-        files: bool,
-    ) -> Result<(BTreeMap<String, Option<String>>, bool)> {
-        let http = self.core.http()?;
-        let wanted_type = |r#type: &str| !files || self.catalog.matches(FILE_TYPE, r#type);
-        let mut title_fields: Vec<&str> = self
-            .catalog
-            .declared()
-            .filter(|(r#type, _)| !r#type.starts_with("system.") && wanted_type(r#type))
-            .map(|(r#type, _)| fields::title_field(self.catalog, r#type))
-            .collect();
-        title_fields.sort();
-        title_fields.dedup();
-        let wanted = folded(name.trim());
-        let mut found = BTreeMap::new();
-        let mut more = false;
-        // The server compares the text it is sent as it is, so each form a
-        // title can be held in is asked.
-        let asked: Vec<(&str, String)> = title_fields
-            .iter()
-            .flat_map(|field| {
-                forms(name.trim())
-                    .into_iter()
-                    .map(move |form| (*field, form))
-            })
-            .collect();
-        for (field, form) in asked {
-            let (rows, capped) = http.items_containing(field, &form, LOOKUP_PAGES)?;
-            more |= capped;
-            for row in rows {
-                let item = row.item;
-                if !matches!(item.state.as_str(), "active" | "archived")
-                    || fields::title_field(self.catalog, &item.r#type) != field
-                    || !wanted_type(&item.r#type)
-                    || files
-                        && !item
-                            .properties
-                            .get("blob_ref")
-                            .is_some_and(Value::is_string)
-                {
-                    continue;
-                }
-                let title = item.properties.get(field).and_then(Value::as_str);
-                if title.is_some_and(|title| folded(title.trim()) == wanted) {
-                    found.insert(item.id, Some(item.r#type));
-                }
-            }
-        }
-        Ok((found, more))
-    }
 }
+
+/// Why a name the server holds under more items than it lists is not read:
+/// the one wanted may be among the rest.
+const TOO_MANY: &str = "more items are titled it than the server lists";
 
 /// An id as the server mints one, in its hyphenated form.
 pub(crate) fn is_id(text: &str) -> bool {
@@ -581,5 +650,306 @@ mod tests {
         );
         assert!(answers("Target", &target));
         assert!(answers(&format!(" {} ", titled), &titled));
+    }
+
+    /// A copy on a scripted server, with the notes titled `titles` held.
+    fn copy_holding(
+        server: &crate::scripted::Scripted,
+        dir: &std::path::Path,
+        titles: &[&str],
+    ) -> std::sync::Arc<Core> {
+        use crate::catalog::Indexing;
+        use crate::store::testing::wire_item;
+        let core = crate::stop_tests::copy_in_keyed(server, dir, "k");
+        for (at, title) in titles.iter().enumerate() {
+            let row = wire_item(
+                &format!("held-{at}"),
+                "core.note",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": title }),
+            );
+            store::upsert_item(&core.conn().unwrap(), &row, None, &Indexing::default()).unwrap();
+        }
+        core
+    }
+
+    /// What `/items/titles` answers when it finds nothing for `count` names.
+    fn nothing_for(count: usize) -> crate::scripted::Answer {
+        let result = r#"{"name":"","items":[],"more":false}"#;
+        crate::scripted::json(
+            200,
+            &format!("{{\"results\":[{}]}}", vec![result; count].join(",")),
+        )
+    }
+
+    fn titled(id: &str, title: &str) -> String {
+        format!(r#"{{"id":"{id}","type":"core.note","title":"{title}","has_blob":false}}"#)
+    }
+
+    fn answer_of(entries: &[String]) -> crate::scripted::Answer {
+        let results: Vec<String> = entries
+            .iter()
+            .map(|items| format!(r#"{{"name":"","items":[{items}],"more":false}}"#))
+            .collect();
+        crate::scripted::json(200, &format!(r#"{{"results":[{}]}}"#, results.join(",")))
+    }
+
+    fn sent_names(server: &crate::scripted::Scripted) -> Vec<Vec<String>> {
+        server
+            .seen("/items/titles")
+            .iter()
+            .map(|seen| {
+                serde_json::from_slice::<serde_json::Value>(&seen.body).unwrap()["names"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|name| name.as_str().unwrap().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn resolver<'a>(core: &'a Core, catalog: &'a Catalog) -> Resolver<'a> {
+        Resolver::new(core, catalog, &crate::body::rule::Placements)
+    }
+
+    fn catalog_of(core: &Core) -> Catalog {
+        Catalog::load(&core.conn().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn names_are_asked_in_calls_of_the_most_a_call_takes_each_once() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![nothing_for(200), nothing_for(200), nothing_for(50)],
+        );
+        let names: Vec<String> = (0..450).map(|at| format!("Name {at}")).collect();
+        let mut again = names.clone();
+        // The same name in another case and with white space is the same name.
+        again.push(" NAME 7 ".into());
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(again.iter().map(String::as_str)).unwrap();
+        let sent = sent_names(&server);
+        assert_eq!(
+            sent.iter().map(Vec::len).collect::<Vec<_>>(),
+            [200, 200, 50]
+        );
+        assert_eq!(sent.concat(), names);
+        // Resolving them asks the server nothing more.
+        for name in &names {
+            assert!(matches!(
+                resolver.resolve(name).unwrap(),
+                Resolved::Unmatched
+            ));
+        }
+        assert_eq!(server.seen("/items/titles").len(), 3);
+    }
+
+    #[test]
+    fn a_name_the_copy_holds_under_two_items_is_not_asked() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &["Twin", "TWIN", "Solo"]);
+        let catalog = catalog_of(&core);
+        server.on("/items/titles", vec![nothing_for(2)]);
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Twin", "Solo", "Other"]).unwrap();
+        assert_eq!(sent_names(&server), [["Solo", "Other"]]);
+        assert!(matches!(
+            resolver.resolve("twin").unwrap(),
+            Resolved::Ambiguous
+        ));
+        assert!(matches!(
+            resolver.resolve("Solo").unwrap(),
+            Resolved::Found { .. }
+        ));
+        assert_eq!(server.seen("/items/titles").len(), 1);
+    }
+
+    #[test]
+    fn a_name_held_once_and_titled_once_on_the_server_is_ambiguous() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &["Ada"]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![answer_of(&[titled("elsewhere", "ADA")])],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Ada"]).unwrap();
+        assert!(matches!(
+            resolver.resolve("Ada").unwrap(),
+            Resolved::Ambiguous
+        ));
+    }
+
+    #[test]
+    fn the_server_is_compared_by_the_core_whatever_it_answers() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![answer_of(&[titled("same", "ada")
+                + ","
+                + &titled("other", "Adam")])],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Ada"]).unwrap();
+        assert!(matches!(
+            resolver.resolve("Ada").unwrap(),
+            Resolved::Found { id, .. } if id == "same"
+        ));
+    }
+
+    #[test]
+    fn a_call_the_network_fails_leaves_its_names_waiting_and_asks_no_more() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![
+                nothing_for(200),
+                crate::scripted::refusal(503, "unavailable"),
+            ],
+        );
+        let names: Vec<String> = (0..450).map(|at| format!("Name {at}")).collect();
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(names.iter().map(String::as_str)).unwrap();
+        assert_eq!(server.seen("/items/titles").len(), 2);
+        assert!(matches!(
+            resolver.resolve("Name 0").unwrap(),
+            Resolved::Unmatched
+        ));
+        for name in ["Name 200", "Name 449"] {
+            assert!(matches!(resolver.resolve(name).unwrap(), Resolved::Waiting));
+        }
+        assert_eq!(server.seen("/items/titles").len(), 2);
+    }
+
+    #[test]
+    fn a_rate_limited_call_leaves_its_names_waiting() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::Answer::Json {
+                status: 429,
+                body: r#"{"error":{"code":"rate_limited","message":"scripted"}}"#.into(),
+                headers: vec![("Retry-After".into(), "1".into())],
+            }],
+        );
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["Ada", "Grace"]).unwrap();
+        assert!(matches!(
+            resolver.resolve("Ada").unwrap(),
+            Resolved::Waiting
+        ));
+        assert!(matches!(
+            resolver.resolve("Grace").unwrap(),
+            Resolved::Waiting
+        ));
+        assert_eq!(server.seen("/items/titles").len(), 1);
+    }
+
+    #[test]
+    fn a_refused_call_leaves_only_its_names_unanswered() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![
+                crate::scripted::refusal(403, "type_not_permitted"),
+                nothing_for(50),
+            ],
+        );
+        let names: Vec<String> = (0..250).map(|at| format!("Name {at}")).collect();
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(names.iter().map(String::as_str)).unwrap();
+        assert_eq!(server.seen("/items/titles").len(), 2);
+        assert!(matches!(
+            resolver.resolve("Name 199").unwrap(),
+            Resolved::Unanswered(_)
+        ));
+        assert!(matches!(
+            resolver.resolve("Name 200").unwrap(),
+            Resolved::Unmatched
+        ));
+    }
+
+    #[test]
+    fn a_name_of_punctuation_is_asked_and_one_of_white_space_or_past_the_cap_is_not() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on("/items/titles", vec![answer_of(&[titled("dots", "...")])]);
+        let long = "n".repeat(TITLE_LOOKUP_UNITS + 1);
+        let mut resolver = resolver(&core, &catalog);
+        resolver.prefetch(["...", " \u{3000} ", &long]).unwrap();
+        assert_eq!(sent_names(&server), [["..."]]);
+        assert!(matches!(
+            resolver.resolve("...").unwrap(),
+            Resolved::Found { id, .. } if id == "dots"
+        ));
+        assert!(matches!(
+            resolver.resolve(&long).unwrap(),
+            Resolved::Unmatched
+        ));
+        assert!(matches!(
+            resolver.resolve(" \u{3000} ").unwrap(),
+            Resolved::Unmatched
+        ));
+        assert_eq!(server.seen("/items/titles").len(), 1);
+    }
+
+    #[test]
+    fn a_name_not_prefetched_is_asked_for_alone() {
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on("/items/titles", vec![nothing_for(1)]);
+        let mut resolver = resolver(&core, &catalog);
+        assert!(matches!(
+            resolver.resolve("Late").unwrap(),
+            Resolved::Unmatched
+        ));
+        assert_eq!(sent_names(&server), [["Late"]]);
+    }
+
+    #[test]
+    fn the_name_fold_agrees_with_the_cases_the_server_is_held_to() {
+        #[derive(serde::Deserialize)]
+        struct Cases {
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            about: String,
+            name: String,
+            folded: String,
+        }
+        let cases: Cases = serde_json::from_str(include_str!(
+            "../../../../conformance/fixtures/name-fold.json"
+        ))
+        .unwrap();
+        assert!(!cases.cases.is_empty());
+        for case in cases.cases {
+            assert_eq!(folded(case.name.trim()), case.folded, "{}", case.about);
+        }
     }
 }

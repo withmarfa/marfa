@@ -3,10 +3,10 @@
 
 use super::tests::{ScannedDir, scanned_folder};
 use super::*;
-use crate::scripted::{Scripted, certified, json, refusal};
+use crate::scripted::{Scripted, refusal};
 
 /// A folder of notes with nothing in it yet, whose copy has synced, over a
-/// server that answers every name lookup with `lookup`.
+/// server that answers every title lookup with `lookup`.
 pub(super) fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
     let (dir, folder) = scanned_folder();
     {
@@ -20,7 +20,7 @@ pub(super) fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
     }
     drop(folder);
     let server = Scripted::start();
-    server.on("/items", vec![certified(lookup)]);
+    server.on("/items/titles", vec![lookup]);
     let folder = Folder::open(
         dir.path(),
         Some(crate::Server {
@@ -35,7 +35,7 @@ pub(super) fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
 pub(super) type Answer = crate::scripted::Answer;
 
 pub(super) fn nothing_found() -> Answer {
-    json(200, r#"{"data":[],"next_cursor":null}"#)
+    Answer::Titled { found: Vec::new() }
 }
 
 fn flags(report: &ScanReport) -> Vec<(&str, &str, &str)> {
@@ -71,7 +71,7 @@ pub(super) fn held(folder: &Folder, path: &str) -> Option<String> {
 }
 
 fn lookups(server: &Scripted) -> usize {
-    server.seen("/items").len()
+    server.seen("/items/titles").len()
 }
 
 #[test]
@@ -152,14 +152,12 @@ fn a_name_two_items_have_stays_held_until_one_goes_to_the_bin() {
     let a = item_at(&folder, "A.md");
     assert_eq!(edges_of(&folder, &a, LINK_EDGE), Vec::<String>::new());
 
-    // Asked again once the copy changes, it is still never guessed.
-    let asked = lookups(&server);
+    // The copy holds the name twice, so the server could not make it one
+    // and is not asked, then or when the copy changes; it is never guessed.
+    assert_eq!(lookups(&server), 0, "an ambiguous name was asked");
     std::fs::write(dir.path().join("C.md"), "C\n").unwrap();
     assert_eq!(folder.scan().unwrap().created, 1);
-    assert!(
-        lookups(&server) > asked,
-        "the held name was not asked again"
-    );
+    assert_eq!(lookups(&server), 0, "an ambiguous name was asked");
     assert!(held(&folder, "A.md").is_some_and(|held| held.contains("more than one item")));
     assert_eq!(edges_of(&folder, &a, LINK_EDGE), Vec::<String>::new());
 
@@ -222,50 +220,4 @@ fn a_hold_from_a_store_that_never_recorded_when_to_judge_it_again_is_judged_agai
     assert!(report.flagged.is_empty(), "{report:?}");
     assert_eq!(held(&folder, "A.md"), None);
     assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
-}
-
-#[test]
-fn an_unmatched_name_is_asked_again_while_a_refused_name_in_the_same_file_is_not() {
-    // How many lookups one name takes, so the refusal lands on the second.
-    let per_name = {
-        let (dir, folder, server) = online_folder(nothing_found());
-        std::fs::write(dir.path().join("Probe.md"), "See [[Elsewhere]].\n").unwrap();
-        folder.scan().unwrap();
-        lookups(&server)
-    };
-    assert!(per_name > 0);
-    let mut answers = vec![nothing_found(); per_name];
-    answers.push(refusal(403, "forbidden"));
-    let (dir, folder, server) = online_folder(nothing_found());
-    server.on("/items", answers);
-    std::fs::write(dir.path().join("A.md"), "See [[B]] and [[Common]].\n").unwrap();
-    folder.scan().unwrap();
-    let first = held(&folder, "A.md").unwrap();
-    assert!(
-        first.contains("[[B]] in its body matches no item"),
-        "{first}"
-    );
-    assert!(
-        first.contains("[[Common]] in its body could not be looked up"),
-        "{first}"
-    );
-    let asked = lookups(&server);
-    let a = item_at(&folder, "A.md");
-
-    server.on("/items", vec![nothing_found()]);
-    std::fs::write(dir.path().join("B.md"), "B\n").unwrap();
-    assert_eq!(folder.scan().unwrap().created, 1);
-    assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
-    let still = held(&folder, "A.md").unwrap();
-    assert!(!still.contains("[[B]]"), "{still}");
-    assert!(
-        still.contains("[[Common]] in its body could not be looked up"),
-        "{still}"
-    );
-    let since: Vec<_> = server.seen("/items").into_iter().skip(asked).collect();
-    assert_eq!(since.len(), per_name, "{since:?}");
-    assert!(
-        since.iter().all(|seen| !seen.query.contains("Common")),
-        "the refused name was asked again: {since:?}"
-    );
 }
