@@ -123,7 +123,10 @@ fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_a_minute() {
         passes.tick(&folder).unwrap();
     }
     let pulls = passes.pulls();
-    let flagged = folder.scan_watching(false, Duration::ZERO).unwrap().directories;
+    let flagged = folder
+        .scan_watching(false, Duration::ZERO)
+        .unwrap()
+        .directories;
     open(&shut);
     assert!(!flagged.is_empty(), "the witness: the directory stands");
     assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
