@@ -1694,7 +1694,8 @@ describe("what a pull does with a file whose item stops matching", () => {
     edges.deleting = () => answers.edgePermissionDenied("in-folder");
     trashedAt(edges);
     const reports = [];
-    for (let push = 0; push < 2; push += 1) {
+    // The third push begins after the second's drain cleared the refusal.
+    for (let push = 0; push < 3; push += 1) {
       const pushed = await harness!.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
       if (pushed.ok) reports.push(pushed.value);
@@ -1706,14 +1707,14 @@ describe("what a pull does with a file whose item stops matching", () => {
           .map((entry) => entry.verdict),
       ),
       "the refusal of the end of a placement was not reported once, or was reported again",
-    ).toEqual([["refused"], []]);
+    ).toEqual([["refused"], [], []]);
     expect(reports[0]?.pull?.ended).toBe(1);
-    const queued = await harness!.folder.device().queue();
-    expect(queued.ok).toBe(true);
-    if (!queued.ok) return;
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge"),
-      "a refused end was queued again at every push",
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname.startsWith("/edges/"),
+      ),
+      "the end of a placement the server refused was asked for again",
     ).toHaveLength(1);
     expect(edges.placements(harness!.settings.id).size).toBe(1);
   });
