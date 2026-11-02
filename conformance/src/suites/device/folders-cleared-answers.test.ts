@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("a folder's answered writes", () => {
-  it("clears the writes it recorded at its next drain, and keeps a refused edit's words and every refusal it shows", async () => {
+  it("clears the writes it recorded once their drain ends, and keeps a refused edit's words and every refusal it shows", async () => {
     harness = await folderHarness("folder-clears-answered");
     let door: FolderDoor | undefined;
     scriptFolderWrites(harness, {
@@ -57,26 +57,31 @@ describe("a folder's answered writes", () => {
     );
     const refused = await harness.folder.push();
     expect(refused.ok, JSON.stringify(refused)).toBe(true);
-    const before = await harness.folder.device().queue();
-    expect(before.ok, JSON.stringify(before)).toBe(true);
     expect(
-      before.ok && before.value.filter((write) => write.verdict === "accepted"),
-      "the witness: the last push's answers stay until the next drain",
+      refused.ok &&
+        refused.value.drain.verdicts.filter(
+          (entry) => entry.verdict === "accepted",
+        ),
+      "the witness: the server took writes this push sent",
     ).not.toEqual([]);
 
-    const quiet = await harness.folder.push();
-    expect(quiet.ok, JSON.stringify(quiet)).toBe(true);
-    const after = await harness.folder.device().queue();
-    expect(after.ok, JSON.stringify(after)).toBe(true);
-    const left = after.ok ? after.value : [];
-    expect(
-      left.filter((write) => write.verdict !== "refused"),
-      "a write the folder recorded stayed in its queue",
-    ).toEqual([]);
-    expect(
-      left.map((write) => [write.kind, write.item_id]),
-      "only the refused edit, which carries the person's words, stays",
-    ).toEqual([["update_item", refusedId]]);
+    for (const push of ["the push that answered them", "a quiet push"]) {
+      if (push === "a quiet push") {
+        const quiet = await harness.folder.push();
+        expect(quiet.ok, JSON.stringify(quiet)).toBe(true);
+      }
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      const left = queued.ok ? queued.value : [];
+      expect(
+        left.filter((write) => write.verdict !== "refused"),
+        `a write the folder recorded stayed in its queue after ${push}`,
+      ).toEqual([]);
+      expect(
+        left.map((write) => [write.kind, write.item_id]),
+        `after ${push}, only the refused edit, which carries the person's words, stays`,
+      ).toEqual([["update_item", refusedId]]);
+    }
 
     const status = await harness.folder.status();
     expect(status.ok, JSON.stringify(status)).toBe(true);

@@ -161,7 +161,7 @@ fn the_rows_a_drain_reads_do_not_grow_with_the_writes_the_folder_sent() {
 #[test]
 fn a_drain_reads_the_writes_its_files_wait_on_by_id_not_the_whole_queue() {
     let (dir, folder, _server, _passes) = watched_notes(&["a.md", "b.md"]);
-    // Held as between one drain's answers and the next drain's clearing.
+    // As an earlier build left them, before a drain clears them.
     sent_long_ago(&folder, &item_of(&folder, "b.md"), 500);
     edited(dir.path(), &folder, "a.md", "edited");
     let edit = answered(&folder, Verdict::Accepted, None);

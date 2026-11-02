@@ -12,9 +12,10 @@ use crate::{Result, store};
 
 impl Folder {
     /// Clears the answered writes as `store::forget_answered` does, but for
-    /// each whose answer the folder has yet to record. Run as a drain
-    /// begins, so the answers of the drain before it stay in the queue until
-    /// then. Answers how many writes left the queue.
+    /// each whose answer the folder has yet to record. Run as a drain ends,
+    /// once its answers are recorded; an answer a drain cut short left is
+    /// cleared by the next drain that ends. Answers how many writes left the
+    /// queue.
     pub(super) fn clear_answered(&self) -> Result<usize> {
         self.core.lock.refuse_unless_writer()?;
         let mut conn = self.core.conn()?;

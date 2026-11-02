@@ -175,13 +175,15 @@ describe("what a folder is", () => {
     ).toBe("core.bookmark");
     expect((sent?.properties as Record<string, unknown>).language).toBe("en");
     expect(sent?.tier).toBe("library");
-    const queued = await harness.folder.device().queue();
-    expect(queued.ok).toBe(true);
-    if (!queued.ok) return;
     expect(
-      queued.value
-        .filter((row) => row.kind === "add_tag")
-        .map((row) => row.tag),
+      harness.server.requests
+        .filter(
+          (request) =>
+            request.method === "POST" && request.pathname.endsWith("/tags"),
+        )
+        .flatMap(
+          (request) => (JSON.parse(request.body) as { tags: string[] }).tags,
+        ),
     ).toEqual(["inbox"]);
     expect(
       existsSync(join(harness.dir, "a bookmark.md")),
