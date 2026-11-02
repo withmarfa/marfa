@@ -35,9 +35,9 @@ pub(super) struct Selection {
     /// Files the last full render rewrote that the choice would have left,
     /// each as its path, for the watch to tell.
     missed: Vec<String>,
-    /// The items narrow pulls reached that did not run to their end, which
-    /// the next pull reaches too: the names they brought up to date no
-    /// longer differ.
+    /// The items narrow pulls reached, with those whose names they brought
+    /// up to date, that did not run to their end, which the next pull
+    /// reaches too: those names no longer differ.
     owed: HashSet<String>,
     /// Whether the next pull reads every item, where a narrow one met what
     /// only a pull of every item settles.
@@ -237,6 +237,11 @@ impl Selection {
         let differing = last
             .names
             .refresh(&*folder.core.conn()?, catalog, &renamed, &paths)?;
+        // At once: the baseline's names no longer differ, so a pull that
+        // ends here, to a full one or by an error, would not find them.
+        self.owed.extend(differing.iter().cloned());
+        let differing: HashSet<String> = differing.into_iter().collect();
+        self.owed.extend(Self::with_neighbors(folder, &differing)?);
         changed.extend(moved);
         changed.extend(differing);
         let mut reached = Self::with_neighbors(folder, &changed)?;
@@ -317,6 +322,40 @@ impl Selection {
     /// date.
     pub(super) fn names(&self) -> Option<&Names> {
         self.last.as_ref().map(|last| &last.names)
+    }
+
+    /// Called once a narrow pull has pinned `pinned`, which the baseline's
+    /// names do not hold yet, so a line to one shows its title. An item
+    /// whose name one of them took is owed to the next pull, with its
+    /// neighbors.
+    pub(super) fn name_pinned(
+        &mut self,
+        folder: &Folder,
+        pick: &Pick,
+        catalog: &Catalog,
+        pinned: &[String],
+    ) -> Result<()> {
+        let Some(last) = self.last.as_mut() else {
+            return Ok(());
+        };
+        if pinned.is_empty() {
+            return Ok(());
+        }
+        let ids: BTreeSet<String> = pinned.iter().cloned().collect();
+        let paths: Vec<(String, String)> = pick
+            .bound
+            .values()
+            .filter(|bound| ids.contains(&bound.item_id))
+            .map(|bound| (bound.path.clone(), bound.item_id.clone()))
+            .collect();
+        let mut differing = last
+            .names
+            .refresh(&*folder.core.conn()?, catalog, &ids, &paths)?;
+        differing.retain(|id| !ids.contains(id));
+        let differing: HashSet<String> = differing.into_iter().collect();
+        self.owed.extend(Self::with_neighbors(folder, &differing)?);
+        self.owed.extend(differing);
+        Ok(())
     }
 
     /// Called where a narrow pull met what only a pull of every item
@@ -470,7 +509,7 @@ impl Pick {
 
 /// Past this many items, a narrow pull would read more than the choice
 /// saves.
-const MOST_ATTACHED: usize = 4096;
+pub(super) const MOST_ATTACHED: usize = 4096;
 
 /// Adds to `read` every item joined to one in it by attachments, each
 /// document with its attachments and each attachment with its documents;
@@ -495,7 +534,7 @@ fn attached_together(folder: &Folder, read: &mut HashSet<String>) -> Result<bool
                 }
             }
         }
-        if read.len() > MOST_ATTACHED {
+        if read.len() > most_attached() {
             return Ok(false);
         }
     }
@@ -504,10 +543,22 @@ fn attached_together(folder: &Folder, read: &mut HashSet<String>) -> Result<bool
 
 #[cfg(test)]
 thread_local! {
+    /// The most items a narrow pull reads on this thread, in place of
+    /// `MOST_ATTACHED`.
+    pub(super) static ATTACHED_LIMIT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(MOST_ATTACHED) };
+
     /// Makes the choice leave out the items at the other end of a changed
     /// item's edges, to show a test of it fails.
     pub(super) static LEAVE_OUT_NEIGHBORS: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+}
+
+fn most_attached() -> usize {
+    #[cfg(test)]
+    return ATTACHED_LIMIT.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    MOST_ATTACHED
 }
 
 fn neighbors_left_out() -> bool {

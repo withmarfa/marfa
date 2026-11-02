@@ -203,14 +203,15 @@ impl Folder {
                     (&settings, &catalog, &edge_types),
                 ),
             };
-            // As the scan measures: the text it sends, which a file item's
-            // bytes are not. Sent as JSON, a byte takes at most six, so a
-            // file under a sixth of the limit is not read for it.
+            // As the scan measures: the text of a document it sends, which a
+            // file item's bytes are not and no other file's are. Sent as
+            // JSON, a byte takes at most six, so a file under a sixth of the
+            // limit is not read for it.
             let short = captured.is_some_and(|captured| {
                 usize::try_from(captured.metadata.borrow().len())
                     .is_ok_and(|len| len.saturating_mul(6) < NEAR_LIMIT)
             });
-            entry.warning = (!file_item && !short)
+            entry.warning = (!file_item && is_document(path) && !short)
                 .then(|| found.bytes())
                 .flatten()
                 .and_then(|bytes| near_limit(key, text_of(bytes).ok()?))

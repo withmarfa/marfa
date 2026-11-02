@@ -450,7 +450,15 @@ impl Folder {
             &mut work,
             &mut retained,
         )?;
-        let unread = self.hold_edge_ends(&work, &edge_types, &catalog)?;
+        let (unread, pinned) =
+            self.hold_edge_ends(&work, &edge_types, &catalog, narrow.is_none())?;
+        // A narrow pull renders by the names it kept, which an end pinned
+        // just now is not among.
+        if let (Some(selection), Some(pick), Some(_)) =
+            (selection.as_deref_mut(), pick.as_ref(), &narrow)
+        {
+            selection.name_pinned(self, pick, &catalog, &pinned)?;
+        }
         let withheld = self.withheld()?;
         let renaming = Renaming {
             reserved: self.placed_here()?,
@@ -2490,13 +2498,20 @@ impl Folder {
     /// it; the record of them holds each such pin. Answers each end the
     /// server refused to show for a reason other than that it is gone or
     /// hidden, with why: it is neither pinned nor recorded, so the next pull
-    /// asks again. What ends a drain ends the pull instead.
+    /// asks again. What ends a drain ends the pull instead. Answers, with
+    /// those, the ends it recorded that the record did not hold.
+    ///
+    /// Only with `release` does it let go of a recorded end no file here
+    /// wants: a pull that read some of the items cannot tell an end the others
+    /// still want from one nobody does, so a narrow pull releases none and the
+    /// next full pull does.
     fn hold_edge_ends(
         &self,
         work: &[(Item, bool)],
         edge_types: &EdgeTypes,
         catalog: &Catalog,
-    ) -> Result<HashMap<String, String>> {
+        release: bool,
+    ) -> Result<(HashMap<String, String>, Vec<String>)> {
         let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for (item, _) in work {
             if bytes_of(item, catalog).is_none() {
@@ -2523,13 +2538,20 @@ impl Folder {
             }
             Ok(())
         })?;
-        let conn = self.core.conn()?;
-        for (id, made) in recorded {
-            if !wanted.contains(&id) {
-                state::release_edge_end(&conn, &id, made)?;
+        let pinned = wanted
+            .iter()
+            .filter(|id| !recorded.contains_key(*id))
+            .cloned()
+            .collect();
+        if release {
+            let conn = self.core.conn()?;
+            for (id, made) in recorded {
+                if !wanted.contains(&id) {
+                    state::release_edge_end(&conn, &id, made)?;
+                }
             }
         }
-        Ok(unread)
+        Ok((unread, pinned))
     }
 
     /// Holds the attachments of `members` as `hold_edge_ends` would, for a

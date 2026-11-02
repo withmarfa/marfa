@@ -276,6 +276,11 @@ pub(super) struct Computed {
     conflicts: u64,
 }
 
+/// How near a file's modification time may be to the start of the scan that
+/// read it before a later change of the same size can leave the time as it
+/// was: the coarsest a file system keeps one (FAT, to two seconds).
+const RACILY_CLEAN: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A file as a scan last read it: its identity and its size and time, taken
 /// before the read, and the hash of the bytes read.
 #[derive(Debug, Clone)]
@@ -286,12 +291,27 @@ pub(super) struct LastRead {
 }
 
 impl LastRead {
-    pub(super) fn of(captured: &Captured, stat: &str, hash: &str) -> LastRead {
-        LastRead {
-            identity: identity::of(&captured.metadata.borrow()).map(|found| found.key()),
+    /// What a scan that began at `began` keeps of its read of the file, as
+    /// Git does of a file racily clean: none for a file modified within
+    /// `RACILY_CLEAN` of `began`, since a change made after the read could
+    /// leave its size and time as they are, so a status reads it again.
+    pub(super) fn of(
+        captured: &Captured,
+        stat: &str,
+        hash: &str,
+        began: std::time::SystemTime,
+    ) -> Option<LastRead> {
+        let metadata = captured.metadata.borrow();
+        let settled = metadata.modified().ok().is_some_and(|modified| {
+            began
+                .duration_since(modified)
+                .is_ok_and(|age| age >= RACILY_CLEAN)
+        });
+        settled.then(|| LastRead {
+            identity: identity::of(&metadata).map(|found| found.key()),
             stat: stat.to_string(),
             hash: hash.to_string(),
-        }
+        })
     }
 }
 
@@ -934,10 +954,40 @@ mod tests {
         FILES_READ.with(|read| read.replace(0))
     }
 
+    /// Gives the file a modification time a minute back, as one the scan did
+    /// not read racily.
+    fn aged(path: &std::path::Path) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+    }
+
     #[test]
     fn a_status_after_a_scan_takes_the_files_it_read_from_the_scan() {
         let names = ["a.md", "b.md", "c.md", "d.md", "e.md"];
         let (dir, folder, server, mut passes) = super::super::tests::watched_notes(&names);
+        for name in names {
+            aged(&dir.path().join(name));
+        }
+        // An attachment past a sixth of the request limit, which only a
+        // document is read to warn of.
+        std::fs::write(dir.path().join("big.bin"), vec![7u8; 200_000]).unwrap();
+        aged(&dir.path().join("big.bin"));
+        folder.scan().unwrap();
+        super::super::tests::landed(&folder, "big.bin");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        super::super::tests::settle(&folder, &mut passes);
+        // A file that is not a document is left to a later pass while it
+        // may still be written, so the full pass waits that out.
+        std::thread::sleep(std::time::Duration::from_millis(400));
         passes.run(&folder, true).unwrap();
         // The server is gone, so each edit stays to be sent and no pull
         // writes a file after the scan.
@@ -946,6 +996,7 @@ mod tests {
             let path = dir.path().join(name);
             let text = std::fs::read_to_string(&path).unwrap();
             std::fs::write(&path, format!("{text}\nedited\n")).unwrap();
+            aged(&path);
             status_computed();
             files_read();
             passes.run(&folder, full).unwrap();
@@ -965,11 +1016,38 @@ mod tests {
             assert_eq!(files_read(), 0);
             folder.last_reads.lock().unwrap().clear();
             let (read, _) = folder.health_status(false);
-            assert_eq!(files_read(), names.len(), "{name}");
+            assert_eq!(files_read(), names.len() + 1, "{name}");
             assert_eq!(taken.unwrap(), read.unwrap(), "{name}");
             status_computed();
             passes.run(&folder, true).unwrap();
         }
+    }
+
+    #[test]
+    fn a_status_reads_again_a_file_modified_as_the_scan_read_it() {
+        let (dir, folder, _server, mut passes) =
+            super::super::tests::watched_notes(&["a.md", "b.md"]);
+        passes.run(&folder, true).unwrap();
+        files_read();
+        // The notes were written as the scans read them, so a change since
+        // could have left the size and time the scan recorded.
+        let (racy, _) = folder.health_status(false);
+        assert_eq!(
+            files_read(),
+            2,
+            "the status took a racily clean file's hash"
+        );
+
+        // The witness: once their times are a minute old, a full pass keeps
+        // the hashes it read and the status reads no file.
+        for name in ["a.md", "b.md"] {
+            aged(&dir.path().join(name));
+        }
+        passes.run(&folder, true).unwrap();
+        files_read();
+        let (aged, _) = folder.health_status(false);
+        assert_eq!(files_read(), 0);
+        assert_eq!(racy.unwrap(), aged.unwrap());
     }
 
     /// Asserts that what a reusing observation would take as the folder's
