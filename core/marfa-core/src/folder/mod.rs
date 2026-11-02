@@ -3925,7 +3925,10 @@ mod tests {
             rendered_items();
             folder.pull_selecting(&mut selection).unwrap();
             let read = read_items();
-            assert!(read > 0 && read < paths.len() / 4, "{case}: read {read} items");
+            assert!(
+                read > 0 && read < paths.len() / 4,
+                "{case}: read {read} items"
+            );
             let rendered = rendered_items();
             assert!(rendered.len() < paths.len() / 4, "{case}: {rendered:?}");
             match case {

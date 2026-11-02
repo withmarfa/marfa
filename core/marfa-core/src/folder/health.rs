@@ -603,7 +603,8 @@ impl Folder {
     fn current_conflicts(&self) -> Result<u64> {
         let conn = self.core.conn()?;
         let read = conn.unchecked_transaction()?;
-        let bound: i64 = read.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
+        let bound: i64 =
+            read.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
         if bound == 0 {
             return Ok(0);
         }
@@ -622,7 +623,10 @@ impl Folder {
             .into_iter()
             .filter(|item| {
                 item.state != crate::model::ItemState::Trashed
-                    && item.tags.iter().any(|tag| tag == crate::CONFLICTED_COPY_TAG)
+                    && item
+                        .tags
+                        .iter()
+                        .any(|tag| tag == crate::CONFLICTED_COPY_TAG)
             })
             .count();
         read.commit()?;
@@ -699,7 +703,9 @@ impl Folder {
         let identity = identity::of(&metadata).map(|found| found.key());
         let last = self.last_reads.lock().expect("last reads lock");
         last.get(key)
-            .filter(|last| last.identity.is_some() && last.identity == identity && last.stat == stat)
+            .filter(|last| {
+                last.identity.is_some() && last.identity == identity && last.stat == stat
+            })
             .map(|last| last.hash.clone())
     }
 
@@ -939,7 +945,11 @@ mod tests {
             files_read();
             passes.run(&folder, full).unwrap();
             assert!(status_computed() > 0, "{name}: the pass reused the status");
-            assert_eq!(files_read(), 0, "{name}: the status read files the scan had read");
+            assert_eq!(
+                files_read(),
+                0,
+                "{name}: the status read files the scan had read"
+            );
             let observed = folder.observed_health().unwrap();
             let waiting = if full { 1 } else { 2 };
             assert_eq!(observed.pending_uploads, waiting, "{name}: {observed:?}");

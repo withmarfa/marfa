@@ -234,9 +234,9 @@ impl Selection {
             .map(|bound| (bound.path.clone(), bound.item_id.clone()))
             .collect();
         let last = self.last.as_mut().expect("a baseline that holds");
-        let differing =
-            last.names
-                .refresh(&*folder.core.conn()?, catalog, &renamed, &paths)?;
+        let differing = last
+            .names
+            .refresh(&*folder.core.conn()?, catalog, &renamed, &paths)?;
         changed.extend(moved);
         changed.extend(differing);
         let mut reached = Self::with_neighbors(folder, &changed)?;
@@ -278,8 +278,9 @@ impl Selection {
             let conn = folder.core.conn()?;
             read.extend(state::unmatched(&conn)?);
             read.extend(state::journaled(&conn)?.into_iter().map(|row| row.item_id));
-            let paused: HashSet<String> =
-                state::paused(&conn, state::Removal::Pull)?.into_iter().collect();
+            let paused: HashSet<String> = state::paused(&conn, state::Removal::Pull)?
+                .into_iter()
+                .collect();
             read.extend(
                 pick.bound
                     .values()
@@ -293,11 +294,7 @@ impl Selection {
         if !attached_together(folder, &mut read)? {
             return Ok(None);
         }
-        let unread = last
-            .settled
-            .iter()
-            .filter(|id| !read.contains(*id))
-            .count();
+        let unread = last.settled.iter().filter(|id| !read.contains(*id)).count();
         let shown = last
             .shown
             .iter()

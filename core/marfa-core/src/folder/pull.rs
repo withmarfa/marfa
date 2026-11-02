@@ -425,7 +425,11 @@ impl Folder {
         let outside: Vec<String> = bound_items
             .iter()
             .filter(|id| !members.contains(*id))
-            .filter(|id| narrow.as_ref().is_none_or(|narrow| narrow.read.contains(*id)))
+            .filter(|id| {
+                narrow
+                    .as_ref()
+                    .is_none_or(|narrow| narrow.read.contains(*id))
+            })
             .cloned()
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
