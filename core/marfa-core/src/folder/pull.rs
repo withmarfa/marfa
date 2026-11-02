@@ -49,6 +49,14 @@ pub fn copy_changed(error: &CoreError) -> bool {
     matches!(error, CoreError::StreamIncomplete { reason } if reason == "local_copy_changed")
 }
 
+/// Whether a failed read of an attachment ends the pass instead of holding
+/// that one attachment: what ends a drain, a stopped run and a refused
+/// credential are no one item's.
+fn ends_the_pass(error: &CoreError) -> bool {
+    crate::drain::ends_the_drain(error)
+        || matches!(error, CoreError::Canceled | CoreError::Unauthorized { .. })
+}
+
 /// What a rename that follows a title may take: the paths other items are
 /// placed at, by folded name, and the lists the folder writes within.
 struct Renaming<'a> {
@@ -403,7 +411,7 @@ impl Folder {
             &mut work,
             &mut retained,
         )?;
-        self.hold_edge_ends(&work, &edge_types, &catalog)?;
+        let unread = self.hold_edge_ends(&work, &edge_types, &catalog)?;
         let withheld = self.withheld()?;
         let renaming = Renaming {
             reserved: self.placed_here()?,
@@ -412,8 +420,9 @@ impl Folder {
         // After the pins, so an embed names an attachment the copy now holds;
         // an item a file here embeds or has attached is that file's, never
         // unmatched.
-        let embedded =
-            self.with_documents(&work, &members, &withheld, &settings, &catalog, &renaming)?;
+        let hosts = self.document_hosts(&work, &withheld, &settings, &catalog, &renaming)?;
+        let mut embedded = self.embedded(&hosts, &members, &catalog, renaming.lists)?;
+        self.report_unread(&hosts, &unread, &mut embedded)?;
         // A file a document here embeds or has attached is that document's,
         // whatever other folder holds the item, so it is never let go.
         let (shown, files): (Vec<Item>, Vec<Item>) = files
@@ -1531,17 +1540,15 @@ impl Folder {
         Ok(TakeIn::Taken)
     }
 
-    /// Where each file a document of `work` embeds or has attached is
-    /// written, each document read at the path a pull writes it.
-    fn with_documents(
+    /// Each document of `work`, at the path a pull writes it.
+    fn document_hosts<'a>(
         &self,
-        work: &[(Item, bool)],
-        members: &HashSet<String>,
+        work: &'a [(Item, bool)],
         withheld: &placement::Withheld,
         settings: &Settings,
         catalog: &Catalog,
         renaming: &Renaming<'_>,
-    ) -> Result<super::embeds::Embedded> {
+    ) -> Result<Vec<(&'a Item, String)>> {
         let mut hosts = Vec::new();
         for (item, _) in work {
             if item.version == 0 || bytes_of(item, catalog).is_some() {
@@ -1561,7 +1568,35 @@ impl Folder {
                 hosts.push((item, path));
             }
         }
-        self.embedded(&hosts, members, catalog, renaming.lists)
+        Ok(hosts)
+    }
+
+    /// Reports each document an attachment that could not be read is
+    /// attached to; the file is not written until it can be.
+    fn report_unread(
+        &self,
+        hosts: &[(&Item, String)],
+        unread: &HashMap<String, String>,
+        embedded: &mut super::embeds::Embedded,
+    ) -> Result<()> {
+        for (host, path) in hosts {
+            for edge in self.core.edges_to(&host.id)? {
+                if let Some(error) = unread.get(&edge.source_id)
+                    && edge.edge_type == ATTACHMENT_EDGE
+                {
+                    embedded.reports.push(Flagged {
+                        path: path.clone(),
+                        flag: "attachment",
+                        reason: format!(
+                            "its attached file {} cannot be read ({error}); it is written once it can be read",
+                            edge.source_id
+                        ),
+                        item: Some(edge.source_id),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The files a pull writes as the embeds or attachments of documents
@@ -1612,8 +1647,8 @@ impl Folder {
             lists: &lists,
         };
         let withheld = self.withheld()?;
-        let embedded =
-            self.with_documents(&work, members, &withheld, settings, &catalog, &renaming)?;
+        let hosts = self.document_hosts(&work, &withheld, settings, &catalog, &renaming)?;
+        let embedded = self.embedded(&hosts, members, &catalog, renaming.lists)?;
         Ok(embedded.at.into_keys().collect())
     }
 
@@ -2183,13 +2218,16 @@ impl Folder {
 
     /// Pins the other end of every edge a file here writes, so its line has a
     /// title to show, and every attachment of a document, so an embed can name
-    /// it; the record of them holds each such pin.
+    /// it; the record of them holds each such pin. Answers each attachment
+    /// the server refused to show for a reason other than that it is gone or
+    /// hidden, with why: it is neither pinned nor recorded, so the next pull
+    /// asks again. What ends a drain ends the pull instead.
     fn hold_edge_ends(
         &self,
         work: &[(Item, bool)],
         edge_types: &EdgeTypes,
         catalog: &Catalog,
-    ) -> Result<()> {
+    ) -> Result<HashMap<String, String>> {
         let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for (item, _) in work {
             if bytes_of(item, catalog).is_none() {
@@ -2206,12 +2244,15 @@ impl Folder {
                 );
             }
         }
-        let recorded = self.hold_ends(&wanted, |_, error| {
-            if matches!(error, CoreError::NoServer) || error.is_environmental() {
-                Ok(())
-            } else {
-                Err(error)
+        let mut unread = HashMap::new();
+        let recorded = self.hold_ends(&wanted, |id, error| {
+            if ends_the_pass(&error) {
+                return Err(error);
             }
+            if !(matches!(error, CoreError::NoServer) || error.is_environmental()) {
+                unread.insert(id.to_string(), error.to_string());
+            }
+            Ok(())
         })?;
         let conn = self.core.conn()?;
         for (id, made) in recorded {
@@ -2219,7 +2260,7 @@ impl Folder {
                 state::release_edge_end(&conn, &id, made)?;
             }
         }
-        Ok(())
+        Ok(unread)
     }
 
     /// Holds the attachments of `members` as `hold_edge_ends` would, for a
@@ -2242,7 +2283,7 @@ impl Folder {
             .collect();
         let mut unread = HashMap::new();
         self.hold_ends(&wanted, |id, error| {
-            if crate::drain::ends_the_drain(&error) || error == CoreError::Canceled {
+            if ends_the_pass(&error) {
                 return Err(error);
             }
             unread.insert(id.to_string(), error.to_string());

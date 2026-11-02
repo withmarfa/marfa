@@ -7220,6 +7220,32 @@ mod tests {
         ScannedDir,
         Option<crate::scripted::Scripted>,
     ) {
+        let (folder, dir, server, id) = over_an_unread_attachment(n, answers, renew, |dir| {
+            std::fs::write(dir.join("New.md"), "A new note.\n").unwrap();
+        });
+        let scanned = folder.scan();
+        if let Some(server) = &server {
+            assert!(!server.seen(&format!("/items/{id}")).is_empty());
+        }
+        (scanned, folder, dir, server)
+    }
+
+    /// The folder `added_again_over_embeds` makes for one embedded and
+    /// attached image whose item the copy does not hold, opened against a
+    /// server that answers the image's reads with `answers`, or against none
+    /// that answers at all, and the image's id. `prepare` sets up the
+    /// directory before it is opened.
+    fn over_an_unread_attachment(
+        n: usize,
+        answers: Option<Vec<crate::scripted::Answer>>,
+        renew: Option<fn(&std::path::Path) -> crate::http::Renew>,
+        prepare: impl FnOnce(&std::path::Path),
+    ) -> (
+        Folder,
+        ScannedDir,
+        Option<crate::scripted::Scripted>,
+        &'static str,
+    ) {
         let photo = b"\x89PNG\r\n\x1a\nphoto".as_slice();
         let id = "01a00000-0000-7000-8000-0000000026e1";
         let (dir, folder) = added_again_over_embeds(
@@ -7247,7 +7273,7 @@ mod tests {
         assert_eq!(attachments.len(), 1);
         assert!(folder.core.get(id).unwrap().is_none());
         drop(folder);
-        std::fs::write(dir.path().join("New.md"), "A new note.\n").unwrap();
+        prepare(dir.path());
         let server = answers.map(|answers| {
             let server = crate::scripted::Scripted::start();
             server.on(
@@ -7286,11 +7312,7 @@ mod tests {
         if let Some(renew) = renew {
             folder.core.renew_credential_with(renew(dir.path()));
         }
-        let scanned = folder.scan();
-        if let Some(server) = &server {
-            assert!(!server.seen(&format!("/items/{id}")).is_empty());
-        }
-        (scanned, folder, dir, server)
+        (folder, dir, server, id)
     }
 
     #[test]
@@ -7379,6 +7401,134 @@ mod tests {
         assert!(
             scanned.as_ref().is_err_and(super::copy_changed),
             "{scanned:?}"
+        );
+    }
+
+    /// `over_an_unread_attachment` with a second note in the copy, pulled:
+    /// the note that embeds and has the image attached is `Note.md`, and the
+    /// other is `Other.md`, neither written yet.
+    fn pulled_over_an_unread_attachment(
+        n: usize,
+        answers: Vec<crate::scripted::Answer>,
+        renew: Option<fn(&std::path::Path) -> crate::http::Renew>,
+    ) -> (
+        Result<PullReport>,
+        Folder,
+        ScannedDir,
+        crate::scripted::Scripted,
+        &'static str,
+    ) {
+        let (folder, dir, server, id) = over_an_unread_attachment(n, Some(answers), renew, |dir| {
+            std::fs::remove_file(dir.join("Note.md")).unwrap();
+        });
+        {
+            let conn = folder.core.conn().unwrap();
+            let catalog = Catalog::load(&conn).unwrap();
+            crate::store::put_server_item(
+                &conn,
+                &crate::store::testing::note(
+                    "01a00000-0000-7000-8000-0000000027a1",
+                    "Other",
+                    "Another note.",
+                    "2026-01-01T00:00:00Z",
+                ),
+                None,
+                &catalog,
+            )
+            .unwrap();
+        }
+        let pulled = folder.pull();
+        (pulled, folder, dir, server.unwrap(), id)
+    }
+
+    /// What the pull flagged of the attachments it could not read, each as
+    /// the document's path, the attachment and the reason.
+    fn unread_attachments(report: &PullReport) -> Vec<(&str, Option<&str>, &str)> {
+        report
+            .embeds
+            .iter()
+            .filter(|flagged| flagged.flag == "attachment")
+            .map(|flagged| {
+                (
+                    flagged.path.as_str(),
+                    flagged.item.as_deref(),
+                    flagged.reason.as_str(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pull_holds_the_attachment_whose_read_is_refused_and_writes_the_rest() {
+        use crate::scripted::refusal;
+
+        // The witness: an attachment the server says is gone is neither
+        // written nor reported, and the rest is written.
+        let (pulled, dir_folder, dir, _server, _) =
+            pulled_over_an_unread_attachment(10, vec![refusal(404, "item_not_found")], None);
+        let report = pulled.unwrap();
+        assert_eq!(report.written, 2, "{report:?}");
+        assert!(unread_attachments(&report).is_empty(), "{report:?}");
+        assert!(dir.path().join("Note.md").is_file() && dir.path().join("Other.md").is_file());
+        drop(dir_folder);
+
+        let mut failed = Vec::new();
+        for (case, answer, said) in [
+            ("409", refusal(409, "conflict"), "409"),
+            ("400", refusal(400, "invalid_request"), "invalid_request"),
+        ] {
+            let (pulled, folder, dir, server, id) =
+                pulled_over_an_unread_attachment(11, vec![answer.clone(), answer], None);
+            let report = match pulled {
+                Ok(report) => report,
+                Err(error) => {
+                    failed.push(format!("{case}: the pull failed: {error}"));
+                    continue;
+                }
+            };
+            let held = unread_attachments(&report);
+            if report.written != 2
+                || !dir.path().join("Note.md").is_file()
+                || !dir.path().join("Other.md").is_file()
+                || held.len() != 1
+                || held[0].0 != "Note.md"
+                || held[0].1 != Some(id)
+                || !held[0].2.contains(said)
+                || !held[0].2.contains(id)
+                || !held[0].2.contains("cannot be read")
+            {
+                failed.push(format!("{case}: {report:?}"));
+                continue;
+            }
+            // Not marked done: no pin is recorded, so the next pull asks
+            // again and reports it again.
+            let recorded = state::edge_ends(&folder.core.conn().unwrap()).unwrap();
+            if recorded.iter().any(|(end, _)| end == id) {
+                failed.push(format!("{case}: the attachment was recorded as held"));
+            }
+            let again = folder.pull().unwrap();
+            if server.seen(&format!("/items/{id}")).len() != 2
+                || unread_attachments(&again).len() != 1
+                || again.written != 0
+            {
+                failed.push(format!(
+                    "{case}: the second pull {again:?}, asked {} times",
+                    server.seen(&format!("/items/{id}")).len()
+                ));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
+
+        // A refused credential is no one attachment's: the pull ends, with
+        // the copy the refusal ended.
+        let (pulled, _folder, _dir, _server, _) =
+            pulled_over_an_unread_attachment(12, vec![refusal(401, "unauthorized")], None);
+        assert!(
+            matches!(
+                &pulled,
+                Err(CoreError::CopyExpired { reason }) if reason == "credential_ended"
+            ),
+            "{pulled:?}"
         );
     }
 
