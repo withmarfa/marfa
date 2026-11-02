@@ -2,7 +2,7 @@
 //! bodies of this folder's documents to name it by its new title, as Obsidian
 //! does (`folders/body-link-retitled`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -257,6 +257,18 @@ impl Folder {
         }
         Ok(changed)
     }
+}
+
+/// The writes of the rewrites this folder queued and has yet to settle, by
+/// id, each of which settles on its answer.
+pub(super) fn unsettled(conn: &Connection) -> Result<HashSet<String>> {
+    let mut statement = conn.prepare(
+        "SELECT substr(key, length(?1) + 1) FROM meta WHERE substr(key, 1, length(?1)) = ?1",
+    )?;
+    let ids = statement
+        .query_map([QUEUED], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
 }
 
 /// `result`, or none where it failed with an error that leaves the store

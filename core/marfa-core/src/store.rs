@@ -1000,7 +1000,7 @@ pub fn queued_ids(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
-        forget_answered_inner(conn, None, false)?;
+        forget_answered_inner(conn, None, None, false)?;
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM temp.queue WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)",
             [
@@ -1090,7 +1090,7 @@ fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 /// The writes in the queue that a folder's file state names as waiting on
 /// their answer, by id.
 #[cfg(unix)]
-fn awaited_by_files(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+pub(crate) fn awaited_by_files(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = match conn.prepare("SELECT writes FROM main.folder_files") {
         Ok(statement) => statement,
         // A store with no folder record of this kind records no file.
@@ -2297,6 +2297,27 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(conn, "", [])
 }
 
+/// The writes the queue holds of those `ids` names, in queue order, each
+/// found through the index on its id.
+pub fn queued_writes_named(conn: &Connection, ids: &[String]) -> Result<Vec<QueuedWrite>, CoreError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let named = serde_json::to_string(ids)
+        .map_err(|error| CoreError::Invalid(format!("the ids cannot be named: {error}")))?;
+    read_writes(
+        conn,
+        "WHERE id IN (SELECT value FROM json_each(?1))",
+        [named],
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many queue rows this thread has read, for tests that count them.
+    pub(crate) static ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 type EditField = (bool, String);
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -3161,7 +3182,7 @@ fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrit
     )
 }
 
-fn read_writes(
+pub(crate) fn read_writes(
     conn: &Connection,
     filter: &str,
     values: impl rusqlite::Params,
@@ -3204,6 +3225,8 @@ fn read_writes(
     let mut writes = Vec::new();
     for row in rows {
         let raw = row?;
+        #[cfg(test)]
+        ROWS_READ.with(|read| read.set(read.get() + 1));
         let depends_on = match raw.depends_on {
             Some(json) => serde_json::from_str(&json).map_err(|error| {
                 CoreError::Store(format!(
@@ -5501,7 +5524,7 @@ fn take_out(
 /// be released and is cleared; passes repeat until one clears nothing, since
 /// each can free what the last kept.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
-    forget_answered_inner(conn, None, true)
+    forget_answered_inner(conn, None, None, true)
 }
 
 /// `forget_answered`, restricted to the rows named: every other answered row
@@ -5512,18 +5535,30 @@ pub fn forget_answered_ids(conn: &Connection, ids: &[String]) -> Result<usize, C
     }
     let only = serde_json::to_string(ids)
         .map_err(|error| CoreError::Invalid(format!("the ids cannot be named: {error}")))?;
-    forget_answered_inner(conn, Some(&only), true)
+    forget_answered_inner(conn, Some(&only), None, true)
 }
 
-/// `only` is a JSON array of the ids to clear, or `None` for any.
+/// `forget_answered`, keeping every row `kept` names whatever its verdict.
+pub fn forget_answered_except(
+    conn: &Connection,
+    kept: &HashSet<String>,
+) -> Result<usize, CoreError> {
+    let except = serde_json::to_string(kept)
+        .map_err(|error| CoreError::Invalid(format!("the ids cannot be named: {error}")))?;
+    forget_answered_inner(conn, None, Some(&except), true)
+}
+
+/// `only` is a JSON array of the ids to clear, or `None` for any; `except` a
+/// JSON array of the ids to keep, or `None` for none.
 fn forget_answered_inner(
     conn: &Connection,
     only: Option<&str>,
+    except: Option<&str>,
     clean_effects: bool,
 ) -> Result<usize, CoreError> {
     let mut cleared = 0;
     loop {
-        let pass = forget_answered_once(conn, only)?;
+        let pass = forget_answered_once(conn, only, except)?;
         if pass == 0 {
             if clean_effects {
                 for prefix in [
@@ -5548,7 +5583,11 @@ fn forget_answered_inner(
     }
 }
 
-fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, CoreError> {
+fn forget_answered_once(
+    conn: &Connection,
+    only: Option<&str>,
+    except: Option<&str>,
+) -> Result<usize, CoreError> {
     let free = content_free_kinds();
     // Kept while an unanswered or releasable row names it, which would
     // otherwise wait on a write no drain can find.
@@ -5557,6 +5596,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
             "DELETE FROM queue
           WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
             AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
+            AND (:except IS NULL OR queue.id NOT IN (SELECT value FROM json_each(:except)))
             AND verdict = :refused AND sent = 0 AND kind IN ({free})
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
@@ -5570,6 +5610,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
         ),
         named_params! {
             ":only": only,
+            ":except": except,
             ":refused": Verdict::Refused.as_str(),
             ":blocked": Verdict::Blocked.as_str(),
             ":dead": Verdict::Dead.as_str(),
@@ -5581,6 +5622,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
                 "DELETE FROM queue
           WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
             AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
+            AND (:except IS NULL OR queue.id NOT IN (SELECT value FROM json_each(:except)))
             AND verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
             AND NOT (verdict = :refused AND kind NOT IN ({free}))
@@ -5594,6 +5636,7 @@ fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, 
             ),
             named_params! {
                 ":only": only,
+                ":except": except,
                 ":accepted": Verdict::Accepted.as_str(),
                 ":merged": Verdict::Merged.as_str(),
                 ":conflicted": Verdict::Conflicted.as_str(),
@@ -9103,6 +9146,26 @@ mod tests {
             plan("edge_id").contains("queue_edge"),
             "{}",
             plan("edge_id")
+        );
+    }
+
+    #[test]
+    fn named_writes_are_found_through_the_index_on_their_id() {
+        let conn = conn();
+        let plan = conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT {QUEUE_COLUMNS} FROM queue
+                  WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY seq ASC"
+            ))
+            .unwrap()
+            .query_map(["[\"x\"]"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .map(|detail| detail.unwrap())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            plan.contains("SEARCH queue USING INDEX sqlite_autoindex_queue"),
+            "{plan}"
         );
     }
 

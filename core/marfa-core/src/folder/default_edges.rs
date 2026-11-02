@@ -157,14 +157,13 @@ impl Folder {
             End::Target => self.core.edges_to(item_id)?,
             End::Source => self.core.edges_from(item_id)?,
         };
-        let waiting = |edge: &crate::model::Edge| {
-            self.core.queue().map(|queue| {
-                queue.iter().any(|row| {
-                    row.kind == crate::model::WriteKind::CreateEdge
-                        && row.verdict.is_none()
-                        && row.edge_id.as_deref() == Some(edge.id.as_str())
-                })
-            })
+        let waiting = |edge: &crate::model::Edge| -> Result<bool> {
+            Ok(!crate::store::read_writes(
+                &*self.core.conn()?,
+                "WHERE edge_id = ?1 AND kind = ?2 AND verdict IS NULL",
+                [edge.id.as_str(), crate::model::WriteKind::CreateEdge.as_str()],
+            )?
+            .is_empty())
         };
         for edge in edges {
             if edge.edge_type == line.edge_type
