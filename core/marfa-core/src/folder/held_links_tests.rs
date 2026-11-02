@@ -46,7 +46,7 @@ fn flags(report: &ScanReport) -> Vec<(&str, &str, &str)> {
         .collect()
 }
 
-pub(super) fn item_at(folder: &Folder, path: &str) -> String {
+fn item_at(folder: &Folder, path: &str) -> String {
     state::bound_at(&folder.core.conn().unwrap(), path)
         .unwrap()
         .unwrap_or_else(|| panic!("{path} has no item"))
