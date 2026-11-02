@@ -59,7 +59,7 @@ pub(crate) fn inheriting<T, F: FnOnce() -> T>(work: F) -> impl FnOnce() -> T {
 /// the few seconds an edit may wait, as in Low Power Mode. A thread already at
 /// utility or lower is left as it is. Off Apple platforms it changes nothing;
 /// the service manager's own settings cover the agent.
-pub(crate) fn lowered() -> Lowered {
+pub fn lowered() -> Lowered {
     #[cfg(target_vendor = "apple")]
     let before = Class::of_caller()
         .filter(|before| before.class as u32 > libc::qos_class_t::QOS_CLASS_UTILITY as u32);
@@ -80,7 +80,7 @@ pub(crate) fn lowered() -> Lowered {
 
 /// Puts the class the thread had when [`lowered`] was called back, where it
 /// ends or unwinds. It belongs to the thread that made it.
-pub(crate) struct Lowered {
+pub struct Lowered {
     #[cfg(target_vendor = "apple")]
     before: Option<Class>,
     _same_thread: PhantomData<*const ()>,

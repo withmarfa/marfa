@@ -42,7 +42,7 @@ mod model;
 mod names;
 #[cfg(test)]
 mod part_names_tests;
-mod priority;
+pub mod priority;
 mod query;
 mod reach;
 #[cfg(test)]

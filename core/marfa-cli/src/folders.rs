@@ -15,6 +15,7 @@ use crate::error::{CliError, Exit};
 use crate::interrupt;
 use crate::keyfile;
 use crate::logfile;
+use crate::new_build;
 use crate::output::{self, Printer};
 use crate::remote::{Named, Remote, Session, renewing};
 use crate::storage;
@@ -67,7 +68,8 @@ pub enum FoldersCommand {
         dir: PathBuf,
     },
     /// Say where every file in the folder stands, from its own store,
-    /// asking the server nothing.
+    /// asking the server nothing, and whether the watch of the folder runs
+    /// another build of marfa.
     Status {
         /// The folder.
         dir: PathBuf,
@@ -196,6 +198,16 @@ pub enum FoldersCommand {
         /// the watch with it.
         #[arg(long, value_name = "FILE")]
         key_file: Option<PathBuf>,
+        /// End with exit status 3 once a new build of marfa is installed at
+        /// the path the watch was started by, after the passes under way
+        /// finish, so that a service manager starts the new build. A link
+        /// moved to another build counts, as does a file replaced in place.
+        /// `folders autostart` runs the watch with it. Without it, the watch
+        /// says once that a new build is installed and goes on. Either way, a
+        /// path that leads to no file, or to one that does not say its
+        /// version, is said once, and the watch goes on.
+        #[arg(long)]
+        exit_on_new_build: bool,
     },
     /// Sync every folder from login, in your own account: a launchd agent on
     /// macOS or a systemd user unit on Linux runs `folders watch` with no
@@ -332,7 +344,22 @@ pub fn run(
         }
         FoldersCommand::Status { dir } => {
             let report = Folder::status_of(&dir)?;
-            output::report(&report, json, || describe_status(&report))
+            let other = new_build::other_build_watching(&dir);
+            output::report(
+                &FolderStatus {
+                    report: &report,
+                    watch_other_build: other.as_ref(),
+                },
+                json,
+                || {
+                    let mut text = describe_status(&report);
+                    if let Some(other) = &other {
+                        text.push('\n');
+                        text.push_str(&other.describe());
+                    }
+                    text
+                },
+            )
         }
         FoldersCommand::Health { id } => {
             let report = Remote::resolve(named)?.json(&crate::remote::request::Request::get(&[
@@ -553,6 +580,7 @@ pub fn run(
             r#for,
             log,
             key_file,
+            exit_on_new_build,
         } => {
             interrupt::stop_on_terminate_too();
             if let Some(log) = &log {
@@ -566,12 +594,18 @@ pub fn run(
                 }
                 None => named,
             };
+            new_build::look_out(exit_on_new_build, json);
             let ended = match dir {
                 Some(dir) => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
                 None => watch::watch_every(named, r#for, json),
             };
             if log.is_some() {
                 logfile::note_stop();
+            }
+            // A service manager starts again only a watch that failed, and
+            // one it stopped itself stays stopped.
+            if ended.is_ok() && new_build::ended_for_it() && !interrupt::asked_to_stop() {
+                exit = Exit::Environment;
             }
             ended
         }
@@ -1126,6 +1160,15 @@ fn status_words(status: &str) -> String {
         "outside" => "not taken".to_string(),
         other => other.replace('_', " "),
     }
+}
+
+/// `folders status` in JSON: the folder's own status, and the current watch
+/// of the folder where it runs another build of marfa.
+#[derive(serde::Serialize)]
+struct FolderStatus<'a> {
+    #[serde(flatten)]
+    report: &'a marfa_core::StatusReport,
+    watch_other_build: Option<&'a new_build::OtherBuild>,
 }
 
 fn describe_status(report: &marfa_core::StatusReport) -> String {

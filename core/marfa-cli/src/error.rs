@@ -268,7 +268,7 @@ impl Exit {
                 "the command line or the profile file was wrong, or named no store or server"
             }
             Exit::Environment => {
-                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
+                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`); try again"
             }
             Exit::Local => {
                 "the working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"

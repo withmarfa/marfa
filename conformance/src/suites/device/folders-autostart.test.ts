@@ -418,7 +418,14 @@ describe("folder syncing from login", () => {
       ) as Record<string, unknown>;
       expect(agent).toEqual({
         Label: LABEL,
-        ProgramArguments: [binary, "folders", "watch", "--log", log],
+        ProgramArguments: [
+          binary,
+          "folders",
+          "watch",
+          "--exit-on-new-build",
+          "--log",
+          log,
+        ],
         EnvironmentVariables: { MARFA_FOLDER_REGISTRY: registry },
         RunAtLoad: true,
         KeepAlive: { SuccessfulExit: false },
@@ -459,7 +466,14 @@ describe("folder syncing from login", () => {
       ]);
     }
     const runs = agentRuns(root);
-    expect(runs.argv).toEqual([binary, "folders", "watch", "--log", log]);
+    expect(runs.argv).toEqual([
+      binary,
+      "folders",
+      "watch",
+      "--exit-on-new-build",
+      "--log",
+      log,
+    ]);
     expect(runs.env).toEqual({ MARFA_FOLDER_REGISTRY: registry });
     // The command's own credential and server were set, and none reached the file.
     for (const carried of [
@@ -630,6 +644,24 @@ describe("folder syncing from login", () => {
     expect(
       parsed<Status>(autostart(root, "status", { registry })).outdated,
     ).toBe(false);
+
+    // An agent whose watch does not end for a new build is one to replace,
+    // and is still read as the agent it is.
+    const unflagged = current.replace(
+      macOS
+        ? "\t\t<string>--exit-on-new-build</string>\n"
+        : ' "--exit-on-new-build"',
+      "",
+    );
+    expect(unflagged).not.toBe(current);
+    writeFileSync(agentFile(root), unflagged);
+    const before = parsed<Status>(autostart(root, "status", { registry }));
+    expect(before).toMatchObject({ installed: true, outdated: true });
+    expect(before.binary).toMatchObject({ path: requireBinary() });
+    expect(parsed<Switched>(autostart(root, "on", { registry })).changed).toBe(
+      true,
+    );
+    expect(readFileSync(agentFile(root), "utf8")).toBe(current);
   });
 
   it("refuses --url, --key and --profile, and writes nothing", () => {
@@ -903,6 +935,7 @@ describe("folder syncing from login", () => {
       "watch",
       "--key-file",
       path,
+      "--exit-on-new-build",
       "--log",
       log,
     ]);

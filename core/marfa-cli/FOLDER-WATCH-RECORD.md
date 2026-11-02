@@ -14,6 +14,7 @@ For `marfa folders health`, which reads what the server was told, see [Read remo
   "processes": [
     {
       "pid": 4821,
+      "build_version": "0.0.56",
       "started_at": "2026-10-15T09:00:00.000Z",
       "heartbeat_at": "2026-10-15T09:20:35.120Z",
       "heartbeat_interval_seconds": 5,
@@ -38,6 +39,7 @@ For `marfa folders health`, which reads what the server was told, see [Read remo
 ```
 
 - `processes` has one entry for each watch process on the machine: one for a `folders watch` of every folder, and one for each `folders watch DIR`. A watch rewrites only its own entry.
+- `build_version` is the version of the marfa build that runs the watch, which `marfa --version` prints. Compare it with your own to tell a watch that still runs an earlier build after an upgrade. It is absent in an entry written by a build earlier than this field, and a build that early drops it from every entry when it rewrites the file, until each watch writes its own entry again.
 - `folders` lists the folders that process was asked to hold. A watch of every folder lists every folder the registry lists, and stops listing one the registry drops.
 - `dir` is the folder's directory, and `folder` is its `system.folder` ID.
 - `watching` is `true` once the folder is said to be watched. A folder tried again after it failed is said to be watched once its watch has lasted about 10 seconds, so until then `watching` stays `false` and `reason` stays as it was. For a folder a watch of every folder cannot watch, it is `false` and `reason` is the error code, such as `first_sync_waiting`, `unauthorized` or `io`. For a folder whose directory cannot be found, as a deleted directory or a volume that is away, `reason` is `missing`, which is no error code; `folders remove` takes such a folder off the list. The watch tries it again, and `reason` changes with the attempt. `reason` is `null` for a folder not yet tried. A folder that a command such as `folders confirm` asked for is `false` with `reason` `handed_over` from when either form of the watch lets it go, or a watch of every folder finds it asked for as it opens it, until the watch holds it again.

@@ -31,7 +31,7 @@ Every command accepts these.
 | 0 | Done. |
 | 1 | The server refused the request (a wrong or spent setup code included), the CLI refused it before sending, the answer came from another contract, a docs page does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
 | 2 | The command line or the profile file was wrong, or named no store or server. |
-| 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
+| 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`); try again. |
 | 4 | The working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own. |
 | 5 | There is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
 | 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
@@ -3863,7 +3863,7 @@ marfa folders remove [OPTIONS] <DIR>
 
 ### marfa folders status
 
-Say where every file in the folder stands, from its own store, asking the server nothing.
+Say where every file in the folder stands, from its own store, asking the server nothing, and whether the watch of the folder runs another build of marfa.
 
 ```text
 marfa folders status [OPTIONS] <DIR>
@@ -4058,6 +4058,7 @@ marfa folders watch [OPTIONS] [DIR]
 | `--for <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
 | `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. When Ctrl-C or `SIGTERM` stops the watch, the last line written names the signal and the time, and the process that sent it where the system reports one. |
 | `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the folders that name that server and reads the keychain for none, so a folder of another server is reported as having no credential. Keep the file outside every folder. `folders autostart on --key-file` runs the watch with it. |
+| `--exit-on-new-build` | End with exit status 3 once a new build of marfa is installed at the path the watch was started by, after the passes under way finish, so that a service manager starts the new build. A link moved to another build counts, as does a file replaced in place. `folders autostart` runs the watch with it. Without it, the watch says once that a new build is installed and goes on. Either way, a path that leads to no file, or to one that does not say its version, is said once, and the watch goes on. |
 
 ### marfa folders autostart
 
@@ -4069,7 +4070,7 @@ marfa folders autostart [OPTIONS] <COMMAND>
 
 ### marfa folders autostart on
 
-Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ, as one written by an earlier build does. The watch runs at a lower CPU and I/O priority, so it gives way to foreground work but keeps working when every core is busy.
+Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ, as one written by an earlier build does. The watch runs at a lower CPU and I/O priority, so it gives way to foreground work but keeps working when every core is busy. Once a new build is installed at the binary's path, as an upgrade does, the watch ends after the passes under way finish and the service manager starts the new build.
 
 The watch writes to its log, `folder-watch.log` beside the folder registry. An error it makes before it opens the log goes, on macOS, to `folder-watch.launchd.log` beside it, which the agent names for the watch's output, and on Linux to the user journal (`journalctl --user -u marfa-folder-watch.service`).
 

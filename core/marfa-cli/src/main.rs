@@ -16,6 +16,7 @@ mod interrupt;
 mod keyfile;
 mod local;
 mod logfile;
+mod new_build;
 mod output;
 mod profiles;
 #[cfg(test)]

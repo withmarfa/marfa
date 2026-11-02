@@ -69,6 +69,11 @@ struct File {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Process {
     pid: u32,
+    /// The version of the build running the watch, which a program reading
+    /// the record compares with its own. `None` in an entry a build written
+    /// before the field wrote, or rewrote, and such an entry is still kept.
+    #[serde(default)]
+    build_version: Option<String>,
     started_at: String,
     heartbeat_at: String,
     heartbeat_interval_seconds: u64,
@@ -456,6 +461,7 @@ impl WatchRecord {
     fn process(&self, inner: &Inner) -> Process {
         Process {
             pid: self.pid,
+            build_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             started_at: self.started_at.clone(),
             heartbeat_at: String::new(),
             heartbeat_interval_seconds: self.heartbeat.as_secs().max(1),
@@ -634,6 +640,43 @@ mod tests {
     }
 
     #[test]
+    fn each_entry_names_the_version_of_the_build_that_runs_the_watch() {
+        let temp = tempfile::tempdir().unwrap();
+        let record = record(temp.path(), 11);
+        record.write_now().unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(temp.path().join(FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(
+            raw["processes"][0]["build_version"],
+            serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn an_entry_a_build_wrote_without_a_version_is_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(FILE_NAME);
+        let other = serde_json::json!({
+            "version": FORMAT,
+            "processes": [{
+                "pid": 31,
+                "started_at": store::now_iso(),
+                "heartbeat_at": store::now_iso(),
+                "heartbeat_interval_seconds": 5,
+                "ended_at": null,
+                "folders": [],
+            }],
+        });
+        std::fs::write(&path, serde_json::to_vec(&other).unwrap()).unwrap();
+        let record = record(temp.path(), 11);
+        record.write_now().unwrap();
+        let file = read(&path);
+        let pids: Vec<u32> = file.processes.iter().map(|process| process.pid).collect();
+        assert_eq!(pids, vec![31, 11]);
+        assert_eq!(only(&file, 31).build_version, None);
+    }
+
+    #[test]
     fn a_folder_waiting_for_its_first_sync_says_so_though_no_pass_has_run() {
         let temp = tempfile::tempdir().unwrap();
         let record = record(temp.path(), 11);
@@ -786,6 +829,7 @@ mod tests {
             processes: vec![
                 Process {
                     pid: 30,
+                    build_version: None,
                     started_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
@@ -794,6 +838,7 @@ mod tests {
                 },
                 Process {
                     pid: 31,
+                    build_version: None,
                     started_at: store::now_iso(),
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,
@@ -803,6 +848,7 @@ mod tests {
                 // A heartbeat still to come is no heartbeat.
                 Process {
                     pid: 32,
+                    build_version: None,
                     started_at: store::now_iso(),
                     heartbeat_at: "2999-01-01T00:00:00.000Z".into(),
                     heartbeat_interval_seconds: 5,
@@ -813,6 +859,7 @@ mod tests {
                 // ended and whose id came round again.
                 Process {
                     pid: 11,
+                    build_version: None,
                     started_at: "2020-01-01T00:00:00.000Z".into(),
                     heartbeat_at: store::now_iso(),
                     heartbeat_interval_seconds: 5,
