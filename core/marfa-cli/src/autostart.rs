@@ -60,7 +60,10 @@ pub enum AutostartCommand {
     /// changes nothing unless the agent would differ, as one written by an
     /// earlier build does. The watch runs at a lower CPU and I/O priority, so
     /// it gives way to foreground work but keeps working when every core is
-    /// busy.
+    /// busy. Once a new build is installed at the binary's path, as an
+    /// upgrade does, the watch ends after the passes under way finish and the
+    /// service manager starts the new build. An agent written before this
+    /// was so is replaced by running `on` again.
     ///
     /// The watch writes to its log, `folder-watch.log` beside the folder
     /// registry. An error it makes before it opens the log goes, on macOS, to
@@ -213,7 +216,7 @@ impl Agent {
         if let Some(key_file) = &self.key_file {
             arguments.extend(["--key-file", text(key_file)?]);
         }
-        arguments.extend(["--log", text(&self.log)?]);
+        arguments.extend([crate::new_build::FLAG, "--log", text(&self.log)?]);
         Ok(arguments)
     }
 
@@ -309,7 +312,7 @@ WantedBy=default.target
     }
 
     fn read(manager: Manager, written: &str) -> Option<Agent> {
-        let (arguments, registry) = match manager {
+        let (mut arguments, registry) = match manager {
             Manager::Launchd => (
                 plist_strings(after(written, "<key>ProgramArguments</key>")?, "</array>")?,
                 // A string never holds a bare `<`, so the key is found only as one.
@@ -333,6 +336,14 @@ WantedBy=default.target
                     }),
             ),
         };
+        // An agent whose watch does not end for a new build is still read as
+        // the agent it is, so `status` says it is one `on` replaces.
+        if let Some(at) = arguments
+            .iter()
+            .position(|argument| argument == crate::new_build::FLAG)
+        {
+            arguments.remove(at);
+        }
         let (binary, key_file, log) = match arguments.as_slice() {
             [binary, folders, watch, flag, log]
                 if folders == "folders" && watch == "watch" && flag == "--log" =>
@@ -1053,29 +1064,40 @@ struct RecordView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Watched {
-    dir: String,
-    watching: bool,
-    reason: Option<String>,
+pub(crate) struct Watched {
+    pub(crate) dir: String,
+    pub(crate) watching: bool,
+    pub(crate) reason: Option<String>,
+}
+
+/// The parts of `folder-watch.json` this program reads.
+#[derive(Deserialize)]
+pub(crate) struct RecordFile {
+    pub(crate) processes: Vec<RecordProcess>,
 }
 
 #[derive(Deserialize)]
-struct RecordFile {
-    processes: Vec<RecordProcess>,
-}
-
-#[derive(Deserialize)]
-struct RecordProcess {
-    pid: u32,
+pub(crate) struct RecordProcess {
+    pub(crate) pid: u32,
+    #[serde(default)]
+    pub(crate) marfa_version: Option<String>,
     heartbeat_at: String,
     heartbeat_interval_seconds: u64,
     ended_at: Option<String>,
-    folders: Vec<Watched>,
+    pub(crate) folders: Vec<Watched>,
+}
+
+impl RecordFile {
+    pub(crate) fn read(path: &Path) -> Option<RecordFile> {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    }
 }
 
 impl RecordProcess {
     /// The rule `FOLDER-WATCH-RECORD.md` gives a reader.
-    fn current(&self, now: SystemTime) -> bool {
+    pub(crate) fn current(&self, now: SystemTime) -> bool {
         let Ok(beat) = chrono::DateTime::parse_from_rfc3339(&self.heartbeat_at) else {
             return false;
         };
@@ -1110,10 +1132,7 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
         let path = WatchRecord::beside(&Registry::at(&agent.registry))
             .path()
             .to_path_buf();
-        let entry = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<RecordFile>(&bytes).ok())
-            .and_then(|file| {
+        let entry = RecordFile::read(&path).and_then(|file| {
                 file.processes
                     .into_iter()
                     .find(|process| Some(process.pid) == pid)
@@ -1360,7 +1379,7 @@ mod tests {
         let plist = agent("/bin/marfa").plist().unwrap();
         assert!(plist.contains("<key>Label</key>\n\t<string>so.marfa.folder-watch</string>"));
         assert!(plist.contains(
-            "\t\t<string>/bin/marfa</string>\n\t\t<string>folders</string>\n\t\t<string>watch</string>\n\t\t<string>--log</string>\n\t\t<string>/data/marfa/folder-watch.log</string>\n\t</array>"
+            "\t\t<string>/bin/marfa</string>\n\t\t<string>folders</string>\n\t\t<string>watch</string>\n\t\t<string>--exit-on-new-build</string>\n\t\t<string>--log</string>\n\t\t<string>/data/marfa/folder-watch.log</string>\n\t</array>"
         ));
         assert!(plist.contains(
             "<key>MARFA_FOLDER_REGISTRY</key>\n\t\t<string>/data/marfa/folders.json</string>"
@@ -1428,7 +1447,7 @@ mod tests {
     fn the_systemd_unit_runs_the_watch_of_every_folder_and_restarts_only_a_failure() {
         let unit = agent("/bin/marfa").unit().unwrap();
         assert!(unit.contains(
-            "ExecStart=\"/bin/marfa\" \"folders\" \"watch\" \"--log\" \"/data/marfa/folder-watch.log\"\n"
+            "ExecStart=\"/bin/marfa\" \"folders\" \"watch\" \"--exit-on-new-build\" \"--log\" \"/data/marfa/folder-watch.log\"\n"
         ));
         assert!(unit.contains("Environment=\"MARFA_FOLDER_REGISTRY=/data/marfa/folders.json\"\n"));
         assert!(unit.contains("Restart=on-failure\nRestartSec=30\n"));
@@ -1497,6 +1516,30 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_whose_watch_does_not_end_for_a_new_build_is_one_to_replace() {
+        for manager in [Manager::Launchd, Manager::Systemd] {
+            for keyed in [
+                agent("/bin/marfa"),
+                Agent {
+                    key_file: Some("/home/me/watch.env".into()),
+                    ..agent("/bin/marfa")
+                },
+            ] {
+                let current = keyed.render(manager).unwrap();
+                let flag = match manager {
+                    Manager::Launchd => "\t\t<string>--exit-on-new-build</string>\n",
+                    Manager::Systemd => " \"--exit-on-new-build\"",
+                };
+                assert!(current.contains(flag), "{manager:?}");
+                let earlier = current.replace(flag, "");
+                assert_eq!(Agent::read(manager, &earlier), Some(keyed.clone()));
+                assert!(outdated(manager, &earlier), "{manager:?}");
+                assert!(!outdated(manager, &current), "{manager:?}");
+            }
+        }
+    }
+
+    #[test]
     fn neither_file_holds_a_credential_or_a_server() {
         for manager in [Manager::Launchd, Manager::Systemd] {
             let written = agent("/bin/marfa").render(manager).unwrap();
@@ -1522,12 +1565,12 @@ mod tests {
         };
         let plist = keyed.plist().unwrap();
         assert!(plist.contains(
-            "\t\t<string>watch</string>\n\t\t<string>--key-file</string>\n\t\t<string>/home/me/.config/marfa/watch.env</string>\n\t\t<string>--log</string>"
+            "\t\t<string>watch</string>\n\t\t<string>--key-file</string>\n\t\t<string>/home/me/.config/marfa/watch.env</string>\n\t\t<string>--exit-on-new-build</string>\n\t\t<string>--log</string>"
         ));
         let unit = keyed.unit().unwrap();
         assert!(
             unit.contains(
-                "\"watch\" \"--key-file\" \"/home/me/.config/marfa/watch.env\" \"--log\""
+                "\"watch\" \"--key-file\" \"/home/me/.config/marfa/watch.env\" \"--exit-on-new-build\" \"--log\""
             )
         );
         for manager in [Manager::Launchd, Manager::Systemd] {
@@ -1650,6 +1693,7 @@ mod tests {
     fn an_entry_is_current_by_the_record_reader_rule() {
         let entry = |beat: &str, ended: Option<&str>| RecordProcess {
             pid: 1,
+            marfa_version: None,
             heartbeat_at: beat.into(),
             heartbeat_interval_seconds: 5,
             ended_at: ended.map(str::to_string),
