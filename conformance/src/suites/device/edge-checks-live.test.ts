@@ -223,7 +223,10 @@ function refusedWith(
 
 /** The server's code and `details.constraint` for a refused write. */
 function servedConstraint(
-  answer: { ok: boolean; error?: { error: { code: string; details?: Record<string, unknown> } } },
+  answer: {
+    ok: boolean;
+    error?: { error: { code: string; details?: Record<string, unknown> } };
+  },
   what: string,
 ): [string | undefined, unknown] {
   expect(answer.ok, `the server took ${what}`).toBe(false);
@@ -555,10 +558,26 @@ it("refuses locally a duplicate, and an edge onto each end a cardinality holds t
     "a second references edge from a to b",
   );
   for (const [draft, words, what] of [
-    [{ source: a, target: c, type: "supersedes" }, SOURCE_FULL, "a second one-to-one edge from a"],
-    [{ source: c, target: b, type: "supersedes" }, TARGET_FULL, "a second one-to-one edge to b"],
-    [{ source: c, target: b, type: "parent-of" }, TARGET_FULL, "a second parent of b"],
-    [{ source: b, target: c, type: "in-thread" }, SOURCE_FULL, "b in a second thread"],
+    [
+      { source: a, target: c, type: "supersedes" },
+      SOURCE_FULL,
+      "a second one-to-one edge from a",
+    ],
+    [
+      { source: c, target: b, type: "supersedes" },
+      TARGET_FULL,
+      "a second one-to-one edge to b",
+    ],
+    [
+      { source: c, target: b, type: "parent-of" },
+      TARGET_FULL,
+      "a second parent of b",
+    ],
+    [
+      { source: b, target: c, type: "in-thread" },
+      SOURCE_FULL,
+      "b in a second thread",
+    ],
   ] satisfies Array<[EdgeDraft, string, string]>) {
     await constraintAlike(device, draft, "cardinality", words, what);
   }
@@ -596,9 +615,24 @@ it("counts an edge waiting to be sent, and frees the end a waiting delete leaves
   const device = await hydrated("queued", ["core.note"]);
   value(await device.createEdge({ source: a, target: b, type: "supersedes" }));
   const waiting = [
-    [{ source: a, target: b, type: "supersedes" }, "duplicate", DUPLICATE, "the triple of an edge waiting to be sent"],
-    [{ source: a, target: e, type: "supersedes" }, "cardinality", SOURCE_FULL, "a second edge from a, whose first waits to be sent"],
-    [{ source: e, target: b, type: "supersedes" }, "cardinality", TARGET_FULL, "a second edge to b, whose first waits to be sent"],
+    [
+      { source: a, target: b, type: "supersedes" },
+      "duplicate",
+      DUPLICATE,
+      "the triple of an edge waiting to be sent",
+    ],
+    [
+      { source: a, target: e, type: "supersedes" },
+      "cardinality",
+      SOURCE_FULL,
+      "a second edge from a, whose first waits to be sent",
+    ],
+    [
+      { source: e, target: b, type: "supersedes" },
+      "cardinality",
+      TARGET_FULL,
+      "a second edge to b, whose first waits to be sent",
+    ],
   ] satisfies Array<[EdgeDraft, "duplicate" | "cardinality", string, string]>;
   const before = value(await device.queue()).length;
   for (const [draft, , words, what] of waiting) {
@@ -719,9 +753,9 @@ it("refuses a move onto a full end, checked or made, and finds nothing against a
     ).toEqual({ refused: false });
   }
   // The witness: a move onto a free end.
-  expect(
-    value(await device.checkEdgeMove(link.id, { target_id: e })),
-  ).toEqual({ refused: false });
+  expect(value(await device.checkEdgeMove(link.id, { target_id: e }))).toEqual({
+    refused: false,
+  });
   expect(
     value(await device.queue()).length,
     "a check or a refused move queued a write",

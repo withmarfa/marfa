@@ -2594,7 +2594,7 @@ If an edge write would leave a second edge of a type at an end the held catalog 
 
 ### `queue-and-verdicts/edge-counted-as-sent`
 
-A device MUST count an edge whose create, move or delete waits to be sent as the server will hold it once the write reaches it, and MUST NOT count an edge whose create was refused, when it judges a duplicate, cardinality or a cycle.
+When a device judges a duplicate, cardinality or a cycle, a device MUST count the edges as the server will hold them once the writes waiting ahead reach it: an edge a waiting create or move makes where that write leaves it, no edge a waiting delete removes, and no edge whose create was refused.
 
 **Reason:** the writes ahead of an edge write reach the server first, so a waiting delete frees the end it leaves. The server holds no edge whose create it refused, and counting one would refuse a write the server takes.
 
