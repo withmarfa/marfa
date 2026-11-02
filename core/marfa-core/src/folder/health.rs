@@ -634,35 +634,39 @@ impl Folder {
     }
 
     fn health_status(&self, reuse: bool) -> (Result<Local>, Result<u64>) {
-        let compute = |reads: Option<&mut Reads>| {
+        let compute = |reads: Option<&mut Reads>, walked: Option<Walked>| {
             #[cfg(test)]
             tests::STATUS_COMPUTED.with(|computed| computed.set(computed.get() + 1));
             (
-                self.status_reading(reads).map(|status| Local::of(&status)),
+                self.status_reading(reads, walked)
+                    .map(|status| Local::of(&status)),
                 self.current_conflicts(),
             )
         };
         if !reuse {
-            return compute(None);
+            return compute(None, None);
         }
         let kept = self
             .health_status
             .lock()
             .expect("health status lock")
             .take();
+        // The walk that found the inputs changed is the status's own.
+        let mut walked = None;
         if let Some(kept) = kept
-            && self
-                .status_inputs()
-                .is_some_and(|inputs| inputs == kept.inputs)
+            && let Some((inputs, walk)) = self.status_inputs()
         {
-            let reused = (Ok(kept.local.clone()), Ok(kept.conflicts));
-            *self.health_status.lock().expect("health status lock") = Some(kept);
-            return reused;
+            if inputs == kept.inputs {
+                let reused = (Ok(kept.local.clone()), Ok(kept.conflicts));
+                *self.health_status.lock().expect("health status lock") = Some(kept);
+                return reused;
+            }
+            walked = Some(walk);
         }
         let writes = self.store_writes();
         let store = self.store_input();
         let mut reads = Reads::default();
-        let (local, conflicts) = compute(Some(&mut reads));
+        let (local, conflicts) = compute(Some(&mut reads), walked);
         // The status reads the store in several steps, so a write could land
         // and be undone between them and leave the store reading as it did.
         // Neither count can return to a value it had.
@@ -679,11 +683,11 @@ impl Folder {
         (local, conflicts)
     }
 
-    /// The inputs as they are now. `None` where a status could not be
+    /// The inputs as they are now, with the walk that found them. `None` where a status could not be
     /// computed from them alone: the folder's directory is gone or replaced,
     /// a store or settings input cannot be read, or a crash cut off a write
     /// whose file the status reads wherever it is.
-    fn status_inputs(&self) -> Option<Inputs> {
+    fn status_inputs(&self) -> Option<(Inputs, Walked)> {
         if self.root_gone().is_some() {
             return None;
         }
@@ -692,7 +696,7 @@ impl Folder {
         let disk = self.disk_input(&walked, |_, key, captured| {
             Found::of(self, key, captured).digest()
         })?;
-        Some(Inputs { store, disk })
+        Some((Inputs { store, disk }, walked))
     }
 
     /// The hash the scan last read `key` at, where the file is still as it

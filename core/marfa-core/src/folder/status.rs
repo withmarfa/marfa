@@ -93,13 +93,15 @@ impl FileStatus {
 impl Folder {
     /// Writes nothing, so a store opened without holding it answers it.
     pub(super) fn status(&self) -> Result<StatusReport> {
-        self.status_reading(None)
+        self.status_reading(None, None)
     }
 
-    /// `status`, noting in `reads` what it read of each file it walked.
+    /// `status`, noting in `reads` what it read of each file it walked, and
+    /// over `walked` where the caller has just walked the folder.
     pub(super) fn status_reading(
         &self,
         mut reads: Option<&mut super::health::Reads>,
+        walked: Option<super::Walked>,
     ) -> Result<StatusReport> {
         self.refuse_if_gone()?;
         #[cfg(debug_assertions)]
@@ -118,7 +120,7 @@ impl Folder {
             })?
         };
         let lists = settings.lists()?;
-        let walked = self.walked(&lists);
+        let walked = walked.unwrap_or_else(|| self.walked(&lists));
         let (snapshot, disk, pull, unmatched) = {
             let conn = self.core.conn()?;
             (
