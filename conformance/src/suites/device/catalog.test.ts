@@ -160,12 +160,12 @@ describe("The type catalog a working copy holds", () => {
       type: "string",
       required: false,
       label: "Body",
-      description: "The note text",
+      description: "The text of the note.",
       declared_by: "core.note",
       definition: {
         type: "string",
         label: "Body",
-        description: "The note text",
+        description: "The text of the note.",
       },
     });
 

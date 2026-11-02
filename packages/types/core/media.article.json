@@ -2,7 +2,7 @@
   "id": "core.media.article",
   "parent": "core.media",
   "label": "Article",
-  "description": "An article. Inherits all core.media fields.",
+  "description": "An article, such as a blog post or a news story.",
   "version": 0,
   "fields": {
     "body": {

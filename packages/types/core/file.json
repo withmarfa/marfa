@@ -1,26 +1,26 @@
 {
   "id": "core.file",
   "label": "File",
-  "description": "A file or binary reference — the generic fallback for any file that has no more specific type.",
+  "description": "A file you keep, such as a PDF or a spreadsheet.",
   "version": 0,
   "fields": {
     "blob_ref": {
       "type": "string",
       "label": "Blob Reference",
-      "description": "Reference to the binary content (sha256:<hex>)"
+      "description": "A reference to the file's contents, written as sha256: followed by the hex digest."
     },
     "mime_type": {
       "type": "string",
       "label": "MIME Type",
-      "description": "MIME type"
+      "description": "The file's MIME type, such as application/pdf."
     },
     "title": {
       "type": "string",
-      "description": "Filename or title"
+      "description": "The file's name or title."
     },
     "description": {
       "type": "string",
-      "description": "What the file contains"
+      "description": "What the file contains."
     },
     "url": {
       "type": "string",
@@ -31,12 +31,12 @@
     "source_url": {
       "type": "string",
       "label": "Source URL",
-      "description": "Where the file was sourced from",
+      "description": "Where the file came from.",
       "format": "url"
     },
     "author": {
       "type": "string",
-      "description": "Who created the file"
+      "description": "Who made the file."
     },
     "language": {
       "type": "string",
@@ -45,20 +45,20 @@
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the file's details."
     },
     "extracted_text": {
       "type": "string",
-      "description": "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)"
+      "description": "Text the server reads out of the file, such as document text or the words in an image."
     },
     "executable": {
       "type": "boolean",
-      "description": "Whether the file may be run as a program; absent means it may not"
+      "description": "Whether the file may be run as a program. Absent means it may not."
     },
     "size_bytes": {
       "type": "integer",
       "label": "Size",
-      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
+      "description": "The size of the file in bytes, set by the server once the instance holds the file's bytes."
     }
   },
   "required": ["blob_ref", "mime_type"],

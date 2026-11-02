@@ -1,20 +1,20 @@
 {
   "id": "core.message",
   "label": "Message",
-  "description": "A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.",
+  "description": "A message you sent or received, such as a text or a chat message.",
   "version": 0,
   "fields": {
     "body": {
       "type": "string",
-      "description": "The message text"
+      "description": "The text of the message."
     },
     "from": {
       "type": "string",
-      "description": "Sender identifier — format-agnostic (phone number, email, handle, etc.)"
+      "description": "Who sent the message, such as a phone number, an email address or a handle."
     },
     "to": {
       "type": "array",
-      "description": "Recipient identifiers — same format-agnostic shape as from",
+      "description": "Who received the message, written the same way as `from`.",
       "items_type": "string"
     }
   },

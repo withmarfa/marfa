@@ -1,37 +1,37 @@
 {
   "id": "core.task",
   "label": "Task",
-  "description": "Something to be done.",
+  "description": "Something you need to do, such as booking flights or sending an invoice.",
   "version": 0,
   "fields": {
     "title": {
       "type": "string",
-      "description": "What needs doing"
+      "description": "What needs doing."
     },
     "description": {
       "type": "string",
-      "description": "Brief context"
+      "description": "A line or two of context."
     },
     "body": {
       "type": "string",
-      "description": "Detailed description"
+      "description": "The full details, as long as you need."
     },
     "due_at": {
       "type": "string",
       "label": "Due",
-      "description": "Deadline",
+      "description": "When the task is due.",
       "format": "datetime"
     },
     "starts_at": {
       "type": "string",
       "label": "Starts",
-      "description": "When to start",
+      "description": "When you plan to start the task.",
       "format": "datetime"
     },
     "completed_at": {
       "type": "string",
       "label": "Completed",
-      "description": "When completed",
+      "description": "When you finished the task.",
       "format": "datetime"
     },
     "status": {
@@ -46,28 +46,28 @@
     },
     "priority": {
       "type": "enum",
-      "description": "Task priority",
+      "description": "How important the task is.",
       "enum_values": ["low", "medium", "high", "urgent"]
     },
     "place": {
       "type": "string",
-      "description": "Location"
+      "description": "Where the task is done."
     },
     "precision": {
       "type": "enum",
-      "description": "Temporal precision",
+      "description": "How much of the task's date is known, such as only the year or the month.",
       "enum_values": ["year", "month", "day", "time"]
     },
     "url": {
       "type": "string",
       "label": "URL",
-      "description": "Related link",
+      "description": "A web page related to the task.",
       "format": "url"
     },
     "assignees": {
       "type": "array",
       "items_type": "object",
-      "description": "The people the task is assigned to, one entry each, in the order written. An entry names a person by name, email or both, and holds no item ID: an app finds the person behind an entry by matching its email to the email addresses a person holds. It has the members of an attendee of an event, without a response.",
+      "description": "The people the task is assigned to, one entry each. An entry has a name, an email or both.",
       "items_fields": {
         "name": {
           "type": "string",
@@ -81,12 +81,12 @@
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the task's details."
     },
     "recurrence": {
       "type": "array",
       "items_type": "string",
-      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE) for a task that repeats. The series starts at due_at, or at starts_at when the task has no due_at, and advances in UTC because a task has no timezone. The server keeps and checks the rule but does not unfold it: GET /occurrences answers events only. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when it carries more than one RRULE, more than 40,000 characters in all or more than 1,000 added and removed dates, when the rule names no date that exists after the start, when it produces no occurrence within the bound a read unfolds a rule to, or when the task has neither due_at nor starts_at."
+      "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from `due_at` or, without one, from `starts_at`."
     }
   },
   "required": ["title"],

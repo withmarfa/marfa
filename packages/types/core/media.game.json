@@ -2,7 +2,7 @@
   "id": "core.media.game",
   "parent": "core.media",
   "label": "Game",
-  "description": "A video, board or card game. Inherits all core.media fields.",
+  "description": "A video game, board game or card game.",
   "version": 0,
   "fields": {
     "platforms": {

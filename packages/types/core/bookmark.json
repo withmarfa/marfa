@@ -1,26 +1,26 @@
 {
   "id": "core.bookmark",
   "label": "Bookmark",
-  "description": "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
+  "description": "Something you saved from elsewhere, such as a link, a highlighted excerpt or a clipped paragraph.",
   "version": 0,
   "fields": {
     "url": {
       "type": "string",
       "label": "URL",
-      "description": "The saved URL",
+      "description": "The address of the page you saved.",
       "format": "url"
     },
     "body": {
       "type": "string",
-      "description": "Captured text (a highlight, excerpt, or clipping)"
+      "description": "The text you captured, such as a highlight, excerpt or clipping."
     },
     "title": {
       "type": "string",
-      "description": "Title of the saved content"
+      "description": "The title of the saved content."
     },
     "description": {
       "type": "string",
-      "description": "Summary"
+      "description": "A short summary of the saved content."
     },
     "source_url": {
       "type": "string",
@@ -55,7 +55,7 @@
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the saved content."
     }
   },
   "required": [],

@@ -2,32 +2,32 @@
   "id": "core.file.image",
   "parent": "core.file",
   "label": "Image",
-  "description": "Photos, screenshots, diagrams. Inherits all core.file fields.",
+  "description": "A photo, a screenshot or a diagram.",
   "version": 0,
   "fields": {
     "width": {
       "type": "integer",
-      "description": "Width in pixels (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Width in pixels. The server fills it in from the file if you leave it out."
     },
     "height": {
       "type": "integer",
-      "description": "Height in pixels (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Height in pixels. The server fills it in from the file if you leave it out."
     },
     "latitude": {
       "type": "number",
-      "description": "Subject latitude"
+      "description": "Latitude of what the image shows."
     },
     "longitude": {
       "type": "number",
-      "description": "Subject longitude"
+      "description": "Longitude of what the image shows."
     },
     "altitude": {
       "type": "number",
-      "description": "Altitude in meters"
+      "description": "The altitude of what the image shows, in meters."
     },
     "thumbnail": {
       "type": "thumbnail",
-      "description": "A small preview of the image, supplied by the writer"
+      "description": "A small preview of the image, supplied by whoever saved it."
     }
   },
   "display_hints": {

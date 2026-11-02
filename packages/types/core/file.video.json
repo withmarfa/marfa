@@ -2,36 +2,36 @@
   "id": "core.file.video",
   "parent": "core.file",
   "label": "Video",
-  "description": "Video files. Inherits all core.file fields.",
+  "description": "A video file, such as a clip or a screen recording.",
   "version": 0,
   "fields": {
     "width": {
       "type": "integer",
-      "description": "Width in pixels (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Width in pixels. The server fills it in from the file if you leave it out."
     },
     "height": {
       "type": "integer",
-      "description": "Height in pixels (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Height in pixels. The server fills it in from the file if you leave it out."
     },
     "duration": {
       "type": "number",
-      "description": "Length in seconds (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Length in seconds. The server fills it in from the file if you leave it out."
     },
     "latitude": {
       "type": "number",
-      "description": "Subject latitude"
+      "description": "Latitude of what the video shows."
     },
     "longitude": {
       "type": "number",
-      "description": "Subject longitude"
+      "description": "Longitude of what the video shows."
     },
     "altitude": {
       "type": "number",
-      "description": "Altitude in meters"
+      "description": "The altitude of what the video shows, in meters."
     },
     "language": {
       "type": "string",
-      "description": "BCP 47 language code (for spoken content)",
+      "description": "BCP 47 language code of the speech.",
       "format": "bcp47"
     }
   },

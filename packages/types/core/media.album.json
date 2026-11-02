@@ -2,13 +2,13 @@
   "id": "core.media.album",
   "parent": "core.media",
   "label": "Album",
-  "description": "An album. Inherits all core.media fields.",
+  "description": "A music album, EP or single.",
   "version": 0,
   "roles": ["container"],
   "fields": {
     "release_type": {
       "type": "string",
-      "description": "Recommended values: album, ep, single"
+      "description": "The kind of release, such as album, ep or single."
     },
     "num_tracks": {
       "type": "integer",

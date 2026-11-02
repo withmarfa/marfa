@@ -3,16 +3,16 @@
   "parent": "core.file",
   "label": "Audio",
   "plural": "Audio",
-  "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
+  "description": "A recording, a music file or a voice memo.",
   "version": 0,
   "fields": {
     "duration": {
       "type": "number",
-      "description": "Length in seconds (server enrichment: derived from the file when the client does not supply it)"
+      "description": "Length in seconds. The server fills it in from the file if you leave it out."
     },
     "language": {
       "type": "string",
-      "description": "BCP 47 language code (for spoken content)",
+      "description": "BCP 47 language code of the speech.",
       "format": "bcp47"
     }
   },

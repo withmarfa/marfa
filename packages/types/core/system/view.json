@@ -1,25 +1,25 @@
 {
   "id": "system.view",
   "label": "View",
-  "description": "A saved list of items, held here and shared by every app: which items, in what order and how they group. How an app shows them is the app's own. Written only through `/views`: created, changed at a version, and deleted, which removes it at once with no trash. Lifecycle bounded to active | revoked. Has no tier.",
+  "description": "A saved list of items, with the order and grouping you chose, shared by every app.",
   "version": 0,
   "fields": {
     "title": {
       "type": "string",
-      "description": "The view's name"
+      "description": "The view's name."
     },
     "query": {
       "type": "object",
-      "description": "Which items the view lists. `types`: type identifiers, each with its subtypes; empty or absent lists every type the reading key reads. `tier`: `library`, `feed` or `all`; absent is `all`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`."
+      "description": "Which items the view lists, chosen by type, tier, state, a filter or a position under an item."
     },
     "sort": {
       "type": "array",
       "items_type": "object",
-      "description": "The keys the view sorts by, first key first. Each is a `by` field and a `direction`, `asc` or `desc`."
+      "description": "The keys the view sorts by, first key first. Each has a `by` field and a `direction`, `asc` or `desc`."
     },
     "group": {
       "type": "object",
-      "description": "How the view groups the items it lists: `by` (a field, or `edge[<type>]` or `backref[<type>]`), and optionally `bucket` (`day`, `week`, `month` or `year`, for a date field), `order` (the values whose groups come first) and `hidden` (the values whose groups are left out)."
+      "description": "How the view groups its items: by a field or an edge, optionally in day, week, month or year buckets, with the group order and any hidden groups."
     }
   },
   "required": [

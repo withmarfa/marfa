@@ -203,22 +203,23 @@ const FILE_FIELDS = {
   blob_ref: {
     type: "string",
     label: "Blob Reference",
-    description: "Reference to the binary content (sha256:<hex>)",
+    description:
+      "A reference to the file's contents, written as sha256: followed by the hex digest.",
     required: true,
   },
   mime_type: {
     type: "string",
     label: "MIME Type",
-    description: "MIME type",
+    description: "The file's MIME type, such as application/pdf.",
     required: true,
   },
   title: {
     type: "string",
-    description: "Filename or title",
+    description: "The file's name or title.",
   },
   description: {
     type: "string",
-    description: "What the file contains",
+    description: "What the file contains.",
   },
   url: {
     type: "url",
@@ -228,11 +229,11 @@ const FILE_FIELDS = {
   source_url: {
     type: "url",
     label: "Source URL",
-    description: "Where the file was sourced from",
+    description: "Where the file came from.",
   },
   author: {
     type: "string",
-    description: "Who created the file",
+    description: "Who made the file.",
   },
   language: {
     type: "string",
@@ -241,23 +242,23 @@ const FILE_FIELDS = {
   },
   notes: {
     type: "string",
-    description: "Personal annotations",
+    description: "Your own comments, kept apart from the file's details.",
   },
   extracted_text: {
     type: "string",
     description:
-      "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)",
+      "Text the server reads out of the file, such as document text or the words in an image.",
   },
   executable: {
     type: "boolean",
     description:
-      "Whether the file may be run as a program; absent means it may not",
+      "Whether the file may be run as a program. Absent means it may not.",
   },
   size_bytes: {
     type: "integer",
     label: "Size",
     description:
-      "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)",
+      "The size of the file in bytes, set by the server once the instance holds the file's bytes.",
   },
 };
 
@@ -278,14 +279,17 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     // a scripted type thinner than the real one is a registry no server
     // serves.
     fields: {
-      body: { type: "string", description: "The note text" },
-      title: { type: "string", description: "Heading or title" },
+      body: { type: "string", description: "The text of the note." },
+      title: { type: "string", description: "The note's heading." },
       language: {
         type: "string",
         description: "BCP 47 language code",
         format: "bcp47",
       },
-      notes: { type: "string", description: "Personal annotations" },
+      notes: {
+        type: "string",
+        description: "Your own comments, kept apart from the note's text.",
+      },
     },
     mergePolicy: {
       fields: { body: "keep_both_copies", notes: "keep_both_copies" },
@@ -297,8 +301,15 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     bodyField: "description",
     icon: "lucide:calendar",
     fields: {
-      title: { type: "string", description: "Event name", required: true },
-      description: { type: "string", description: "Event details" },
+      title: {
+        type: "string",
+        description: "The name of the event.",
+        required: true,
+      },
+      description: {
+        type: "string",
+        description: "A short description of the event.",
+      },
       starts_at: { type: "string", format: "datetime", label: "Starts" },
     },
     mergePolicy: {
@@ -315,10 +326,10 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     fields: {
       text: {
         type: "string",
-        description: "The highlighted passage, as Markdown",
+        description: "The highlighted passage, as Markdown.",
         required: true,
       },
-      note: { type: "string", description: "User annotation on the highlight" },
+      note: { type: "string", description: "Your note on the passage." },
     },
   }),
   wireType("core.file", {
@@ -342,28 +353,29 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
       width: {
         type: "integer",
         description:
-          "Width in pixels (server enrichment: derived from the file when the client does not supply it)",
+          "Width in pixels. The server fills it in from the file if you leave it out.",
       },
       height: {
         type: "integer",
         description:
-          "Height in pixels (server enrichment: derived from the file when the client does not supply it)",
+          "Height in pixels. The server fills it in from the file if you leave it out.",
       },
       latitude: {
         type: "number",
-        description: "Subject latitude",
+        description: "Latitude of what the image shows.",
       },
       longitude: {
         type: "number",
-        description: "Subject longitude",
+        description: "Longitude of what the image shows.",
       },
       altitude: {
         type: "number",
-        description: "Altitude in meters",
+        description: "The altitude of what the image shows, in meters.",
       },
       thumbnail: {
         type: "thumbnail",
-        description: "A small preview of the image, supplied by the writer",
+        description:
+          "A small preview of the image, supplied by whoever saved it.",
       },
     },
     mergePolicy: { fields: {}, default: "last_writer_wins" },
@@ -428,7 +440,7 @@ export const MEDIA_FILE_TYPES: ReadonlyArray<Record<string, unknown>> = [
       duration: {
         type: "number",
         description:
-          "Length in seconds (server enrichment: derived from the file when the client does not supply it)",
+          "Length in seconds. The server fills it in from the file if you leave it out.",
       },
     },
     mergePolicy: { fields: {}, default: "last_writer_wins" },
@@ -438,9 +450,21 @@ export const MEDIA_FILE_TYPES: ReadonlyArray<Record<string, unknown>> = [
     titleField: "title",
     fields: {
       ...FILE_FIELDS,
-      width: { type: "integer", description: "Width in pixels" },
-      height: { type: "integer", description: "Height in pixels" },
-      duration: { type: "number", description: "Length in seconds" },
+      width: {
+        type: "integer",
+        description:
+          "Width in pixels. The server fills it in from the file if you leave it out.",
+      },
+      height: {
+        type: "integer",
+        description:
+          "Height in pixels. The server fills it in from the file if you leave it out.",
+      },
+      duration: {
+        type: "number",
+        description:
+          "Length in seconds. The server fills it in from the file if you leave it out.",
+      },
     },
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),

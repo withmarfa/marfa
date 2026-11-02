@@ -2,20 +2,20 @@
   "id": "core.media",
   "label": "Media",
   "plural": "Media",
-  "description": "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
+  "description": "Something someone made that you read, watch, listen to or play, such as a film, podcast, book, article, song, show or game.",
   "version": 0,
   "fields": {
     "title": {
       "type": "string",
-      "description": "Name of the work"
+      "description": "The name of the work."
     },
     "body": {
       "type": "string",
-      "description": "Text content or description"
+      "description": "The text of the work, or a longer write-up of it."
     },
     "author": {
       "type": "string",
-      "description": "Who created the work"
+      "description": "Who made the work."
     },
     "url": {
       "type": "string",
@@ -25,11 +25,11 @@
     },
     "description": {
       "type": "string",
-      "description": "Summary or blurb"
+      "description": "A short summary or blurb."
     },
     "publisher": {
       "type": "string",
-      "description": "Who published the work"
+      "description": "Who published the work."
     },
     "published_at": {
       "type": "string",
@@ -50,7 +50,7 @@
     },
     "progress": {
       "type": "status",
-      "description": "Where the owner is with the work: want to read, watch, listen to or play it, started, finished, or gave up",
+      "description": "Where you are with the work, such as whether you have started or finished it.",
       "status_values": [
         { "value": "planned", "group": "not_started" },
         { "value": "started", "group": "in_progress" },
@@ -60,17 +60,17 @@
     },
     "rating": {
       "type": "integer",
-      "description": "The owner's overall view of the work, from 1 (lowest) to 5 (highest)",
+      "description": "Your overall view of the work, from 1 (lowest) to 5 (highest).",
       "minimum": 1,
       "maximum": 5
     },
     "notes": {
       "type": "string",
-      "description": "Personal annotations"
+      "description": "Your own comments, kept apart from the work's details."
     },
     "thumbnail": {
       "type": "thumbnail",
-      "description": "A small preview of the work, supplied by the writer"
+      "description": "A small preview of the work, supplied by whoever saved it."
     }
   },
   "required": ["title"],
