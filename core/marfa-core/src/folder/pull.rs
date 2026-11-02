@@ -2499,7 +2499,8 @@ impl Folder {
     /// server refused to show for a reason other than that it is gone or
     /// hidden, with why: it is neither pinned nor recorded, so the next pull
     /// asks again. What ends a drain ends the pull instead. Answers, with
-    /// those, the ends it recorded that the record did not hold.
+    /// those, the ends wanted that the record did not hold before, whether
+    /// or not the pin took.
     ///
     /// Only with `release` does it let go of a recorded end no file here
     /// wants: a pull that read some of the items cannot tell an end the others
