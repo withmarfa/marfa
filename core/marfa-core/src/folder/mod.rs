@@ -1829,7 +1829,10 @@ impl Folder {
         let one = self.core.one_drain();
         let mut report = crate::DrainReport::empty();
         let mut rebased = 0;
-        let ended = self.drain_rebasing(&one, &mut report, &mut rebased).err();
+        let ended = self
+            .clear_answered_if_due()
+            .and_then(|_| self.drain_rebasing(&one, &mut report, &mut rebased))
+            .err();
         if let Some(drain_error) = ended {
             // A refusal that could not be remembered is told in place of the
             // drain's own error, since a caller that went on would lose it.
@@ -1854,9 +1857,6 @@ impl Folder {
             let gave_way = self.settle_placements(&mut report, watched)?;
             self.keep_wait(&report)?;
             self.hold_refused()?;
-            // Last, once the files hold what they need of the answers, so a
-            // quiet drain after this one changes nothing in the copy.
-            self.clear_answered()?;
             Ok(gave_way)
         })();
         let drained = |report, (gave_way, withdrawn)| Drained {
