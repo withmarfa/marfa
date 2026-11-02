@@ -448,7 +448,7 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 ### `types/unknown-key`
 
-If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `maxLength`, `maxItems`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `maxLength`, `maxItems`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
@@ -472,7 +472,7 @@ If a field or a member of `items_fields` names a `minimum` or `maximum` on a typ
 
 When a type names `items_fields` on an `array` field whose `items_type` is `object`, the server MUST store the members and answer them on `GET /types/{id}`.
 
-**Reason:** a type can then promise that each entry in a list has a given shape, as a list of contacts or of attendees needs. A member takes `type`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`.
+**Reason:** a type can then promise that each entry in a list has a given shape, as a list of contacts or of attendees needs. A member takes `type`, `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`.
 
 **Tests:** `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
 

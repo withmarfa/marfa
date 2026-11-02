@@ -449,6 +449,7 @@ async function agedOut() {
 const READS: Array<[string, string[]]> = [
   ["items", ["items", "list", "--view", VIEW]],
   ["groups", ["views", "groups", VIEW]],
+  ["search", ["search", "body", "--view", VIEW]],
 ];
 
 it.each(READS)(
