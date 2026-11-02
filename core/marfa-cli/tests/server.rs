@@ -32,7 +32,9 @@ case "$1" in
     dir="$3"; action="$4"
     name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
     case "$action" in
-      pull) touch "$S/image" ;;
+      pull)
+        if [ -e "$S/pull-fails" ]; then echo "failed to extract layer: no space left on device" >&2; exit 1; fi
+        touch "$S/image" ;;
       up)
         port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
         touch "$S/c-$name" "$S/vol-$name-data" "$S/go-$port" ;;
@@ -407,6 +409,129 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
     let log = rig.log();
     assert!(log.contains("network create marfa-net"), "{log}");
     assert!(log.lines().any(|l| l.contains(" up -d")), "{log}");
+}
+
+const KEEP_WARNING: &str = "Keep a copy of";
+
+/// A first run whose image cannot be pulled, which is after the secrets are
+/// written. The failure is switched off for the next run.
+fn failed_first_install(rig: &Rig) {
+    fs::write(rig.state.join("pull-fails"), "").unwrap();
+    let (code, _, stderr) = rig.install(&["--access", "local"]);
+    assert_ne!(code, 0, "the pull should have failed");
+    assert!(stderr.contains("no space left"), "{stderr}");
+    assert!(
+        rig.dir.join("marfa.env").exists(),
+        "the secrets were not written before the failure"
+    );
+    fs::remove_file(rig.state.join("pull-fails")).unwrap();
+}
+
+#[test]
+fn the_warning_to_keep_the_settings_file_survives_a_first_install_that_failed() {
+    let rig = Rig::new("warn-after-failure");
+    failed_first_install(&rig);
+    let kept = secrets(&rig);
+
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains(KEEP_WARNING), "{stdout}");
+    assert!(
+        stdout.contains(&rig.dir.join("marfa.env").display().to_string()),
+        "{stdout}"
+    );
+    assert_eq!(secrets(&rig), kept, "the secrets were made again");
+
+    let (code, stdout, stderr) = rig.install(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains(KEEP_WARNING), "{stdout}");
+}
+
+#[test]
+fn a_failure_after_a_failure_keeps_the_warning_until_one_install_succeeds() {
+    let rig = Rig::new("warn-after-two-failures");
+    failed_first_install(&rig);
+    failed_first_install(&rig);
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains(KEEP_WARNING), "{stdout}");
+}
+
+#[test]
+fn a_first_install_that_succeeds_warns_once() {
+    let rig = Rig::new("warn-once");
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.matches(KEEP_WARNING).count(), 1, "{stdout}");
+    for _ in 0..2 {
+        let (code, stdout, stderr) = rig.install(&[]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(!stdout.contains(KEEP_WARNING), "{stdout}");
+    }
+}
+
+#[test]
+fn the_json_report_says_to_keep_the_settings_file_until_an_install_succeeds() {
+    let rig = Rig::new("warn-json");
+    failed_first_install(&rig);
+    let report = |rig: &Rig| {
+        let (code, stdout, stderr) = rig.install(&["--json"]);
+        assert_eq!(code, 0, "{stderr}");
+        let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        report["keep_settings_file"].clone()
+    };
+    assert_eq!(report(&rig), true);
+    assert_eq!(report(&rig), false);
+}
+
+#[test]
+fn a_settings_file_the_person_supplied_gets_no_warning_even_after_a_failure() {
+    let rig = Rig::new("warn-supplied");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    fs::write(rig.state.join("pull-fails"), "").unwrap();
+    let (code, _, _) = rig.install(&["--access", "local"]);
+    assert_ne!(code, 0);
+    fs::remove_file(rig.state.join("pull-fails")).unwrap();
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains(KEEP_WARNING), "{stdout}");
+}
+
+#[test]
+fn a_leftover_marker_with_no_settings_file_warns_for_the_new_secrets_and_does_not_crash() {
+    let rig = Rig::new("warn-stale");
+    failed_first_install(&rig);
+    fs::remove_file(rig.dir.join("marfa.env")).unwrap();
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.matches(KEEP_WARNING).count(), 1, "{stdout}");
+    let (code, stdout, _) = rig.install(&[]);
+    assert_eq!(code, 0);
+    assert!(!stdout.contains(KEEP_WARNING), "{stdout}");
+}
+
+#[test]
+fn a_marker_that_cannot_be_kept_costs_neither_the_install_nor_a_false_warning() {
+    let rig = Rig::new("warn-unwritable");
+    // A folder where the marker belongs: it can be neither written nor read
+    // as a marker.
+    fs::create_dir_all(rig.dir.join(".secrets-unconfirmed")).unwrap();
+    let (code, stdout, stderr) = rig.install(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout.matches(KEEP_WARNING).count(), 1, "{stdout}");
+    let (code, stdout, stderr) = rig.install(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains(KEEP_WARNING), "{stdout}");
+}
+
+#[test]
+fn uninstalling_with_the_data_leaves_no_marker_behind() {
+    let rig = Rig::new("warn-uninstall");
+    failed_first_install(&rig);
+    assert!(rig.dir.join(".secrets-unconfirmed").is_file(), "no witness");
+    let (code, _, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!rig.dir.exists(), "{:?}", fs::read_dir(&rig.dir).ok());
 }
 
 #[test]

@@ -908,6 +908,17 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     }
     let lacks = |name: &str| settings.get(name).is_none_or(|value| value.is_empty());
     let made_secrets = !external && (lacks("API_KEY_SALT") || lacks("MARFA_AUTH_SECRET"));
+    // The warning is owed until one install has succeeded after the secrets
+    // were made, which a run that fails part-way does not do.
+    let marker = folder.path(files::UNCONFIRMED);
+    let warn_to_keep = made_secrets || (!external && marker.is_file());
+    if made_secrets {
+        // Written before the secrets, and best effort: a marker that cannot
+        // be kept costs only the warning on a later run, never the install.
+        let _ = std::fs::create_dir_all(&folder.dir)
+            .map_err(CliError::from)
+            .and_then(|()| files::write_if_changed(&marker, files::UNCONFIRMED_NOTE, false));
+    }
     if !external {
         for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
             if settings.get(secret).is_none_or(|value| value.is_empty()) {
@@ -1034,7 +1045,9 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "local_address": local_address(port),
         "access": access.name(),
         "backup": backup_on,
-        "secrets_made": made_secrets,
+        // True when this run tells the person to keep the settings file safe:
+        // it made the secrets, or an earlier run did and none has succeeded since.
+        "keep_settings_file": warn_to_keep,
         "settings": if external { "external" } else { "managed" },
         "autostart": autostart,
         "autostart_error": autostart_failed,
@@ -1075,7 +1088,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 settings_path.display()
             ));
         }
-        if made_secrets {
+        if warn_to_keep {
             text.push_str(&format!(
                 "\nKeep a copy of {} somewhere safe, outside this folder. It holds the two secrets the data needs, and they are not stored anywhere else.\n",
                 settings_path.display()
@@ -1099,7 +1112,11 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
         text.push_str(&format!("\n{AGENT_HINT}\n"));
         style::labelled(Stream::Out, &text)
-    })
+    })?;
+    // The install succeeded, so the warning is no longer owed. A marker that
+    // cannot be removed only repeats it.
+    let _ = std::fs::remove_file(&marker);
+    Ok(())
 }
 
 /// Writes the Compose file, after keeping a copy of one that differs, because
@@ -1503,7 +1520,12 @@ fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             eprintln!("The Docker network {net} stays: {error}");
         }
         let kept_settings = state.external;
-        for name in [files::SETTINGS, files::DOTENV, files::COMPOSE] {
+        for name in [
+            files::SETTINGS,
+            files::UNCONFIRMED,
+            files::DOTENV,
+            files::COMPOSE,
+        ] {
             if kept_settings && name == files::SETTINGS {
                 continue;
             }
