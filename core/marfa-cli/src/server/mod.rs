@@ -1111,8 +1111,8 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         text.push_str(&format!("\n{AGENT_HINT}\n"));
         style::labelled(Stream::Out, &text)
     })?;
-    // Printed, so the person has been told. A marker that stays only repeats
-    // the warning.
+    // The install succeeded, so the warning is no longer owed. A marker that
+    // cannot be removed only repeats it.
     let _ = std::fs::remove_file(&marker);
     Ok(())
 }

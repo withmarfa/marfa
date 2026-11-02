@@ -13,14 +13,15 @@ pub const COMPOSE: &str = "compose.yaml";
 pub const DOTENV: &str = ".env";
 /// Read by the server: its secrets and its address.
 pub const SETTINGS: &str = "marfa.env";
-/// Present from the run that makes the secrets until an install has succeeded
-/// and told the person to keep `marfa.env`. It holds no secret.
+/// Present from the run that makes the secrets until an install succeeds. It
+/// holds no secret.
 pub const UNCONFIRMED: &str = ".secrets-unconfirmed";
 
 pub const UNCONFIRMED_NOTE: &str = "\
-# Written by `marfa server install` with the secrets in marfa.env. It is
-# removed by the first install that succeeds and tells you to keep a copy of
-# marfa.env. Until then, every install tells you again.
+# Written by `marfa server install` with the secrets in marfa.env. Until an
+# install succeeds, every install tells you to keep a copy of marfa.env,
+# unless it runs with --external-settings. The first install that succeeds
+# removes this file.
 ";
 
 pub const COMPOSE_FILE: &str = "\
