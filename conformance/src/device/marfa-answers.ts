@@ -546,7 +546,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       position: {
         type: "number",
         description:
-          "Ordering among the host's attachments, such as the page of a scan (1-based).",
+          "Where the attachment comes among the item's attachments, such as the page number of a scan.",
       },
     },
   }),
@@ -564,7 +564,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     property_schema: {
       position: {
         type: "number",
-        description: "Ordering within the collection (1-based).",
+        description: "Where the item comes among the container's members.",
       },
     },
   }),
@@ -574,8 +574,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     property_schema: {
       path: {
         type: "string",
-        description:
-          "The file's path relative to the folder's root, with `/` between names; required, with no `..` name. The edge takes no other property.",
+        description: "The file's path from the folder's root.",
       },
     },
   }),
@@ -584,7 +583,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     property_schema: {
       position: {
         type: "number",
-        description: "Ordering within the thread (1-based).",
+        description: "Where the message comes in the thread.",
       },
     },
   }),

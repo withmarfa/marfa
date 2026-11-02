@@ -2,7 +2,7 @@
   "id": "in-thread",
   "label": "In thread",
   "reverse_label": "Messages",
-  "description": "Source item is in the thread-target sequence. Each source is in at most one thread; the target is the thread item. Carries position for ordering.",
+  "description": "Says that an item is a message in a thread, such as a reply in a conversation.",
   "cardinality": "many-to-one",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],
@@ -10,7 +10,7 @@
   "property_schema": {
     "position": {
       "type": "number",
-      "description": "Ordering within the thread (1-based)."
+      "description": "Where the message comes in the thread."
     }
   }
 }
