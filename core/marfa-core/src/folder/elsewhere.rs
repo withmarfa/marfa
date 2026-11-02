@@ -122,10 +122,12 @@ impl Peer {
                 core,
                 key: std::sync::Mutex::new(None),
                 unread_give_ways: std::sync::Mutex::new(Default::default()),
+                released: std::sync::Mutex::default(),
                 permissions: std::sync::OnceLock::new(),
                 refused_renames: std::sync::Mutex::new(Default::default()),
                 barred: std::sync::Mutex::new(None),
                 health_status: std::sync::Mutex::new(None),
+                last_reads: std::sync::Mutex::default(),
                 replaced: None,
             })
         });

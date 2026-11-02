@@ -185,6 +185,9 @@ pub struct Folder {
     /// Placement writes whose give-way read failed in a watch, by queue id,
     /// and when.
     unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
+    /// Items whose refused placement is no longer withheld, which a narrow
+    /// pull sends: nothing in the copy says that the key's grant came back.
+    released: std::sync::Mutex<std::collections::BTreeSet<String>>,
     permissions: std::sync::OnceLock<bool>,
     /// Renames to follow a title that the file system refused, by item: the
     /// path the file kept and the one refused, not tried again while both
@@ -196,6 +199,8 @@ pub struct Folder {
     /// The status a watch's health observation last computed, with what it
     /// was computed from.
     health_status: std::sync::Mutex<Option<health::Computed>>,
+    /// What the scans of this open last read of each file, by path.
+    last_reads: std::sync::Mutex<HashMap<String, health::LastRead>>,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -411,10 +416,12 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -537,10 +544,12 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced,
         })
     }
@@ -581,10 +590,12 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
         })
     }
@@ -3412,7 +3423,12 @@ mod tests {
     /// at rest: the first scan binds each and writes its id line, the second
     /// takes in what the first wrote and records each file's size and time.
     fn settled_notes(names: &[&str]) -> (ScannedDir, Folder) {
-        let (dir, folder) = scanned_folder();
+        settled_notes_in(serde_json::json!({ "query": {} }), names)
+    }
+
+    /// `settled_notes` over a folder with these settings.
+    fn settled_notes_in(settings: Value, names: &[&str]) -> (ScannedDir, Folder) {
+        let (dir, folder) = scanned_folder_with(settings, None);
         for name in names {
             std::fs::write(
                 dir.path().join(name),
@@ -3726,7 +3742,11 @@ mod tests {
     /// `settled_notes`, each note's create answered as a server would, so a
     /// watch's pass over them finds nothing to do.
     fn answered_notes(names: &[&str]) -> (ScannedDir, Folder) {
-        let (dir, folder) = settled_notes(names);
+        answered_notes_in(serde_json::json!({ "query": {} }), names)
+    }
+
+    fn answered_notes_in(settings: Value, names: &[&str]) -> (ScannedDir, Folder) {
+        let (dir, folder) = settled_notes_in(settings, names);
         for name in names {
             landed(&folder, name);
         }
@@ -3746,7 +3766,15 @@ mod tests {
     pub(super) fn watched_notes(
         names: &[&str],
     ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
-        let (dir, folder) = answered_notes(names);
+        watched_notes_in(serde_json::json!({ "query": {} }), names)
+    }
+
+    /// `watched_notes` over a folder with these settings.
+    fn watched_notes_in(
+        settings: Value,
+        names: &[&str],
+    ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
+        let (dir, folder) = answered_notes_in(settings, names);
         drop(folder);
         let server = crate::scripted::Scripted::start();
         let folder = Folder::open(
@@ -3844,6 +3872,175 @@ mod tests {
         assert_eq!(before, files_of(dir));
     }
 
+    thread_local! {
+        /// How many items this thread's pulls read from the copy.
+        pub(super) static READ_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// How many items this thread's pulls read since the last call.
+    fn read_items() -> usize {
+        READ_ITEMS.with(|read| read.replace(0))
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_pull_after_a_one_file_change_reads_only_what_the_change_reaches() {
+        let paths: Vec<String> = (0..40).map(|n| format!("n{n:02}.md")).collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let (dir, folder, _server, _) = watched_notes(&paths);
+        referenced_on_the_server(&folder, "edge-0-1", "n00.md", "n01.md");
+        changed_on_the_server(&folder, "n00.md", "[[n01.md]]");
+        let linking = id_at(&folder, "n00.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        // The witness: a pull of every item reads the whole copy.
+        read_items();
+        folder.pull().unwrap();
+        assert!(read_items() >= paths.len());
+        let text = |path: &str| std::fs::read_to_string(dir.path().join(path)).unwrap_or_default();
+        for case in [
+            "edit",
+            "server change",
+            "rename",
+            "delete",
+            "relink after a retitle",
+            "copy changed",
+        ] {
+            match case {
+                "edit" => {
+                    std::fs::write(dir.path().join("n05.md"), text("n05.md") + "\nedited\n")
+                        .unwrap();
+                    folder.scan().unwrap();
+                }
+                "server change" => changed_on_the_server(&folder, "n06.md", "from the server"),
+                "rename" => {
+                    std::fs::rename(dir.path().join("n07.md"), dir.path().join("seventh.md"))
+                        .unwrap();
+                    folder.scan().unwrap();
+                }
+                "delete" => {
+                    let id = id_at(&folder, "n08.md");
+                    folder.core.conn().unwrap().execute(
+                        "UPDATE items SET state = 'trashed', version = version + 1 WHERE id = ?1",
+                        [&id],
+                    ).unwrap();
+                }
+                "relink after a retitle" => {
+                    renamed_on_the_server(&folder, "n01.md", "bee", "bee.md");
+                }
+                "copy changed" => {
+                    // Another item answering to the name the link uses reaches
+                    // the linking file through the names alone, which the
+                    // failed attempts brought up to date.
+                    let id = id_at(&folder, "n09.md");
+                    folder.core.conn().unwrap().execute(
+                        "UPDATE items SET properties = json_set(properties, '$.title', 'bee'), version = version + 1 WHERE id = ?1",
+                        [&id],
+                    ).unwrap();
+                    let failing = crate::fault::fail_on_this_thread("folder-pull-copy-changes");
+                    let error = folder.pull_selecting(&mut selection).unwrap_err();
+                    assert!(copy_changed(&error), "{error}");
+                    drop(failing);
+                }
+                _ => unreachable!(),
+            }
+            read_items();
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            let read = read_items();
+            assert!(
+                read > 0 && read < paths.len() / 4,
+                "{case}: read {read} items"
+            );
+            let rendered = rendered_items();
+            assert!(rendered.len() < paths.len() / 4, "{case}: {rendered:?}");
+            match case {
+                "edit" => assert!(text("n05.md").ends_with("\nedited\n"), "{}", text("n05.md")),
+                "server change" => assert!(text("n06.md").ends_with("from the server")),
+                "rename" => {
+                    assert!(!dir.path().join("n07.md").exists());
+                    assert!(!text("seventh.md").is_empty());
+                }
+                "delete" => assert!(!dir.path().join("n08.md").exists()),
+                "relink after a retitle" => {
+                    assert!(text("n00.md").contains("[[bee]]"), "{}", text("n00.md"));
+                }
+                "copy changed" => assert!(rendered.contains(&linking), "{rendered:?}"),
+                _ => unreachable!(),
+            }
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
+    /// The ends the folder holds a pin of, sorted.
+    fn held_ends(folder: &Folder) -> Vec<String> {
+        let mut ends: Vec<String> = state::edge_ends(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        ends.sort();
+        ends
+    }
+
+    #[test]
+    fn a_narrow_pull_keeps_the_pins_of_the_ends_of_files_it_did_not_read() {
+        const X: &str = "01a00000-0000-7000-8000-0000000000a1";
+        const Y: &str = "01a00000-0000-7000-8000-0000000000a2";
+        let (_dir, folder, _server, mut passes) = watched_notes_in(
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            &["a.md", "b.md"],
+        );
+        // Tasks outside the folder's query, each the end of one note's line.
+        {
+            let conn = folder.core.conn().unwrap();
+            for (id, edge, note) in [(X, "about-x", "a.md"), (Y, "about-y", "b.md")] {
+                crate::store::put_server_item(
+                    &conn,
+                    &crate::store::testing::wire_item(
+                        id,
+                        "core.task",
+                        "active",
+                        "2026-01-01T00:00:00Z",
+                        serde_json::json!({ "title": id }),
+                    ),
+                    None,
+                    &crate::catalog::Catalog::empty(),
+                )
+                .unwrap();
+                let source = state::bound_at(&conn, note).unwrap().unwrap().item_id;
+                crate::store::put_server_edge(
+                    &conn,
+                    &crate::store::testing::wire_edge(edge, &source, id, "about"),
+                )
+                .unwrap();
+            }
+        }
+        settle(&folder, &mut passes);
+        assert_eq!(
+            held_ends(&folder),
+            [X, Y],
+            "the witness: both ends are held"
+        );
+
+        changed_on_the_server(&folder, "a.md", "from the server");
+        // A pass the server's follow wakes.
+        passes.run(&folder, false).unwrap();
+        assert_eq!(held_ends(&folder), [X, Y], "the pass that took the change");
+        read_items();
+        let mut late = 0;
+        for tick in 0..9 {
+            passes.tick(&folder).unwrap();
+            assert_eq!(held_ends(&folder), [X, Y], "tick {tick}");
+            let read = read_items();
+            if tick >= 3 {
+                late += read;
+            }
+        }
+        assert_eq!(late, 0, "the watch is still reading items after it settled");
+    }
+
     #[test]
     fn a_title_another_item_takes_reaches_the_file_of_an_edge_not_its_own() {
         let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
@@ -3866,6 +4063,194 @@ mod tests {
             settle_selecting(&folder, &mut selection);
             assert_a_full_pull_changes_nothing(dir.path(), &folder);
         }
+    }
+
+    #[test]
+    fn a_title_another_item_takes_reaches_the_file_when_the_narrow_pull_falls_back() {
+        let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md", "c.md"]);
+        referenced_on_the_server(&folder, "edge-a-b", "a.md", "b.md");
+        let a = id_at(&folder, "a.md");
+        let c = id_at(&folder, "c.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        for title in ["b.md", "different"] {
+            folder.core.conn().unwrap().execute(
+                "UPDATE items SET properties = json_set(properties, '$.title', ?2), version = version + 1 WHERE id = ?1",
+                [&c, title],
+            ).unwrap();
+            // The read set passes the limit, so the full pull runs in its
+            // place, with the names the narrow pull brought up to date.
+            selective::ATTACHED_LIMIT.with(|limit| limit.set(0));
+            rendered_items();
+            folder.pull_selecting(&mut selection).unwrap();
+            selective::ATTACHED_LIMIT.with(|limit| limit.set(selective::MOST_ATTACHED));
+            assert!(
+                rendered_items().contains(&a),
+                "a not reached by collision {title}"
+            );
+            settle_selecting(&folder, &mut selection);
+            assert_a_full_pull_changes_nothing(dir.path(), &folder);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_narrow_pull_sends_a_refused_placement_once_the_key_is_granted_again() {
+        let key = |grant: &str| {
+            crate::scripted::json(
+                200,
+                &format!(r#"{{"id":"key","edge_permissions":{{"{grant}":"write"}}}}"#),
+            )
+        };
+        let paths: Vec<String> = (0..12).map(|n| format!("n{n:02}.md")).collect();
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let (_dir, folder, server, _) = watched_notes(&paths);
+        server.on("/keys/current", vec![key("references")]);
+        let id = id_at(&folder, "n00.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+
+        // The server refused the placement, which the copy took back, and the
+        // key's grant has not changed since.
+        folder.withhold(&id, "n00.md").unwrap();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "DELETE FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+                [&id, PLACEMENT_EDGE],
+            )
+            .unwrap();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder.placement(&id).unwrap().is_none(),
+            "a placement was sent under the refusal that withholds it"
+        );
+
+        server.on("/keys/current", vec![key("*")]);
+        *folder.key.lock().unwrap() = None;
+        read_items();
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(
+            read_items() < paths.len(),
+            "the witness for a narrow pull: it read every item"
+        );
+        assert!(
+            folder.placement(&id).unwrap().is_some(),
+            "a narrow pull left a refused placement unsent after the key's grant was restored"
+        );
+    }
+
+    #[test]
+    fn a_narrow_pull_shows_the_title_of_an_end_it_pinned() {
+        const X: &str = "01a00000-0000-7000-8000-0000000000b1";
+        let (dir, folder, server, _) = watched_notes_in(
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            &["a.md"],
+        );
+        // A task the copy does not hold, which a pin reads from the server.
+        server.on(
+            &format!("/items/{X}"),
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({
+                    "listed": true,
+                    "item": {
+                        "id": X, "type": "core.task", "state": "active",
+                        "properties": { "title": "xylophone" },
+                        "version": 1, "schema_version": 1, "source": "test",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z"
+                    },
+                    "metadata": { "tags": [] }
+                })
+                .to_string(),
+            ))],
+        );
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder.core.get(X).unwrap().is_none(),
+            "the witness: X is not held"
+        );
+
+        let a = id_at(&folder, "a.md");
+        crate::store::put_server_edge(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_edge("about-x", &a, X, "about"),
+        )
+        .unwrap();
+        changed_on_the_server(&folder, "a.md", "from the server");
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(folder.core.get(X).unwrap().is_some(), "X was not pinned");
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert!(text.contains("xylophone"), "{text}");
+        assert!(!text.contains(X), "{text}");
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn a_name_a_pinned_end_takes_reaches_the_files_that_name_it_on_the_next_pull() {
+        const X: &str = "01a00000-0000-7000-8000-0000000000b2";
+        let (dir, folder, server, _) = watched_notes_in(
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            &["a.md", "b.md", "c.md"],
+        );
+        // A task titled as a note's file is, which a pin reads from the
+        // server.
+        server.on(
+            &format!("/items/{X}"),
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({
+                    "listed": true,
+                    "item": {
+                        "id": X, "type": "core.task", "state": "active",
+                        "properties": { "title": "b.md" },
+                        "version": 1, "schema_version": 1, "source": "test",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z"
+                    },
+                    "metadata": { "tags": [] }
+                })
+                .to_string(),
+            ))],
+        );
+        referenced_on_the_server(&folder, "edge-c-b", "c.md", "b.md");
+        let mut selection = selective::Selection::default();
+        settle_selecting(&folder, &mut selection);
+        assert!(
+            folder.core.get(X).unwrap().is_none(),
+            "the witness: X is not held"
+        );
+
+        let a = id_at(&folder, "a.md");
+        let c = id_at(&folder, "c.md");
+        crate::store::put_server_edge(
+            &folder.core.conn().unwrap(),
+            &crate::store::testing::wire_edge("about-x", &a, X, "about"),
+        )
+        .unwrap();
+        changed_on_the_server(&folder, "a.md", "from the server");
+        rendered_items();
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(folder.core.get(X).unwrap().is_some(), "X was not pinned");
+        assert!(
+            !rendered_items().contains(&c),
+            "the witness: the pull that pins X does not render c.md"
+        );
+
+        folder.pull_selecting(&mut selection).unwrap();
+        assert!(
+            rendered_items().contains(&c),
+            "c.md was not rendered once b.md's name belonged to two items"
+        );
+        settle_selecting(&folder, &mut selection);
+        assert_a_full_pull_changes_nothing(dir.path(), &folder);
     }
 
     #[test]
@@ -3963,7 +4348,8 @@ mod tests {
             pick.settle(&id_at(&folder, p));
         }
         changed_on_the_server(&folder, "a.md", "arrived during pull");
-        selection.end(pick, &settings, names);
+        let members = folder.members(&settings).unwrap();
+        selection.end(pick, &settings, names, members, HashSet::new());
         folder.pull_selecting(&mut selection).unwrap();
         assert!(
             std::fs::read_to_string(dir.path().join("a.md"))

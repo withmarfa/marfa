@@ -4,9 +4,10 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::edge_types::EdgeTypes;
+use super::health::Found;
 use super::{
-    Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document, id_named,
-    identity, is_document, named_by_its_file, near_limit, one_per_name, state, text_of,
+    Flagged, Folder, NEAR_LIMIT, ScanReport, captured_identities, carries_frontmatter, document,
+    id_named, identity, is_document, named_by_its_file, near_limit, one_per_name, state, text_of,
 };
 use crate::Result;
 use crate::catalog::Catalog;
@@ -92,13 +93,15 @@ impl FileStatus {
 impl Folder {
     /// Writes nothing, so a store opened without holding it answers it.
     pub(super) fn status(&self) -> Result<StatusReport> {
-        self.status_reading(None)
+        self.status_reading(None, None)
     }
 
-    /// `status`, noting in `reads` what it read of each file it walked.
+    /// `status`, noting in `reads` what it read of each file it walked, and
+    /// over `walked` where the caller has just walked the folder.
     pub(super) fn status_reading(
         &self,
         mut reads: Option<&mut super::health::Reads>,
+        walked: Option<super::Walked>,
     ) -> Result<StatusReport> {
         self.refuse_if_gone()?;
         #[cfg(debug_assertions)]
@@ -117,7 +120,7 @@ impl Folder {
             })?
         };
         let lists = settings.lists()?;
-        let walked = self.walked(&lists);
+        let walked = walked.unwrap_or_else(|| self.walked(&lists));
         let (snapshot, disk, pull, unmatched) = {
             let conn = self.core.conn()?;
             (
@@ -168,28 +171,26 @@ impl Folder {
         }
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
-            let read = walked.opened.get(path).map(super::Captured::read);
+            let captured = walked.opened.get(path);
+            let found = Found::of(self, key, captured);
             #[cfg(debug_assertions)]
             crate::fault::hold(|| format!("folder-status-read:{}", path.display()));
             if let Some(reads) = reads.as_deref_mut() {
-                reads.note(path, read.as_ref());
+                reads.note(path, &found);
             }
-            let bytes = read.and_then(std::result::Result::ok);
-            let file_item = match bytes.as_deref() {
-                Some(bytes) if is_document(path) => self.file_item_at(
+            let file_item = is_document(path)
+                && self.file_item_at(
                     path,
                     key,
-                    bytes,
+                    &found,
                     marks.get(path).map(identity::Identity::key),
                     &rows,
                     &catalog,
-                )?,
-                _ => false,
-            };
+                )?;
             let mut entry = match by_path.get(key.as_str()) {
                 Some(bound) => self.bound_status(
                     bound,
-                    bytes.as_deref().map(state::hash),
+                    found.hash().map(str::to_string),
                     &pull,
                     &unmatched,
                     &waiting,
@@ -197,16 +198,22 @@ impl Folder {
                 None => self.unbound_status(
                     key,
                     path,
-                    bytes.as_deref(),
+                    found.bytes(),
                     file_item,
                     (&settings, &catalog, &edge_types),
                 ),
             };
-            // As the scan measures: the text it sends, which a file item's
-            // bytes are not.
-            entry.warning = bytes
-                .as_deref()
-                .filter(|_| !file_item)
+            // As the scan measures: the text of a document it sends, which a
+            // file item's bytes are not and no other file's are. Sent as
+            // JSON, a byte takes at most six, so a file under a sixth of the
+            // limit is not read for it.
+            let short = captured.is_some_and(|captured| {
+                usize::try_from(captured.metadata.borrow().len())
+                    .is_ok_and(|len| len.saturating_mul(6) < NEAR_LIMIT)
+            });
+            entry.warning = (!file_item && is_document(path) && !short)
+                .then(|| found.bytes())
+                .flatten()
                 .and_then(|bytes| near_limit(key, text_of(bytes).ok()?))
                 .map(|flagged| flagged.reason);
             files.push(entry);
@@ -413,7 +420,7 @@ impl Folder {
         &self,
         path: &Path,
         key: &str,
-        bytes: &[u8],
+        found: &Found<'_>,
         mark: Option<String>,
         rows: &Rows<'_>,
         catalog: &Catalog,
@@ -433,6 +440,9 @@ impl Folder {
         if !self.file_item(&bound.item_id, catalog)? {
             return Ok(false);
         }
+        let Some(bytes) = found.bytes() else {
+            return Ok(false);
+        };
         let read = text_of(bytes)
             .ok()
             .filter(|_| carries_frontmatter(path))
@@ -607,10 +617,12 @@ mod tests {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(Default::default()),
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
+            last_reads: std::sync::Mutex::default(),
             replaced: None,
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),

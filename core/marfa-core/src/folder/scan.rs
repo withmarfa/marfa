@@ -66,6 +66,8 @@ pub(super) const EMBEDS_REREAD: &str = "folder_embeds_references";
 
 /// What a pass holds between its phases.
 struct ScanState {
+    /// When the pass began, before it captured any file's size and time.
+    began: std::time::SystemTime,
     full: bool,
     /// Whether this pass reads every document's edges again
     /// (`EMBEDS_REREAD`).
@@ -332,6 +334,7 @@ impl Folder {
             std::fs::rename(self.root.with_extension("replacement"), &self.root)
                 .expect("install replacement root for fault");
         }
+        let began = std::time::SystemTime::now();
         let walked = self.walked(&lists);
         let incomplete = walked.incomplete();
         swap_root(&self.root, "replace-root-before-capture");
@@ -371,6 +374,7 @@ impl Folder {
         let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
         Ok(ControlFlow::Continue(ScanState {
+            began,
             full,
             reread_embeds: false,
             settle,
@@ -1183,10 +1187,33 @@ impl Folder {
         Ok(())
     }
 
-    /// Records the size and time each file had before its read.
+    /// Records the size and time each file had before its read, and keeps
+    /// them with the hash of the bytes read, for health.
     fn record_stats(&self, scan: &ScanState) -> Result<()> {
         let conn = self.core.conn()?;
         state::set_stats(&conn, &scan.stats, scan.full)?;
+        let stats: HashMap<&str, &str> = scan
+            .stats
+            .iter()
+            .map(|(key, stat)| (key.as_str(), stat.as_str()))
+            .collect();
+        let mut last = self.last_reads.lock().expect("last reads lock");
+        if scan.full {
+            last.clear();
+        }
+        for file in &scan.files {
+            last.remove(&file.key);
+            if file.deferred || file.folded {
+                continue;
+            }
+            if let Some(stat) = stats.get(file.key.as_str())
+                && let Some(captured) = scan.walked.opened.get(&file.path)
+                && let Some(read) =
+                    super::health::LastRead::of(captured, stat, &file.hash, scan.began)
+            {
+                last.insert(file.key.clone(), read);
+            }
+        }
         Ok(())
     }
 
