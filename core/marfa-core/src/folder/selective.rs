@@ -252,43 +252,44 @@ impl Selection {
                 last.members.remove(id);
             }
         }
-        // What every pull goes over whatever changed: an item whose file it
-        // did not leave as it renders, a file here the query does not hold
-        // but as a document's embed or attachment, and a file the folder
-        // keeps unmatched, a refused placement or a journaled delete names.
         let bound_items: HashSet<&String> = pick.bound.values().map(|b| &b.item_id).collect();
+        // An item whose file the last pull did not leave as it renders.
         for id in last.members.iter().chain(bound_items.iter().copied()) {
-            if !last.settled.contains(id)
-                || !last.members.contains(id) && !last.shown.contains(id)
-            {
+            if !last.settled.contains(id) {
                 reached.insert(id.clone());
+            }
+        }
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "folder-selection-narrow") {
+            reached.clear();
+        }
+        // What every pull goes over, and renders only where its file is not
+        // as it renders: a file here the query does not hold but as a
+        // document's embed or attachment, and a file the folder keeps
+        // unmatched, a refused placement, a journaled delete or a paused
+        // removal names.
+        let mut read = reached.clone();
+        for id in bound_items {
+            if !last.members.contains(id) && !last.shown.contains(id) {
+                read.insert(id.clone());
             }
         }
         {
             let conn = folder.core.conn()?;
-            reached.extend(state::unmatched(&conn)?);
-            reached.extend(state::journaled(&conn)?.into_iter().map(|row| row.item_id));
-        }
-        reached.extend(folder.withheld()?.into_keys());
-        {
-            let conn = folder.core.conn()?;
+            read.extend(state::unmatched(&conn)?);
+            read.extend(state::journaled(&conn)?.into_iter().map(|row| row.item_id));
             let paused: HashSet<String> =
                 state::paused(&conn, state::Removal::Pull)?.into_iter().collect();
-            reached.extend(
+            read.extend(
                 pick.bound
                     .values()
                     .filter(|bound| paused.contains(&bound.path))
                     .map(|bound| bound.item_id.clone()),
             );
         }
-        #[cfg(debug_assertions)]
-        if crate::fault::fails(|| "folder-selection-narrow") {
-            reached.clear();
-        }
+        read.extend(folder.withheld()?.into_keys());
         // Where an attachment's file goes rests on every document it is
-        // attached to, so a pull reads them all together, and renders those
-        // a change did not reach only where their file is not as it renders.
-        let mut read = reached.clone();
+        // attached to, so a pull reads them all together.
         if !attached_together(folder, &mut read)? {
             return Ok(None);
         }
