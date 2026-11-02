@@ -192,6 +192,10 @@ pub struct FolderScan {
     pub warnings: Vec<FlaggedFile>,
     /// Why the scan read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
+    /// Why links by name wait though the server answered, where they do: it
+    /// refused a title lookup as a whole, or has none. Said once for the
+    /// folder, not for each file.
+    pub lookup_refused: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -809,6 +813,7 @@ fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
         secrets: scan.secrets,
         warnings: scan.warnings.into_iter().map(flagged_file).collect(),
         root_gone: scan.root_gone,
+        lookup_refused: scan.lookup_refused,
     }
 }
 
@@ -871,6 +876,19 @@ mod tests {
         });
         assert_eq!(scan.unchanged, 3);
         assert_eq!(scan.waiting, 2);
+    }
+
+    #[test]
+    fn a_scan_carries_why_a_title_lookup_was_refused() {
+        let refused = scan_of(marfa_core::ScanReport {
+            lookup_refused: Some("links by name wait".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            refused.lookup_refused.as_deref(),
+            Some("links by name wait")
+        );
+        assert_eq!(scan_of(Default::default()).lookup_refused, None);
     }
 
     #[test]
