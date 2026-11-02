@@ -25,7 +25,7 @@ fn body(request: &Request) -> &serde_json::Value {
 fn a_listing_sends_only_the_filters_it_was_given() {
     let request = items::list_request(&items::ListArgs {
         type_: Some("core.note".into()),
-        state: Some(StateFilter::Any),
+        state: vec![StateFilter::Any],
         tags: vec!["a".into(), "b".into()],
         occurred_after: Some("2026-01-01T00:00:00Z".into()),
         page: PageArgs {
@@ -33,7 +33,8 @@ fn a_listing_sends_only_the_filters_it_was_given() {
             cursor: Some("c1".into()),
         },
         ..Default::default()
-    });
+    })
+    .unwrap();
     assert_eq!(request.method, Method::Get);
     assert_eq!(request.path(), "/items");
     assert_eq!(query(&request, "type").as_deref(), Some("core.note"));
@@ -50,7 +51,8 @@ fn a_listing_sends_only_the_filters_it_was_given() {
         tier: Some(TierFilter::All),
         include: vec!["edges".into(), "metadata".into()],
         ..Default::default()
-    });
+    })
+    .unwrap();
     assert_eq!(query(&given, "source").as_deref(), Some("test/cli"));
     assert_eq!(query(&given, "tier").as_deref(), Some("all"));
     assert_eq!(query(&given, "include").as_deref(), Some("edges,metadata"));
@@ -497,7 +499,7 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
 fn a_search_sends_its_query_and_its_narrowing() {
     let request = search::request(&search::SearchArgs {
         query: "zebra crossing".into(),
-        state: Some(StateFilter::Archived),
+        state: vec![StateFilter::Archived],
         tier: Some(TierFilter::All),
         source: Some("import".into()),
         updated_after: Some("2026-01-01T00:00:00Z".into()),
@@ -509,7 +511,8 @@ fn a_search_sends_its_query_and_its_narrowing() {
             cursor: Some("c6".into()),
         },
         ..Default::default()
-    });
+    })
+    .unwrap();
     assert_eq!(request.path(), "/search");
     assert_eq!(query(&request, "source").as_deref(), Some("import"));
     assert_eq!(
@@ -1088,7 +1091,8 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
         format: Some(export::ExportFormat::Archive),
         type_: Some("core.note".into()),
         ..Default::default()
-    });
+    })
+    .unwrap();
     assert_eq!(exported.path(), "/export");
     assert!(exported.stream);
     assert_eq!(query(&exported, "format").as_deref(), Some("archive"));
@@ -2175,4 +2179,77 @@ fn an_overview_of_a_credential_that_reaches_nothing_is_two_lines() {
         "credential": { "kind": "app" }
     }));
     assert_eq!(text, "instance Marfa (abc)\ncredential app");
+}
+
+#[derive(clap::Parser)]
+struct ListProbe {
+    #[command(flatten)]
+    args: items::ListArgs,
+}
+
+#[derive(clap::Parser)]
+struct SearchProbe {
+    #[command(flatten)]
+    args: search::SearchArgs,
+}
+
+#[derive(clap::Parser)]
+struct ExportProbe {
+    #[command(flatten)]
+    args: export::ExportArgs,
+}
+
+/// What each listing door sends as `state` for the flags given, or the
+/// refusal it makes before any request.
+fn states_sent(door: &str, flags: &[&str]) -> Result<Option<String>, CliError> {
+    use clap::Parser;
+    let argv = ["marfa"].into_iter().chain(flags.iter().copied());
+    let request = match door {
+        "items list" => items::list_request(&ListProbe::try_parse_from(argv).unwrap().args),
+        "search" => {
+            let argv = argv.chain(["words"]);
+            search::request(&SearchProbe::try_parse_from(argv).unwrap().args)
+        }
+        "export" => export::request(&ExportProbe::try_parse_from(argv).unwrap().args),
+        other => panic!("no listing door {other}"),
+    }?;
+    Ok(query(&request, "state"))
+}
+
+#[test]
+fn a_state_list_is_sent_as_the_servers_comma_separated_list() {
+    for door in ["items list", "search", "export"] {
+        for flags in [
+            &["--state", "active,archived"][..],
+            &["--state", "active", "--state", "archived"],
+        ] {
+            assert_eq!(
+                states_sent(door, flags).unwrap().as_deref(),
+                Some("active,archived"),
+                "{door} {flags:?}"
+            );
+        }
+        // The witness for the absences below: one state and none are producible.
+        assert_eq!(
+            states_sent(door, &["--state", "any"]).unwrap().as_deref(),
+            Some("any"),
+            "{door}"
+        );
+        assert_eq!(states_sent(door, &[]).unwrap(), None, "{door}");
+    }
+}
+
+#[test]
+fn any_beside_another_state_is_refused_before_a_request() {
+    for door in ["items list", "search", "export"] {
+        for flags in [
+            &["--state", "any,archived"][..],
+            &["--state", "active", "--state", "any"],
+        ] {
+            assert!(
+                matches!(states_sent(door, flags), Err(CliError::Usage(_))),
+                "{door} {flags:?} was let through"
+            );
+        }
+    }
 }

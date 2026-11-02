@@ -1,6 +1,6 @@
 use clap::Args;
 
-use super::{PageArgs, StateFilter, TierFilter};
+use super::{PageArgs, StateFilter, TierFilter, state_list};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -16,9 +16,11 @@ pub struct SearchArgs {
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
-    /// One state, or `any`. Unset answers the active state.
-    #[arg(long)]
-    pub state: Option<StateFilter>,
+    /// A state to answer; repeat it or separate states with commas. `any` is
+    /// every state, and is given alone. Unset answers the active state; the bin
+    /// is never searched.
+    #[arg(long, value_delimiter = ',')]
+    pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
     pub source: Option<String>,
@@ -81,11 +83,11 @@ fn parse_sort(text: &str) -> Result<String, String> {
     }
 }
 
-pub fn request(args: &SearchArgs) -> Request {
-    Request::get(&["search"])
+pub fn request(args: &SearchArgs) -> Result<Request, CliError> {
+    Ok(Request::get(&["search"])
         .query("q", args.query.clone())
         .query_opt("type", args.type_.clone())
-        .query_opt("state", args.state.map(StateFilter::as_str))
+        .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("tier", args.tier.map(TierFilter::as_str))
         .query_list("tags", &args.tags)
@@ -98,9 +100,9 @@ pub fn request(args: &SearchArgs) -> Request {
         .query_opt("direction", args.direction.map(SortDirection::as_str))
         .query_list("include", &args.include)
         .query_opt("limit", args.page.limit.map(|limit| limit.to_string()))
-        .query_opt("cursor", args.page.cursor.clone())
+        .query_opt("cursor", args.page.cursor.clone()))
 }
 
 pub fn run(args: SearchArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    out.value(&remote.json(&request(&args))?)
+    out.value(&remote.json(&request(&args)?)?)
 }

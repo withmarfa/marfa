@@ -6,7 +6,7 @@ use marfa_core::http::BULK_GET_LIMIT;
 use marfa_core::{file_type_for, mime_type_for};
 use serde_json::{Map, Value, json};
 
-use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object};
+use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object, state_list};
 use crate::error::CliError;
 use crate::output::{self, Printer};
 use crate::remote::Remote;
@@ -336,9 +336,10 @@ pub struct ListArgs {
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
-    /// One state, or `any`. Unset answers the active state.
-    #[arg(long)]
-    pub state: Option<StateFilter>,
+    /// A state to answer; repeat it or separate states with commas. `any` is
+    /// every state, and is given alone. Unset answers the active state.
+    #[arg(long, value_delimiter = ',')]
+    pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
     pub source: Option<String>,
@@ -651,10 +652,10 @@ pub fn summaries_request(type_: Option<&str>, q: Option<&str>, page: &PageArgs) 
         .query_opt("cursor", page.cursor.clone())
 }
 
-pub fn list_request(args: &ListArgs) -> Request {
-    Request::get(&["items"])
+pub fn list_request(args: &ListArgs) -> Result<Request, CliError> {
+    Ok(Request::get(&["items"])
         .query_opt("type", args.type_.clone())
-        .query_opt("state", args.state.map(StateFilter::as_str))
+        .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("tier", args.tier.map(TierFilter::as_str))
         .query_list("tags", &args.tags)
@@ -667,7 +668,7 @@ pub fn list_request(args: &ListArgs) -> Request {
         .query_opt("updated_before", args.updated_before.clone())
         .query_list("include", &args.include)
         .query_opt("limit", args.page.limit.map(|limit| limit.to_string()))
-        .query_opt("cursor", args.page.cursor.clone())
+        .query_opt("cursor", args.page.cursor.clone()))
 }
 
 pub fn get_request(id: &str, include: Option<&str>) -> Request {
@@ -1072,7 +1073,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     };
     let request = match &command {
         ItemsCommand::Trash { command } => trash_request(command)?,
-        ItemsCommand::List(args) => list_request(args),
+        ItemsCommand::List(args) => list_request(args)?,
         ItemsCommand::Summaries { type_, q, page } => {
             summaries_request(type_.as_deref(), q.as_deref(), page)
         }
