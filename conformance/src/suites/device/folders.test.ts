@@ -4548,7 +4548,8 @@ describe("what a folder takes", () => {
       // A notice of another kind changes, with the refusal still standing.
       put(harness, ".env", "TOKEN=not-a-real-one\n");
       await vi.waitFor(
-        () => expect(watching.stdout, watching.stdout).toContain(".env: not taken"),
+        () =>
+          expect(watching.stdout, watching.stdout).toContain(".env: not taken"),
         { timeout: 20_000, interval: 100 },
       );
       await new Promise((resolve) => setTimeout(resolve, 1_500));

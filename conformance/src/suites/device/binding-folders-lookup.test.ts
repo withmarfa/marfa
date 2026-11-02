@@ -17,7 +17,8 @@ it("tells an app why links by name wait when the server has no title lookup, and
   let upgraded = false;
   harness = await bindingFolderHarness("binding-folder-lookup-refused", {
     events: [copyLiveReplay("1", [])],
-    lookup: () => (upgraded ? undefined : refusal(404, "not_found", "Not found")),
+    lookup: () =>
+      upgraded ? undefined : refusal(404, "not_found", "Not found"),
   });
   put(harness, "Ticket.md", "See [[Target]].\n");
   expect((await harness.bound.testOpen()).ok).toBe(true);
