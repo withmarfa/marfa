@@ -52,9 +52,8 @@ pub fn copy_changed(error: &CoreError) -> bool {
 /// Whether a failed read of an edge's other end ends the pass instead of
 /// holding that one end: what ends a drain, a stopped run and a refused
 /// credential are no one item's.
-fn ends_the_pass(error: &CoreError) -> bool {
-    crate::drain::ends_the_drain(error)
-        || matches!(error, CoreError::Canceled | CoreError::Unauthorized { .. })
+fn ends_the_folder_pass(error: &CoreError) -> bool {
+    crate::drain::ends_the_drain(error) || matches!(error, CoreError::Canceled)
 }
 
 /// What a rename that follows a title may take: the paths other items are
@@ -2246,7 +2245,7 @@ impl Folder {
         }
         let mut unread = HashMap::new();
         let recorded = self.hold_ends(&wanted, |id, error| {
-            if ends_the_pass(&error) {
+            if ends_the_folder_pass(&error) {
                 return Err(error);
             }
             if !(matches!(error, CoreError::NoServer) || error.is_environmental()) {
@@ -2283,7 +2282,7 @@ impl Folder {
             .collect();
         let mut unread = HashMap::new();
         self.hold_ends(&wanted, |id, error| {
-            if ends_the_pass(&error) {
+            if ends_the_folder_pass(&error) {
                 return Err(error);
             }
             unread.insert(id.to_string(), error.to_string());

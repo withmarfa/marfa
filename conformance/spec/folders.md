@@ -2666,7 +2666,7 @@ If a pull's read of an item attached to a document the folder writes fails for a
 
 ### `folders/attachment-unread-reported`
 
-If a pull does not write an attached item's file because the read of the item failed for a reason other than that the server does not hold it or will not show it, then a device MUST report the document the item is attached to in `embeds` with the flag `attachment`, naming the item and the reason.
+If a pull does not write an attached item's file because the read of the item failed for a reason other than that the server does not hold it or will not show it, an environmental failure or one that ends the drain, then a device MUST report the document the item is attached to in `embeds` with the flag `attachment`, naming the item and the reason.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes the other files, reports the attachment and asks for it again, when its read is %s`.
 
