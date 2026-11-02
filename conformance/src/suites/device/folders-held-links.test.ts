@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   copyItemEvent,
@@ -23,7 +29,9 @@ import {
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
 // `folders/edge-held-cleared`, `folders/edge-held-never-guessed`), while a
 // name whose lookup the server refused is not asked again
-// (`folders/edge-lookup-no-repeat`).
+// (`folders/edge-lookup-no-repeat`). A held file the person deletes goes to
+// the bin unless another device changed its item
+// (`folders/missing-held-line-unchanged`).
 
 let folder: FolderHarness | undefined;
 afterEach(async () => {
@@ -72,7 +80,7 @@ async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
   /** As another device's change reaches the server and its event stream. */
   const elsewhere = (
     item: WireItemOptions,
-    event: "item.created" | "item.deleted",
+    event: "item.created" | "item.updated" | "item.deleted",
   ) => {
     if (event === "item.created") rows["core.note"]!.push({ item });
     frames.push(
@@ -316,5 +324,100 @@ describe("links held until their target exists", () => {
       `create ${created("Ticket")} references ${id(1)}`,
     ]);
     expect((await fileAt("Ticket.md")).status).not.toBe("held");
+  });
+});
+
+describe("a held file the person deletes", () => {
+  const ticket = note(10, "Ticket");
+  const path = () => join(folder!.dir, "Ticket.md");
+
+  /** Ticket.md as the folder wrote it, given a parent no item is named for
+   *  and then deleted, and scanned once since. */
+  async function deletedHeldTicket() {
+    const seeded = await seed([ticket]);
+    await push();
+    const text = readFileSync(path(), "utf8");
+    expect(text.startsWith("---\n"), text).toBe(true);
+    writeFileSync(
+      path(),
+      text.replace(/^---\n/, '---\nchild-of: "[[Missing]]"\n'),
+    );
+    const held = await push();
+    expect(held.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    expect(held.flagged[0]?.reason).toContain("matches no item");
+    rmSync(path());
+    const scanned = await folder!.folder.scan();
+    expect(scanned.ok && scanned.value.missing).toBe(1);
+    return seeded;
+  }
+
+  /** The items the folder queued a delete for. */
+  async function deletesQueued(): Promise<string[]> {
+    const queued = await folder!.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return [];
+    return queued.value
+      .filter((row) => row.kind === "delete_item")
+      .map((row) => String(row.item_id));
+  }
+
+  /** A pull that writes no file, and a sweep once the grace has run out. */
+  async function sweptUnwritten() {
+    const pulled = await folder!.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.revived + pulled.value.written + pulled.value.rewritten,
+      "the person's delete was written back as a change made elsewhere",
+    ).toBe(0);
+    expect(existsSync(path())).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await folder!.folder.scan();
+    expect(swept.ok && swept.value.deleted).toBe(1);
+  }
+
+  it("trashes the item of a deleted file held for a parent no item is named for", async () => {
+    await deletedHeldTicket();
+    await sweptUnwritten();
+    expect(
+      await deletesQueued(),
+      "the person's delete was never sent, and the file's absence stands on every pass",
+    ).toEqual([ticket.id]);
+  });
+
+  it("trashes the item of a deleted held file once an item of the held name appears", async () => {
+    const { elsewhere } = await deletedHeldTicket();
+    elsewhere(note(11, "Missing"), "item.created");
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    await sweptUnwritten();
+    expect(await deletesQueued()).toEqual([ticket.id]);
+  });
+
+  it("writes back a deleted held file when another device changes its item inside the grace", async () => {
+    const { elsewhere } = await deletedHeldTicket();
+    elsewhere(
+      {
+        ...ticket,
+        version: 5,
+        properties: { title: "Ticket", body: "Their edit\n" },
+      },
+      "item.updated",
+    );
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    const pulled = await folder!.folder.pull();
+    expect(pulled.ok && pulled.value.revived).toBe(1);
+    expect(readFileSync(path(), "utf8")).toContain("Their edit");
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await folder!.folder.scan();
+    expect(swept.ok && swept.value.deleted).toBe(0);
+    expect(
+      await deletesQueued(),
+      "a delete was sent for an item changed elsewhere after the person deleted its file",
+    ).toEqual([]);
   });
 });

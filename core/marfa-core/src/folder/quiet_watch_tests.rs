@@ -88,7 +88,9 @@ fn a_quiet_watch_over_a_deleted_held_file_pulls_at_most_once_a_minute() {
     std::fs::remove_file(dir.path().join("A.md")).unwrap();
     passes.run(&folder, false).unwrap();
     past_the_grace(&folder, "A.md");
-    passes.run(&folder, false).unwrap();
+    // The sweep a pass runs, with the delete it queues answered as the
+    // server would.
+    folder.scan().unwrap();
     answered(&folder);
     passes.pulls();
     for _ in 0..TWO_MINUTES {
