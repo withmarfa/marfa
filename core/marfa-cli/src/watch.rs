@@ -824,14 +824,14 @@ mod tests {
         let say = |notices_changed, lookup_changed| {
             standing(&refused, &pulled, &[], &[], notices_changed, lookup_changed)
         };
-        let secret = say(true, false);
+        let excluded = say(true, false);
         assert!(
-            secret.iter().any(|line| line.contains(".env")),
-            "the witness: the notice that changed is said: {secret:?}"
+            excluded.iter().any(|line| line.contains(".env")),
+            "the witness: the notice that changed is said: {excluded:?}"
         );
         assert!(
-            !secret.iter().any(|line| line == why),
-            "another notice said the unchanged refusal again: {secret:?}"
+            !excluded.iter().any(|line| line == why),
+            "another notice said the unchanged refusal again: {excluded:?}"
         );
         let refusal = say(false, true);
         assert_eq!(refusal, [why], "a refusal that changed was not said alone");
