@@ -1219,8 +1219,8 @@ describe("edges in frontmatter", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
     expect(pushed.value.scan.flagged[0]?.reason).toContain("more than 2 pages");
-    // Two pages for each property a title lives in: `title` and `text`.
-    expect(page, "the lookup read past its cap").toBe(4);
+    // Two pages for the one property a scripted title lives in, `title`.
+    expect(page, "the lookup read past its cap").toBe(2);
     expect(sentEdgeWrites(harness)).toEqual([]);
   });
 
