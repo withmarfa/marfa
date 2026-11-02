@@ -59,6 +59,16 @@ impl Presentation {
         self
     }
 
+    pub(super) fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// The same, with `body` as its body.
+    pub(super) fn with_body(mut self, body: &str) -> Presentation {
+        self.body = body.to_string();
+        self
+    }
+
     pub(super) fn document(&self) -> Document {
         Document {
             front: self.front.clone(),

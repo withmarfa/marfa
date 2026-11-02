@@ -3780,7 +3780,15 @@ When a person deletes a bound file that a device holds because a name on one of 
 
 **Reason:** The held name never reached the item, so its absence from what the device would write now is no change made elsewhere. Counted as one, the deletion could not stand and the file could not come back either, since a held file's bytes are the person's to mend, and the missing file would stay in the folder's record for good. An item made since under the held name does not count either, because the line never reached the item. An edge another device removed from the line, or a name it added, is a change made elsewhere, and the file comes back under `folders/missing-file-changed-revives` or `folders/delete-remote-revives`, written as the item renders, without the held name.
 
-**Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file held for a parent no item is named for`, `› trashes the item of a deleted held file once an item of the held name appears`.
+**Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file held for a parent no item is named for`, `› trashes the item of a deleted held file once an item of the held name appears`, `› writes back a deleted held file when another device removes an edge its held line made`, `› writes back a deleted held file when another device adds an edge to its held line`.
+
+### `folders/missing-refused-edit-unchanged`
+
+When a person deletes a bound file whose edit the server refused, a device MUST retain the journaled deletion while the item has not changed in content the file showed, counting the refused edit as unchanged while the item is still at the version the file showed.
+
+**Reason:** The refused edit never reached the item, and the device reads back the item's row in its place, so its absence from what the device would write now is no change made elsewhere. Counted as one, a pull would write the file back inside the grace and the person's delete of their own file would never stand. A refused edit spends no version, so any other change to the item's content moves its version and brings the file back under `folders/missing-file-changed-revives`. Tags and edges, which another device changes without a version step, are still compared, a refused tag change aside.
+
+**Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file whose edit the server refused`.
 
 ### `folders/pull-missing-file-not-written`
 

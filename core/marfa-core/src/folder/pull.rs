@@ -1992,13 +1992,75 @@ impl Folder {
         .fold(presented.presentation(), |presented, field| {
             presented.with(field, None)
         });
-        let agreed = self.untaken_lines_set_aside(agreed, &presented, item, bound, edge_types)?;
+        let agreed = self.untaken_set_aside(agreed, &presented, item, bound, line, edge_types)?;
         Ok(agreed.agrees(&presented, edge_types))
     }
 
-    /// The agreed presentation of a file held for its edge lines, showing
-    /// each such line as the item renders it where the line differs only by
-    /// names the item never took (`folders/missing-held-line-unchanged`):
+    /// The agreed presentation of a file showing bytes its item never took, a
+    /// held file's or one whose change was refused, with those bytes shown as
+    /// the item renders them (`folders/missing-held-line-unchanged`,
+    /// `folders/missing-refused-edit-unchanged`), so the person's delete of
+    /// it stands unless the item changed elsewhere.
+    fn untaken_set_aside(
+        &self,
+        agreed: &document::Presentation,
+        presented: &document::Presentation,
+        item: &Item,
+        bound: &state::Bound,
+        line: Option<i64>,
+        edge_types: &EdgeTypes,
+    ) -> Result<document::Presentation> {
+        if bound.held.is_none() && !bound.holds_refusal() {
+            return Ok(agreed.clone());
+        }
+        let mut set_aside = agreed.clone();
+        // Still at the version line the file showed, the item moved nowhere
+        // but in its tags and edges, which move without a version step.
+        if line == Some(item.version) {
+            set_aside = set_aside.with_body(presented.body());
+            let named: std::collections::BTreeSet<&String> = agreed
+                .front()
+                .keys()
+                .chain(presented.front().keys())
+                .collect();
+            for field in named {
+                if field != fields::TAGS_FIELD && !edge_types.is_name(field) {
+                    set_aside = set_aside.with(field, presented.front().get(field).cloned());
+                }
+            }
+        }
+        // A refused tag change shows in the file but never reached the item.
+        let refused_tags: Vec<(&String, bool)> = bound
+            .writes
+            .refused
+            .iter()
+            .filter_map(|refused| match &refused.change {
+                state::Change::AddTag(tag) => Some((tag, false)),
+                state::Change::RemoveTag(tag) => Some((tag, true)),
+                _ => None,
+            })
+            .collect();
+        let shown = agreed
+            .front()
+            .get(fields::TAGS_FIELD)
+            .map_or(Ok(Vec::new()), fields::tags_of);
+        if let (false, Ok(mut tags)) = (refused_tags.is_empty(), shown) {
+            for (tag, restored) in refused_tags {
+                tags.retain(|held| held != tag);
+                if restored {
+                    tags.push(tag.clone());
+                }
+            }
+            let tags = (!tags.is_empty())
+                .then(|| Value::Array(tags.into_iter().map(Value::String).collect()));
+            set_aside = set_aside.with(fields::TAGS_FIELD, tags);
+        }
+        self.untaken_lines_set_aside(&set_aside, presented, item, bound, edge_types)
+    }
+
+    /// The agreed presentation of a file showing bytes its item never took,
+    /// with each edge line shown as the item renders it where the line
+    /// differs only by names the item never took:
     /// the item shows no name the file did not, and still has every edge the
     /// folder last recorded for the line. An item made since under a held
     /// name does not count: the line never reached the item.
@@ -2010,10 +2072,6 @@ impl Folder {
         bound: &state::Bound,
         edge_types: &EdgeTypes,
     ) -> Result<document::Presentation> {
-        let held = bound.held.as_deref().unwrap_or_default();
-        if !held.starts_with(state::EDGES) && !held.starts_with(state::EDGES_WAITING) {
-            return Ok(agreed.clone());
-        }
         let named_in = |value: Option<&Value>| -> Option<HashSet<String>> {
             let Some(value) = value else {
                 return Some(HashSet::new());
