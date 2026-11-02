@@ -1,12 +1,12 @@
 {
   "id": "core.highlight",
   "label": "Highlight",
-  "description": "A user's engagement with content — the highlighted passage plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`; the moment of highlighting is the item's own `occurred_at`.",
+  "description": "A user's engagement with content — the highlighted passage, its body, plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`, and names the highlight, which has no title of its own; the moment of highlighting is the item's own `occurred_at`.",
   "version": 0,
   "fields": {
     "text": {
       "type": "string",
-      "description": "The highlighted passage"
+      "description": "The highlighted passage, as Markdown"
     },
     "note": {
       "type": "string",
@@ -33,8 +33,8 @@
   },
   "required": ["text"],
   "display_hints": {
-    "title_field": "text",
-    "body_field": "note",
+    "body_field": "text",
+    "name_from_body": false,
     "icon": "lucide:highlighter"
   },
   "merge_policy": {

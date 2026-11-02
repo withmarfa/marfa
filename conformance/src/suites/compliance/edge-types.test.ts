@@ -974,7 +974,7 @@ describe("custom edge-type registration", () => {
       "attached-to": ["Attached to", "Attachments"],
       "comments-on": ["Comment on", "Comments"],
       "derived-from": ["Derived from", "Basis for"],
-      "excerpt-of": ["Excerpt of", "Excerpts"],
+      "excerpt-of": ["Excerpt from", "Excerpts"],
       "in-collection": ["In collection", "Contents"],
       "in-folder": ["In folder", "Folder contents"],
       "in-thread": ["In thread", "Messages"],

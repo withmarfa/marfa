@@ -128,8 +128,8 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * - `fields`: merged root→leaf, per-key, preserving child-owned refinements,
  *   a status field carrying every word the chain declares.
  * - `display_hints` — per hint, nearest-ancestor-wins. `title_field`,
- *   `body_field` and `icon` each come from the nearest type in the chain
- *   that sets that hint.
+ *   `body_field`, `name_from_body` and `icon` each come from the nearest
+ *   type in the chain that sets that hint.
  * - `version_policy` — merged root→leaf, per-key, which is
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.

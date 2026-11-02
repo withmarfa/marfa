@@ -211,6 +211,36 @@ describe("a range, a currency and a list of entries in a type", () => {
       expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     },
   );
+
+  it("refuses a name_from_body that is not true or false with invalid_schema, naming the member", async () => {
+    const id = nextId();
+    const fields = { passage: { type: "string" } } as const;
+    const refused = await client.registerType({
+      id,
+      fields,
+      display_hints: {
+        body_field: "passage",
+        name_from_body: "no" as unknown as boolean,
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(
+      errorsOf(refused)?.some(
+        (e) => e.field === "display_hints.name_from_body",
+      ),
+      JSON.stringify(errorsOf(refused)),
+    ).toBe(true);
+    expect((await client.getType(id)).status).toBe(404);
+
+    // The witness: the same type with the hint a boolean registers.
+    const registered = await client.registerType({
+      id,
+      fields,
+      display_hints: { body_field: "passage", name_from_body: false },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  });
 });
 
 describe("a value in a field with a range, a currency or entries", () => {

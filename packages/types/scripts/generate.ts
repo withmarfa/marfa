@@ -269,6 +269,11 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
     if (schema.display_hints.body_field) {
       parts.push(`body_field: ${quote(schema.display_hints.body_field)}`);
     }
+    if (schema.display_hints.name_from_body !== undefined) {
+      parts.push(
+        `name_from_body: ${String(schema.display_hints.name_from_body)}`,
+      );
+    }
     if (schema.display_hints.icon) {
       parts.push(`icon: ${quote(schema.display_hints.icon)}`);
     }

@@ -6,6 +6,7 @@ import { itemName, itemPreview, partName, titleName } from "./item-name.js";
 interface DisplayHints {
   title_field?: string;
   body_field?: string;
+  name_from_body?: boolean;
 }
 
 interface Shared {
@@ -35,7 +36,7 @@ const SHARED = JSON.parse(
   ),
 ) as Shared;
 
-it("names every built-in type through its display hints", () => {
+it("names every built-in type through its display hints, and a highlight by none of its passage", () => {
   const fields: Record<string, string> = {
     "core.bookmark": "title",
     "core.collection": "title",
@@ -70,8 +71,10 @@ it("names every built-in type through its display hints", () => {
         type.display_hints,
       ),
       type.id,
-    ).toBe("A name");
+    ).toBe(type.id === "core.highlight" ? "Untitled" : "A name");
   }
+  // The witness: the same passage names an item whose hints let it.
+  expect(itemName({ text: "  A name\nPrivate second line" })).toBe("A name");
 });
 
 it("uses custom hints and a bounded fallback with blank or untidy input", () => {
@@ -116,8 +119,10 @@ it("names every case the core is held to as the core does, and Untitled where th
     const hints: DisplayHints = {};
     const title = nearest(type, "title_field");
     const body = nearest(type, "body_field");
-    if (title !== undefined) hints.title_field = title;
-    if (body !== undefined) hints.body_field = body;
+    const fromBody = nearest(type, "name_from_body");
+    if (typeof title === "string") hints.title_field = title;
+    if (typeof body === "string") hints.body_field = body;
+    if (typeof fromBody === "boolean") hints.name_from_body = fromBody;
     expect(itemName(properties, hints), description).toBe(name ?? "Untitled");
     expect(itemPreview(properties, hints), description).toBe(
       preview ?? undefined,
@@ -130,14 +135,19 @@ it("names every part case the core is held to as the core does", () => {
   const labels: Record<string, string> = {
     "attached-to": "Attached to",
     "comments-on": "Comment on",
+    "excerpt-of": "Excerpt from",
   };
   const types = new Map<
     string,
     { parent?: string; display_hints?: DisplayHints }
   >([...ALL_TYPES, ...SHARED.types].map((type) => [type.id, type]));
   const hints = (id: string): DisplayHints => {
-    const found: DisplayHints = {};
-    for (const hint of ["title_field", "body_field"] as const) {
+    const found: Record<string, unknown> = {};
+    for (const hint of [
+      "title_field",
+      "body_field",
+      "name_from_body",
+    ] as const) {
       for (let at = types.get(id); at; at = types.get(at.parent ?? "")) {
         const value = at.display_hints?.[hint];
         if (value === undefined) continue;

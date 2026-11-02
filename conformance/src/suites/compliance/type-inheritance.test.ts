@@ -400,7 +400,11 @@ describe("type inheritance rule", () => {
         await client.registerType({
           id: parentId,
           fields,
-          display_hints: { title_field: "heading", body_field: "text" },
+          display_hints: {
+            title_field: "heading",
+            body_field: "text",
+            name_from_body: false,
+          },
         })
       ).ok,
     ).toBe(true);
@@ -416,7 +420,7 @@ describe("type inheritance rule", () => {
           id: partial,
           parent: parentId,
           fields: {},
-          display_hints: { body_field: "summary" },
+          display_hints: { body_field: "summary", name_from_body: true },
         })
       ).ok,
     ).toBe(true);
@@ -447,20 +451,24 @@ describe("type inheritance rule", () => {
     expect((await client.getType(silent)).data.display_hints).toEqual({
       title_field: "heading",
       body_field: "text",
+      name_from_body: false,
     });
     // Per hint, not whole: the parent's title fills the gap the child leaves.
     expect((await client.getType(partial)).data.display_hints).toEqual({
       title_field: "heading",
       body_field: "summary",
+      name_from_body: true,
     });
     expect((await client.getType(iconOnly)).data.display_hints).toEqual({
       title_field: "heading",
       body_field: "text",
+      name_from_body: false,
       icon: "lucide:star",
     });
     expect((await client.getType(grandchild)).data.display_hints).toEqual({
       title_field: "summary",
       body_field: "text",
+      name_from_body: false,
       icon: "lucide:star",
     });
   });

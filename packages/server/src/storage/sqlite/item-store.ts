@@ -39,6 +39,7 @@ import {
   validateTransition,
   getEdgeTypeSchema,
   withHostsEdgeTypes,
+  namingEdgeTypes,
   softDeleteState,
   parseFilter,
   MarfaError,
@@ -88,7 +89,7 @@ import type {
 import type {
   BlobProof,
   CascadeRoot,
-  PartHost,
+  NamingHost,
   ItemStore,
   ResolvedItem,
   ItemFilters,
@@ -1364,9 +1365,9 @@ export class SqliteItemStore implements ItemStore {
         .limit(batchSize)
         .offset(query ? 0 : offset)
         .all();
-      // The owner reads every row, so a part is named after its oldest
-      // host out of the bin.
-      const hosts = await this.partHosts(rows.map((row) => row.id));
+      // The owner reads every row, so a part or an excerpt is named after
+      // its oldest host out of the bin.
+      const hosts = await this.namingHosts(rows.map((row) => row.id));
       for (const row of rows) {
         const name = nameOf(
           {
@@ -2517,9 +2518,11 @@ export class SqliteItemStore implements ItemStore {
     return out;
   }
 
-  async partHosts(ids: readonly string[]): Promise<Map<string, PartHost[]>> {
-    const types = withHostsEdgeTypes();
-    const out = new Map<string, PartHost[]>();
+  async namingHosts(
+    ids: readonly string[],
+  ): Promise<Map<string, NamingHost[]>> {
+    const types = namingEdgeTypes();
+    const out = new Map<string, NamingHost[]>();
     if (types.length === 0) return out;
     for (let offset = 0; offset < ids.length; offset += 500) {
       const rows = await this.db

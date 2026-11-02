@@ -123,6 +123,7 @@ describe("The type catalog a working copy holds", () => {
       version: 0,
       title_field: "title",
       body_field: "body",
+      name_from_body: true,
       icon: "lucide:sticky-note",
       link_field: null,
       roles: [],

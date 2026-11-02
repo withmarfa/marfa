@@ -25,8 +25,9 @@ pub(crate) fn display(
     properties: &Map<String, Value>,
     title_field: Option<&str>,
     body_field: Option<&str>,
+    name_from_body: bool,
 ) -> ItemDisplay {
-    let named = name(properties, title_field, body_field);
+    let named = name(properties, title_field, body_field, name_from_body);
     let body_property = body_field.unwrap_or(BODY_PROPERTY);
     let preview = properties
         .get(body_property)
@@ -94,19 +95,22 @@ struct Named<'a> {
 }
 
 /// The name, by `types/item-name-fields`, `types/item-name-markdown` and
-/// `types/item-name-text`.
+/// `types/item-name-text`, the body properties left out where the type's
+/// `name_from_body` is false.
 fn name<'a>(
     properties: &Map<String, Value>,
     title_field: Option<&'a str>,
     body_field: Option<&'a str>,
+    name_from_body: bool,
 ) -> Option<Named<'a>> {
+    let body = |field: Option<&'a str>| field.filter(|_| name_from_body);
     let candidates = [
         (title_field, false),
         (Some("title"), false),
         (Some("name"), false),
-        (body_field, true),
-        (Some(BODY_PROPERTY), true),
-        (Some("text"), true),
+        (body(body_field), true),
+        (body(Some(BODY_PROPERTY)), true),
+        (body(Some("text")), true),
         (Some("filename"), false),
         (Some("url"), false),
         (Some("address"), false),
@@ -674,7 +678,7 @@ mod tests {
         let properties = serde_json::json!({
             "title": {}, "name": 17, "body": [], "text": null, "filename": " document.pdf "
         });
-        let shown = display(properties.as_object().unwrap(), None, None);
+        let shown = display(properties.as_object().unwrap(), None, None, true);
         assert_eq!(shown.name.as_deref(), Some("document.pdf"));
         assert_eq!(shown.preview, None);
     }
@@ -692,7 +696,7 @@ mod tests {
     fn stops_reading_a_long_body_once_the_preview_is_full() {
         let body = format!("{}\n{}", "a ".repeat(200), "b".repeat(1_000_000));
         let properties = serde_json::json!({ "title": "T", "body": body });
-        let shown = display(properties.as_object().unwrap(), None, None);
+        let shown = display(properties.as_object().unwrap(), None, None, true);
         let preview = shown.preview.unwrap();
         assert_eq!(preview.chars().count(), PREVIEW_POINTS);
         assert!(preview.ends_with('…'));

@@ -4514,7 +4514,7 @@ When an app asks a device for an item's name, a device MUST compute it by `types
 
 When an app asks a device for the name of an item and names the item's id, a device MUST name it by `types/item-name-part` from the edges and rows the copy holds, judging only a host the copy holds out of the bin, and naming the host `Untitled` where `device/item-name` gives it no name.
 
-**Reason:** an app shows "Comment on Plan" offline where the server's summaries show it online. A host the copy does not hold has no name the copy can read, so the part is named by its own fields.
+**Reason:** an app shows "Comment on Plan" or "Excerpt from Thinking, Fast and Slow" offline where the server's summaries show it online. A host the copy does not hold has no name the copy can read, so the part is named by its own fields.
 
 **Tests:** `device/binding-item-display.test.ts › names a part after the host the copy holds out of the bin, and by its body where it holds none`.
 

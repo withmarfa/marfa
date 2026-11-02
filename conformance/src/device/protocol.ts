@@ -260,6 +260,9 @@ export interface ItemType {
   fields: TypeField[];
   title_field: string | null;
   body_field: string | null;
+  /** False where an item's body does not name it, from the nearest type
+   *  that says; true where none does. */
+  name_from_body: boolean;
   /** The icon ID, from the nearest type that sets one. */
   icon: string | null;
   link_field: string | null;

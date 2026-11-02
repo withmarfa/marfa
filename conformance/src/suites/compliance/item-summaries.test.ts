@@ -94,8 +94,9 @@ it("names every built-in and custom type with bounded plain text and fallback fi
     expect(made.status, `${type}: ${await made.text()}`).toBe(201);
     const result = await owner(`/items/summaries?type=${type}`);
     expect(result.status).toBe(200);
+    // A highlight's passage never names it (`types/item-name-fields`).
     expect(((await result.json()) as Page).data[0]?.name, type).toBe(
-      "Visible name",
+      type === "core.highlight" ? "Untitled" : "Visible name",
     );
   }
   const registered = await key("/types", {
@@ -377,6 +378,86 @@ it("names a part with no title after its oldest host out of the bin, at read tim
     `Attached to ${"😀".repeat(119 - "Attached to ".length)}…`,
   );
 });
+it("names a highlight after the item it is an excerpt of, and never by its passage", async () => {
+  const send = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${server.workingKey}`,
+        "content-type": "application/json",
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    expect(response.status, `${method} ${path}: ${text}`).toBeLessThan(300);
+    return JSON.parse(text) as { item: { id: string; version: number } };
+  };
+  const nameOf = async (type: string, id: string) => {
+    let cursor: string | null = null;
+    do {
+      const result = await owner(
+        `/items/summaries?type=${type}&limit=100${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+      );
+      expect(result.status).toBe(200);
+      const page = (await result.json()) as Page;
+      const found = page.data.find((row) => row.id === id);
+      if (found) return found.name;
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    return undefined;
+  };
+  const book = (
+    await send("POST", "/items", {
+      type: "core.media.book",
+      properties: { title: "Thinking, Fast and Slow" },
+    })
+  ).item;
+  const passage = "Short";
+  const made = async () =>
+    (
+      await send("POST", "/items", {
+        type: "core.highlight",
+        properties: { text: passage, note: "Mine" },
+      })
+    ).item;
+  const first = await made();
+  const second = await made();
+  // The witness: the same passage names an item whose type lets its body
+  // name it.
+  const note = (
+    await send("POST", "/items", {
+      type: "core.note",
+      properties: { body: passage },
+    })
+  ).item;
+  expect(await nameOf("core.note", note.id)).toBe(passage);
+  expect(await nameOf("core.highlight", first.id)).toBe("Untitled");
+
+  for (const highlight of [first, second]) {
+    await send("POST", "/edges", {
+      source_id: highlight.id,
+      target_id: book.id,
+      edge_type: "excerpt-of",
+    });
+  }
+  // Several highlights share the name of what they come from.
+  expect(await nameOf("core.highlight", first.id)).toBe(
+    "Excerpt from Thinking, Fast and Slow",
+  );
+  expect(await nameOf("core.highlight", second.id)).toBe(
+    "Excerpt from Thinking, Fast and Slow",
+  );
+
+  // A source in the bin names nothing, and the passage still does not; the
+  // highlight stays out of the bin, since `excerpt-of` is a plain link.
+  await send("DELETE", `/items/${book.id}`);
+  expect(await nameOf("core.highlight", first.id)).toBe("Untitled");
+  await send("POST", `/items/${book.id}/restore`);
+  expect(await nameOf("core.highlight", first.id)).toBe(
+    "Excerpt from Thinking, Fast and Slow",
+  );
+});
+
 it("keeps archived items, exact types and source filtering while excluding system items", async () => {
   const archived = await key("/items", {
     type: "core.note",

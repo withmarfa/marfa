@@ -115,17 +115,17 @@ const coreFile: TypeSchema = {
 const coreHighlight: TypeSchema = {
   id: "core.highlight",
   label: "Highlight",
-  description: "A user's engagement with content — the highlighted passage plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`; the moment of highlighting is the item's own `occurred_at`.",
+  description: "A user's engagement with content — the highlighted passage, its body, plus optional annotation. What was highlighted is linked with an `excerpt-of` edge, not `references`, and names the highlight, which has no title of its own; the moment of highlighting is the item's own `occurred_at`.",
   version: 0,
   fields: {
-    text: { type: "string", description: "The highlighted passage", required: true },
+    text: { type: "string", description: "The highlighted passage, as Markdown", required: true },
     note: { type: "string", description: "User annotation on the highlight" },
     color: { type: "enum", description: "Highlight color", enum_values: ["yellow", "blue", "green", "pink", "orange", "purple"] },
     locator_type: { type: "enum", description: "How start_location / end_location are interpreted", enum_values: ["offset", "page", "time", "cfi", "order", "none"] },
     start_location: { type: "string", description: "Start locator, typed by locator_type" },
     end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
-  display_hints: { title_field: "text", body_field: "note", icon: "lucide:highlighter" },
+  display_hints: { body_field: "text", name_from_body: false, icon: "lucide:highlighter" },
   merge_policy: { fields: { note: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
@@ -1517,9 +1517,9 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "core.highlight": {
     "display_hints": {
-      "body_field": "note",
+      "body_field": "text",
       "icon": "lucide:highlighter",
-      "title_field": "text"
+      "name_from_body": false
     },
     "fields": {
       "color": {

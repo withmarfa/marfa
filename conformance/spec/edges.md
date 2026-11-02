@@ -14,7 +14,7 @@ Every instance ships these edge types, each a row of the table below, which is w
 | `attached-to`   | Attached to   | Attachments     | `has-attachment` | many-to-many | with-hosts | Any type     | Any type                           |
 | `comments-on`   | Comment on    | Comments        | None             | many-to-one  | with-hosts | Any type     | Any type                           |
 | `derived-from`  | Derived from  | Basis for       | None             | many-to-many | orphan     | Any type     | Any type                           |
-| `excerpt-of`    | Excerpt of    | Excerpts        | None             | many-to-one  | orphan     | Any type     | Any type                           |
+| `excerpt-of`    | Excerpt from  | Excerpts        | None             | many-to-one  | orphan     | Any type     | Any type                           |
 | `in-collection` | In collection | Contents        | None             | many-to-many | orphan     | Any type     | Any type with the role `container` |
 | `in-folder`     | In folder     | Folder contents | None             | many-to-many | orphan     | Any type     | `system.folder`                    |
 | `in-thread`     | In thread     | Messages        | None             | many-to-one  | orphan     | Any type     | Any type                           |

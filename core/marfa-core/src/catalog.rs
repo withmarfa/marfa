@@ -23,6 +23,7 @@ struct Entry {
     title_field: Option<String>,
     thumbnail_field: Option<String>,
     body_field: Option<String>,
+    name_from_body: Option<bool>,
     icon: Option<String>,
     /// The properties the type declares itself, not those it inherits.
     fields: Vec<String>,
@@ -133,6 +134,9 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
+    /// False where an item's body does not name it, such as a highlight's
+    /// passage (`types/item-name-fields`).
+    pub name_from_body: bool,
     /// The Iconify icon ID that stands for the type, `<set>:<name>`: the owner's
     /// choice where they made one, else the nearest author's.
     pub icon: Option<String>,
@@ -807,6 +811,7 @@ fn resolve(
         fields: fields.into_values().collect(),
         title_field: hints.title_field(id).map(str::to_string),
         body_field: hints.body_field(id).map(str::to_string),
+        name_from_body: hints.name_from_body(id),
         icon: hints.icon(id).map(str::to_string),
         link_field: text(own, "link_field"),
         roles: texts(own, "roles"),
@@ -1009,7 +1014,8 @@ impl Catalog {
             "SELECT id, parent, title_field, thumbnail_field,
                     json_extract(json, '$.display_hints.body_field'),
                     json_extract(json, '$.fields'),
-                    json_extract(json, '$.display_hints.icon')
+                    json_extract(json, '$.display_hints.icon'),
+                    json_extract(json, '$.display_hints.name_from_body')
                FROM types",
         )?;
         let rows = statement.query_map([], |row| {
@@ -1021,11 +1027,21 @@ impl Catalog {
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<bool>>(7)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field, thumbnail_field, body_field, fields, icon) = row?;
+            let (
+                id,
+                parent,
+                title_field,
+                thumbnail_field,
+                body_field,
+                fields,
+                icon,
+                name_from_body,
+            ) = row?;
             let fields: Map<String, Value> = fields
                 .map(|fields| serde_json::from_str(&fields))
                 .transpose()?
@@ -1037,6 +1053,7 @@ impl Catalog {
                     title_field,
                     thumbnail_field,
                     body_field,
+                    name_from_body,
                     icon,
                     fields: fields.keys().cloned().collect(),
                     definitions: fields,
@@ -1359,6 +1376,13 @@ impl Catalog {
         self.nearest(type_id, |entry| entry.title_field.as_deref())
     }
 
+    /// Whether an item of the type with no title is named by its body, from
+    /// the nearest type that says, and true where none does.
+    pub fn name_from_body(&self, type_id: &str) -> bool {
+        self.nearest(type_id, |entry| entry.name_from_body)
+            .unwrap_or(true)
+    }
+
     /// The property a type's text lives in, from the nearest type that sets
     /// one.
     pub fn body_field(&self, type_id: &str) -> Option<&str> {
@@ -1406,11 +1430,12 @@ impl Catalog {
             properties,
             self.title_field(type_id),
             self.body_field(type_id),
+            self.name_from_body(type_id),
         )
     }
 
-    /// The name and preview of the item `id`, a part named after its host
-    /// where `types/item-name-part` names it: the copy holds a host out of
+    /// The name and preview of the item `id`, a part or an excerpt named
+    /// after its host where `types/item-name-part` names it: the copy holds a host out of
     /// the bin, which it takes as readable, and the item's own title-like
     /// fields hold no text. A host with no name is `Untitled`, as the
     /// server names it (`types/item-name-empty`).
@@ -1422,7 +1447,7 @@ impl Catalog {
         properties: &Map<String, Value>,
     ) -> Result<ItemDisplay, CoreError> {
         if crate::display::title_name(properties, self.title_field(type_id)).is_none()
-            && let Some(host) = store::part_host(conn, id)?
+            && let Some(host) = store::naming_host(conn, id)?
         {
             let host_name = self
                 .display(&host.r#type, &host.properties)
@@ -1505,11 +1530,7 @@ impl Catalog {
         indexing
     }
 
-    fn nearest<'a>(
-        &'a self,
-        type_id: &str,
-        read: impl Fn(&'a Entry) -> Option<&'a str>,
-    ) -> Option<&'a str> {
+    fn nearest<'a, T>(&'a self, type_id: &str, read: impl Fn(&'a Entry) -> Option<T>) -> Option<T> {
         let mut current = type_id;
         for _ in 0..MAX_PARENT_WALK {
             let entry = self.entries.get(current)?;
@@ -1555,6 +1576,7 @@ mod tests {
                             title_field: None,
                             thumbnail_field: None,
                             body_field: None,
+                            name_from_body: None,
                             icon: None,
                             fields: Vec::new(),
                             definitions: Map::new(),

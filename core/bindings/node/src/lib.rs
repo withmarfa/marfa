@@ -426,6 +426,9 @@ pub struct ItemType {
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
+    /// False where an item's body does not name it, such as a highlight's
+    /// passage (`types/item-name-fields`).
+    pub name_from_body: bool,
     /// The Iconify icon ID, `<set>:<name>`, such as `lucide:book-open`.
     pub icon: Option<String>,
     pub link_field: Option<String>,
@@ -524,6 +527,7 @@ fn item_type(held: marfa_core::ItemType) -> ItemType {
         fields: held.fields.into_iter().map(type_field).collect(),
         title_field: held.title_field,
         body_field: held.body_field,
+        name_from_body: held.name_from_body,
         icon: held.icon,
         link_field: held.link_field,
         roles: held.roles,
