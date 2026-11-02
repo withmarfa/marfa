@@ -320,9 +320,10 @@ export function scriptHydration(
      *  interrupted hydration does, or what it answers in place of its rows,
      *  such as a refusal of its cursor. Asked of every page but the first. */
     drop?: (offset: number) => boolean | Answer;
-    /** Holds every page of the item listing until this settles, as a server
-     *  slow to answer a first hydration does. */
-    listingHeldUntil?: Promise<void>;
+    /** Holds the counts a hydration reads before it marks itself in
+     *  progress until this settles, as a server slow to answer a first
+     *  hydration does. */
+    statsHeldUntil?: Promise<void>;
   },
 ): void {
   server.answer(
@@ -411,7 +412,7 @@ export function scriptHydration(
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
-  scriptStats(server, rows);
+  scriptStats(server, rows, options.statsHeldUntil);
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves `system.*` out.
@@ -448,15 +449,12 @@ export function scriptHydration(
       if (dropped === true) return { kind: "drop" };
       if (dropped !== undefined && dropped !== false) return dropped;
       const next = offset + size;
-      const page = itemsPage(
+      return itemsPage(
         inState
           .slice(offset, next)
           .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
         next < inState.length ? { nextCursor: String(next) } : {},
       );
-      return options.listingHeldUntil === undefined
-        ? page
-        : { kind: "gated", until: options.listingHeldUntil, then: page };
     }
     // A pin that a read by id answers 404 asks the bin for the row this way.
     const byId = /^id eq "([^"]*)"$/.exec(filter);
@@ -496,6 +494,7 @@ export function scriptHydration(
 export function scriptStats(
   server: ScriptedServer,
   rows: Record<string, Array<{ item: WireItemOptions }>> = {},
+  heldUntil?: Promise<void>,
 ): void {
   server.answer("GET", "/items/stats", (request) => {
     if (request.headers["x-marfa-reach"] !== undefined)
@@ -521,7 +520,10 @@ export function scriptStats(
         counts[key] = (counts[key] ?? 0) + 1;
       }
     }
-    return { kind: "json", status: 200, body: counts };
+    const answer: Answer = { kind: "json", status: 200, body: counts };
+    return heldUntil === undefined
+      ? answer
+      : { kind: "gated", until: heldUntil, then: answer };
   });
 }
 
@@ -799,9 +801,10 @@ export async function folderHarness(
     /** Whether a page of the item listing dies unanswered, as
      *  `scriptHydration` takes it. */
     drop?: (offset: number) => boolean;
-    /** Holds the item listing until this settles, as `scriptHydration` takes
-     *  it, for a first hydration the server is slow to answer. */
-    listingHeldUntil?: Promise<void>;
+    /** Holds the counts a hydration reads first until this settles, as
+     *  `scriptHydration` takes it, for a first hydration the server is slow
+     *  to answer. */
+    statsHeldUntil?: Promise<void>;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -849,7 +852,7 @@ export async function folderHarness(
       key: options.key,
       pageSize: options.pageSize,
       drop: options.drop,
-      listingHeldUntil: options.listingHeldUntil,
+      statsHeldUntil: options.statsHeldUntil,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

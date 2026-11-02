@@ -6042,10 +6042,11 @@ describe("a watch started straight after a folder is added", () => {
       release = resolve;
     });
     // A confirmed add hydrates nothing, so the watch's follow does it, and
-    // the server is slow to answer the listing.
+    // the server is slow to answer the first read of a hydration, before the
+    // copy marks itself in progress.
     harness = await folderHarness("folder-watch-first-hydration", {
       hydrate: false,
-      listingHeldUntil: slow,
+      statsHeldUntil: slow,
       rows: {
         "core.note": [
           {
@@ -6062,19 +6063,19 @@ describe("a watch started straight after a folder is added", () => {
     const watching = harness.folder.watch();
     try {
       // Past the watch's first passes, which run while the hydration waits.
+      // A watch that ends on one cannot exit while its follow waits on the
+      // held read, so what shows it is the state after the release.
       await new Promise((resolve) => setTimeout(resolve, 2_500));
-      expect(
-        watching.running(),
-        `a watch ended on its first pass, before the hydration it waits on: ${watching.stderr}`,
-      ).toBe(true);
       release();
       await vi.waitFor(
         () =>
-          expect(read(harness!, "first.md"), watching.stderr).toContain(
-            "from the server",
-          ),
+          expect(
+            existsSync(join(harness!.dir, "first.md")),
+            `the folder's first item never became a file: ${watching.stderr}`,
+          ).toBe(true),
         { timeout: 20_000, interval: 100 },
       );
+      expect(read(harness, "first.md")).toContain("from the server");
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
       release();

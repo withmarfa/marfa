@@ -4310,7 +4310,7 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 ### `folders/watch-awaits-first-hydration`
 
-While a folder watch runs on a copy whose first hydration has not completed, a device MUST keep watching until the hydration completes.
+While a folder's copy has not completed its first hydration, a device MUST NOT end a watch of the folder because the copy does not hold the folder's `system.folder` row.
 
 **Reason:** `folders add` with `--yes` hydrates nothing, so a watch's first passes can meet a copy that does not yet hold the folder's `system.folder` row, which is a hydration still to come and not a folder the key cannot read. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
 
