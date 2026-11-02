@@ -2217,9 +2217,8 @@ pub fn untaken_creates_for_item(
     item_id: &str,
 ) -> Result<Vec<String>, CoreError> {
     // A create refused onto a row no read has found yet still decides where a
-    // later write to its row goes, or whether it goes at all. Each row asks
-    // for its own landing by key, so the answer costs nothing by how many
-    // other creates are waiting to land.
+    // later write to its row goes, or whether it goes at all. Looking up each
+    // create by key avoids scanning unrelated pending landings.
     let mut waiting = Vec::new();
     for row in read_writes(
         conn,
@@ -7922,7 +7921,7 @@ mod tests {
         assert_eq!(many_found, few_found);
         assert!(
             many < few * 2 + 100,
-            "a lookup took {many} steps beside 2000 pending landings and {few} beside one: \
+            "a lookup took {many} steps beside 2001 pending landings and {few} beside one: \
              it reads every landing, so a folder's first sync pays for each edge by the \
              size of the store"
         );
