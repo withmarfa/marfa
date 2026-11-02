@@ -2010,9 +2010,9 @@ When the server becomes reachable after a name lookup waited, a device MUST retr
 
 ### `folders/edge-lookup-refused`
 
-If the server refuses a name lookup that carried one name, then a device MUST flag each file naming that name with the refusal.
+If the server refuses a name lookup that carried one name, other than by answering it as a route it does not have (HTTP 404 or 405), then a device MUST flag each file naming that name with the refusal.
 
-**Reason:** only a refusal of a call that carried one name says which name was refused.
+**Reason:** only a refusal of a call that carried one name says which name was refused, and a missing route refuses the call whatever the number of names it carried, which `folders/edge-lookup-call-refused` covers.
 
 **Tests:** `device/folders-held-links.test.ts › does not ask again for a name a lookup of it alone was refused, and the file stays flagged with the refusal`.
 
@@ -2024,11 +2024,11 @@ While a file naming a name flagged under `folders/edge-lookup-refused` is unchan
 
 ### `folders/edge-lookup-call-refused`
 
-If the server refuses a name lookup that carried more than one name, or answers it as a route it does not have, then a device MUST flag each file naming a name that call carried as waiting for lookup.
+If the server refuses a name lookup that carried more than one name, or answers a name lookup that carried any number of names, one included, as a route it does not have (HTTP 404 or 405), then a device MUST flag each file naming a name that call carried as waiting for lookup.
 
 **Reason:** a refusal of the call as a whole names none of its names, and a server older than the title lookup refuses every call, so the refusal says nothing about any one name.
 
-**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-held-links.test.ts › holds the one link a server without the title lookup refused, as the call's refusal and not the name's`.
 
 ### `folders/edge-lookup-call-retried`
 
@@ -2044,7 +2044,7 @@ When the server refuses a name lookup under `folders/edge-lookup-call-refused`, 
 
 **Reason:** the refusal is a standing condition of the server, not of any file, and a folder of thousands of linked notes would repeat it in each.
 
-**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+**Tests:** `device/folders-frontmatter.test.ts › leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push`, `device/folders-held-links.test.ts › holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/binding-folders-lookup.test.ts › tells an app why links by name wait when the server has no title lookup, and no longer once it has`.
 
 ### `folders/create-before-links`
 
@@ -6984,7 +6984,7 @@ When a `folders watch` pass only waits for a journaled deletion's grace period t
 
 When a `folders watch` pass reports new activity, the CLI MUST NOT repeat a standing notice unchanged since the preceding pass.
 
-**Tests:** `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
+**Tests:** `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`, `device/folders.test.ts › says a refused title lookup once while another notice changes and other passes report`.
 
 ### `folders/watch-notice-change`
 

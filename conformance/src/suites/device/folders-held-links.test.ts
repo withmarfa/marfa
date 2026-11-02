@@ -411,6 +411,40 @@ describe("links held until their target exists", () => {
     expect((await fileAt("Ticket.md")).status).not.toBe("held");
   });
 
+  it("holds the one link a server without the title lookup refused, as the call's refusal and not the name's", async () => {
+    // The refusal of a route the server does not have is the same for a call
+    // of one name as for a call of many.
+    let upgraded = false;
+    await seed([note(1, "Target")], () =>
+      upgraded ? undefined : refusal(404, "not_found", "Not found"),
+    );
+    put("Ticket.md", "See [[Target]].\n");
+    const old = await push();
+    expect(titleCalls()).toEqual([["Target"]]);
+    expect(old.flagged.map((file) => [file.path, file.flag])).toEqual([
+      ["Ticket.md", "edges"],
+    ]);
+    const reason = old.flagged[0]?.reason ?? "";
+    expect(reason).toContain(
+      "[[Target]] in its body is looked up once the server can be asked",
+    );
+    expect(
+      reason,
+      "the name was flagged with the server's refusal",
+    ).not.toContain("could not be looked up");
+    expect(old.lookup_refused).toContain("no title lookup");
+
+    // Unlike a name refused on its own, it is asked again with the file
+    // unedited.
+    upgraded = true;
+    const now = await push();
+    expect(now.flagged).toEqual([]);
+    expect(now.lookup_refused).toBeNull();
+    expect(edges()).toEqual([
+      `create ${created("Ticket")} references ${id(1)}`,
+    ]);
+  });
+
   it("holds a link as waiting while the server is out of reach, and resolves it once it answers", async () => {
     await seed([note(1, "Target")]);
     await folder!.server.offline();

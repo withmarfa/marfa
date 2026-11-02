@@ -245,6 +245,58 @@ fn names_a_lookup_refused_as_a_whole_carried_wait_and_resolve_at_the_next_scan_u
     }
 }
 
+#[test]
+fn a_lookup_of_one_name_a_server_has_no_route_for_is_a_refusal_of_the_call_not_of_the_name() {
+    for (status, code) in [(404, "not_found"), (405, "method_not_allowed")] {
+        let (dir, folder, server) = online_folder(refusal(status, code));
+        std::fs::write(dir.path().join("A.md"), "See [[B]].\n").unwrap();
+        let first = folder.scan().unwrap();
+        let flagged = flags(&first);
+        assert_eq!(flagged.len(), 1, "{status}: {first:?}");
+        assert!(
+            flagged[0]
+                .2
+                .contains("[[B]] in its body is looked up once the server can be asked")
+                && !flagged[0].2.contains("could not be looked up"),
+            "{status}: the name was refused, not left waiting: {first:?}"
+        );
+        assert!(
+            first
+                .lookup_refused
+                .as_deref()
+                .is_some_and(|why| why.contains("no title lookup")),
+            "{status}: {first:?}"
+        );
+        assert_eq!(lookups(&server), 1, "{status}");
+        assert!(!first.lookup_answered, "{status}: {first:?}");
+
+        // The server now has the lookup, and the file is as it was.
+        server.on("/items/titles", vec![nothing_found()]);
+        let second = folder.scan().unwrap();
+        assert_eq!(second.lookup_refused, None, "{status}: {second:?}");
+        assert!(second.lookup_answered, "{status}: {second:?}");
+        assert!(
+            lookups(&server) > 1,
+            "{status}: the name was not asked again"
+        );
+        assert!(
+            held(&folder, "A.md")
+                .is_some_and(|held| held.contains("[[B]] in its body matches no item")),
+            "{status}: the name was not looked up again"
+        );
+    }
+    // The witness: a refusal of one name that is no missing route is said of
+    // that name, and is not the call's.
+    let (dir, folder, _server) = online_folder(refusal(403, "forbidden"));
+    std::fs::write(dir.path().join("A.md"), "See [[B]].\n").unwrap();
+    let first = folder.scan().unwrap();
+    assert!(
+        flags(&first)[0].2.contains("could not be looked up"),
+        "{first:?}"
+    );
+    assert_eq!(first.lookup_refused, None, "{first:?}");
+}
+
 /// Sets when the file at `path` is judged again, as a store written before
 /// that was recorded holds it with `None`.
 fn set_rejudge(folder: &Folder, path: &str, rejudge: Option<state::Rejudge>) {
