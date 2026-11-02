@@ -4578,6 +4578,14 @@ When `folders status` runs while a current entry in the record of folder watches
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
 
+### `folders/status-watch-same-build`
+
+When `folders status` runs and no current entry in the record of folder watches lists the folder as watched with a `build_version` other than the CLI’s own version, or with none, the CLI MUST report `watch_other_build` as `null`.
+
+**Reason:** a program reading the status tells a watch on this build from one on another without testing whether the key is present.
+
+**Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
+
 ### `folders/cross-folder-copy`
 
 When a file’s ID already appears in another folder and the receiving folder already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
