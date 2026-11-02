@@ -11,9 +11,8 @@
 //! The edges the copy holds are the server's and the copy's own waiting
 //! writes as they leave them: a waiting create or move shows its edge where
 //! it will stand, and a waiting delete shows none, so each counts as the
-//! server will hold it once the writes before this one reach it. An edge
-//! whose create the server refused, or the drain gave up on, stays shown
-//! for the person to take back, and counts for nothing.
+//! server will hold it once the writes before this one reach it. A refused
+//! create's edge is no longer shown, so it counts for nothing.
 
 use std::collections::HashMap;
 
@@ -163,9 +162,8 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 End::Target => edge.target_id.to_string(),
             };
             if holds_at(conn, edge, end)?
-                || earlier().any(|earlier| {
-                    earlier.edge_type == edge.edge_type && at(earlier) == at(edge)
-                })
+                || earlier()
+                    .any(|earlier| earlier.edge_type == edge.edge_type && at(earlier) == at(edge))
             {
                 return Err(refused_cardinality(edge_type, end));
             }
@@ -194,24 +192,15 @@ fn refused_cardinality(edge_type: &EdgeType, end: End) -> CoreError {
     }
 }
 
-/// The edges the copy shows that the server may hold: not one whose create
-/// it refused or the drain gave up on. Leaving out an edge the server holds
-/// leaves the write to the server; counting one it lacks would refuse a
-/// write it takes.
-const SERVED: &str = "NOT EXISTS (SELECT 1 FROM queue
-     WHERE queue.edge_id = edges.id AND queue.kind = 'create_edge'
-       AND queue.verdict IN ('refused', 'dead'))";
-
 /// The held edges the write leaves standing beside the proposed one: every
-/// edge of its type the server may hold but the one the write is and those
-/// a create replaces.
+/// edge of its type but the one the write is and those a create replaces.
 const STANDING: &str = "edge_type = ?1 AND id IS NOT ?2 AND source_id IS NOT ?3";
 
 /// Whether the copy holds an edge of the proposed triple.
 fn holds_triple(conn: &Connection, edge: &Proposed) -> Result<bool> {
     let mut statement = conn.prepare_cached(&format!(
         "SELECT EXISTS (SELECT 1 FROM edges
-          WHERE {STANDING} AND {SERVED} AND source_id = ?4 AND target_id = ?5)"
+          WHERE {STANDING} AND source_id = ?4 AND target_id = ?5)"
     ))?;
     Ok(statement.query_row(
         params![
@@ -233,7 +222,7 @@ fn holds_at(conn: &Connection, edge: &Proposed, end: End) -> Result<bool> {
         End::Target => ("target_id", edge.target_id),
     };
     let mut statement = conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM edges WHERE {STANDING} AND {SERVED} AND {column} = ?4)"
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE {STANDING} AND {column} = ?4)"
     ))?;
     Ok(statement.query_row(
         params![edge.edge_type, edge.replacing, edge.source.replaced(), id],
@@ -285,18 +274,18 @@ fn refuse_unfitting_ends(
     Ok(())
 }
 
-/// Whether the target reaches the source through the held edges of the type
-/// the server may hold, those still waiting to be sent among them.
+/// Whether the target reaches the source through the held edges of the type,
+/// those still waiting to be sent among them.
 fn closes_cycle(conn: &Connection, edge: &Proposed) -> Result<bool> {
-    let mut statement = conn.prepare_cached(&format!(
+    let mut statement = conn.prepare_cached(
         "WITH RECURSIVE reached(id) AS (
             SELECT ?1
             UNION
-            SELECT edges.target_id FROM edges JOIN reached ON edges.source_id = reached.id
-             WHERE edges.edge_type = ?3 AND edges.id IS NOT ?4 AND {SERVED}
+            SELECT e.target_id FROM edges e JOIN reached r ON e.source_id = r.id
+             WHERE e.edge_type = ?3 AND e.id IS NOT ?4
          )
-         SELECT EXISTS (SELECT 1 FROM reached WHERE id = ?2)"
-    ))?;
+         SELECT EXISTS (SELECT 1 FROM reached WHERE id = ?2)",
+    )?;
     Ok(statement.query_row(
         params![
             edge.target_id,
@@ -1000,37 +989,35 @@ mod tests {
     }
 
     #[test]
-    fn an_edge_whose_create_the_server_refused_or_gave_up_counts_for_nothing() {
-        for verdict in [crate::Verdict::Refused, crate::Verdict::Dead] {
-            let core = copy();
-            let made = core
-                .create_edge(&edge(NOTE_A, NOTE_B, "mock.next-note"))
-                .unwrap();
-            assert_create_refused_for(
-                &core,
-                &edge(NOTE_A, NOTE_B, "mock.next-note"),
-                DUPLICATE,
-                "the triple while its create waits for an answer",
-            );
-            crate::store::record_verdict(
-                &core.conn().unwrap(),
-                &made.id,
-                &crate::store::Answered {
-                    verdict,
-                    reason: Some("validation_error"),
-                    answer: None,
-                    conflicted_copy_id: None,
-                },
-            )
+    fn an_edge_whose_create_was_refused_counts_for_nothing() {
+        let core = copy();
+        let made = core
+            .create_edge(&edge(NOTE_A, NOTE_B, "mock.next-note"))
             .unwrap();
-            for (draft, what) in [
-                (edge(NOTE_A, NOTE_B, "mock.next-note"), "the triple again"),
-                (edge(NOTE_A, NOTE_C, "mock.next-note"), "another edge from a"),
-                (edge(NOTE_C, NOTE_B, "mock.next-note"), "another edge to b"),
-            ] {
-                core.check_edge(&draft)
-                    .unwrap_or_else(|error| panic!("{what} after {verdict:?}: {error:?}"));
-            }
+        assert_create_refused_for(
+            &core,
+            &edge(NOTE_A, NOTE_B, "mock.next-note"),
+            DUPLICATE,
+            "the triple while its create waits for an answer",
+        );
+        crate::store::record_refusal(
+            &core.conn().unwrap(),
+            &made,
+            "edge_constraint_violation",
+            None,
+            false,
+        )
+        .unwrap();
+        for (draft, what) in [
+            (edge(NOTE_A, NOTE_B, "mock.next-note"), "the triple again"),
+            (
+                edge(NOTE_A, NOTE_C, "mock.next-note"),
+                "another edge from a",
+            ),
+            (edge(NOTE_C, NOTE_B, "mock.next-note"), "another edge to b"),
+        ] {
+            core.check_edge(&draft)
+                .unwrap_or_else(|error| panic!("{what} once refused: {error:?}"));
         }
     }
 
@@ -1051,8 +1038,20 @@ mod tests {
         };
         let before = queued(&core);
         for (edit, end, to, words, what) in [
-            (target(NOTE_D), End::Target, NOTE_D, TARGET_FULL, "onto d, which holds c's edge"),
-            (source(NOTE_C), End::Source, NOTE_C, SOURCE_FULL, "onto c, which holds its own edge"),
+            (
+                target(NOTE_D),
+                End::Target,
+                NOTE_D,
+                TARGET_FULL,
+                "onto d, which holds c's edge",
+            ),
+            (
+                source(NOTE_C),
+                End::Source,
+                NOTE_C,
+                SOURCE_FULL,
+                "onto c, which holds its own edge",
+            ),
         ] {
             assert_refused_for(core.check_edge_move(HELD_EDGE, end, to), words, what);
             assert_refused_for(core.update_edge(HELD_EDGE, &edit), words, what);
@@ -1068,7 +1067,8 @@ mod tests {
         assert_eq!(queued(&core), before, "a refused move was queued");
 
         // The witness: a free end takes the move, and the check queued nothing.
-        core.check_edge_move(HELD_EDGE, End::Target, NOTE_C).unwrap();
+        core.check_edge_move(HELD_EDGE, End::Target, NOTE_C)
+            .unwrap();
         assert_eq!(queued(&core), before, "the check queued a write");
         core.update_edge(HELD_EDGE, &target(NOTE_C)).unwrap();
         assert_eq!(queued(&core), before + 1);
@@ -1138,7 +1138,8 @@ mod tests {
         // The witness: with b's edge gone, the same edge is refused for its cycle.
         {
             let conn = core.conn().unwrap();
-            conn.execute("DELETE FROM edges WHERE id = 'bc'", []).unwrap();
+            conn.execute("DELETE FROM edges WHERE id = 'bc'", [])
+                .unwrap();
         }
         assert_create_refused(
             &core,

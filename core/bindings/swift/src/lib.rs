@@ -4873,12 +4873,8 @@ mod tests {
             .item_id
             .unwrap()
         };
-        let (first, second, third, child) = (
-            note("first"),
-            note("second"),
-            note("third"),
-            note("child"),
-        );
+        let (first, second, third, child) =
+            (note("first"), note("second"), note("third"), note("child"));
         let edge = core
             .create_edge(EdgeDraft {
                 source_id: first.clone(),
