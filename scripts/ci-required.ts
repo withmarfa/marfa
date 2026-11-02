@@ -259,6 +259,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/fixtures\/filter-expressions\.json$/,
     ["workspace", "core-checks-linux", "core"],
   ],
+  // The name fold both implementations are held to: the core's unit tests,
+  // the server's workspace test and the compliance fixture for title lookups
+  // read it.
+  [
+    /^conformance\/fixtures\/name-fold\.json$/,
+    ["workspace", "core-checks-linux", "conformance-compliance"],
+  ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.

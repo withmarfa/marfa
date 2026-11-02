@@ -2017,7 +2017,7 @@ describe("the scripted answers match the server's", () => {
     ).toEqual(read(edgeType(id, { label: "Fidelity link" })));
   });
 
-  it("matches the name lookup a folder asks the server for a typed name", async () => {
+  it("matches the title lookup a folder asks the server for typed names", async () => {
     const name = `Lookup ${uuidv7()}`;
     const kept = await note({ title: name, body: "kept" });
     const shouting = await note({ title: name.toUpperCase(), body: "loud" });
@@ -2026,53 +2026,54 @@ describe("the scripted answers match the server's", () => {
       { method: "POST", body: { state: "archived" } },
     );
     expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
-    const lookup = await client.rawRequest(
-      `/items?filter=${encodeURIComponent(`properties.title contains "${name.toLowerCase()}"`)}&state=any&include=metadata&limit=200`,
-    );
+    const lookup = await client.rawRequest("/items/titles", {
+      method: "POST",
+      body: { names: [name.toLowerCase(), `Absent ${uuidv7()}`] },
+    });
     expect(lookup.ok, JSON.stringify(lookup.error)).toBe(true);
-    const ids = (lookup.data as { data: Array<{ item: { id: string } }> }).data
-      .map((row) => row.item.id)
-      .sort();
+    const results = (
+      lookup.data as { results: Array<{ items: Array<{ id: string }> }> }
+    ).results;
     expect(
-      ids,
+      results[0]?.items.map((row) => row.id).sort(),
       "the lookup did not answer every item under the name whatever its case and state, so a folder would read one of two as the only one",
     ).toEqual([kept.id, shouting.id].sort());
+    expect(results[1]?.items).toEqual([]);
     expectFidelity(
-      "the name lookup",
+      "the title lookup",
       { status: lookup.status, body: lookup.data },
-      itemsPage([{ item: wireItem({ id: kept.id }) }]),
+      answers.titles([
+        {
+          name: name.toLowerCase(),
+          items: [
+            { id: kept.id, type: "core.note", title: name, has_blob: false },
+            {
+              id: shouting.id,
+              type: "core.note",
+              title: name.toUpperCase(),
+              has_blob: false,
+            },
+          ],
+          more: false,
+        },
+        { name: "Absent", items: [], more: false },
+      ]),
       {
-        same: ["next_cursor", "data.0.metadata.tags"],
-        shape: [
-          "data.0.item.id",
-          "data.0.item.type",
-          "data.0.item.properties",
-          "data.0.item.state",
-          "data.0.item.tier",
-          "data.0.item.version",
-          "data.0.item.schema_version",
-          "data.0.item.source",
-          "data.0.item.source_id",
-          "data.0.item.occurred_at",
-          "data.0.item.created_at",
-          "data.0.item.updated_at",
+        same: [
+          "results.0.more",
+          "results.0.items.0.type",
+          "results.0.items.0.has_blob",
+          "results.1.items",
+          "results.1.more",
         ],
-        // A listing that names no include hydrates no edges.
-        absent: ["data.0.item.edges"],
+        shape: [
+          "results.0.name",
+          "results.0.items.0.id",
+          "results.0.items.0.title",
+          "results.1.name",
+        ],
       },
     );
-
-    // A closing backslash is written `\\`; a lone one escapes the quote
-    // after it, so the string never closes.
-    const closed = await client.rawRequest(
-      `/items?filter=${encodeURIComponent('properties.title contains "Back\\\\"')}&state=any`,
-    );
-    expect(closed.status, JSON.stringify(closed.error)).toBe(200);
-    const unclosed = await client.rawRequest(
-      `/items?filter=${encodeURIComponent('properties.title contains "Back\\"')}&state=any`,
-    );
-    expect(unclosed.status).toBe(400);
-    expect(at(unclosed.error, "error.code")).toBe("validation_error");
   });
 
   it("matches the lookup a create naming no tier asks about its natural key", async () => {

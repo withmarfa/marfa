@@ -429,6 +429,11 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "core-checks-linux", "core"],
     ],
     [
+      "the name fold the server and the core share",
+      ["conformance/fixtures/name-fold.json"],
+      ["ci-sqlite", "workspace", "core-checks-linux", "conformance-compliance"],
+    ],
+    [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
       ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],

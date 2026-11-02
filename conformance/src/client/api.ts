@@ -720,6 +720,28 @@ export class MarfaClient {
     });
   }
 
+  /** POST /items/titles: the active and archived items titled by each name,
+   *  once both are folded, one result for each name in the order named. */
+  async findItemsByTitle(names: string[]): Promise<
+    ApiResponse<{
+      results: Array<{
+        name: string;
+        items: Array<{
+          id: string;
+          type: string;
+          title: string;
+          has_blob: boolean;
+        }>;
+        more: boolean;
+      }>;
+    }>
+  > {
+    return this.request("/items/titles", {
+      method: "POST",
+      body: { names },
+    });
+  }
+
   /** POST /items/tombstones — moves the named tombstones' `settled_at`
    *  later, never earlier. */
   async settleTombstones(

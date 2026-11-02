@@ -29,7 +29,6 @@ import {
   answers,
   typeCatalog,
   wireType,
-  itemsPage,
 } from "../../device/marfa-answers.js";
 import {
   folderHarness,
@@ -1091,7 +1090,7 @@ it.each(restoredBodies)(
   },
 );
 
-it("matches include names in NFC regardless of case and asks server names in both forms", async () => {
+it("matches include names in NFC regardless of case and asks the server for a name once, in the form typed", async () => {
   harness = await folderHarness("contract-b-unicode-list", {
     settings: { query: { types: ["core.note"] }, include: ["CAFÉ.md"] },
   });
@@ -1105,7 +1104,7 @@ it("matches include names in NFC regardless of case and asks server names in bot
   harness = await folderHarness("contract-b-unicode-lookup", {
     lookup: (text) => {
       looked.push(text);
-      return itemsPage([]);
+      return undefined;
     },
   });
   writeFileSync(join(harness.dir, "source.md"), "[[Café]]\n");
@@ -1119,8 +1118,9 @@ it("matches include names in NFC regardless of case and asks server names in bot
     refusal(404, "edge_not_found", "no edge"),
   );
   expect((await harness.folder.push()).ok).toBe(true);
+  // The server folds the name, so one spelling is asked for both forms.
   expect(looked).toContain("Café");
-  expect(looked).toContain("Cafe\u0301");
+  expect(looked).not.toContain("Cafe\u0301");
 });
 
 it.each(["ignore", "dot directory"])(

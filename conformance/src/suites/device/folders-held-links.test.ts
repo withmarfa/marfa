@@ -56,7 +56,7 @@ const put = (name: string, text: string) => {
 };
 
 /** A folder of notes whose server holds `items`, takes the folder's writes
- *  as the real one does, refuses the lookup of each name in `refused`, and
+ *  as the real one does, refuses a lookup that carries a name in `refused`, and
  *  serves the event frames `elsewhere` and `edgeElsewhere` add. */
 async function seed(items: WireItemOptions[] = [], refused: string[] = []) {
   const rows: Record<string, { item: WireItemOptions }[]> = {
@@ -146,13 +146,16 @@ function edges(): string[] {
     .sort();
 }
 
-/** The name lookups the folder asked the server, for any name. */
+/** The title lookups the folder sent the server, each for up to 200 names. */
 function lookups(): number {
-  return folder!.server.requests.filter(
-    (request) =>
-      request.pathname === "/items" &&
-      (request.query.get("filter") ?? "").includes(" contains "),
-  ).length;
+  return titleCalls().length;
+}
+
+/** The names each title lookup carried, in the order sent. */
+function titleCalls(): string[][] {
+  return folder!.server.requests
+    .filter((request) => request.pathname === "/items/titles")
+    .map((request) => (JSON.parse(request.body) as { names: string[] }).names);
 }
 
 /** Writes `first`, pushes, then writes `then` and pushes again: A.md
@@ -267,14 +270,18 @@ describe("links held until their target exists", () => {
     expect(first.flagged.map((file) => file.flag)).toEqual(["edges"]);
     expect(first.flagged[0]?.reason).toContain("more than one item");
 
-    // Asked again after the copy changes, it is still not guessed.
+    // Judged again after the copy changes, it is still not guessed, and the
+    // server is not asked: no answer of its could make a name the copy holds
+    // twice into one.
     await push();
     const asked = lookups();
     put("Other.md", "other\n");
     await push();
-    expect(lookups(), "the held name was not asked again").toBeGreaterThan(
-      asked,
-    );
+    expect(
+      lookups(),
+      "a name the copy holds twice was asked of the server",
+    ).toBe(asked);
+    expect(titleCalls().flat()).not.toContain("Same");
     expect(edges()).toEqual([]);
     expect((await fileAt("Ticket.md")).reason).toContain("more than one item");
 
@@ -286,45 +293,80 @@ describe("links held until their target exists", () => {
       `create ${created("Ticket")} references ${id(2)}`,
     ]);
     expect((await fileAt("Ticket.md")).status).not.toBe("held");
+    expect(
+      titleCalls().flat(),
+      "the name was not asked once the copy held it once",
+    ).toContain("Same");
   });
 
-  it("asks again for a name that matched no item but not for one the server refused in the same file, which stays flagged", async () => {
+  it("asks the server for the names of a scan in calls of 200, each distinct name once", async () => {
+    await seed();
+    const names = Array.from(
+      { length: 450 },
+      (_, n) => `Absent ${String(n).padStart(3, "0")}`,
+    );
+    const links = (from: number, to: number) =>
+      `${names
+        .slice(from, to)
+        .map((name) => `[[${name}]]`)
+        .join(" ")}\n`;
+    // 150 names are linked from both files.
+    put("A.md", links(0, 300));
+    put("B.md", links(150, 450));
+    const first = await push();
+    expect(first.created).toBe(2);
+    const calls = titleCalls();
+    expect(calls.map((call) => call.length)).toEqual([200, 200, 50]);
+    expect([...calls.flat()].sort()).toEqual([...names].sort());
+    expect(
+      folder!.server.requests.filter(
+        (request) =>
+          request.pathname === "/items" &&
+          (request.query.get("filter") ?? "").includes(" contains "),
+      ),
+      "a name was looked up with a listing, one request for each",
+    ).toEqual([]);
+  });
+
+  it("leaves a name the copy holds under two items out of the lookup, and asks the rest", async () => {
+    await seed([note(1, "Twin"), note(2, "Twin")]);
+    put("Ticket.md", "See [[Twin]] and [[Absent]].\n");
+    const first = await push();
+    expect(first.flagged[0]?.reason).toContain("more than one item");
+    expect(titleCalls().flat()).toEqual(["Absent"]);
+  });
+
+  it("does not ask again for names a refused lookup carried, and the file stays flagged with the refusal", async () => {
     await seed([], ["Denied"]);
     put("Ticket.md", "See [[Decision]] and [[Denied]].\n");
     const first = await push();
     expect(first.flagged.map((file) => [file.path, file.flag])).toEqual([
       ["Ticket.md", "edges"],
     ]);
+    // The server refuses a lookup as a whole, so each name it carried is
+    // left as the refusal.
     expect(first.flagged[0]?.reason).toContain(
-      "[[Decision]] in its body matches no item",
+      "[[Decision]] in its body could not be looked up",
     );
     expect(first.flagged[0]?.reason).toContain(
       "[[Denied]] in its body could not be looked up",
     );
-    // The witness: the first push asked the server for the refused name.
-    const denied = () =>
-      folder!.server.requests.filter((request) =>
-        (request.query.get("filter") ?? "").includes('"Denied"'),
-      ).length;
-    const asked = denied();
-    expect(asked).toBeGreaterThan(0);
+    const asked = lookups();
+    expect(asked, "the first push did not ask the server").toBeGreaterThan(0);
 
     put("Decision.md", "The decision.\n");
     const second = await push();
     expect(second.created).toBe(1);
-    expect(edges()).toEqual([
-      `create ${created("Ticket")} references ${created("Decision")}`,
-    ]);
+    expect(edges()).toEqual([]);
     expect(second.flagged.map((file) => [file.path, file.flag])).toEqual([
       ["Ticket.md", "edges"],
     ]);
     const ticket = await fileAt("Ticket.md");
     expect(ticket.status).toBe("held");
-    expect(ticket.reason).not.toContain("[[Decision]]");
     expect(ticket.reason).toContain(
       "[[Denied]] in its body could not be looked up",
     );
-    expect(denied(), "the refused name was asked again").toBe(asked);
+    expect(lookups(), "the refused names were asked again").toBe(asked);
   });
 
   it("holds a link as waiting while the server is out of reach, and resolves it once it answers", async () => {

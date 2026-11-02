@@ -1278,6 +1278,19 @@ export const answers = {
     status: 200,
     body: { data: items, tombstones: [] },
   }),
+  /** `POST /items/titles`, one result for each name in the order asked. */
+  titles: (
+    results: Array<{
+      name: string;
+      items: Array<{
+        id: string;
+        type: string;
+        title: string;
+        has_blob: boolean;
+      }>;
+      more: boolean;
+    }>,
+  ): Answer => ({ kind: "json", status: 200, body: { results } }),
   unauthorized: (): Answer =>
     refusal(401, "unauthorized", "Invalid or missing credential"),
   forbidden: (code: string): Answer =>
