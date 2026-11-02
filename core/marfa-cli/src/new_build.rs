@@ -232,11 +232,19 @@ impl Identity {
 #[derive(Debug, PartialEq, Eq)]
 enum Notice {
     /// The watch ends for the new build.
-    Restarting { version: String },
+    Restarting {
+        version: String,
+    },
     /// A watch run by hand goes on.
-    Installed { version: String },
-    Gone { reason: String },
-    Unusable { reason: String },
+    Installed {
+        version: String,
+    },
+    Gone {
+        reason: String,
+    },
+    Unusable {
+        reason: String,
+    },
 }
 
 /// The last thing said, so each is said once.

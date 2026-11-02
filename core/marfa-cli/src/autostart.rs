@@ -62,8 +62,7 @@ pub enum AutostartCommand {
     /// it gives way to foreground work but keeps working when every core is
     /// busy. Once a new build is installed at the binary's path, as an
     /// upgrade does, the watch ends after the passes under way finish and the
-    /// service manager starts the new build. An agent written before this
-    /// was so is replaced by running `on` again.
+    /// service manager starts the new build.
     ///
     /// The watch writes to its log, `folder-watch.log` beside the folder
     /// registry. An error it makes before it opens the log goes, on macOS, to
@@ -1133,10 +1132,10 @@ fn status(place: &Place, json: bool) -> Result<(), CliError> {
             .path()
             .to_path_buf();
         let entry = RecordFile::read(&path).and_then(|file| {
-                file.processes
-                    .into_iter()
-                    .find(|process| Some(process.pid) == pid)
-            });
+            file.processes
+                .into_iter()
+                .find(|process| Some(process.pid) == pid)
+        });
         let current = entry
             .as_ref()
             .is_some_and(|entry| entry.current(SystemTime::now()));
