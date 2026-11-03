@@ -287,8 +287,7 @@ impl Folder {
         let mut telling = Telling::default();
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
-        let mut lists = self.settings().and_then(|settings| settings.lists()).ok();
-        let mut full_every = self.full_pass_every(FULL_PASS);
+        let (mut lists, mut full_every) = self.watch_settings(FULL_PASS);
         // Whether anything has happened since the last pass began that it
         // did not see.
         let mut changed = true;
@@ -326,7 +325,7 @@ impl Folder {
             match heard {
                 Ok(Wake::File(Ok(event), delivered)) => {
                     if stale {
-                        lists = self.settings().and_then(|settings| settings.lists()).ok();
+                        (lists, full_every) = self.watch_settings(full_every);
                         stale = false;
                     }
                     stale |= event.paths.iter().any(|path| settings_file(dir, path));
@@ -395,8 +394,7 @@ impl Folder {
             if stale {
                 // A changed interval counts from the last full pass, so it
                 // takes effect without a restart.
-                lists = self.settings().and_then(|settings| settings.lists()).ok();
-                full_every = self.full_pass_every(full_every);
+                (lists, full_every) = self.watch_settings(full_every);
                 stale = false;
             }
             let full = full_due(last_full, crate::clock::now(), full_every);
@@ -432,8 +430,7 @@ impl Folder {
             gate.passed(crate::clock::now());
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-ended");
-            lists = self.settings().and_then(|settings| settings.lists()).ok();
-            full_every = self.full_pass_every(full_every);
+            (lists, full_every) = self.watch_settings(full_every);
             stale = false;
         }
         Ok(WatchEnd::Stopped)
@@ -594,10 +591,11 @@ impl Folder {
         let refused = credential_refused(&drain);
         let wait = rate_limit_wait(&drain.report);
         // Only what time alone moves on keeps the ticks running. A file that
-        // stays missing, a held delete, a file waiting on another folder or a
-        // directory that cannot be read stands as it is until a file event,
-        // a server change or the next full pass, and a pass a second would
-        // only find it again.
+        // stays missing or a directory that cannot be read stands as it is
+        // until a file event, a server change or the next full pass, and a
+        // pass a second would only find it again. A held delete or a file
+        // waiting on another folder is looked for again once a minute
+        // (`kept_look`), which walks the other folders.
         telling.at_rest = wait.is_none()
             && refused.is_none()
             && !stirred(&settings, &scan, &drain, &pull)
@@ -621,6 +619,11 @@ impl Folder {
         } else {
             None
         };
+        telling.kept_look = if telling.at_rest {
+            self.kept_look_at()?
+        } else {
+            None
+        };
         if let Some(event) = event {
             tell(event).map_err(WatchError::Told)?;
         }
@@ -639,8 +642,12 @@ pub(super) struct Passes {
     pub(super) missed: Vec<String>,
     /// The ticks since the last full pass.
     ticks: u64,
-    /// The folder's interval between full passes as last read.
-    every: Duration,
+    /// The folder's interval between full passes as the watch last read it,
+    /// which it does at its start, after each pass and where `stale` says the
+    /// settings may have changed.
+    every: Option<Duration>,
+    /// Whether the settings may have changed since they were read.
+    stale: bool,
 }
 
 #[cfg(test)]
@@ -654,11 +661,24 @@ impl Passes {
             }
             Ok::<(), ()>(())
         };
-        match folder.pass(full, &asked, &mut self.telling, &mut told, &self.health) {
+        let passed = match folder.pass(full, &asked, &mut self.telling, &mut told, &self.health) {
             Ok(_) => Ok(()),
             Err(WatchError::Core(error)) => Err(error),
             Err(other) => panic!("the pass ended the watch: {other:?}"),
-        }
+        };
+        self.every = Some(folder.watch_settings(self.every()).1);
+        self.stale = false;
+        passed
+    }
+
+    fn every(&self) -> Duration {
+        self.every.unwrap_or(FULL_PASS)
+    }
+
+    /// What a settings change on disk or a change the server sends tells the
+    /// watch, which reads the settings again before its next pass.
+    pub(super) fn settings_may_have_changed(&mut self) {
+        self.stale = true;
     }
 
     /// Runs what a second's tick of a watch that hears no file event and no
@@ -667,13 +687,16 @@ impl Passes {
     /// of rest. Answers whether a pass ran.
     pub(super) fn tick(&mut self, folder: &Folder) -> Result<bool, CoreError> {
         self.ticks += 1;
-        let kept = if self.every.is_zero() {
-            FULL_PASS
-        } else {
-            self.every
-        };
-        self.every = folder.full_pass_every(kept);
-        let full = self.ticks >= self.every.as_secs() / TICK.as_secs();
+        if self.every.is_none() || self.stale {
+            self.every = Some(folder.watch_settings(self.every()).1);
+            self.stale = false;
+        }
+        #[cfg(debug_assertions)]
+        {
+            folder.age_kept_look(TICK);
+            self.telling.kept_look = self.telling.kept_look.and_then(|at| at.checked_sub(TICK));
+        }
+        let full = self.ticks >= self.every().as_secs() / TICK.as_secs();
         if self.telling.rests(full, false) {
             return Ok(false);
         }
@@ -996,11 +1019,15 @@ fn full_due(last: Option<Instant>, now: Instant, every: Duration) -> bool {
 }
 
 impl Folder {
-    /// The interval the folder's settings name, or `kept` while they cannot
-    /// be read: a refused or missing row does not change the watch's pace.
-    pub(super) fn full_pass_every(&self, kept: Duration) -> Duration {
-        self.settings()
-            .map_or(kept, |settings| settings.full_pass_interval())
+    /// What a watch reads of the folder's settings, once: the lists that say
+    /// which events matter, and the interval between full passes, or `kept`
+    /// while the settings cannot be read, since a refused or missing row does
+    /// not change the watch's pace.
+    pub(super) fn watch_settings(&self, kept: Duration) -> (Option<Lists>, Duration) {
+        match self.settings() {
+            Ok(settings) => (settings.lists().ok(), settings.full_pass_interval()),
+            Err(_) => (None, kept),
+        }
     }
 }
 
@@ -1158,6 +1185,10 @@ struct Telling {
     /// When the key a refused placement is held under can be asked again,
     /// which ends the rest: only a pass meets a grant that came back.
     key_due: Option<Instant>,
+    /// When a sweep's look in the other folders for a file it keeps is next
+    /// due, which ends the rest: only a pass meets a folder that took the
+    /// file or can be read again.
+    kept_look: Option<Instant>,
     /// When the last pass began its scan.
     scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.
@@ -1181,6 +1212,7 @@ impl Telling {
             && !changed
             && self.at_rest
             && self.key_due.is_none_or(|due| crate::clock::now() < due)
+            && self.kept_look.is_none_or(|due| crate::clock::now() < due)
     }
 
     /// Whether a change the copy took at `applied` is one the last pull did not

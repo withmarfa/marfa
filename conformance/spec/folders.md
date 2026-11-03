@@ -4790,9 +4790,17 @@ When a missing folder file could be in unreadable registered folders or several 
 
 While a missing folder file could be in unreadable registered folders or among several files elsewhere with its bytes, a device MUST NOT write the file again.
 
-**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folders/uncertain-move-deferred`, `folders/missing-file-trashed`), and a full pass looks for the file again. A file found nowhere whose item changed elsewhere comes back then (`folders/missing-file-changed-revives`).
+**Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folders/uncertain-move-deferred`, `folders/missing-file-trashed`), and a pass looks for the file again (`folders/kept-file-looked-again`). A file found nowhere whose item changed elsewhere comes back then (`folders/missing-file-changed-revives`).
 
 **Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`, `device/folders-one-mac.test.ts › writes back no file moved to a folder it cannot read when another device changes its item inside the grace`.
+
+### `folders/kept-file-looked-again`
+
+While a folder watch keeps a missing folder file's binding past the rename grace because it cannot tell where the file went, or because another folder has yet to take it, a device MUST look for the file in the other registered folders again no later than one minute after its last look, whatever the folder's full-pass interval.
+
+**Reason:** a delete or a move whose direction was uncertain waited for the next full pass, which is ten minutes by default. Looking walks every other registered folder, so a quick pass looks only once a minute and a watch at rest wakes for it then, where a look at every pass would walk them each time.
+
+**Tests:** `device/binding-folders-clock.test.ts › decides a delete it could not tell from a move in a quick pass once the registry can be read, with no full pass`.
 
 ### `folders/uncertain-move-not-text`
 
@@ -4846,7 +4854,7 @@ While a missing folder file is found in another registered folder in a file that
 
 While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, a pull leaves a missing folder file unwritten under `folders/moved-not-revived`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
 
-**Reason:** a watch pulls at every pass while an item counts as `elsewhere`, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
+**Reason:** a watch pulls at every pass while an item counts as `elsewhere`, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding until a minute has passed since the last look, and a full pass looks again, so a watch releases the binding within a minute of the other folder binding the file, whatever the folder's full-pass interval (`folders/kept-file-looked-again`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
@@ -6840,7 +6848,7 @@ Where a folder's settings name `full_pass_interval_seconds`, a device MUST use t
 
 **Reason:** A watch of every folder runs one watch per folder, and each keeps the interval its own folder names.
 
-**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`.
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`, `device/binding-folders-clock.test.ts › keeps each folder's own interval where two folders of one machine are watched at once`.
 
 ### `folders/watch-full-pass-interval-followed`
 

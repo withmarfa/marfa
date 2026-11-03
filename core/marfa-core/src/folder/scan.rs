@@ -4,7 +4,7 @@ use crate::Seen;
 
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
-    EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
+    EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
     bytes_of, captured_identities, carries_frontmatter, changed_within, copy_refused, document,
@@ -2003,8 +2003,10 @@ impl Folder {
     }
 
     /// Past the grace, a file whose binding the last sweep kept is looked for
-    /// in the other folders again only by a full pass, so a watch walks them
-    /// at most once every full pass for it.
+    /// in the other folders again by a full pass, and by a quick pass once
+    /// `KEPT_LOOK` has passed since the last look, so that looking walks the
+    /// other folders at most once each `KEPT_LOOK` however often the watch
+    /// scans, and a kept file does not wait for the full pass.
     fn sweep_journal(
         &self,
         settings: &Settings,
@@ -2025,6 +2027,7 @@ impl Folder {
             return Ok(());
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
+        let look = full || self.kept_look_due()?;
         let now = crate::store::iso_at(crate::clock::system_time());
         let sweep = Sweep::default();
         let mut due = Vec::new();
@@ -2033,24 +2036,29 @@ impl Folder {
                 continue;
             }
             match row.kept {
-                Some(state::Kept::Unsure(reason)) if !full => {
+                Some(state::Kept::Unsure(reason)) if !look => {
                     report.unsure.push(Unsure {
                         path: row.path,
                         reason,
                     });
                     continue;
                 }
-                Some(state::Kept::Arriving) if !full => continue,
+                Some(state::Kept::Arriving) if !look => continue,
                 _ => {}
             }
             due.push((row.path, row.item_id));
         }
         self.decide_changed(&due, settings, &sweep)?;
+        let mut kept = false;
         for (path, item_id) in due {
             match self.let_go_missing(&path, &item_id, settings, peers, &sweep)? {
                 Missing::Moved => report.moved_away += 1,
-                Missing::Arriving | Missing::Changed => {}
-                Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
+                Missing::Arriving => kept = true,
+                Missing::Changed => {}
+                Missing::Unsure(reason) => {
+                    kept = true;
+                    report.unsure.push(Unsure { path, reason });
+                }
                 Missing::Deleted => {
                     report.deleted += 1;
                     report.trashed.push(path);
@@ -2058,7 +2066,51 @@ impl Folder {
                 Missing::Gone => {}
             }
         }
+        if kept {
+            *self
+                .kept_looked
+                .lock()
+                .map_err(|_| CoreError::Store("the kept look's record was poisoned".into()))? =
+                Some(crate::clock::now());
+        }
         Ok(())
+    }
+
+    /// Whether a quick pass looks again for the files a sweep kept: none has
+    /// looked yet, or `KEPT_LOOK` has passed since one did.
+    fn kept_look_due(&self) -> Result<bool> {
+        let looked = *self
+            .kept_looked
+            .lock()
+            .map_err(|_| CoreError::Store("the kept look's record was poisoned".into()))?;
+        Ok(looked.is_none_or(|at| crate::clock::now() >= at + KEPT_LOOK))
+    }
+
+    /// When a watch at rest scans to look again for a kept file, or `None`
+    /// where the sweep keeps none: nothing in the folder or the copy tells
+    /// that the other folder took the file, or can be read again.
+    pub(super) fn kept_look_at(&self) -> Result<Option<std::time::Instant>> {
+        if !state::journaled(&*self.core.conn()?)?
+            .iter()
+            .any(|row| row.kept.is_some())
+        {
+            return Ok(None);
+        }
+        let looked = *self
+            .kept_looked
+            .lock()
+            .map_err(|_| CoreError::Store("the kept look's record was poisoned".into()))?;
+        Ok(Some(
+            looked.map_or_else(crate::clock::now, |at| at + KEPT_LOOK),
+        ))
+    }
+
+    /// Lets `by` pass on the clock a kept file's look is counted by.
+    #[cfg(all(test, debug_assertions))]
+    pub(super) fn age_kept_look(&self, by: Duration) {
+        if let Some(at) = self.kept_looked.lock().unwrap().as_mut() {
+            *at = at.checked_sub(by).expect("an instant that far back");
+        }
     }
 
     /// Decides for every file of `missing`, a path and its item, whether its

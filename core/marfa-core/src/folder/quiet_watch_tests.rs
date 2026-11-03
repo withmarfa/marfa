@@ -262,14 +262,21 @@ fn a_changed_interval_takes_effect_in_the_running_watch() {
     set_interval(&folder, serde_json::json!(240));
     assert_eq!(
         ticks_of_full_passes(&mut passes, &folder, 100),
-        [40],
-        "counted from the last full pass"
+        Vec::<usize>::new(),
+        "the witness: a watch reads the settings again only where they may have changed"
+    );
+    passes.settings_may_have_changed();
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 100),
+        [1],
+        "counted from the last full pass, 300 ticks before"
     );
     set_interval(&folder, serde_json::Value::Null);
+    passes.settings_may_have_changed();
     assert_eq!(
         ticks_of_full_passes(&mut passes, &folder, 600),
-        [540],
-        "a removed interval is the default, counted from the full pass 60 ticks before"
+        [501],
+        "a removed interval is the default, counted from the full pass 99 ticks before"
     );
 }
 
@@ -282,12 +289,12 @@ fn a_watch_keeps_its_pace_while_the_folders_interval_is_one_it_refuses() {
     set_interval(&folder, serde_json::json!(5));
     assert!(folder.settings().is_err(), "the witness: it is refused");
     assert_eq!(
-        folder.full_pass_every(Duration::from_secs(120)),
+        folder.watch_settings(Duration::from_secs(120)).1,
         Duration::from_secs(120)
     );
     set_interval(&folder, serde_json::json!(300));
     assert_eq!(
-        folder.full_pass_every(Duration::from_secs(120)),
+        folder.watch_settings(Duration::from_secs(120)).1,
         Duration::from_secs(300)
     );
 }
@@ -354,7 +361,7 @@ fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_an_interval(
 }
 
 #[test]
-fn a_quiet_watch_over_a_delete_it_cannot_tell_from_a_move_rests_until_the_full_pass_can() {
+fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move() {
     let (registry, _registry) = super::registry::tests::own_registry();
     let (dir, folder) = folder_with(
         "01a00000-0000-7000-8000-0000000026e1",
@@ -380,27 +387,28 @@ fn a_quiet_watch_over_a_delete_it_cannot_tell_from_a_move_rests_until_the_full_p
     let unsure = || matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_)));
     assert!(unsure(), "{:?}", kept(&folder, "a.md"));
 
-    let pulls = two_quiet_intervals(&mut passes, &folder);
-    assert!(
-        once_an_interval(pulls),
-        "{pulls} pulls in two quiet intervals"
-    );
+    // The pass runs once a minute, not each tick, and the full pass is ten
+    // minutes off.
+    assert_eq!(ticks_of_full_passes(&mut passes, &folder, 130), [60, 120]);
     assert!(unsure(), "the witness: the delete stands undecided");
 
     // The registry can be read again, which no event here tells. The server
-    // is busy, so the delete the full pass decides waits in the queue.
+    // is busy, so the delete the quick pass decides waits in the queue.
     std::fs::write(registry.path(), listed).unwrap();
     server.on(
         &format!("/items/{id}"),
         vec![crate::scripted::refusal(503, "unavailable")],
     );
-    assert!(
-        wakes_within_an_interval(&mut passes, &folder, || {
-            state::journaled(&folder.core.conn().unwrap())
-                .unwrap()
-                .is_empty()
-        }),
-        "the full pass did not decide the delete"
+    let decided_after = (1..=60).find(|_| {
+        passes.tick(&folder).unwrap();
+        state::journaled(&folder.core.conn().unwrap())
+            .unwrap()
+            .is_empty()
+    });
+    assert_eq!(
+        decided_after,
+        Some(50),
+        "the quick pass did not decide the delete a minute after the look at tick 120"
     );
     assert_eq!(deletes_queued(&folder).len(), 1);
 }
