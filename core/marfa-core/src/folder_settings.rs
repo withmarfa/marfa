@@ -158,6 +158,41 @@ impl Core {
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
     }
 
+    /// Whether the folder's query would hold an item made from `draft` in
+    /// `made`, answered by the query itself on a row made in a transaction
+    /// that is rolled back, so a type, tier, tag, state or filter is judged
+    /// as the copy judges every item. `beneath` is left out: it asks about
+    /// edges, which a new item has only once the folder has made them.
+    pub(crate) fn would_be_held_by(
+        &self,
+        settings: &Settings,
+        draft: &crate::model::Draft,
+        made: ItemState,
+    ) -> Result<bool> {
+        if !settings.holds_state(made) {
+            return Ok(false);
+        }
+        let mut judged = settings.clone();
+        judged.query.beneath = None;
+        judged.query.state = None;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let catalog = catalog::Catalog::load(&tx)?;
+        let queued = crate::queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
+        let Some(id) = queued.item_id else {
+            return Ok(true);
+        };
+        let (mut clauses, mut values) = (Vec::new(), Vec::new());
+        judged.narrow(&catalog, &[], &mut clauses, &mut values)?;
+        clauses.push("items.id = ?".into());
+        values.push(Value::String(id));
+        let held =
+            !query::list_where(&tx, &clauses, &values, Sort::default(), None, None)?.is_empty();
+        // Dropped without a commit.
+        drop(tx);
+        Ok(held)
+    }
+
     /// Which of `ids` the folder's query holds, as `held_by` answers.
     pub(crate) fn held_among(
         &self,

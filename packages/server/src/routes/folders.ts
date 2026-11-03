@@ -186,6 +186,11 @@ const settingsShape = {
   addition_threshold: AdditionThresholdSchema.describe(
     "New files wait to be confirmed when a scan would add more than `files` files and more than `fraction` of the folder's files.",
   ),
+  outside_query: z
+    .enum(["send", "hold"])
+    .describe(
+      "What a machine does with a new file whose item the query would not hold. `send` makes it an item and keeps it in the folder, flagged unmatched. `hold` leaves it on the disk, not sent and with no item, until it matches the query or the setting is `send`. A file that already has an item is never affected. Absent means `send`.",
+    ),
 };
 
 type Settings = {
@@ -205,6 +210,7 @@ const CreateFolderSchema = z.strictObject({
   full_pass_interval_seconds:
     settingsShape.full_pass_interval_seconds.optional(),
   addition_threshold: settingsShape.addition_threshold.optional(),
+  outside_query: settingsShape.outside_query.optional(),
 });
 
 const UpdateFolderSchema = z.strictObject({
@@ -227,6 +233,7 @@ const UpdateFolderSchema = z.strictObject({
   full_pass_interval_seconds:
     settingsShape.full_pass_interval_seconds.optional(),
   addition_threshold: settingsShape.addition_threshold.optional(),
+  outside_query: settingsShape.outside_query.optional(),
 });
 
 const IdParam = z.object({

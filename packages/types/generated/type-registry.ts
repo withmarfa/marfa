@@ -675,6 +675,7 @@ const systemFolder: TypeSchema = {
     removal_threshold: { type: "object", description: "When removing files pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Defaults to 10 and 0.25." },
     full_pass_interval_seconds: { type: "integer", description: "Seconds between the watch's passes that read every file in the folder, from 60 to 86400. Defaults to 600." },
     addition_threshold: { type: "object", description: "When new files pause for confirmation: a scan that would add more than `files` files and more than `fraction` of the folder's files. Defaults to 50 and 0.25." },
+    outside_query: { type: "enum", description: "What the folder does with a new file its query would not hold: send it and keep it flagged unmatched, or hold it on disk, not sent. Defaults to send.", enum_values: ["send", "hold"] },
     revoked_at: { type: "datetime", description: "When the folder was revoked." },
   },
 };
@@ -2597,6 +2598,13 @@ export const SHIPPED_TYPE_SHAPES = {
       "include": {
         "items_type": "string",
         "type": "array"
+      },
+      "outside_query": {
+        "enum_values": [
+          "send",
+          "hold"
+        ],
+        "type": "enum"
       },
       "query": {
         "type": "object"

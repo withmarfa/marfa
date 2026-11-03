@@ -1293,7 +1293,7 @@ struct Standing {
     embeds: Vec<Flagged>,
     registry: Option<String>,
     unsure: Vec<Unsure>,
-    paused: (usize, usize, usize),
+    paused: (usize, usize, usize, usize),
     lookup_refused: Option<String>,
 }
 
@@ -1399,7 +1399,12 @@ impl Telling {
             root_gone: None,
             undelivered: drain.report.undelivered,
             stopped: drain.report.stopped.clone(),
-            paused: (scan.paused, pull.paused, scan.paused_additions),
+            paused: (
+                scan.paused,
+                pull.paused,
+                scan.paused_additions,
+                scan.held_outside,
+            ),
             lost: scan.lost,
             unreached: scan.unreached,
             directories: scan

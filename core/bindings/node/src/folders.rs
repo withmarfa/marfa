@@ -63,6 +63,7 @@ pub struct FolderPaused {
     pub disk: i64,
     pub pull: i64,
     pub additions: i64,
+    pub outside_query: i64,
 }
 #[napi(object)]
 pub struct FirstSyncPlan {
@@ -122,6 +123,7 @@ pub struct FolderScan {
     pub moved_away: i64,
     pub paused: i64,
     pub paused_additions: i64,
+    pub held_outside: i64,
     pub trashed: Vec<String>,
     pub secrets: Vec<String>,
     pub warnings: Vec<FlaggedFile>,
@@ -477,6 +479,7 @@ impl Task for ReadFolderStatus {
                     disk: count(report.paused.disk as u64),
                     pull: count(report.paused.pull as u64),
                     additions: count(report.paused.additions as u64),
+                    outside_query: count(report.paused.outside_query as u64),
                 },
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
@@ -900,6 +903,7 @@ fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
         moved_away: count(scan.moved_away as u64),
         paused: count(scan.paused as u64),
         paused_additions: count(scan.paused_additions as u64),
+        held_outside: count(scan.held_outside as u64),
         trashed: scan.trashed,
         secrets: scan.secrets,
         warnings: scan.warnings.into_iter().map(flagged_file).collect(),

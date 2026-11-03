@@ -757,6 +757,19 @@ pub fn set_paused_additions(conn: &Connection, paths: &[String]) -> Result<(), C
     set_list(conn, PAUSED_ADDITIONS, paths)
 }
 
+const HELD_OUTSIDE: &str = "folder_held_outside";
+
+/// The new files the last scan held because the query would not hold them
+/// and the folder holds such files (`outside_query: hold`). They have no item
+/// and no binding.
+pub fn held_outside(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, HELD_OUTSIDE)
+}
+
+pub fn set_held_outside(conn: &Connection, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, HELD_OUTSIDE, paths)
+}
+
 const PAUSED_BASE: &str = "folder_paused_add_base";
 
 /// How many new files the window held when the standing pause began.

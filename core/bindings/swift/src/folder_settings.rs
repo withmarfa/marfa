@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use marfa_core::folder::settings::{
-    AdditionThreshold as CoreAdditionThreshold, Defaults, Query,
+    AdditionThreshold as CoreAdditionThreshold, Defaults, OutsideQuery as CoreOutsideQuery, Query,
     RemovalThreshold as CoreRemovalThreshold, Settings,
 };
 use serde_json::{Map, Value};
@@ -37,6 +37,37 @@ pub struct FolderSettings {
     #[uniffi(default = None)]
     pub full_pass_interval_seconds: Option<u64>,
     pub addition_threshold: AdditionThreshold,
+    /// What the folder does with a new file its query would not hold.
+    pub outside_query: OutsideQuery,
+}
+
+/// What a folder does with a new file that its query would not hold. A file
+/// that already has an item is never affected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum OutsideQuery {
+    /// Make it an item and keep it in the folder, flagged unmatched.
+    Send,
+    /// Leave it on the disk, not sent and with no item, until it matches the
+    /// query or the folder says `Send`.
+    Hold,
+}
+
+impl From<CoreOutsideQuery> for OutsideQuery {
+    fn from(mode: CoreOutsideQuery) -> Self {
+        match mode {
+            CoreOutsideQuery::Send => OutsideQuery::Send,
+            CoreOutsideQuery::Hold => OutsideQuery::Hold,
+        }
+    }
+}
+
+impl From<OutsideQuery> for CoreOutsideQuery {
+    fn from(mode: OutsideQuery) -> Self {
+        match mode {
+            OutsideQuery::Send => CoreOutsideQuery::Send,
+            OutsideQuery::Hold => CoreOutsideQuery::Hold,
+        }
+    }
 }
 
 /// The query that decides which items a folder holds.
@@ -116,6 +147,8 @@ pub struct FolderSettingsChange {
     #[uniffi(default = None)]
     pub full_pass_interval_seconds: Option<u64>,
     pub addition_threshold: Option<AdditionThreshold>,
+    #[uniffi(default = None)]
+    pub outside_query: Option<OutsideQuery>,
 }
 
 /// A `system.folder` and the settings it carries.
@@ -238,6 +271,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
         removal_threshold,
         full_pass_interval_seconds,
         addition_threshold,
+        outside_query,
     } = settings;
     Ok(FolderSettings {
         title,
@@ -275,6 +309,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
             files: addition_threshold.files,
             fraction: addition_threshold.fraction,
         },
+        outside_query: outside_query.into(),
     })
 }
 
@@ -289,6 +324,7 @@ fn core_settings(settings: FolderSettings) -> Result<Settings, MarfaError> {
         removal_threshold: core_threshold(settings.removal_threshold),
         full_pass_interval_seconds: settings.full_pass_interval_seconds,
         addition_threshold: core_addition_threshold(settings.addition_threshold),
+        outside_query: settings.outside_query.into(),
     })
 }
 
@@ -374,6 +410,13 @@ fn change_body(change: FolderSettingsChange) -> Result<Map<String, Value>, Marfa
         )
         .map_err(encoding)?;
     }
+    if let Some(mode) = change.outside_query {
+        put(
+            "outside_query",
+            serde_json::to_value(CoreOutsideQuery::from(mode)),
+        )
+        .map_err(encoding)?;
+    }
     Ok(body)
 }
 
@@ -407,11 +450,13 @@ mod tests {
             "removal_threshold": { "files": 4, "fraction": 0.5 },
             "full_pass_interval_seconds": 3600,
             "addition_threshold": { "files": 80, "fraction": 0.5 },
+            "outside_query": "hold",
         });
         let core: Settings = serde_json::from_value(properties).unwrap();
         let crossed = settings(core.clone()).unwrap();
         assert_eq!(crossed.query.states, Some(vec![ItemState::Archived]));
         assert_eq!(crossed.query.tier, Some(SliceTier::All));
+        assert_eq!(crossed.outside_query, OutsideQuery::Hold);
         assert_eq!(core_settings(crossed).unwrap(), core);
     }
 

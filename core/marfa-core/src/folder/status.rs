@@ -56,6 +56,9 @@ pub struct Paused {
     pub pull: usize,
     /// New files on the disk that the addition threshold holds back.
     pub additions: usize,
+    /// New files on the disk that the query would not hold, in a folder whose
+    /// `outside_query` is `hold`.
+    pub outside_query: usize,
 }
 
 const WAITS: [&str; 11] = [
@@ -123,7 +126,7 @@ impl Folder {
         };
         let lists = settings.lists()?;
         let walked = walked.unwrap_or_else(|| self.walked(&lists));
-        let (snapshot, disk, pull, unmatched, added) = {
+        let (snapshot, disk, pull, unmatched, added, outside) = {
             let conn = self.core.conn()?;
             (
                 // As the next scan settles any write a crash cut off.
@@ -135,9 +138,11 @@ impl Folder {
                 state::paused(&conn, state::Removal::Pull)?,
                 state::unmatched(&conn)?,
                 state::paused_additions(&conn)?,
+                state::held_outside(&conn)?,
             )
         };
         let added: HashSet<String> = added.into_iter().collect();
+        let outside: HashSet<String> = outside.into_iter().collect();
         let disk: HashSet<String> = disk.into_iter().collect();
         let pull: HashSet<String> = pull.into_iter().collect();
         let unmatched: HashSet<String> = unmatched.into_iter().collect();
@@ -202,6 +207,10 @@ impl Folder {
                 None if added.contains(key) => FileStatus::new(key, None, "held").because(
                     "addition",
                     "is held with a drop of new files that passed the addition threshold, so it is not sent, and any new file that arrives joins the hold until you decide: `folders confirm` sends them, and deleting the files you did not mean to add cancels it",
+                ),
+                None if outside.contains(key) => FileStatus::new(key, None, "held").because(
+                    "outside_query",
+                    super::unmatched::HELD_OUTSIDE_REASON,
                 ),
                 None => self.unbound_status(
                     key,
@@ -280,6 +289,10 @@ impl Folder {
             .iter()
             .filter(|file| file.flag == Some("addition"))
             .count();
+        let outside_query = files
+            .iter()
+            .filter(|file| file.flag == Some("outside_query"))
+            .count();
         Ok(StatusReport {
             files,
             directories: walked.directories,
@@ -287,6 +300,7 @@ impl Folder {
                 disk: disk.len(),
                 pull: pull.len(),
                 additions,
+                outside_query,
             },
             first_sync: if self.awaiting_confirmation()? {
                 Some(FirstSyncStatus {

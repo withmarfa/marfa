@@ -89,7 +89,7 @@ use pull::{Departing, PullPlan};
 pub use registry::{REGISTRY_ENV, Registered, Registry};
 use scan::{Missing, Sweep};
 
-pub use settings::{FOLDER_TYPE, Settings};
+pub use settings::{FOLDER_TYPE, OutsideQuery, Settings};
 pub use settings_file::SettingsFileReport;
 
 pub const STATE_DIR: &str = ".marfa";
@@ -249,6 +249,9 @@ pub struct ScanReport {
     pub paused: usize,
     /// New files held back for confirmation, which `folders confirm` sends.
     pub paused_additions: usize,
+    /// New files left on disk because the query would not hold them and the
+    /// folder's `outside_query` is `hold`.
+    pub held_outside: usize,
     pub warnings: Vec<Flagged>,
     /// Why the pass read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
@@ -6407,6 +6410,170 @@ mod tests {
         );
         // Nothing is held again by the scan after.
         assert_eq!(folder.scan().unwrap().paused_additions, 0);
+    }
+
+    fn write_note(dir: &Path, name: &str, lines: &str) {
+        std::fs::write(
+            dir.join(name),
+            format!("---\ntitle: {name}\n{lines}---\nbody\n"),
+        )
+        .unwrap();
+    }
+
+    fn set_folder_setting(folder: &Folder, setting: &str, value: &str) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                &format!(
+                    "UPDATE items SET properties = json_set(properties, '$.{setting}', ?1) WHERE id = ?2"
+                ),
+                [value, folder.folder.as_str()],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_holds_new_files_outside_its_query_keeps_them_unsent_and_unwritten() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b001",
+            serde_json::json!({ "query": { "state": ["active"] }, "outside_query": "hold" }),
+            None,
+        );
+        write_note(dir.path(), "in.md", "");
+        write_note(dir.path(), "out.md", "state: archived\n");
+        let before = std::fs::read(dir.path().join("out.md")).unwrap();
+        let scanned = folder.scan().unwrap();
+        assert_eq!(
+            (scanned.created, scanned.held_outside),
+            (1, 1),
+            "{scanned:?}"
+        );
+        assert_eq!(creates_queued(&folder), 1, "the held file was sent");
+        assert_eq!(std::fs::read(dir.path().join("out.md")).unwrap(), before);
+        assert_eq!(folder.scan().unwrap().held_outside, 1);
+
+        landed(&folder, "in.md");
+        let status = folder.status().unwrap();
+        assert_eq!(status.paused.outside_query, 1);
+        assert_eq!(status.paused.additions, 0);
+        let held: Vec<_> = status
+            .files
+            .iter()
+            .filter(|file| file.flag == Some("outside_query"))
+            .map(|file| (file.path.as_str(), file.status, file.item_id.clone()))
+            .collect();
+        assert_eq!(held, [("out.md", "held", None)]);
+        let listed = folder.unmatched_files().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            (listed[0].path.as_str(), listed[0].item_id.is_none()),
+            ("out.md", true)
+        );
+        assert!(listed[0].held.is_some() && listed[0].kept.is_none());
+        let removed = folder.remove_unmatched(&["out.md".into()]).unwrap();
+        assert!(removed.removed.is_empty(), "{removed:?}");
+        assert!(dir.path().join("out.md").is_file());
+
+        write_note(dir.path(), "out.md", "state: active\n");
+        let edited = folder.scan().unwrap();
+        assert_eq!((edited.created, edited.held_outside), (1, 0), "{edited:?}");
+        assert!(folder.unmatched_files().unwrap().is_empty());
+        assert_eq!(folder.status().unwrap().paused.outside_query, 0);
+    }
+
+    #[test]
+    fn a_folder_sends_a_new_file_outside_its_query_unless_it_holds_it() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b002",
+            serde_json::json!({ "query": { "state": ["active"] } }),
+            None,
+        );
+        write_note(dir.path(), "out.md", "state: archived\n");
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.held_outside), (1, 0), "{sent:?}");
+
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b003",
+            serde_json::json!({ "query": { "state": ["active"] }, "outside_query": "hold" }),
+            None,
+        );
+        write_note(dir.path(), "out.md", "state: archived\n");
+        assert_eq!(folder.scan().unwrap().held_outside, 1);
+        set_folder_setting(&folder, "outside_query", "send");
+        let released = folder.scan().unwrap();
+        assert_eq!(
+            (released.created, released.held_outside),
+            (1, 0),
+            "{released:?}"
+        );
+        assert!(
+            state::held_outside(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_new_file_is_judged_by_type_tier_and_filter_as_well_as_state() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b004",
+            serde_json::json!({
+                "query": { "types": ["core.note"], "filter": "properties.title neq \"out.md\"" },
+                "outside_query": "hold",
+            }),
+            None,
+        );
+        write_note(dir.path(), "in.md", "");
+        write_note(dir.path(), "out.md", "");
+        write_note(dir.path(), "feed.md", "tier: feed\n");
+        write_note(dir.path(), "bookmark.md", "type: core.bookmark\n");
+        let scanned = folder.scan().unwrap();
+        assert_eq!(
+            (scanned.created, scanned.held_outside),
+            (1, 3),
+            "{scanned:?}"
+        );
+        assert_eq!(
+            state::held_outside(&folder.core.conn().unwrap()).unwrap(),
+            ["bookmark.md", "feed.md", "out.md"]
+        );
+    }
+
+    #[test]
+    fn files_held_outside_the_query_do_not_count_toward_the_addition_threshold() {
+        let (_, _registry) = registry::tests::own_registry();
+        for (id, mode, held, paused) in [
+            ("01a00000-0000-7000-8000-00000000b005", "hold", 3, 0),
+            ("01a00000-0000-7000-8000-00000000b006", "send", 0, 4),
+        ] {
+            let (dir, folder) = folder_with(
+                id,
+                serde_json::json!({
+                    "query": { "state": ["active"] },
+                    "outside_query": mode,
+                    "addition_threshold": { "files": 1, "fraction": 0.0 },
+                }),
+                None,
+            );
+            write_note(dir.path(), "first.md", "");
+            assert_eq!(folder.scan().unwrap().created, 1);
+            for name in ["a.md", "b.md", "c.md"] {
+                write_note(dir.path(), name, "state: archived\n");
+            }
+            write_note(dir.path(), "d.md", "");
+            let scanned = folder.scan().unwrap();
+            assert_eq!(
+                (scanned.held_outside, scanned.paused_additions),
+                (held, paused),
+                "{mode}: {scanned:?}"
+            );
+            assert_eq!(scanned.created, usize::from(mode == "hold"), "{mode}");
+        }
     }
 
     #[test]

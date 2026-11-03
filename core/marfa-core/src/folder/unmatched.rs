@@ -16,6 +16,11 @@ pub struct Unmatched {
     /// follows `is kept:`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kept: Option<String>,
+    /// Why the folder holds the file where it has no item yet: a new file the
+    /// query would not hold, in a folder whose `outside_query` is `hold`.
+    /// Removing unmatched files never takes it away.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
 }
 
 /// What removing unmatched files did.
@@ -47,26 +52,31 @@ impl Folder {
             let conn = self.core.conn()?;
             (state::unmatched(&conn)?, state::every_bound(&conn)?)
         };
+        let held = state::held_outside(&*self.core.conn()?)?;
         let unmatched: HashSet<String> = unmatched.into_iter().collect();
         let mut rows: Vec<state::Bound> = bound
             .into_iter()
             .filter(|row| unmatched.contains(&row.item_id))
             .collect();
         if rows.is_empty() {
-            return Ok(Vec::new());
+            return Ok(held.into_iter().map(held_entry).collect());
         }
         rows.sort_by(|a, b| a.path.cmp(&b.path));
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let members = self.members(&settings)?;
         let recorded = state::new_outside_state(&*self.core.conn()?)?;
-        rows.into_iter()
+        let mut files = rows
+            .into_iter()
             .map(|row| {
                 let row = as_removable(row, &recorded);
                 let kept = self.kept_because(&row, &members, &settings, &lists)?;
                 Ok(entry(&row, kept))
             })
-            .collect()
+            .collect::<Result<Vec<Unmatched>>>()?;
+        files.extend(held.into_iter().map(held_entry));
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
     }
 
     /// Takes away the named unmatched files, each only while it is still
@@ -93,6 +103,7 @@ impl Folder {
                     path: path.clone(),
                     item_id: None,
                     kept: Some("it is no longer a file of the folder".into()),
+                    held: None,
                 });
                 continue;
             };
@@ -202,5 +213,18 @@ fn entry(row: &state::Bound, kept: Option<String>) -> Unmatched {
         path: row.path.clone(),
         item_id: Some(row.item_id.clone()),
         kept,
+        held: None,
+    }
+}
+
+/// The reason the status of a held file gives, too.
+pub(super) const HELD_OUTSIDE_REASON: &str = "is a new file that the folder's query would not hold, so it is held on disk and not sent, with no item: it is sent once its content matches the query, or once the folder's `outside_query` is `send`";
+
+fn held_entry(path: String) -> Unmatched {
+    Unmatched {
+        path,
+        item_id: None,
+        kept: None,
+        held: Some(HELD_OUTSIDE_REASON.into()),
     }
 }

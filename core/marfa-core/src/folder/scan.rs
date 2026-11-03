@@ -3,7 +3,8 @@ use std::sync::atomic::Ordering;
 
 use crate::Seen;
 
-use super::push::{admission_hold, new_document};
+use super::push::{admission_hold, file_item_draft, new_document};
+use super::settings::OutsideQuery;
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
@@ -777,7 +778,8 @@ impl Folder {
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
-        let held_back = self.hold_additions(scan, &claims, &waiting)?;
+        let held_outside = self.hold_outside(scan, &claims, &waiting)?;
+        let held_back = self.hold_additions(scan, &claims, &waiting, &held_outside)?;
         let by_path = bound_by_path(&scan.snapshot);
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
@@ -884,7 +886,7 @@ impl Folder {
                 other => other,
             };
             match claim {
-                None if held_back.contains(&at) => {
+                None if held_outside.contains(&at) || held_back.contains(&at) => {
                     // Read again by the next pass, which counts the drop anew.
                     unsettled.insert(file.key.clone());
                 }
@@ -1985,6 +1987,7 @@ impl Folder {
         scan: &mut ScanState,
         claims: &[Option<Claim>],
         waiting: &Waiting,
+        outside: &HashSet<usize>,
     ) -> Result<HashSet<usize>> {
         let conn = self.core.conn()?;
         let confirmed = state::additions_allowed(&conn)?;
@@ -1997,20 +2000,11 @@ impl Folder {
             state::gate_additions(&conn)?;
         }
         drop(conn);
-        let new: Vec<usize> = scan
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(at, file)| {
-                claims[*at].is_none()
-                    && !waiting.contains_key(at)
-                    && !file.deferred
-                    && file.unreadable.is_none()
-                    && !(scan.only_embedded.contains(&file.key)
-                        && !scan.embedded.contains(&file.key))
-            })
-            .filter(|(_, file)| self.would_send(file, scan))
-            .map(|(at, _)| at)
+        let new: Vec<usize> = self
+            .new_files(scan, claims, waiting)
+            .into_iter()
+            .filter(|at| !outside.contains(at))
+            .filter(|at| self.would_send(&scan.files[*at], scan))
             .collect();
         let conn = self.core.conn()?;
         // A file a person let through is not a drop to count, now or against
@@ -2064,6 +2058,97 @@ impl Folder {
         state::set_paused_additions(&conn, &paths)?;
         scan.report.paused_additions = held.len();
         Ok(held)
+    }
+
+    /// The files with no item yet that this pass may send: the ones a person
+    /// could be asked about, not those that wait, are read later or cannot be
+    /// read.
+    fn new_files(
+        &self,
+        scan: &ScanState,
+        claims: &[Option<Claim>],
+        waiting: &Waiting,
+    ) -> Vec<usize> {
+        scan.files
+            .iter()
+            .enumerate()
+            .filter(|(at, file)| {
+                claims[*at].is_none()
+                    && !waiting.contains_key(at)
+                    && !file.deferred
+                    && file.unreadable.is_none()
+                    && !(scan.only_embedded.contains(&file.key)
+                        && !scan.embedded.contains(&file.key))
+            })
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// The new files this pass holds on disk because the folder's
+    /// `outside_query` is `hold` and the query would not hold what they
+    /// become. A held file has no item and no binding, so a pass judges it
+    /// again: it is sent once it matches, or once the setting says `send`.
+    /// An embedded file is an attachment of a note and goes with it, and a
+    /// file that is not a document and whose type the query does not hold is
+    /// never sent, held or not.
+    fn hold_outside(
+        &self,
+        scan: &mut ScanState,
+        claims: &[Option<Claim>],
+        waiting: &Waiting,
+    ) -> Result<HashSet<usize>> {
+        let mut held = HashSet::new();
+        let mut paths = Vec::new();
+        if scan.settings.outside_query == OutsideQuery::Hold {
+            for at in self.new_files(scan, claims, waiting) {
+                if self.is_outside(&scan.files[at], scan)? {
+                    paths.push(scan.files[at].key.clone());
+                    held.insert(at);
+                }
+            }
+        }
+        paths.sort();
+        state::set_held_outside(&*self.core.conn()?, &paths)?;
+        scan.report.held_outside = held.len();
+        Ok(held)
+    }
+
+    /// Whether the query would not hold the item a new file becomes. What
+    /// the copy would refuse to make is not judged here: it is flagged
+    /// where it is made.
+    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Result<bool> {
+        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
+            let draft = file_item_draft(file, file_type, settings, catalog);
+            return self.judge_outside(settings, &draft, ItemState::Active);
+        }
+        if scan.embedded.contains(&file.key) && bytes_type(&file.path, catalog).is_some() {
+            return Ok(false);
+        }
+        let Ok(made) = new_document(&file.key, &file.document(), (settings, catalog, edge_types))
+        else {
+            return Ok(false);
+        };
+        if admission_hold(catalog, &file.key, &made.draft).is_some() {
+            return Ok(false);
+        }
+        let state = made.read.lines.state.unwrap_or(ItemState::Active);
+        self.judge_outside(settings, &made.draft, state)
+    }
+
+    /// A draft the copy cannot judge is not held: it is made, or refused,
+    /// as it would be without the setting.
+    fn judge_outside(
+        &self,
+        settings: &Settings,
+        draft: &crate::model::Draft,
+        made: ItemState,
+    ) -> Result<bool> {
+        Ok(self
+            .core
+            .would_be_held_by(settings, draft, made)
+            .map(|held| !held)
+            .unwrap_or(false))
     }
 
     /// Whether a new file would be sent as an item: not one the scan holds

@@ -50,6 +50,13 @@ pub struct SettingsArgs {
     /// When new files pause, as a JSON object: `files` and `fraction`.
     #[arg(long, value_name = "JSON")]
     pub addition_threshold: Option<String>,
+    /// What the folder does with a new file that its query would not hold:
+    /// `send` makes it an item and keeps it flagged unmatched, `hold` leaves
+    /// it on disk, not sent and with no item, until it matches or this is
+    /// `send`. A file that already has an item is not affected; unset is
+    /// `send`.
+    #[arg(long, value_name = "MODE", value_parser = ["send", "hold"])]
+    pub outside_query: Option<String>,
 }
 
 impl SettingsArgs {
@@ -98,6 +105,9 @@ impl SettingsArgs {
                 "addition_threshold".into(),
                 Value::Object(object(threshold, "--addition-threshold")?),
             );
+        }
+        if let Some(mode) = &self.outside_query {
+            flags.insert("outside_query".into(), json!(mode));
         }
         for (key, value) in flags {
             if settings.contains_key(&key) {
