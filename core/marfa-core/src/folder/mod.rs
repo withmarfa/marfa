@@ -3885,7 +3885,7 @@ mod tests {
     }
 
     /// `watched_notes` over a folder with these settings.
-    fn watched_notes_in(
+    pub(super) fn watched_notes_in(
         settings: Value,
         names: &[&str],
     ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {

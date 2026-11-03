@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FolderSettings } from "../../device/cli-adapter.js";
 import { StreamFeed } from "../../device/scripted-server.js";
 import {
   bindingFolderHarness,
@@ -17,6 +18,7 @@ import {
 import { heldBy, untilHeld } from "./binding.shared.js";
 import {
   EdgeDoor,
+  scriptFolderChanges,
   scriptFolderWrites,
   settingsFile,
 } from "./folders.shared.js";
@@ -26,7 +28,11 @@ afterEach(async () => {
   for (const harness of made.splice(0).reverse()) await harness.stop();
 });
 
-async function prepared(label: string, files: Record<string, string> = {}) {
+async function prepared(
+  label: string,
+  files: Record<string, string> = {},
+  more: FolderSettings = {},
+) {
   const edges = new EdgeDoor();
   const feed = new StreamFeed();
   let watching = false;
@@ -36,6 +42,7 @@ async function prepared(label: string, files: Record<string, string> = {}) {
     settings: {
       query: { types: ["core.note"] },
       removal_threshold: { files: 100, fraction: 1 },
+      ...more,
     },
     events: [
       (request) =>
@@ -152,31 +159,93 @@ describe("folder clock and scan boundaries", () => {
     expect((await bound.testClose()).ok).toBe(true);
   });
 
-  it("performs a full first pass and the first pass past sixty seconds", async () => {
-    const harness = await prepared("binding-periodic-scan");
-    const { device } = harness;
+  it.each([
+    {
+      named: "ten minutes where the folder names none",
+      more: {},
+      seconds: 600,
+    },
+    {
+      named: "the folder's own interval",
+      more: { full_pass_interval_seconds: 120 },
+      seconds: 120,
+    },
+  ])(
+    "performs a full first pass and the first pass past $named",
+    async ({ more, seconds }) => {
+      const harness = await prepared("binding-periodic-scan", {}, more);
+      const { device } = harness;
+      await startFirstPass(harness);
+      await untilHeld(device, "folder-pass-ended");
+      expect(await device.hooks.reached("folder-full-scan")).toBe(1);
+      await nextTurn(harness);
+      await device.clock.advance(seconds * 1000 - 1);
+      writeFileSync(join(harness.dir, "wake.md"), "before the boundary\n");
+      await device.hooks.release("folder-watch-turn");
+      // inotify can report an earlier access before the write notification;
+      // either wake may legitimately finish this due pass.
+      await untilHeld(device, "folder-pass-ended");
+      expect(await device.hooks.reached("folder-full-scan")).toBe(1);
+      expect(await device.hooks.reached("folder-quick-scan")).toBe(1);
+
+      await nextTurn(harness);
+      // Every wake is due after this interval, even if a filesystem reports
+      // the preceding pass's changes before this write.
+      await device.clock.advance(5_000);
+      writeFileSync(join(harness.dir, "wake.md"), "after the boundary\n");
+      await device.hooks.release("folder-watch-turn");
+      await untilHeld(device, "folder-pass-ended");
+      expect(await device.hooks.reached("folder-full-scan")).toBe(2);
+      expect(await device.hooks.reached("folder-quick-scan")).toBe(1);
+      await device.hooks.release("folder-pass-ended");
+    },
+  );
+
+  it("takes an interval edited in the settings file at the next pass of the running watch", async () => {
+    const harness = await prepared(
+      "binding-interval-changed",
+      {},
+      { full_pass_interval_seconds: 3_600 },
+    );
+    const { device, dir } = harness;
+    const sent = scriptFolderChanges(harness);
     await startFirstPass(harness);
     await untilHeld(device, "folder-pass-ended");
     expect(await device.hooks.reached("folder-full-scan")).toBe(1);
+
+    // The witness: two minutes on, an hour-long interval leaves the pass quick.
     await nextTurn(harness);
-    await device.clock.advance(59_999);
-    writeFileSync(join(harness.dir, "wake.md"), "before the boundary\n");
+    await device.clock.advance(120_000);
+    writeFileSync(join(dir, "wake.md"), "two minutes on\n");
     await device.hooks.release("folder-watch-turn");
-    // inotify can report an earlier access before the write notification;
-    // either wake may legitimately finish this due pass.
     await untilHeld(device, "folder-pass-ended");
     expect(await device.hooks.reached("folder-full-scan")).toBe(1);
     expect(await device.hooks.reached("folder-quick-scan")).toBe(1);
 
     await nextTurn(harness);
-    // Every wake is due after this interval, even if a filesystem reports
-    // the preceding pass's changes before this write.
+    const settings = settingsFile(harness);
+    writeFileSync(
+      settings,
+      readFileSync(settings, "utf8").replace(
+        /full_pass_interval_seconds: 3600/,
+        "full_pass_interval_seconds: 120",
+      ),
+    );
     await device.clock.advance(5_000);
-    writeFileSync(join(harness.dir, "wake.md"), "after the boundary\n");
     await device.hooks.release("folder-watch-turn");
     await untilHeld(device, "folder-pass-ended");
-    expect(await device.hooks.reached("folder-full-scan")).toBe(2);
-    expect(await device.hooks.reached("folder-quick-scan")).toBe(1);
+    expect(sent, "the edited interval was not sent").toHaveLength(1);
+    expect(sent[0]?.full_pass_interval_seconds).toBe(120);
+
+    await nextTurn(harness);
+    await device.clock.advance(5_000);
+    writeFileSync(join(dir, "wake.md"), "past the new interval\n");
+    await device.hooks.release("folder-watch-turn");
+    await untilHeld(device, "folder-pass-ended");
+    expect(
+      await device.hooks.reached("folder-full-scan"),
+      "the watch went on at the interval it started with",
+    ).toBe(2);
     await device.hooks.release("folder-pass-ended");
   });
 
@@ -302,7 +371,7 @@ describe("folder clock and scan boundaries", () => {
     ).toBe(rendered);
 
     await nextTurn(harness);
-    await device.clock.advance(60_000);
+    await device.clock.advance(600_000);
     const settings = settingsFile(harness);
     writeFileSync(settings, readFileSync(settings));
     await device.hooks.release("folder-watch-turn");

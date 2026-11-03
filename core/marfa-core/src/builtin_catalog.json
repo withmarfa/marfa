@@ -2449,6 +2449,10 @@
      "type": "object",
      "description": "When removing files pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Defaults to 10 and 0.25."
     },
+    "full_pass_interval_seconds": {
+     "type": "integer",
+     "description": "Seconds between the watch's passes that read every file in the folder, from 60 to 86400. Defaults to 600."
+    },
     "revoked_at": {
      "type": "datetime",
      "description": "When the folder was revoked."

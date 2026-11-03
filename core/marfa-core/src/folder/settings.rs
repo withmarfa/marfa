@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -31,7 +32,14 @@ pub struct Settings {
     pub first_placement: BTreeMap<String, String>,
     #[serde(default)]
     pub removal_threshold: RemovalThreshold,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_pass_interval_seconds: Option<u64>,
 }
+
+/// The fewest and most seconds between a watch's full passes.
+pub const FULL_PASS_INTERVAL_LEAST: u64 = 60;
+pub const FULL_PASS_INTERVAL_MOST: u64 = 86_400;
+const FULL_PASS_INTERVAL_DEFAULT: u64 = 600;
 
 /// An unknown member is refused rather than ignored, which would answer the
 /// query as though the condition were not there.
@@ -89,6 +97,14 @@ impl RemovalThreshold {
 }
 
 impl Settings {
+    /// How long a watch waits between passes that read every file.
+    pub fn full_pass_interval(&self) -> Duration {
+        Duration::from_secs(
+            self.full_pass_interval_seconds
+                .unwrap_or(FULL_PASS_INTERVAL_DEFAULT),
+        )
+    }
+
     pub fn of(item: &Item) -> Result<Settings> {
         Settings::read(
             &item.id,
@@ -214,6 +230,13 @@ impl Settings {
         {
             return Err(CoreError::Invalid(format!(
                 "a folder's removal threshold names a fraction of {fraction}, and a fraction of the folder runs from 0 to 1"
+            )));
+        }
+        if let Some(seconds) = self.full_pass_interval_seconds
+            && !(FULL_PASS_INTERVAL_LEAST..=FULL_PASS_INTERVAL_MOST).contains(&seconds)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a folder's full_pass_interval_seconds is {seconds}, and a full pass runs every {FULL_PASS_INTERVAL_LEAST} to {FULL_PASS_INTERVAL_MOST} seconds"
             )));
         }
         if let Some(tier) = self.defaults.tier
@@ -621,6 +644,39 @@ mod tests {
                 "{dir:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_full_pass_interval_defaults_to_ten_minutes_and_holds_its_limits() {
+        assert_eq!(
+            read(json!({})).unwrap().full_pass_interval(),
+            Duration::from_secs(600),
+            "unset"
+        );
+        let own = read(json!({ "full_pass_interval_seconds": 3600 })).unwrap();
+        assert_eq!(own.full_pass_interval(), Duration::from_secs(3600));
+        for ok in [60, 86_400] {
+            assert!(
+                read(json!({ "full_pass_interval_seconds": ok })).is_ok(),
+                "{ok}"
+            );
+        }
+        for refused in [
+            json!(0),
+            json!(59),
+            json!(86_401),
+            json!(-1),
+            json!(60.5),
+            json!("600"),
+        ] {
+            let error = read(json!({ "full_pass_interval_seconds": refused }));
+            assert!(error.is_err(), "{refused}");
+        }
+        let low = read(json!({ "full_pass_interval_seconds": 59 })).unwrap_err();
+        assert!(
+            low.to_string().contains("full_pass_interval_seconds"),
+            "{low}"
+        );
     }
 
     #[test]

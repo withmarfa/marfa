@@ -1191,6 +1191,7 @@ fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice()
             title: Some("Project".into()),
             include: vec!["*.md".into()],
             first_placement: vec!["core.note=Notes".into()],
+            full_pass_interval_seconds: Some(1800),
             ..Default::default()
         },
         ..Default::default()
@@ -1205,6 +1206,7 @@ fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice()
             "title": "Project",
             "include": ["*.md"],
             "first_placement": { "core.note": "Notes" },
+            "full_pass_interval_seconds": 1800,
         })
     );
 

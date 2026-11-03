@@ -2066,7 +2066,7 @@ When the working copy has changed since a file was flagged `edges` because a nam
 
 While a file flagged `edges` because a name matched no item or more than one item is unchanged and the working copy has not changed since the flag, a device MUST NOT look that name up again.
 
-**Reason:** A watch runs a full pass every minute, and a lookup on every pass would ask the server about each held name once a minute for nothing.
+**Reason:** A watch runs a full pass once each full-pass interval, and a lookup on every pass would ask the server about each held name that often for nothing.
 
 **Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
 
@@ -6822,9 +6822,35 @@ When a folder file changes while a watch scan reads it, a device MUST read it ag
 
 ### `folders/watch-periodic-full-pass`
 
-While a folder watch runs, a device MUST perform a full scan at its first pass and at the first pass after sixty seconds since the previous full scan.
+While a folder watch runs, a device MUST perform a full scan at its first pass and at the first pass after the folder's full-pass interval since the previous full scan.
 
-**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past sixty seconds`.
+**Reason:** A full scan reads every file, to find a change the system did not report.
+
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past ten minutes where the folder names none`, `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past the folder's own interval`.
+
+### `folders/watch-full-pass-interval-default`
+
+Where a folder's settings name no `full_pass_interval_seconds`, a device MUST use 600 seconds as the folder's full-pass interval.
+
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past ten minutes where the folder names none`.
+
+### `folders/watch-full-pass-interval-own`
+
+Where a folder's settings name `full_pass_interval_seconds`, a device MUST use that many seconds as that folder's full-pass interval, so that watches of several folders each keep their own.
+
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past the folder's own interval`.
+
+### `folders/watch-full-pass-interval-followed`
+
+When a running folder watch follows changed settings that name another `full_pass_interval_seconds`, a device MUST apply the new interval from the next pass, counted from the previous full scan, without the watch being restarted.
+
+**Tests:** `device/binding-folders-clock.test.ts › takes an interval edited in the settings file at the next pass of the running watch`.
+
+### `folders/full-pass-interval-refused`
+
+If folder settings name a `full_pass_interval_seconds` that is not a whole number of seconds from 60 to 86400, then a device MUST refuse to follow them.
+
+**Tests:** `device/folders.test.ts › refuses a query condition it does not implement`.
 
 ### `folders/watch-quiet-pass-unrendered`
 

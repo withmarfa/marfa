@@ -105,6 +105,9 @@ const PatternListSchema = z
   .array(maxStringLength(z.string().min(1), 1024))
   .max(1000);
 
+const MIN_FULL_PASS_INTERVAL_SECONDS = 60;
+const MAX_FULL_PASS_INTERVAL_SECONDS = 86_400;
+
 const RemovalThresholdSchema = z
   .strictObject({
     files: z
@@ -148,6 +151,14 @@ const settingsShape = {
   removal_threshold: RemovalThresholdSchema.describe(
     "A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files.",
   ),
+  full_pass_interval_seconds: z
+    .number()
+    .int()
+    .min(MIN_FULL_PASS_INTERVAL_SECONDS)
+    .max(MAX_FULL_PASS_INTERVAL_SECONDS)
+    .describe(
+      `Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: ${String(MIN_FULL_PASS_INTERVAL_SECONDS)} to ${String(MAX_FULL_PASS_INTERVAL_SECONDS)}. Absent means 600.`,
+    ),
 };
 
 type Settings = {
@@ -164,6 +175,8 @@ const CreateFolderSchema = z.strictObject({
   ignore: settingsShape.ignore.optional(),
   first_placement: settingsShape.first_placement.optional(),
   removal_threshold: settingsShape.removal_threshold.optional(),
+  full_pass_interval_seconds:
+    settingsShape.full_pass_interval_seconds.optional(),
 });
 
 const UpdateFolderSchema = z.strictObject({
@@ -183,6 +196,8 @@ const UpdateFolderSchema = z.strictObject({
   ignore: settingsShape.ignore.optional(),
   first_placement: settingsShape.first_placement.optional(),
   removal_threshold: settingsShape.removal_threshold.optional(),
+  full_pass_interval_seconds:
+    settingsShape.full_pass_interval_seconds.optional(),
 });
 
 const IdParam = z.object({

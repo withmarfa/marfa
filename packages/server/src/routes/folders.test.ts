@@ -243,6 +243,21 @@ describe("POST /folders", () => {
       "validation_error",
       "removal_threshold.fraction",
     ],
+    [
+      { full_pass_interval_seconds: 59 },
+      "validation_error",
+      "full_pass_interval_seconds",
+    ],
+    [
+      { full_pass_interval_seconds: 86_401 },
+      "validation_error",
+      "full_pass_interval_seconds",
+    ],
+    [
+      { full_pass_interval_seconds: 90.5 },
+      "validation_error",
+      "full_pass_interval_seconds",
+    ],
   ])(
     "refuses %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {
@@ -408,6 +423,7 @@ describe("PATCH /folders/{id}", () => {
         ignore: ["drafts/"],
         first_placement: { "core.note": "Notes" },
         removal_threshold: { files: 12 },
+        full_pass_interval_seconds: 3600,
       };
       const folder = await createFolder(settings);
       const stored = {

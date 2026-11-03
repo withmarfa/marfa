@@ -38777,6 +38777,12 @@
                   },
                   "removal_threshold": {
                     "$ref": "#/components/schemas/FolderRemovalThreshold"
+                  },
+                  "full_pass_interval_seconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 86400,
+                    "description": "Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600."
                   }
                 },
                 "required": [
@@ -39265,6 +39271,12 @@
                   },
                   "removal_threshold": {
                     "$ref": "#/components/schemas/FolderRemovalThreshold"
+                  },
+                  "full_pass_interval_seconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 86400,
+                    "description": "Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600."
                   }
                 },
                 "required": [

@@ -20192,6 +20192,8 @@ export interface operations {
                         [key: string]: string;
                     };
                     removal_threshold?: components["schemas"]["FolderRemovalThreshold"];
+                    /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
+                    full_pass_interval_seconds?: number;
                 };
             };
         };
@@ -20409,6 +20411,8 @@ export interface operations {
                         [key: string]: string;
                     };
                     removal_threshold?: components["schemas"]["FolderRemovalThreshold"];
+                    /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
+                    full_pass_interval_seconds?: number;
                 };
             };
         };

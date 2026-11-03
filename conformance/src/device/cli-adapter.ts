@@ -1218,6 +1218,7 @@ export interface FolderSettings {
   ignore?: string[];
   first_placement?: Record<string, string>;
   removal_threshold?: { files?: number; fraction?: number };
+  full_pass_interval_seconds?: number;
 }
 
 export interface ScanReport {

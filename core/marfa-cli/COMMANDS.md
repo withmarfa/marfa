@@ -3123,6 +3123,7 @@ marfa device folders create [OPTIONS]
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -3151,6 +3152,7 @@ marfa device folders change [OPTIONS] --version <VERSION> <ID>
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -4028,6 +4030,7 @@ marfa folders create [OPTIONS]
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders change
@@ -4054,6 +4057,7 @@ marfa folders change [OPTIONS] --version <VERSION> <ID>
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders revoke

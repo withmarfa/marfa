@@ -23,8 +23,9 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// A tick starts a pass only while the last one left such work.
 const TICK: Duration = Duration::from_secs(1);
 
-/// Finds a change that size and time did not show.
-const FULL_PASS: Duration = Duration::from_secs(60);
+/// Finds a change that size and time did not show. A folder's own
+/// `full_pass_interval_seconds` replaces it.
+const FULL_PASS: Duration = Duration::from_secs(600);
 
 /// A file written more often than `SETTLE`, a log say, would otherwise hold
 /// off every pass for as long as it is written.
@@ -287,6 +288,7 @@ impl Folder {
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
         let mut lists = self.settings().and_then(|settings| settings.lists()).ok();
+        let mut full_every = self.full_pass_every(FULL_PASS);
         // Whether anything has happened since the last pass began that it
         // did not see.
         let mut changed = true;
@@ -390,7 +392,14 @@ impl Folder {
             {
                 continue;
             }
-            let full = full_due(last_full, crate::clock::now());
+            if stale {
+                // A changed interval counts from the last full pass, so it
+                // takes effect without a restart.
+                lists = self.settings().and_then(|settings| settings.lists()).ok();
+                full_every = self.full_pass_every(full_every);
+                stale = false;
+            }
+            let full = full_due(last_full, crate::clock::now(), full_every);
             if telling.rests(full, changed) {
                 continue;
             }
@@ -424,6 +433,7 @@ impl Folder {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-ended");
             lists = self.settings().and_then(|settings| settings.lists()).ok();
+            full_every = self.full_pass_every(full_every);
             stale = false;
         }
         Ok(WatchEnd::Stopped)
@@ -629,6 +639,8 @@ pub(super) struct Passes {
     pub(super) missed: Vec<String>,
     /// The ticks since the last full pass.
     ticks: u64,
+    /// The folder's interval between full passes as last read.
+    every: Duration,
 }
 
 #[cfg(test)]
@@ -650,12 +662,18 @@ impl Passes {
     }
 
     /// Runs what a second's tick of a watch that hears no file event and no
-    /// server change runs: a full pass once a minute, and otherwise a quick
+    /// server change runs: a full pass each interval the folder names, and otherwise a quick
     /// pass only where the last pass left the folder short of rest. Answers
     /// whether a pass ran.
     pub(super) fn tick(&mut self, folder: &Folder) -> Result<bool, CoreError> {
         self.ticks += 1;
-        let full = self.ticks >= FULL_PASS.as_secs() / TICK.as_secs();
+        let kept = if self.every.is_zero() {
+            FULL_PASS
+        } else {
+            self.every
+        };
+        self.every = folder.full_pass_every(kept);
+        let full = self.ticks >= self.every.as_secs() / TICK.as_secs();
         if self.telling.rests(full, false) {
             return Ok(false);
         }
@@ -973,8 +991,17 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
     crate::clock::wait(stop, wait, Duration::from_millis(250));
 }
 
-fn full_due(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
+fn full_due(last: Option<Instant>, now: Instant, every: Duration) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= every)
+}
+
+impl Folder {
+    /// The interval the folder's settings name, or `kept` while they cannot
+    /// be read: a refused or missing row does not change the watch's pace.
+    pub(super) fn full_pass_every(&self, kept: Duration) -> Duration {
+        self.settings()
+            .map_or(kept, |settings| settings.full_pass_interval())
+    }
 }
 
 struct Gate {
@@ -1903,11 +1930,15 @@ mod tests {
     }
 
     #[test]
-    fn the_first_pass_reads_every_file_and_then_one_a_minute() {
+    fn the_first_pass_reads_every_file_and_then_one_each_interval() {
         let now = Instant::now();
-        assert!(full_due(None, now));
-        assert!(!full_due(Some(now), now + 59 * SECOND));
-        assert!(full_due(Some(now), now + FULL_PASS));
+        assert!(full_due(None, now, FULL_PASS));
+        assert!(!full_due(Some(now), now + FULL_PASS - SECOND, FULL_PASS));
+        assert!(full_due(Some(now), now + FULL_PASS, FULL_PASS));
+        let hour = Duration::from_secs(3600);
+        assert!(!full_due(Some(now), now + FULL_PASS, hour));
+        assert!(full_due(Some(now), now + hour, hour));
+        assert_eq!(FULL_PASS, Duration::from_secs(600));
     }
 
     #[test]
