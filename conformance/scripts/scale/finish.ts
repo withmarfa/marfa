@@ -20,7 +20,10 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { benchmarkEvent, captureUrl } from "../../src/utils/scale/posthog.js";
-import { pickPreviousArtifact } from "../../src/utils/scale/previous.js";
+import {
+  pickLiveArtifact,
+  pickPreviousRuns,
+} from "../../src/utils/scale/previous.js";
 import {
   EXPECTED_STEPS,
   mergeFragments,
@@ -41,33 +44,51 @@ function profileName(): string {
   return `scale-${targetItems()}`;
 }
 
+/** How many of the newest runs on `main` are looked through for figures. */
+const RUNS_TO_SEARCH = 15;
+
+function gh(args: string[]): unknown {
+  return JSON.parse(execFileSync("gh", args, { encoding: "utf8" })) as unknown;
+}
+
+/**
+ * The newest night on `main` that kept its figures: the workflow's completed
+ * runs on `main` newest first, and the first one whose run still holds an
+ * unexpired `scale-figures` artifact.
+ */
 function previousNight(): FiguresFile | null {
   const repo = process.env.GITHUB_REPOSITORY;
   if (!repo || !process.env.GH_TOKEN) return null;
   let directory: string | undefined;
   try {
-    const listing = JSON.parse(
-      execFileSync(
-        "gh",
-        [
-          "api",
-          `repos/${repo}/actions/artifacts?name=scale-figures&per_page=30`,
-        ],
-        { encoding: "utf8" },
-      ),
-    ) as unknown;
-    const artifact = pickPreviousArtifact(
-      listing,
+    const runs = pickPreviousRuns(
+      gh([
+        "api",
+        `repos/${repo}/actions/workflows/benchmarks.yml/runs?branch=main&status=completed&per_page=${RUNS_TO_SEARCH}`,
+      ]),
       process.env.GITHUB_RUN_ID ?? "",
     );
-    if (artifact === null) return null;
+    let found: number | undefined;
+    for (const runId of runs) {
+      const artifact = pickLiveArtifact(
+        gh([
+          "api",
+          `repos/${repo}/actions/runs/${runId}/artifacts?name=scale-figures`,
+        ]),
+      );
+      if (artifact !== null) {
+        found = runId;
+        break;
+      }
+    }
+    if (found === undefined) return null;
     directory = mkdtempSync(resolve(tmpdir(), "scale-previous-"));
     execFileSync(
       "gh",
       [
         "run",
         "download",
-        String(artifact.workflow_run.id),
+        String(found),
         "--repo",
         repo,
         "--name",

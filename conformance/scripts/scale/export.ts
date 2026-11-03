@@ -11,7 +11,8 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
-import { connect, log, Recorder, sleep, stateDir } from "./context.js";
+import { totalOfStats } from "../../src/utils/scale/pages.js";
+import { api, connect, log, Recorder, sleep, stateDir } from "./context.js";
 
 const POLL_MS = 250;
 /** Past this the export is stopped and counted as not completing. */
@@ -29,6 +30,59 @@ function bytesIn(directory: string): number {
   } catch {
     return 0;
   }
+}
+
+/** How many lines a file inside the archive holds, read as the tar stream goes by. */
+function archiveLines(archive: string, entry: string): Promise<number> {
+  return new Promise((done, fail) => {
+    const tar = spawn("tar", ["-xzOf", archive, entry], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let lines = 0;
+    let last = 10;
+    let stderr = "";
+    tar.stdout.on("data", (chunk: Buffer) => {
+      for (const byte of chunk) if (byte === 10) lines++;
+      last = chunk[chunk.length - 1] ?? last;
+    });
+    tar.stderr.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-500);
+    });
+    tar.once("error", fail);
+    tar.once("close", (code) => {
+      if (code !== 0) fail(new Error(`tar exited with ${code}: ${stderr}`));
+      // A last line with no newline is still a line.
+      else done(last === 10 ? lines : lines + 1);
+    });
+  });
+}
+
+/**
+ * What is wrong with the archive, or null. It must exist and hold bytes, and
+ * its `items.ndjson` must hold as many lines as the instance holds items: the
+ * export copies every state but trashed, and the seed trashes nothing.
+ */
+async function archiveProblem(
+  archive: string,
+  held: number | null,
+): Promise<string | null> {
+  let size: number;
+  try {
+    size = statSync(archive).size;
+  } catch {
+    return "the export wrote no archive file";
+  }
+  if (size === 0) return "the archive is empty";
+  let lines: number;
+  try {
+    lines = await archiveLines(archive, "items.ndjson");
+  } catch (error) {
+    return `the archive could not be read: ${String(error).slice(0, 200)}`;
+  }
+  if (held === null) return null;
+  return lines === held
+    ? null
+    : `the archive holds ${lines.toLocaleString("en-US")} items and the instance holds ${held.toLocaleString("en-US")}`;
 }
 
 export async function exportArchive(): Promise<void> {
@@ -91,19 +145,29 @@ export async function exportArchive(): Promise<void> {
   }
   const totalMs = performance.now() - started;
   const bytes = bytesIn(directory);
-  rmSync(directory, { recursive: true, force: true });
 
   const completed = exit === 0 && !timedOut;
   if (!completed)
     log(
       `the export ${timedOut ? "did not finish" : `exited with ${exit}`}: ${stderr}`,
     );
+  // Nothing writes between here and the export's end, so the count the
+  // server gives now is the one the archive was cut from.
+  const stats = await api("GET", "/items/stats");
+  const problem = completed
+    ? await archiveProblem(
+        resolve(directory, "instance.archive"),
+        stats.status === 200 ? totalOfStats(stats.text) : null,
+      )
+    : null;
+  if (problem !== null) log(problem);
+  rmSync(directory, { recursive: true, force: true });
   recorder.add(
     scalar("archive_export", "s", totalMs / 1000, {
-      errors: completed ? 0 : 1,
-      note: completed
-        ? `${(bytes / 1_048_576).toFixed(0)} MB written`
-        : `the export ${timedOut ? "did not finish" : `exited with ${exit}`}`,
+      errors: completed && problem === null ? 0 : 1,
+      note: !completed
+        ? `the export ${timedOut ? "did not finish" : `exited with ${exit}`}`
+        : (problem ?? `${(bytes / 1_048_576).toFixed(0)} MB written`),
     }),
   );
   if (firstByteMs !== null) {

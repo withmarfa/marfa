@@ -50,6 +50,9 @@ export function benchmarkEvent(
     failed_count: failedCount(file),
   };
   for (const figure of file.figures) {
+    // A figure that took no measurement has no value to send: its zero would
+    // read as the fastest night, and it is the verdict above that fails.
+    if (figure.samples === 0 || !Number.isFinite(figure.value)) continue;
     if (figure.p95 !== null && figure.p50 !== null) {
       properties[propertyName(figure.name, figure.unit, "p50")] = figure.p50;
       properties[propertyName(figure.name, figure.unit, "p95")] = figure.p95;

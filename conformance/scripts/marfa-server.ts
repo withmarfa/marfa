@@ -54,6 +54,16 @@ import { tmpdir } from "node:os";
  * instrumentation preload, under `run-server.mjs`, which writes how the
  * server ended to `server.exit`. The package's `dev` script is watch mode
  * and belongs to a person at a keyboard.
+ *
+ * With `MARFA_SERVER_BUILT=true` it starts the built server instead
+ * (`packages/server/dist/index.js` with `dist/instrumentation.js`), which is
+ * what a person runs, for a run that measures memory or start-up time. The
+ * environment variable, not an option, so that a `restart` follows the boot
+ * it replaces. A built server is started with `MARFA_TEST_HOOKS` off: the
+ * clock shim and the fault routes exist only in the source run, and the built
+ * run is without them, as a person's is. Nothing that reads the clock or the
+ * fault table can run against it. The build must be there already
+ * (`pnpm --filter "@withmarfa/server..." build`); it is not made here.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -268,6 +278,37 @@ function ensurePageAssets(): void {
   pageAssetsWritten = true;
 }
 
+/** Whether this run starts the built server, not the sources. */
+export function builtServer(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARFA_SERVER_BUILT === "true";
+}
+
+/** The built server's two entry files, which a build writes. */
+const BUILT_ENTRY = resolve(REPO_ROOT, "packages/server/dist/index.js");
+const BUILT_PRELOAD = resolve(
+  REPO_ROOT,
+  "packages/server/dist/instrumentation.js",
+);
+
+/** What the supervisor starts: the sources through tsx, or the build. */
+export function serverCommand(built: boolean): [string, ...string[]] {
+  if (!built) {
+    return serverRuntime([
+      "--import",
+      "./src/instrumentation.ts",
+      "src/index.ts",
+    ]);
+  }
+  for (const file of [BUILT_ENTRY, BUILT_PRELOAD]) {
+    if (!existsSync(file)) {
+      throw new Error(
+        `MARFA_SERVER_BUILT is true and ${file} is missing; build the server first`,
+      );
+    }
+  }
+  return [process.execPath, "--import", BUILT_PRELOAD, BUILT_ENTRY];
+}
+
 /** Runtime command supervised for a server entrypoint and its preloads. */
 export function serverRuntime(args: string[]): [string, ...string[]] {
   // The tsx CLI force-kills a child that cannot acknowledge a signal within
@@ -419,7 +460,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   // the name.
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
   ensureBuilt();
-  ensurePageAssets();
+  const built = builtServer();
+  if (!built) ensurePageAssets();
 
   const port =
     args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
@@ -495,7 +537,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   }
   // Production refuses test hooks, so only nonproduction boots enable them
   // by default. Explicit settings below can exercise that refusal.
-  const hooks = args.nodeEnv !== "production";
+  // The built server is started as a person starts it, without them.
+  const hooks = args.nodeEnv !== "production" && !built;
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
@@ -522,15 +565,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // server; what the supervisor adds is the server's exit status.
   const child = spawn(
     process.execPath,
-    [
-      RUN_SERVER,
-      p.exit,
-      ...serverRuntime([
-        "--import",
-        "./src/instrumentation.ts",
-        "src/index.ts",
-      ]),
-    ],
+    [RUN_SERVER, p.exit, ...serverCommand(built)],
     {
       cwd: resolve(REPO_ROOT, "packages/server"),
       env,

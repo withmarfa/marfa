@@ -2,15 +2,15 @@
  * Stops and starts the server on its data, four times, and reads its memory
  * once it has settled.
  *
- * The time is the whole restart: the stop, the start from source and the
+ * The time is the whole restart: the stop, the start of the built server and the
  * boot script's own sign-in once `/health` answers, which adds a little to
  * what a person waits for. The first restart follows the seeding, so it also
- * pays for compiling the server's sources and for checkpointing a database
- * just written; it is recorded on its own, and the figure with the ceiling is
- * the p95 of the three after it, which one outlier does not decide.
+ * pays for checkpointing a database just written; it is recorded on its own, and the figure with the ceiling is
+ * the slowest of the three after it. Three are too few for a p95 to mean more
+ * than that, and the slowest is the stricter reading.
  */
 import { restartServer } from "../marfa-server.js";
-import { distribution, scalar } from "../../src/utils/scale/figures.js";
+import { scalar } from "../../src/utils/scale/figures.js";
 import { readServerMemory } from "../../src/utils/scale/memory.js";
 import { log, Recorder, sleep, stateDir, supervisorPid } from "./context.js";
 
@@ -32,7 +32,11 @@ export async function restart(): Promise<void> {
     else times.push(took);
   }
   recorder.add(scalar("server_restart_first", "ms", first));
-  recorder.add(distribution("server_restart", "ms", times));
+  recorder.add(
+    scalar("server_restart", "ms", Math.max(...times), {
+      note: `the slowest of ${times.length} restarts after the first`,
+    }),
+  );
   await sleep(SETTLE_MS);
   const memory = readServerMemory(supervisorPid());
   recorder.add(scalar("rss_at_rest", "MB", memory.rssMb));

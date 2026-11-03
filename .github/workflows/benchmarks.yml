@@ -15,9 +15,13 @@ on:
         type: boolean
         default: false
 
+# A run is never cancelled for a newer one: a dispatch on `main` while the
+# night is running would otherwise end it halfway, and the night's figures,
+# which the next night is compared with, would be lost. A newer run waits for
+# the running one (GitHub keeps only the latest waiting).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -133,6 +137,11 @@ jobs:
       actions: read
     env:
       MARFA_SCALE_STATE: ${{ github.workspace }}/../marfa-scale
+      # The memory and restart figures are of the built server a person runs,
+      # not the sources through tsx. The build is the step above. The built
+      # server has no test hooks (clock shim, fault routes), which nothing
+      # here uses.
+      MARFA_SERVER_BUILT: "true"
       MARFA_DEVICE_BIN: ${{ github.workspace }}/core/target/release/marfa
     steps:
       - uses: actions/checkout@v7

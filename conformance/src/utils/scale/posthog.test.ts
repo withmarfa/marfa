@@ -10,7 +10,11 @@ const file: FiguresFile = {
   profile: "scale-250k",
   items: 250_000,
   figures: [
-    distribution("get_item", "ms", [10, 20, 30]),
+    distribution(
+      "get_item",
+      "ms",
+      Array.from({ length: 30 }, (_, i) => 10 + i),
+    ),
     scalar("rss_at_rest", "MB", 400),
     scalar("bulk_page_ratio", "ratio", 1.1),
     scalar("seed_rate", "per_s", 330),
@@ -80,7 +84,7 @@ describe("the event", () => {
 
   it("holds numbers for figures and the verdict as given", () => {
     expect(event.properties).toMatchObject({
-      get_item_p95_ms: 29,
+      get_item_p95_ms: 37.55,
       rss_at_rest_mb: 400,
       commit: "abc1234",
       run_id: "42",
@@ -112,6 +116,37 @@ describe("the event", () => {
       { token: "t", distinctId: "d" },
     );
     expect(clean.properties).toMatchObject({ passed: true, failed_count: 0 });
+  });
+
+  it("sends nothing for a figure that took no measurement, and still the verdict", () => {
+    const unmeasured = benchmarkEvent(
+      {
+        ...file,
+        figures: [
+          distribution("get_item", "ms", []),
+          scalar("rss_at_rest", "MB", Number.NaN),
+          scalar("rss_peak", "MB", 120),
+        ],
+        missingSteps: ["bulk"],
+      },
+      { token: "t", distinctId: "d" },
+    );
+    expect(Object.keys(unmeasured.properties).sort()).toEqual(
+      [
+        "$process_person_profile",
+        "commit",
+        "failed_count",
+        "items",
+        "passed",
+        "profile",
+        "rss_peak_mb",
+        "run_id",
+      ].sort(),
+    );
+    expect(unmeasured.properties).toMatchObject({
+      passed: false,
+      failed_count: 3,
+    });
   });
 
   it("leaves an unknown size out as null rather than zero", () => {

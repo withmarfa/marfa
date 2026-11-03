@@ -41,7 +41,16 @@ interface CeilingEntry {
   /** An upper bound in the figure's unit; null where the figure is recorded only. */
   ceiling: number | null;
   issue: number | null;
+  /**
+   * The bound depends on another reading of the same night (resident memory
+   * at rest plus a margin), so the step works it out and passes it in. The
+   * margin is the table's: see `RSS_MARGIN_AFTER_BULK_MB`.
+   */
+  relative?: true;
 }
+
+/** How far above its resting reading memory may be, 10 s after a bulk page (#2609). */
+export const RSS_MARGIN_AFTER_BULK_MB = 100;
 
 const recorded: CeilingEntry = { ceiling: null, issue: null };
 
@@ -83,6 +92,8 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   // Resident memory of the server process.
   rss_at_rest: { ceiling: 300, issue: 2609 },
   rss_after_bulk_1min: { ceiling: 300, issue: 2609 },
+  // At rest plus RSS_MARGIN_AFTER_BULK_MB; the bulk step works the bound out.
+  rss_after_bulk_10s: { ceiling: null, issue: 2609, relative: true },
   rss_growth_after_bulk: { ceiling: 100, issue: 2609 },
   rss_peak: recorded,
 
@@ -133,6 +144,26 @@ function judged(value: number, entry: CeilingEntry, errors: number): boolean {
 export interface FigureOptions {
   note?: string;
   errors?: number;
+  /** Only for a figure whose entry is `relative`, and then required. */
+  ceiling?: number;
+}
+
+function entryWith(name: string, options: FigureOptions): CeilingEntry {
+  const entry = entryFor(name);
+  if (entry.relative === true) {
+    if (options.ceiling === undefined) {
+      throw new Error(
+        `the figure "${name}" needs the ceiling its step works out`,
+      );
+    }
+    return { ...entry, ceiling: options.ceiling };
+  }
+  if (options.ceiling !== undefined) {
+    throw new Error(
+      `the figure "${name}" has a ceiling in the table; none may be passed`,
+    );
+  }
+  return entry;
 }
 
 /** A figure that is one measurement. */
@@ -142,7 +173,7 @@ export function scalar(
   value: number,
   options: FigureOptions = {},
 ): Figure {
-  const entry = entryFor(name);
+  const entry = entryWith(name, options);
   const errors = options.errors ?? 0;
   return {
     name,
@@ -159,6 +190,12 @@ export function scalar(
   };
 }
 
+/**
+ * The fewest samples a figure with a ceiling may rest on. A p95 of fewer is
+ * close to the slowest request, so it neither shows a drift nor earns a pass.
+ */
+export const MIN_SAMPLES = 20;
+
 /** A figure that is many measurements, headed by its p95. */
 export function distribution(
   name: string,
@@ -166,7 +203,7 @@ export function distribution(
   samples: number[],
   options: FigureOptions = {},
 ): Figure {
-  const entry = entryFor(name);
+  const entry = entryWith(name, options);
   const errors = options.errors ?? 0;
   if (samples.length === 0) {
     return {
@@ -179,6 +216,15 @@ export function distribution(
   }
   const sorted = [...samples].sort((a, b) => a - b);
   const p95 = percentile(sorted, 95);
+  const tooFew = entry.ceiling !== null && sorted.length < MIN_SAMPLES;
+  const note = [
+    options.note,
+    tooFew
+      ? `${sorted.length} samples; a figure with a ceiling needs at least ${MIN_SAMPLES}`
+      : undefined,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join("; ");
   return {
     name,
     unit,
@@ -189,8 +235,8 @@ export function distribution(
     errors,
     ceiling: entry.ceiling,
     issue: entry.issue,
-    passed: judged(p95, entry, errors),
-    note: options.note ?? null,
+    passed: !tooFew && judged(p95, entry, errors),
+    note: note === "" ? null : note,
   };
 }
 

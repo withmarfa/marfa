@@ -11,9 +11,18 @@
  * which is what the core's drain sends. Memory is read a minute after the
  * first page.
  */
-import { distribution, scalar } from "../../src/utils/scale/figures.js";
+import {
+  distribution,
+  RSS_MARGIN_AFTER_BULK_MB,
+  scalar,
+} from "../../src/utils/scale/figures.js";
 import { scaleItem } from "../../src/utils/scale/generator.js";
 import { readServerMemory } from "../../src/utils/scale/memory.js";
+import {
+  judgePage,
+  sumPageErrors,
+  type PageJudgement,
+} from "../../src/utils/scale/pages.js";
 import {
   api,
   log,
@@ -30,6 +39,7 @@ const PAGE = 5_000;
 const EDGE_PAGE = 2_000;
 const SMALL_PAGE = 100;
 const MINUTE_MS = Number(process.env.MARFA_SCALE_MINUTE_MS ?? "60000");
+const TEN_SECONDS_MS = Number(process.env.MARFA_SCALE_TEN_S_MS ?? "10000");
 /** Between two polls of one reader, so a reader is a person and not a flood. */
 const POLL_GAP_MS = 10;
 
@@ -67,6 +77,24 @@ async function withReaders<T>(
   }
 }
 
+/** The ids of the entries a bulk answer says it created, in order. */
+function newIds(text: string): string[] {
+  try {
+    const results = (
+      JSON.parse(text) as {
+        results?: { outcome?: string; id?: string }[];
+      }
+    ).results;
+    return (results ?? []).flatMap((entry) =>
+      entry.outcome === "created" && typeof entry.id === "string"
+        ? [entry.id]
+        : [],
+    );
+  } catch {
+    return [];
+  }
+}
+
 function pageBody(first: number, count: number, atomic: boolean | undefined) {
   const items = [];
   for (let n = first; n < first + count; n++) items.push(scaleItem(n));
@@ -89,24 +117,41 @@ export async function bulk(): Promise<void> {
 
   const readerFigures = (
     kind: "atomic" | "best_effort" | "edge",
-    run: {
-      get: ReaderResult;
-      health: ReaderResult;
-      written: { status: number };
-    },
+    run: { get: ReaderResult; health: ReaderResult },
+    page: PageJudgement,
   ) => {
-    // A page the server refused measured nothing, so it fails both figures.
-    const refused = run.written.status === 200 ? 0 : 1;
+    // A page that fell short measured less work than it claims, so it fails
+    // both figures: each entry it did not write counts as an error.
+    const options = (readerErrors: number) => ({
+      errors: readerErrors + page.errors,
+      ...(page.note === null ? {} : { note: page.note }),
+    });
     recorder.add(
-      distribution(`read_get_during_${kind}_bulk`, "ms", run.get.times, {
-        errors: run.get.errors + refused,
-      }),
+      distribution(
+        `read_get_during_${kind}_bulk`,
+        "ms",
+        run.get.times,
+        options(run.get.errors),
+      ),
     );
     recorder.add(
-      distribution(`read_health_during_${kind}_bulk`, "ms", run.health.times, {
-        errors: run.health.errors + refused,
-      }),
+      distribution(
+        `read_health_during_${kind}_bulk`,
+        "ms",
+        run.health.times,
+        options(run.health.errors),
+      ),
     );
+  };
+
+  /** Sends one page and judges what it wrote by its counts. */
+  const sendPage = async (path: string, body: string, size: number) => {
+    const answer = await api("POST", path, body);
+    return {
+      ms: answer.ms,
+      text: answer.text,
+      judgement: judgePage(answer.status, answer.text, size),
+    };
   };
 
   // The resting reading to compare with: the restart step's, else now.
@@ -117,16 +162,25 @@ export async function bulk(): Promise<void> {
 
   // 1. A 5,000-entry page in the default (atomic) mode.
   const atomicBody = pageBody(takePositions(PAGE), PAGE, undefined);
-  const atomic = await withReaders(ids, async () => {
-    const answer = await api("POST", "/items/bulk", atomicBody);
-    return { status: answer.status, ms: answer.ms };
-  });
-  readerFigures("atomic", atomic);
+  const atomic = await withReaders(ids, () =>
+    sendPage("/items/bulk", atomicBody, PAGE),
+  );
+  readerFigures("atomic", atomic, atomic.written.judgement);
   log(
-    `the atomic page took ${Math.round(atomic.written.ms)} ms; waiting a minute before reading memory`,
+    `the atomic page took ${Math.round(atomic.written.ms)} ms; reading memory after 10 s and after a minute`,
   );
 
-  await sleep(MINUTE_MS);
+  // The server hands memory back soon after bulk work stops (#2609), so the
+  // first reading is 10 s after the page ends, at rest plus a margin.
+  await sleep(TEN_SECONDS_MS);
+  const soon = readServerMemory(supervisorPid());
+  recorder.add(
+    scalar("rss_after_bulk_10s", "MB", soon.rssMb, {
+      ceiling: rest + RSS_MARGIN_AFTER_BULK_MB,
+      note: `resting reading was ${rest.toFixed(1)} MB; the ceiling is that plus ${RSS_MARGIN_AFTER_BULK_MB} MB`,
+    }),
+  );
+  await sleep(Math.max(0, MINUTE_MS - TEN_SECONDS_MS));
   const after = readServerMemory(supervisorPid());
   recorder.add(scalar("rss_after_bulk_1min", "MB", after.rssMb));
   recorder.add(
@@ -137,60 +191,70 @@ export async function bulk(): Promise<void> {
 
   // 2. A 5,000-entry best-effort page, as the core's drain sends it.
   const bestBody = pageBody(takePositions(PAGE), PAGE, false);
-  const best = await withReaders(ids, async () => {
-    const answer = await api("POST", "/items/bulk", bestBody);
-    return { status: answer.status, ms: answer.ms };
-  });
-  readerFigures("best_effort", best);
+  const best = await withReaders(ids, () =>
+    sendPage("/items/bulk", bestBody, PAGE),
+  );
+  readerFigures("best_effort", best, best.written.judgement);
 
-  // 3. A 2,000-entry page of edges between items already there.
+  // 3. A 2,000-entry page of `about` edges. An `about` edge runs from any
+  // type to any type, many to many, and refuses a self-loop and a repeat of
+  // a triple. Each edge here runs from an item the page above just created
+  // to one the seed made, so no edge repeats one the instance holds, none
+  // is a loop, and both ends are known to exist: the page must create all of
+  // them, which is checked by its counts.
+  const created = newIds(best.written.text);
   const pool = ids.slice(0, Math.min(ids.length, 1_000));
-  const edges = [];
-  for (let i = 0; i < EDGE_PAGE; i++) {
-    edges.push({
-      source_id: pool[i % pool.length] as string,
-      target_id: pool[
-        ((i % pool.length) + 1 + Math.floor(i / pool.length)) % pool.length
-      ] as string,
-      edge_type: "about",
-    });
+  const edges = created.slice(0, EDGE_PAGE).map((source, i) => ({
+    source_id: source,
+    target_id: pool[i % pool.length] as string,
+    edge_type: "about",
+  }));
+  if (edges.length < EDGE_PAGE) {
+    log(
+      `the best-effort page left ${edges.length} new items to link, not ${EDGE_PAGE}`,
+    );
   }
   const edgeBody = JSON.stringify({ edges, mode: "upsert", atomic: false });
-  const edgeRun = await withReaders(ids, async () => {
-    const answer = await api("POST", "/edges/bulk", edgeBody);
-    return { status: answer.status, ms: answer.ms };
-  });
-  readerFigures("edge", edgeRun);
+  const edgeRun = await withReaders(ids, () =>
+    sendPage("/edges/bulk", edgeBody, EDGE_PAGE),
+  );
+  readerFigures("edge", edgeRun, edgeRun.written.judgement);
 
   // 4. The same number of entries in pages of 100.
   const small = takePositions(PAGE);
   let smallMs = 0;
-  let smallErrors = 0;
+  const smallPages: PageJudgement[] = [];
   for (let first = small; first < small + PAGE; first += SMALL_PAGE) {
-    const answer = await api(
-      "POST",
+    const page = await sendPage(
       "/items/bulk",
       pageBody(first, SMALL_PAGE, false),
+      SMALL_PAGE,
     );
-    smallMs += answer.ms;
-    if (!ok(answer)) smallErrors++;
+    smallMs += page.ms;
+    smallPages.push(page.judgement);
   }
   const largePerEntry = best.written.ms / PAGE;
   const smallPerEntry = smallMs / PAGE;
-  const errored = (best.written.status === 200 ? 0 : 1) + smallErrors;
+  const large = best.written.judgement;
+  const smallSum = sumPageErrors(smallPages);
+  const note = (judgement: PageJudgement) =>
+    judgement.note === null ? {} : { note: judgement.note };
   recorder.add(
     scalar("bulk_page_5000_per_entry", "ms", largePerEntry, {
-      errors: best.written.status === 200 ? 0 : 1,
+      errors: large.errors,
+      ...note(large),
     }),
   );
   recorder.add(
     scalar("bulk_page_100_per_entry", "ms", smallPerEntry, {
-      errors: smallErrors,
+      errors: smallSum.errors,
+      ...note(smallSum),
     }),
   );
   recorder.add(
     scalar("bulk_page_ratio", "ratio", largePerEntry / smallPerEntry, {
-      errors: errored,
+      errors: large.errors + smallSum.errors,
+      ...note(large.errors > 0 ? large : smallSum),
     }),
   );
 

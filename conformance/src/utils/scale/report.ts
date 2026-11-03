@@ -257,11 +257,27 @@ export function renderSummary(
   );
   if (previous === null) {
     lines.push("No previous night to compare with.", "");
-  } else if (previous.items !== tonight.items) {
+  } else {
     lines.push(
-      `The previous night measured ${previous.items === null ? "an instance of unknown size" : `${previous.items.toLocaleString("en-US")} items`}, so the changes below say little.`,
-      "",
+      `Compared with the night of ${previous.date.slice(0, 10) || "an unknown date"} (commit \`${previous.commit || "unknown"}\`, run ${previous.runId || "unknown"}).`,
     );
+    const caveats: string[] = [];
+    if (previous.missingSteps.length > 0) {
+      caveats.push(
+        `That night left no figures for ${previous.missingSteps.join(", ")}.`,
+      );
+    }
+    if (previous.profile !== tonight.profile) {
+      caveats.push(
+        `It ran profile ${previous.profile || "unknown"}, against tonight's ${tonight.profile}.`,
+      );
+    }
+    if (previous.items !== tonight.items) {
+      caveats.push(
+        `It measured ${previous.items === null ? "an instance of unknown size" : `${previous.items.toLocaleString("en-US")} items`}, so the changes below say little.`,
+      );
+    }
+    lines.push(...caveats.map((caveat) => `- ${caveat}`), "");
   }
 
   lines.push(

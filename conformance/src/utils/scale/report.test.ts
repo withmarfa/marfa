@@ -143,6 +143,9 @@ describe("the verdict", () => {
   });
 });
 
+/** Twenty samples of one value: enough for a ceiling to be judged. */
+const steady = (value: number) => Array.from({ length: 20 }, () => value);
+
 function fileWith(
   figures: ReturnType<typeof scalar>[],
   overrides: Partial<FiguresFile> = {},
@@ -159,13 +162,13 @@ function fileWith(
 
 describe("the summary", () => {
   const tonight = fileWith([
-    distribution("get_item", "ms", [20, 30, 40]),
+    distribution("get_item", "ms", steady(40)),
     scalar("rss_at_rest", "MB", 400),
   ]);
 
   it("shows each figure with last night's, the change, the ceiling and the verdict", () => {
     const previous = fileWith([
-      distribution("get_item", "ms", [10, 20, 30]),
+      distribution("get_item", "ms", steady(30)),
       scalar("rss_at_rest", "MB", 200),
     ]);
     const text = renderSummary(tonight, previous);
@@ -173,7 +176,7 @@ describe("the summary", () => {
       "| Figure | Tonight | Previous night | Change | Ceiling | Verdict |",
     );
     expect(text).toMatch(
-      /\| get_item \(p95\) \| 39\.0 ms \| 29\.0 ms \| \+10\.0 ms \(\+34%\) \| 50\.0 ms \| pass \|/,
+      /\| get_item \(p95\) \| 40\.0 ms \| 30\.0 ms \| \+10\.0 ms \(\+33%\) \| 50\.0 ms \| pass \|/,
     );
     expect(text).toMatch(
       /\| rss_at_rest \| 400\.0 MB \| 200\.0 MB \| \+200\.0 MB \(\+100%\) \| 300\.0 MB \| \*\*FAIL\*\* \|/,
@@ -184,7 +187,7 @@ describe("the summary", () => {
     const text = renderSummary(tonight, null);
     expect(text).toContain("No previous night");
     expect(text).not.toContain("Previous night |  ");
-    expect(text).toMatch(/\| get_item \(p95\) \| 39\.0 ms \| none \| none \|/);
+    expect(text).toMatch(/\| get_item \(p95\) \| 40\.0 ms \| none \| none \|/);
   });
 
   it("renders when last night measured different figures, marking new ones and listing dropped ones", () => {
@@ -193,15 +196,40 @@ describe("the summary", () => {
       scalar("search_rare", "ms", 5),
     ]);
     const text = renderSummary(tonight, previous);
-    expect(text).toMatch(/\| get_item \(p95\) \| 39\.0 ms \| none \| new \|/);
+    expect(text).toMatch(/\| get_item \(p95\) \| 40\.0 ms \| none \| new \|/);
     expect(text).toMatch(/not measured tonight.*search_rare/i);
   });
 
-  it("warns when last night measured a different size, since the change then says little", () => {
+  it("warns when last night measured a different size, since the change then say little", () => {
     const previous = fileWith([scalar("rss_at_rest", "MB", 200)], {
       items: 5_000,
     });
-    expect(renderSummary(tonight, previous)).toMatch(/5,000 items/);
+    const text = renderSummary(tonight, previous);
+    expect(text).toMatch(/5,000 items/);
+    expect(text).toMatch(/say little/);
+  });
+
+  it("names the night it compares with by its date, commit and run", () => {
+    const previous = fileWith([scalar("rss_at_rest", "MB", 200)], {
+      commit: "def5678",
+      runId: "41",
+      date: "2026-11-02T04:43:00.000Z",
+    });
+    const text = renderSummary(tonight, previous);
+    expect(text).toContain(
+      "Compared with the night of 2026-11-02 (commit `def5678`, run 41).",
+    );
+    expect(text).not.toContain("say little");
+  });
+
+  it("says when that night missed steps, or ran another profile", () => {
+    const previous = fileWith([scalar("rss_at_rest", "MB", 200)], {
+      missingSteps: ["bulk", "export"],
+      profile: "scale-5000",
+    });
+    const text = renderSummary(tonight, previous);
+    expect(text).toMatch(/left no figures for bulk, export/);
+    expect(text).toMatch(/profile scale-5000.*tonight's scale-250k/);
   });
 
   it("names the steps that left no figures and the problems, above the table", () => {

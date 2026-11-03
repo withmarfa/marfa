@@ -86,7 +86,9 @@ export interface Answer {
 /**
  * One request. A 429 is waited out and retried, since it says the server is
  * fine and asks for time; any other answer, or a failure to answer, is
- * returned for the caller to count. A network failure is status 0.
+ * returned for the caller to count. A network failure is status 0. The clock
+ * starts once, before the first try, so the time a retry waited is in the
+ * answer's `ms` and a limiter cannot make a request look quick.
  */
 export async function api(
   method: "GET" | "POST",
@@ -100,8 +102,8 @@ export async function api(
       : typeof body === "string"
         ? body
         : JSON.stringify(body);
+  const start = performance.now();
   for (let attempt = 0; ; attempt++) {
-    const start = performance.now();
     let status = 0;
     let text = "";
     try {
