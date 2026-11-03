@@ -790,13 +790,8 @@ impl Folder {
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
-        self.core.hydrate_until_first(
-            &settings.slice_types(),
-            settings.tier(),
-            &whole,
-            std::slice::from_ref(&self.folder),
-            stop,
-        )
+        self.core
+            .hydrate_until(&settings.slice_types(), settings.tier(), &whole, stop)
     }
 
     /// `None` where the copy already answers for the slice the settings ask.

@@ -287,6 +287,31 @@ describe("the record of folder watches", () => {
     );
   });
 
+  it("shows the folder unavailable while its first hydration keeps failing", async () => {
+    // The witness for the test above: the same watch and the same folder,
+    // where the first page is refused every time, is a problem and not a
+    // copy that is slow to fill.
+    const a = await folderHarness("record-hydration-failing", {
+      hydrate: false,
+      firstPageDropped: true,
+      rows: {
+        "core.note": [{ item: { id: "01a00000-0000-7000-8000-0000000000d2" } }],
+      },
+    });
+    made.push(a);
+    scriptFolderWrites(a);
+    const watch = hold(a.folder.watchEvery());
+    const pid = watch.pid();
+    await vi.waitFor(() => {
+      const entry = entryOf(a, pid, a.dir);
+      expect(entry, `${watch.stdout}${watch.stderr}`).toBeDefined();
+      expect(
+        entry?.problems?.map((problem) => problem.code),
+        `${watch.stdout}${watch.stderr}`,
+      ).toContain("unavailable");
+    }, WAIT);
+  });
+
   it("lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it", async () => {
     const { a, b, others } = await twoFolders("record-unwatched", {
       others: [tagged("w")],

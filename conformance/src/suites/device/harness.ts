@@ -333,6 +333,9 @@ export function scriptHydration(
      *  hydration has marked itself in progress by, as a server slow to
      *  answer a page does. */
     pagesHeldUntil?: Promise<void>;
+    /** Drops the connection on the first page of each listing, as a server
+     *  that cannot be reached does. */
+    firstPageDropped?: boolean;
   },
 ): void {
   server.answer(
@@ -422,12 +425,15 @@ export function scriptHydration(
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
   scriptStats(server, rows, options.statsHeldUntil);
-  const pageHeld = (request: RecordedRequest, page: Answer): Answer =>
-    options.pagesHeldUntil !== undefined &&
-    request.query.get("cursor") === null &&
-    request.query.get("filter") === null
+  const pageHeld = (request: RecordedRequest, page: Answer): Answer => {
+    const first =
+      request.query.get("cursor") === null &&
+      request.query.get("filter") === null;
+    if (first && options.firstPageDropped === true) return { kind: "drop" };
+    return first && options.pagesHeldUntil !== undefined
       ? { kind: "gated", until: options.pagesHeldUntil, then: page }
       : page;
+  };
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves `system.*` out.
@@ -878,6 +884,8 @@ export async function folderHarness(
     statsHeldUntil?: Promise<void>;
     /** Holds the first page of each listing, as `scriptHydration` takes it. */
     pagesHeldUntil?: Promise<void>;
+    /** Drops the first page of each listing, as `scriptHydration` takes it. */
+    firstPageDropped?: boolean;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -927,6 +935,7 @@ export async function folderHarness(
       drop: options.drop,
       statsHeldUntil: options.statsHeldUntil,
       pagesHeldUntil: options.pagesHeldUntil,
+      firstPageDropped: options.firstPageDropped,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

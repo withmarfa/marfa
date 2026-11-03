@@ -367,8 +367,8 @@ describe("the order a hydration reads in", () => {
   });
 });
 
-describe("the pinned system rows a hydration reads first", () => {
-  it("reads a pinned system row before the first page of an item listing", async () => {
+describe("the pinned rows a hydration reads first", () => {
+  it("reads a pinned row before the first page of an item listing", async () => {
     harness = await startHarness("system-pins-first");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -402,7 +402,7 @@ describe("the pinned system rows a hydration reads first", () => {
     expect(system, doors.join(", ")).toBeGreaterThanOrEqual(0);
     expect(
       system,
-      "a pinned system row was read after the first page, so a folder's own row is missing from the copy while the listing fills it",
+      "a pinned row was read after the first page, so a folder's own row is missing from the copy while the listing fills it",
     ).toBeLessThan(page);
     const held = await device.get("settings");
     expect(held.ok ? held.value.properties.title : "not held").toBe("pinned");

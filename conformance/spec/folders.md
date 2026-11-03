@@ -7216,9 +7216,9 @@ When a folder-health receipt reports a stored sequence at least as high as the d
 
 While a folder's copy hydrates, a device MUST NOT report `settings_invalid` or `unavailable` for the folder because the copy answers `hydration_incomplete`.
 
-**Reason:** a copy that is still filling has not yet said anything about the folder's settings or the server, and a person or an app reading the report would be told something is wrong when nothing is. Settings that cannot be read and a server that cannot be reached still report.
+**Reason:** a copy that is still filling has not yet said anything about the folder's settings or the server, and a person or an app reading the report would be told something is wrong when nothing is. Settings that cannot be read still report, and so does a hydration that keeps failing for a reason outside Marfa, such as a server that cannot be reached: the folder reports `unavailable` for as long as the hydration fails, and nothing once it is merely slow.
 
-**Tests:** `device/folder-watch-record.test.ts › shows no problem for a folder whose first hydration is under way`.
+**Tests:** `device/folder-watch-record.test.ts › shows no problem for a folder whose first hydration is under way`, `› shows the folder unavailable while its first hydration keeps failing`.
 
 ## Where a folder sits
 
