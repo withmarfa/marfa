@@ -47,7 +47,7 @@ function releaseMemory(): void {
     });
   } catch {
     // Handing memory back is an optimization, and a runtime without the
-    // inspector (a worker thread, a stripped build) simply keeps it.
+    // inspector simply keeps it.
     session.disconnect();
   }
 }
