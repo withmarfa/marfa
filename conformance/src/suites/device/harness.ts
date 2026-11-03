@@ -532,9 +532,9 @@ export type FilterReading = (
 export function scriptedFilter(
   filter: string,
 ): ((row: FilteredRow) => boolean) | undefined {
-  const anyOf = filter.split(/\s+OR\s+/).map((part) =>
-    part.split(/\s+AND\s+/).map(scriptedTerm),
-  );
+  const anyOf = filter
+    .split(/\s+OR\s+/)
+    .map((part) => part.split(/\s+AND\s+/).map(scriptedTerm));
   if (anyOf.some((allOf) => allOf.some((term) => term === undefined)))
     return undefined;
   const terms = anyOf as Array<Array<(row: FilteredRow) => boolean>>;
@@ -958,7 +958,7 @@ export async function folderHarness(
     /** A home whose own registry the binary finds, in place of either. */
     home?: string;
     /** The type catalog the server serves, the scripted one unless named. */
-    catalog?: Answer;
+    catalog?: Responder;
     /** What `GET /edge-types` answers, the shipped types unless named. */
     edgeTypes?: Responder;
     /** A call to `POST /items/titles` naming a name this answers is answered

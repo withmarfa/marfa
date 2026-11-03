@@ -44,7 +44,7 @@ Where a slice has a query, a device MUST hold a row of a type and a tier the sli
 
 Where a slice has a query, a device MUST hold a conflicted copy of a type and a tier the slice takes that is in one of the query's states or in the bin, whether or not the query's filter matches it.
 
-**Reason:** a conflicted copy is written beside the file it came from (`folders/conflicted-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
+**Reason:** a conflicted copy is written beside the file it came from (`folders/conflict-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
@@ -910,7 +910,7 @@ When a device hydrates after a hydration completed, a device MUST read every pag
 
 If a device hydrates other types, another tier, other edge types or another query than an interrupted hydration declared, then a device MUST read the slice again from its first page and report the hydration `restarted` with `slice_changed`.
 
-**Tests:** `device/hydration.test.ts › starts again from the first page for another slice`, `device/folders-copy-shrink.test.ts › keeps every unsent write when a shrink stopped midway is resumed`.
+**Tests:** `device/hydration.test.ts › starts again from the first page for another slice`, `device/folders-copy-shrink.test.ts › starts a stopped shrink again from the first page when the query changes`.
 
 ### `device/hydrate-restart-instance`
 
