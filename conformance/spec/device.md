@@ -762,7 +762,7 @@ When a device hydrates, a device MUST read each item listing until a page answer
 
 When a device hydrates, a device MUST read the pinned rows its slice does not bring with `POST /items/bulk-get` under the hydration's reach, at most 100 ids to a request.
 
-**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`reach/listed-bulk-get`).
+**Reason:** a read of each pin alone would add a request to every hydration for each row an app pins, and a pin made for a create lasts until it is taken off or the server says its row is gone (`device/pin-create-lasts`). The bulk read takes at most 100 ids (`items/bulk-get-cap`) and answers each row's `listed` (`reach/listed-bulk-get`). The early read of every pin (`device/hydrate-pins-first`) is batched the same way and answers each pin once: the walk of pins after the listings reads only a pin made since the early read, so no pin is read twice in one hydration, a pin the server left out of its answer included.
 
 **Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its reach, not one request each`.
 
@@ -770,7 +770,7 @@ When a device hydrates, a device MUST read the pinned rows its slice does not br
 
 When a device hydrates, a device MUST read every pinned row before the first page of the item listing.
 
-**Reason:** a folder's own row is a pinned `system.folder` row, and a copy that clears before it reads that row cannot answer the folder's settings until the listings are done, so a folder reads its settings as not yet held for the whole hydration. A device cannot tell which pinned rows an app depends on, so it reads them all. A read that fails ends the hydration before it replaces anything, so the copy stays as it was. The hydration reads each pin the listings did not bring again after them (`device/hydrate-pins-batched`), and a row that changed in between ends at the newer version, which the later read or the replay of the log brings.
+**Reason:** a folder's own row is a pinned `system.folder` row, and a copy that clears before it reads that row cannot answer the folder's settings until the listings are done, so a folder reads its settings as not yet held for the whole hydration. A device cannot tell which pinned rows an app depends on, so it reads them all. A read that fails ends the hydration before it replaces anything, so the copy stays as it was. The walk after the listings reads no pin the early read answered (`device/hydrate-pins-batched`), and a row that changed after the early read ends at the newer version, which the replay of the log from the head read before it brings.
 
 **Tests:** `device/hydration.test.ts › reads a pinned row before the first page of an item listing`.
 

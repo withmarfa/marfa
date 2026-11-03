@@ -269,6 +269,21 @@ impl CoreError {
         }
     }
 
+    /// Whether the server could not be reached or answered with its own
+    /// trouble: the network, a timeout, a rate limit or a `5xx`. A full disk
+    /// or a local read or write that failed is environmental but is not the
+    /// server being unavailable.
+    pub fn is_unreachable(&self) -> bool {
+        match self {
+            CoreError::RenewalFailed(cause) => cause.is_unreachable(),
+            CoreError::Network(_) | CoreError::RateLimited { .. } => true,
+            CoreError::Server { status, .. } | CoreError::Unnamed { status, .. } => {
+                matches!(status, 408 | 429 | 500..=599)
+            }
+            _ => false,
+        }
+    }
+
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             CoreError::RenewalFailed(cause) => cause.retry_after(),
@@ -593,6 +608,31 @@ mod tests {
             validation.to_string(),
             "validation (invalid_properties): read: Expected boolean"
         );
+    }
+
+    #[test]
+    fn only_a_server_out_of_reach_or_in_trouble_is_unreachable() {
+        let status = |status| CoreError::Server {
+            status,
+            code: "x".into(),
+            message: String::new(),
+            details: None,
+        };
+        assert!(CoreError::Network("down".into()).is_unreachable());
+        assert!(status(503).is_unreachable());
+        assert!(status(408).is_unreachable());
+        assert!(!status(425).is_unreachable());
+        assert!(!status(404).is_unreachable());
+        assert!(
+            CoreError::RateLimited {
+                code: "x".into(),
+                message: String::new(),
+                retry_after_seconds: None
+            }
+            .is_unreachable()
+        );
+        assert!(!CoreError::Io("disk".into()).is_unreachable());
+        assert!(!CoreError::StorageFull("full".into()).is_unreachable());
     }
 
     #[test]

@@ -148,8 +148,9 @@ struct FollowHealth {
     generation: u64,
     consumed: u64,
     live: bool,
-    /// The follow's hydration is failing for a reason outside Marfa, such as
-    /// a server out of reach, so the copy is not merely slow to fill
+    /// The follow's latest hydration attempt failed because the server could
+    /// not be reached or answered with its own trouble (`is_unreachable`), so
+    /// the copy is not merely slow to fill; cleared as each attempt begins
     /// (`folders/health-hydrating`).
     hydration_failing: bool,
 }
@@ -159,6 +160,17 @@ impl FollowHealth {
         self.live = live;
         if live {
             self.generation = self.generation.saturating_add(1);
+        }
+    }
+
+    /// Clears the failure of the attempt before, which says whether it was.
+    fn begin_attempt(&mut self) -> bool {
+        std::mem::replace(&mut self.hydration_failing, false)
+    }
+
+    fn attempt_failed(&mut self, error: &CoreError) {
+        if error.is_unreachable() {
+            self.hydration_failing = true;
         }
     }
 
@@ -764,17 +776,19 @@ fn follow(
     // it has at once, and the watch would go on telling it unreachable.
     let mut unreachable = false;
     while !ended.load(Ordering::SeqCst) {
+        // Down until this attempt fails, so a retry that is filling shows
+        // as filling and only a fresh failure shows `unavailable`.
+        let was_failing = health.lock().expect("follow health lock").begin_attempt();
         let resumed = folder.resume_until(ended);
-        if resumed.as_ref().is_err_and(CoreError::is_environmental) {
-            health.lock().expect("follow health lock").hydration_failing = true;
+        if let Err(error) = &resumed {
+            health
+                .lock()
+                .expect("follow health lock")
+                .attempt_failed(error);
         }
         let followed = resumed.and_then(|hydrated| {
             retry = RETRY_FIRST;
             said = false;
-            let was_failing = std::mem::replace(
-                &mut health.lock().expect("follow health lock").hydration_failing,
-                false,
-            );
             if hydrated.is_some() || was_failing {
                 let _ = wakes.send(Wake::Server(crate::clock::now(), None));
             }
@@ -1516,6 +1530,20 @@ mod tests {
             Some(crate::CoreError::Network(_))
         ));
         assert!(health.failing(&crate::CoreError::NoCursor).is_none());
+    }
+
+    #[test]
+    fn a_retry_that_is_filling_is_not_unavailable_and_a_local_fault_never_is() {
+        let mut health = super::FollowHealth::default();
+        let slow = crate::CoreError::HydrationIncomplete;
+        health.attempt_failed(&crate::CoreError::Network("down".into()));
+        assert!(health.failing(&slow).is_some(), "the attempt that failed");
+        assert!(health.begin_attempt(), "the failure is told to the next");
+        assert!(health.failing(&slow).is_none(), "the retry filling");
+        health.attempt_failed(&crate::CoreError::StorageFull("full".into()));
+        health.attempt_failed(&crate::CoreError::Io("read".into()));
+        assert!(health.failing(&slow).is_none(), "a local fault");
+        assert!(!health.begin_attempt());
     }
 
     #[test]

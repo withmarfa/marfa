@@ -107,13 +107,9 @@ enum Phase {
 /// holds them now (`device/hydrate-pins-first`). They are read before the
 /// copy is replaced, so a row an app depends on, such as a folder's own, is
 /// never missing from it while the listings fill it, and a read that fails
-/// leaves the copy as it was. The walk of pins reads again each one the
-/// listings did not bring.
-fn read_pins(
-    core: &Core,
-    http: &Http,
-    stop: &AtomicBool,
-) -> Result<Vec<(WireItemWithMetadata, Vec<WireEdge>)>> {
+/// leaves the copy as it was. The walk of pins then skips them, so each pin is
+/// read once; a change after the read comes with the replay of the log.
+fn read_pins(core: &Core, http: &Http, stop: &AtomicBool) -> Result<EarlyPins> {
     let ids = store::pins(&*core.conn()?)?;
     let mut read = Vec::new();
     for chunk in ids.chunks(crate::http::BULK_GET_LIMIT) {
@@ -127,18 +123,31 @@ fn read_pins(
             read.push((row, edges));
         }
     }
-    Ok(read)
+    Ok(EarlyPins { ids, rows: read })
 }
 
-/// Lays the rows `read_pins` read over the cleared copy. Their listing
-/// mark is left to the walk of pins, which reads them again, so the listings
-/// count a row they bring as theirs.
-fn take_pins(
-    tx: &rusqlite::Connection,
-    rows: &[(WireItemWithMetadata, Vec<WireEdge>)],
-) -> Result<()> {
+/// What `read_pins` asked and what it was answered.
+struct EarlyPins {
+    ids: Vec<String>,
+    rows: Vec<(WireItemWithMetadata, Vec<WireEdge>)>,
+}
+
+/// Lays the rows `read_pins` read over the cleared copy. A row the server
+/// holds is marked answered, as the walk of pins marks what it reads, and
+/// every pin asked is marked early, so the walk does not read any of them
+/// again, a pin the answer left out included. The listings still count a row
+/// they bring as theirs once, which the early mark lets them tell.
+fn take_pins(tx: &rusqlite::Connection, pins: &EarlyPins) -> Result<()> {
     let catalog = Catalog::load(tx)?;
-    for (row, edges) in rows {
+    for id in &pins.ids {
+        crate::reach::set_early(tx, id)?;
+    }
+    for (row, edges) in &pins.rows {
+        crate::reach::set_listed(
+            tx,
+            &row.item.id,
+            row.listed.ok_or_else(crate::reach::invalid)?,
+        )?;
         store::take_server_item(tx, &row.item, Some(&row.metadata.tags), &catalog)?;
         for edge in edges {
             store::put_server_edge(tx, edge)?;
@@ -492,9 +501,12 @@ fn attempt(
                             .and_then(|count| count.parse().ok())
                             .unwrap_or(0);
                         for row in &page.data {
-                            if !crate::reach::answered(tx, &row.item.id)? {
+                            if !crate::reach::answered(tx, &row.item.id)?
+                                || crate::reach::early(tx, &row.item.id)?
+                            {
                                 listed += 1;
                             }
+                            crate::reach::forget_early(tx, &row.item.id)?;
                             crate::reach::set_listed(
                                 tx,
                                 &row.item.id,
@@ -581,12 +593,13 @@ fn attempt(
             // outside the bin, and stays without one (`device/pin-gone-kept`).
             // A pin the queue alone holds is a create whose answer may have
             // been lost after the server took it, so only a row the listings
-            // brought is skipped.
+            // or the early read answered is skipped, and a pin the early read
+            // asked is not asked again.
             let pinned: Vec<String> = {
                 let conn = core.conn()?;
                 let mut unheld = Vec::new();
                 for id in store::pins(&conn)? {
-                    if !crate::reach::answered(&conn, &id)? {
+                    if !crate::reach::answered(&conn, &id)? && !crate::reach::early(&conn, &id)? {
                         unheld.push(id);
                     }
                 }
@@ -630,6 +643,7 @@ fn attempt(
             }
             let conn = core.conn()?;
             context.check(&conn)?;
+            conn.execute("DELETE FROM meta WHERE key LIKE 'item_early/%'", [])?;
             Reached::at(Phase::Replay, pages_total).keep(&conn)?;
         }
 
@@ -1797,8 +1811,8 @@ mod tests {
         assert_eq!(core.get("other").unwrap().unwrap().r#type, "core.note");
     }
 
-    /// A pinned row that the server changes between the early read and the
-    /// first page is read again by the walk of pins, which takes the newer
+    /// A pinned row that the server changes after the early read is read once,
+    /// and the replay of the log from the head read before it brings the newer
     /// version; the older one the early read took does not win.
     #[test]
     fn a_pinned_row_that_changes_after_the_early_read_ends_at_the_newer_version() {
@@ -1807,18 +1821,43 @@ mod tests {
         store::pin(&core.conn().unwrap(), "sys").unwrap();
         server.on(
             "/items/bulk-get",
+            vec![bulk_typed(&[("sys", "system.folder", 1)])],
+        );
+        let mut changed: Value = serde_json::from_str(&scripted::item_payload(
+            "item.updated",
+            "sys",
+            "system.folder",
+            2,
+        ))
+        .unwrap();
+        changed["listed"] = true.into();
+        let changed = changed.to_string();
+        server.on(
+            "/events",
             vec![
-                bulk_typed(&[("sys", "system.folder", 1)]),
-                bulk_typed(&[("sys", "system.folder", 2)]),
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "12"),
+                        scripted::event("11", "item.updated", &changed),
+                        scripted::copy_marker("stream_live", "12"),
+                    ],
+                    Then::End,
+                ),
             ],
         );
 
         hydrate(&core).unwrap();
 
-        assert_eq!(server.seen("/items/bulk-get").len(), 2);
-        let held = core.get("sys").unwrap().unwrap();
-        assert_eq!(held.version, 2);
-        assert_eq!(held.properties["title"], "sys v2");
+        assert_eq!(
+            server.seen("/items/bulk-get").len(),
+            1,
+            "each pin is read once"
+        );
+        assert_eq!(core.get("sys").unwrap().unwrap().version, 2);
     }
 
     /// The early read of an older version never replaces a newer row the
@@ -1858,56 +1897,49 @@ mod tests {
     }
 
     #[test]
-    fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_under_its_reach() {
+    fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_and_each_once() {
         let server = Scripted::start();
         let (core, pinned) = pinned_copy(&server, 250);
-        server.on(
-            "/items/bulk-get",
-            vec![
-                bulk(&[]),
-                bulk(&[]),
-                bulk(&[]),
-                bulk(&[("pin-000", true), ("pin-001", false)]),
-                bulk(&[]),
-                bulk(&[("pin-249", true)]),
-            ],
-        );
+        // The server answers every pin, and the listings bring none.
+        let answers: Vec<Answer> = pinned
+            .chunks(100)
+            .map(|ids| {
+                let rows: Vec<(&str, bool)> = ids
+                    .iter()
+                    .map(|id| (id.as_str(), id != "pin-001"))
+                    .collect();
+                bulk(&rows)
+            })
+            .collect();
+        server.on("/items/bulk-get", answers);
 
         let report = hydrate(&core).unwrap();
 
-        // Each pin is read before the copy is replaced and again for what
-        // the listings did not bring; both reads are 100 to a request.
+        // The early read of every pin is 100 to a request and answers each
+        // one; the walk after the listings asks for none again.
         let asked = server.seen("/items/bulk-get");
-        let (early, asked) = asked.split_at(3);
-        assert_eq!(early.len(), 3);
+        let mut sizes = Vec::new();
         let mut named = Vec::new();
-        for seen in asked {
+        for seen in &asked {
             assert_eq!(seen.reach.as_deref(), Some(scripted::FENCE));
             let body: Value = serde_json::from_slice(&seen.body).unwrap();
             assert_eq!(body["include"], json!(["edges", "metadata", "system"]));
-            named.extend(
-                body["ids"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|id| id.as_str().unwrap().to_string()),
-            );
+            let ids: Vec<String> = body["ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().to_string())
+                .collect();
+            sizes.push(ids.len());
+            named.extend(ids);
         }
         assert_eq!(
-            asked
-                .iter()
-                .map(
-                    |seen| serde_json::from_slice::<Value>(&seen.body).unwrap()["ids"]
-                        .as_array()
-                        .unwrap()
-                        .len()
-                )
-                .collect::<Vec<_>>(),
+            sizes,
             [100, 100, 50],
-            "the pinned rows were not read 100 to a request"
+            "the pinned rows were not read 100 to a request, each once"
         );
         assert_eq!(named, pinned);
-        assert_eq!(report.items, 3);
+        assert_eq!(report.items, 250);
         let conn = core.conn().unwrap();
         assert_eq!(
             store::pins(&conn).unwrap(),
@@ -1917,7 +1949,7 @@ mod tests {
         for (id, held) in [
             ("pin-000", true),
             ("pin-001", true),
-            ("pin-100", false),
+            ("pin-100", true),
             ("pin-249", true),
         ] {
             assert_eq!(store::item_held(&conn, id).unwrap(), held, "{id}");
@@ -2711,11 +2743,11 @@ mod tests {
 
         hydrate(&core).unwrap();
 
-        // Once before the copy is replaced and once for the pin the listings
-        // did not bring.
+        // The read before the copy is replaced answered it, so the walk of
+        // pins does not read it again.
         assert_eq!(
             server.seen("/items/bulk-get").len(),
-            2,
+            1,
             "the pinned create was not read"
         );
         assert_eq!(core.get(&id).unwrap().unwrap().version, 2);

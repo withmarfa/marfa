@@ -311,6 +311,20 @@ pub(crate) fn set_listed(conn: &Connection, id: &str, listed: bool) -> Result<()
     )
 }
 
+/// A pin the hydration's early read answered, whose answer the listings have
+/// not yet counted as theirs.
+pub(crate) fn early(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(store::meta_get(conn, &format!("item_early/{id}"))?.is_some())
+}
+
+pub(crate) fn set_early(conn: &Connection, id: &str) -> Result<()> {
+    store::meta_set(conn, &format!("item_early/{id}"), "1")
+}
+
+pub(crate) fn forget_early(conn: &Connection, id: &str) -> Result<()> {
+    store::meta_delete(conn, &format!("item_early/{id}"))
+}
+
 pub(crate) fn forget_listed(conn: &Connection, id: &str) -> Result<()> {
     store::meta_delete(conn, &format!("item_listed/{id}"))
 }
