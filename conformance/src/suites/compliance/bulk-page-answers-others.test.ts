@@ -20,9 +20,12 @@ import { HeldLock } from "../../utils/held-lock.js";
  * not is a read the server answered in the middle of it.
  *
  * **Its own server**, because a page of thousands of entries would slow every
- * fixture sharing the run's server, and because one test sets the busy
- * budget. The budget is short enough that the page outlasts it many times
- * over, and long enough that no single entry does.
+ * fixture sharing the run's server, because one test sets the busy budget,
+ * and because the limiter is on here: counting a request is a write, so a
+ * read that had to wait for the lock to be counted would wait for the page.
+ * The budget is short enough that the page outlasts it many times over, and
+ * long enough that no single entry does. The caps are far above what the
+ * fixtures send.
  */
 const BUDGET_MS = 300;
 const PAGE = 3_000;
@@ -34,6 +37,9 @@ beforeAll(async () => {
   server = await bootFreshServer("bulk-page-answers-others", {
     SQLITE_BUSY_BUDGET_MS: String(BUDGET_MS),
     MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    RATE_LIMIT_ENABLED: "true",
+    RATE_LIMIT_REQUESTS: "1000000",
+    RATE_LIMIT_KEYS_REQUESTS: "1000",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
