@@ -11,10 +11,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   copyHeldLog,
   copyItemEvent,
+  edgeEvent,
   refusal,
   typeCatalog,
+  wireEdge,
   wireItem,
   wireType,
+  type WireEdgeOptions,
 } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { DoorRow, FolderDoor } from "../../device/folder-door.js";
@@ -54,6 +57,9 @@ const id = (n: number): string =>
   `01a00000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 
 const TAGGED_A = 'tags contains "a"';
+
+const edgeId = (n: number): string =>
+  `01a00000-0000-7000-8000-00000000e${String(n).padStart(3, "0")}`;
 
 function note(
   n: number,
@@ -101,7 +107,7 @@ function noteListings(
       )
       .map((request) => {
         const keys: Record<string, string> = {};
-        for (const key of ["state", "filter", "tags", "tier"]) {
+        for (const key of ["state", "filter", "beneath", "tags", "tier"]) {
           const named = request.query.get(key);
           if (named !== null) keys[key] = named;
         }
@@ -264,7 +270,13 @@ function moveSettings(
  */
 async function unsentWork(
   label: string,
-  options: { pageSize?: number; drop?: (offset: number) => boolean } = {},
+  options: {
+    pageSize?: number;
+    drop?: (offset: number) => boolean;
+    /** The query the settings move to, the notes tagged `a` unless named. */
+    to?: FolderSettings["query"];
+    edges?: Record<string, WireEdgeOptions[]>;
+  } = {},
 ) {
   const log: SseFrame[] = [];
   const removal_threshold = { files: 1, fraction: 0.1 };
@@ -286,6 +298,7 @@ async function unsentWork(
     events: [copyHeldLog(log)],
     pageSize: options.pageSize,
     drop: options.drop,
+    edges: options.edges,
   });
   let door: FolderDoor | undefined;
   scriptFolderWrites(harness, {
@@ -346,7 +359,10 @@ async function unsentWork(
   moveSettings(
     harness,
     log,
-    { query: { types: ["core.note"], filter: TAGGED_A }, removal_threshold },
+    {
+      query: options.to ?? { types: ["core.note"], filter: TAGGED_A },
+      removal_threshold,
+    },
     "4",
   );
   value(await device.catchUp());
@@ -406,31 +422,56 @@ async function sendsEverything(folder: FolderHarness): Promise<void> {
   ).toBe(false);
 }
 
+const shrinks: Array<
+  [string, string, Parameters<typeof unsentWork>[1], Record<string, string>]
+> = [
+  ["by a filter", "copy-shrink", undefined, { filter: TAGGED_A }],
+  [
+    "beneath an item",
+    "copy-shrink-beneath",
+    {
+      to: { types: ["core.note"], beneath: id(1) },
+      edges: {
+        "parent-of": [4, 5].map((n) => ({
+          id: edgeId(n),
+          source_id: id(1),
+          target_id: id(n),
+        })),
+      },
+    },
+    { beneath: id(1) },
+  ],
+];
+
 describe("shrinking a copy that holds more than its query shows", () => {
-  it("keeps every unsent write and changes no file when a changed query shrinks the copy", async () => {
-    const before = await unsentWork("copy-shrink");
-    const hydrated = value(await harness!.folder.hydrate());
-    expect(hydrated.query).toEqual({
-      states: ["active", "archived"],
-      filter: TAGGED_A,
-    });
+  it.each(shrinks)(
+    "keeps every unsent write and changes no file when a changed query %s shrinks the copy",
+    async (_, label, options, narrowed) => {
+      const before = await unsentWork(label, options);
+      const hydrated = value(await harness!.folder.hydrate());
+      expect(hydrated.query).toEqual({
+        states: ["active", "archived"],
+        ...narrowed,
+      });
 
-    const held = await heldIds(harness!);
-    expect(held, "the shrink kept a row its query does not take").not.toContain(
-      id(6),
-    );
-    expect(held).toEqual(
-      expect.arrayContaining([id(1), id(2), id(4), id(5), before.copyId]),
-    );
-    expect(keptTables(harness!.dir)).toEqual(before.kept);
-    expect(filesOf(harness!.dir)).toEqual(before.files);
-    expect(value(await harness!.folder.device().queue())).toEqual(
-      before.queued,
-    );
-    expect(await waits(harness!)).toEqual(before.waits);
+      const held = await heldIds(harness!);
+      expect(
+        held,
+        "the shrink kept a row its query does not take",
+      ).not.toContain(id(6));
+      expect(held).toEqual(
+        expect.arrayContaining([id(1), id(2), id(4), id(5), before.copyId]),
+      );
+      expect(keptTables(harness!.dir)).toEqual(before.kept);
+      expect(filesOf(harness!.dir)).toEqual(before.files);
+      expect(value(await harness!.folder.device().queue())).toEqual(
+        before.queued,
+      );
+      expect(await waits(harness!)).toEqual(before.waits);
 
-    await sendsEverything(harness!);
-  });
+      await sendsEverything(harness!);
+    },
+  );
 
   it("keeps every unsent write when a shrink stopped midway is resumed", async () => {
     let armed = false;
@@ -929,6 +970,184 @@ describe("a narrowed copy kept by catch-up", () => {
     const status = value(await device.status());
     expect(status.pinned).toContain(createdId);
     expect(await heldIds(harness!)).toContain(createdId);
+  });
+});
+
+describe("a folder's copy narrowed beneath an item", () => {
+  const parentOf = (n: number, source: number, target: number) => ({
+    id: edgeId(n),
+    source_id: id(source),
+    target_id: id(target),
+  });
+
+  /** A folder of the notes beneath `id(1)`, with a held stream a fixture
+   *  adds events to and the `parent-of` edges the server holds, which a
+   *  fixture changes as it moves a branch. */
+  async function beneath(
+    label: string,
+    rows: ReturnType<typeof note>[],
+    edges: WireEdgeOptions[],
+  ): Promise<{ log: SseFrame[]; edges: WireEdgeOptions[] }> {
+    const log: SseFrame[] = [];
+    harness = await folderHarness(label, {
+      settings: { query: { types: ["core.note"], beneath: id(1) } },
+      rows: { "core.note": rows },
+      edges: { "parent-of": edges },
+      events: [copyHeldLog(log)],
+    });
+    scriptFolderWrites(harness);
+    return { log, edges };
+  }
+
+  const parentEvent = (
+    at: string,
+    kind: string,
+    edge: WireEdgeOptions,
+  ): SseFrame =>
+    edgeEvent(at, kind, wireEdge({ ...edge, edge_type: "parent-of" }));
+
+  it("hydrates only the item and everything beneath it, with its parent-of edges whole", async () => {
+    await beneath(
+      "copy-beneath-holds",
+      [
+        note(1, "root", []),
+        note(2, "child", []),
+        note(3, "grandchild", [], "trashed"),
+        note(4, "outside", []),
+        note(7, "outside child", []),
+        note(9, "conflicted", ["conflicted-copy"]),
+      ],
+      [parentOf(1, 1, 2), parentOf(2, 2, 3), parentOf(3, 4, 7)],
+    );
+
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3), id(9)]);
+    expect(noteListings(harness!)).toEqual([
+      {
+        state: "active,archived,trashed",
+        beneath: id(1),
+        tier: "library",
+      },
+      {
+        state: "active,archived,trashed",
+        tags: "conflicted-copy",
+        tier: "library",
+      },
+    ]);
+    expect(noteListings(harness!, "/items/stats")).toEqual([
+      {
+        state: "active,archived,trashed",
+        beneath: id(1),
+        tier: "library",
+      },
+    ]);
+    const status = value(await harness!.folder.device().status());
+    expect(status.slice_query).toEqual({
+      states: ["active", "archived"],
+      beneath: id(1),
+    });
+    // An edge between two rows the copy does not hold is held all the same.
+    expect(
+      value(await harness!.folder.device().edgesFrom(id(4))).map(
+        (edge) => edge.target_id,
+      ),
+    ).toEqual([id(7)]);
+
+    // The witness: the rows left out are ones the server gives.
+    value(await harness!.folder.device().pin(id(4)));
+    expect(await heldIds(harness!)).toContain(id(4));
+  });
+
+  it("holds a branch moved beneath the item, and writes its files", async () => {
+    const { log, edges } = await beneath(
+      "copy-beneath-enters",
+      [
+        note(1, "root", []),
+        note(2, "child", []),
+        note(5, "branch", []),
+        note(6, "leaf", []),
+      ],
+      [parentOf(1, 1, 2), parentOf(2, 5, 6)],
+    );
+    value(await harness!.folder.pull());
+    expect(await heldIds(harness!)).toEqual([id(1), id(2)]);
+    expect(existsSync(join(harness!.dir, "leaf.md"))).toBe(false);
+
+    const moved = parentOf(3, 2, 5);
+    edges.push(moved);
+    log.push(parentEvent("2", "edge.created", moved));
+    value(await harness!.folder.device().catchUp());
+    value(await harness!.folder.pull());
+
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(5), id(6)]);
+    expect(
+      harness!.server.requests.some(
+        (request) =>
+          request.pathname === "/items" &&
+          request.query.get("beneath") === id(5),
+      ),
+      "the branch was not read beneath where it entered",
+    ).toBe(true);
+    expect(readFileSync(join(harness!.dir, "branch.md"), "utf8")).toContain(
+      "branch",
+    );
+    expect(readFileSync(join(harness!.dir, "leaf.md"), "utf8")).toContain(
+      "leaf",
+    );
+  });
+
+  it("lets go of a branch moved out from beneath the item, but a row a waiting write names", async () => {
+    const { log } = await beneath(
+      "copy-beneath-leaves",
+      [
+        note(1, "root", []),
+        note(2, "branch", []),
+        note(3, "waiting", []),
+        note(4, "leaf", []),
+      ],
+      [parentOf(1, 1, 2), parentOf(2, 2, 3), parentOf(3, 2, 4)],
+    );
+    const device = harness!.folder.device();
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3), id(4)]);
+    const waiting = value(
+      await device.update(id(3), {
+        properties: { body: "mine\n" },
+        version: 1,
+      }),
+    );
+    expect(waiting.verdict).toBeNull();
+
+    log.push(parentEvent("2", "edge.deleted", parentOf(1, 1, 2)));
+    value(await device.catchUp());
+
+    const held = await heldIds(harness!);
+    // The witness: the same move lets go of rows no write names.
+    expect(held).not.toContain(id(2));
+    expect(held).not.toContain(id(4));
+    expect(held).toEqual([id(1), id(3)]);
+  });
+
+  it("keeps the branch while the item is in the bin, and lets it go once the item is purged", async () => {
+    const { log } = await beneath(
+      "copy-beneath-root-binned",
+      [note(1, "root", []), note(2, "child", []), note(3, "grandchild", [])],
+      [parentOf(1, 1, 2), parentOf(2, 2, 3)],
+    );
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3)]);
+
+    const binned = note(1, "root", [], "trashed");
+    harness!.rows["core.note"]![0] = binned;
+    log.push(
+      copyItemEvent("2", "item.deleted", wireItem(binned.item), { tags: [] }),
+    );
+    value(await harness!.folder.device().catchUp());
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3)]);
+
+    harness!.rows["core.note"]!.shift();
+    log.push(
+      copyItemEvent("3", "item.purged", wireItem(binned.item), { tags: [] }),
+    );
+    value(await harness!.folder.device().catchUp());
+    expect(await heldIds(harness!)).toEqual([]);
   });
 });
 
