@@ -632,6 +632,10 @@ impl Remote {
     fn send_once(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
         let sends_key = request.credential && !self.local;
         let http = self.transport(sends_key)?;
+        let http = match request.wait {
+            Some(wait) => http.awaiting(wait),
+            None => http,
+        };
         if sends_key && self.bearer().is_none() {
             return Err(self.no_credential());
         }

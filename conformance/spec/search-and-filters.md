@@ -1984,6 +1984,22 @@ When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no par
 
 **Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
 
+### `search-and-filters/cli-export-archive-wait`
+
+When `marfa export --format archive` has sent its request, the CLI MUST wait up to 30 minutes for the server to begin its answer.
+
+**Reason:** the server checks the whole selection before it sends an archive (`search-and-filters/archive-restorable`), so its first byte comes after a time that grows with the instance: about two minutes for 250,000 items, longer than the 90 seconds the CLI gives most commands for an answer to begin. A bound that is too short ends the export of the instances that most need a backup, and the server then drops the request.
+
+**Tests:** `cli/archive-wait.test.ts › waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole`.
+
+### `search-and-filters/cli-export-archive-working`
+
+While `marfa export --format archive` waits for the server to begin its answer, the CLI MUST say on standard error, from the fifth second and every 15 seconds after, that it is still preparing the archive.
+
+**Reason:** an export that says nothing for minutes looks like a hung command, and a person or a scheduler would end it.
+
+**Tests:** `cli/archive-wait.test.ts › waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole`.
+
 ### `search-and-filters/cli-restore-lacking`
 
 When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the CLI MUST print the answer and exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
