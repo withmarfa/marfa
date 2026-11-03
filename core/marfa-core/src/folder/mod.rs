@@ -6532,6 +6532,37 @@ mod tests {
     }
 
     #[test]
+    fn a_new_file_saved_as_the_paused_files_are_deleted_is_not_held() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a021",
+            serde_json::json!({ "files": 4, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().created, 3);
+        minutes_pass(&folder, 2);
+        drop_notes(dir.path(), &["d.md", "e.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 2);
+        minutes_pass(&folder, 20);
+        for name in ["d.md", "e.md"] {
+            std::fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        drop_notes(dir.path(), &["f.md"]);
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.paused_additions), (1, 0), "{sent:?}");
+        let conn = folder.core.conn().unwrap();
+        assert!(state::paused_additions(&conn).unwrap().is_empty());
+        assert_eq!(state::paused_base(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_window_ignores_minutes_after_the_clock_went_back() {
+        let mut sent = vec![(105, 7), (1_105, 4)];
+        assert_eq!(state::within_window(&mut sent, 110 * 60_000), 7);
+        assert_eq!(sent, [(105, 7)]);
+    }
+
+    #[test]
     fn deleting_every_paused_file_clears_the_pause() {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_past_its_first_scan(

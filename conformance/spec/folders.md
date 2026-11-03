@@ -6870,7 +6870,7 @@ When new files arrive across scans, a device MUST count the new files it sent in
 
 ### `folders/addition-run-ends`
 
-A device MUST NOT count a new file it sent more than ten minutes before the scan.
+A device MUST NOT count a new file it sent more than ten minutes before the scan, or in a minute after the scan's own, which a clock set back leaves behind.
 
 **Tests:** `device/binding-folders-additions.test.ts › never holds a note saved every four minutes, however many there are`, `device/binding-folders-additions.test.ts › sends the same two bursts when they are more than ten minutes apart`.
 
@@ -6966,7 +6966,7 @@ While new files are paused, a device MUST pause the new files that arrive, howev
 
 ### `folders/addition-clears`
 
-When every file of a paused addition is deleted, a device MUST release the pause at the next scan without sending the deleted files.
+When every file of a paused addition is deleted, a device MUST release the pause at the next scan, including one that finds a new file, without sending the deleted files.
 
 **Reason:** The pause is the list of held files in the folder's store, so it survives a crash and needs no record that a person must clear.
 

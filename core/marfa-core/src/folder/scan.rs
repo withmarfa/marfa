@@ -2028,8 +2028,15 @@ impl Folder {
         if !first_scan && !counted.is_empty() {
             // While a pause stands the files that arrive join it and the set
             // is judged against the window as it was when the pause began,
-            // so the window emptying never lets it go.
-            let standing = !state::paused_additions(&conn)?.is_empty();
+            // so the window emptying never lets it go. A pause stands only
+            // while a file it held is still here.
+            let standing = {
+                let held = state::paused_additions(&conn)?;
+                counted.iter().any(|at| held.contains(&scan.files[*at].key))
+            };
+            if !standing {
+                state::clear_paused_base(&conn)?;
+            }
             let base = if standing {
                 state::paused_base(&conn)?
             } else {

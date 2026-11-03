@@ -773,6 +773,10 @@ pub fn set_paused_base(conn: &Connection, base: usize) -> Result<(), CoreError> 
     crate::store::meta_set(conn, PAUSED_BASE, &base.to_string())
 }
 
+pub fn clear_paused_base(conn: &Connection) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, PAUSED_BASE)
+}
+
 const ADDITIONS_SENT: &str = "folder_additions_sent";
 
 /// How long a sent new file counts towards the addition threshold.
@@ -787,10 +791,14 @@ pub fn additions_sent(conn: &Connection) -> Result<Vec<(i64, usize)>, CoreError>
         .unwrap_or_default())
 }
 
-/// Without the minutes that fell out of the window at `now_ms`, and how many
-/// files the rest hold.
+/// Without the minutes that fell out of the window at `now_ms`, and without
+/// those after the current minute, which a clock set back leaves behind, and
+/// how many files the rest hold.
 pub fn within_window(sent: &mut Vec<(i64, usize)>, now_ms: i64) -> usize {
-    sent.retain(|(minute, _)| (minute + 1) * 60_000 > now_ms - ADDITIONS_WINDOW_MS);
+    let now_minute = now_ms.div_euclid(60_000);
+    sent.retain(|(minute, _)| {
+        *minute <= now_minute && (minute + 1) * 60_000 > now_ms - ADDITIONS_WINDOW_MS
+    });
     sent.iter().map(|(_, count)| count).sum()
 }
 
