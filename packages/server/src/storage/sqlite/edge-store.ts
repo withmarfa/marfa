@@ -536,27 +536,41 @@ export class SqliteEdgeStore implements EdgeStore {
     targetId: string,
     pendingEdges: { source_id: string; target_id: string }[],
   ): Promise<boolean> {
-    const pendingJson = JSON.stringify(
-      pendingEdges.map((edge) => [edge.source_id, edge.target_id]),
+    const typeList = sql.join(
+      edgeTypes.map((type) => sql`${type}`),
+      sql`, `,
     );
+    // The stored edges are walked through idx_edges_source (source_id,
+    // edge_type). The request's own pending edges, which no index covers, are
+    // a second branch of the walk and only join it when there are any.
+    const pending =
+      pendingEdges.length === 0
+        ? null
+        : JSON.stringify(
+            pendingEdges.map((edge) => [edge.source_id, edge.target_id]),
+          );
+    const pendingTable = pending
+      ? sql`,
+        pending(source_id, target_id) AS MATERIALIZED (
+          SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]')
+          FROM json_each(${pending})
+        )`
+      : sql``;
+    const pendingStep = pending
+      ? sql`
+          UNION
+          SELECT pending.target_id FROM reachable
+          JOIN pending ON pending.source_id = reachable.id`
+      : sql``;
     const found = await this.db.all<{ found: number }>(sql`
       WITH RECURSIVE
-        pending(source_id, target_id) AS (
-          SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]')
-          FROM json_each(${pendingJson})
-        ),
-        relation(source_id, target_id) AS (
-          SELECT source_id, target_id FROM edges
-          WHERE edge_type IN (SELECT value FROM json_each(${JSON.stringify(edgeTypes)}))
-          UNION ALL
-          SELECT source_id, target_id FROM pending
-        ),
         reachable(id) AS (
           SELECT ${targetId}
           UNION
-          SELECT relation.target_id FROM relation
-          JOIN reachable ON relation.source_id = reachable.id
-        )
+          SELECT edges.target_id FROM reachable
+          JOIN edges ON edges.source_id = reachable.id
+            AND edges.edge_type IN (${typeList})${pendingStep}
+        )${pendingTable}
       SELECT 1 AS found FROM reachable WHERE id = ${sourceId} LIMIT 1
     `);
     return found.length > 0;
