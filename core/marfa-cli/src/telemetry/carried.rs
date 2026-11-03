@@ -3,8 +3,9 @@
 //! `folders autostart on`, so the command writes the settings it finds in its
 //! own environment to one file that only the person can read, beside the
 //! folder registry, and the agent names that file in `MARFA_TELEMETRY_FILE`.
-//! The binary reads the file before anything else, so the watch reports as a
-//! command run from that shell does.
+//! `folders watch`, and no other command, reads the file before it reads the
+//! telemetry settings, so the watch reports as a command run from that shell
+//! does.
 //!
 //! One file holds all of them, and not only the settings that obviously hold
 //! a secret: `OTEL_EXPORTER_OTLP_HEADERS` carries credentials, an endpoint
@@ -13,7 +14,7 @@
 //! rest. The agent's own file is readable by others and holds the path alone.
 
 use std::io::Read as _;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::Path;
 
 /// Names the file in the agent's environment.
@@ -84,33 +85,42 @@ fn parse(text: &str) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// Puts the file's settings into the environment, except one already set, so
-/// that a command run by hand with its own settings keeps them.
+/// Puts the file's settings into the environment, except one set and not
+/// empty already, so that a command run by hand with its own settings keeps
+/// them.
 fn apply(text: &str, get: &impl Fn(&str) -> Option<String>, set: &mut impl FnMut(&str, &str)) {
     for (name, value) in parse(text) {
-        if get(name).is_none() {
+        if super::settings::text(get, name).is_none() {
             set(name, &value);
         }
     }
 }
 
-/// The text of a file that only its owner can read, or what is wrong with it.
-/// Never a value.
-fn read_private(path: &Path) -> Result<String, String> {
+/// The text of a regular file that only `owner` can read, or what is wrong
+/// with it. Never a value. The file is opened without following a symbolic
+/// link and without waiting, so a link or a named pipe in its place is refused
+/// and never blocks the watch.
+fn read_private(path: &Path, owner: u32) -> Result<String, String> {
     let said = |why: &str| {
         format!(
             "the telemetry file {} {why}, so this run sends no reports",
             path.display()
         )
     };
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| said(&format!("cannot be read ({})", error.kind())))?;
+    let not_private = || said("is not a file that only you can read");
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| match error.raw_os_error() {
+            Some(libc::ELOOP) => not_private(),
+            _ => said(&format!("cannot be read ({})", error.kind())),
+        })?;
     let meta = file
         .metadata()
         .map_err(|error| said(&format!("cannot be read ({})", error.kind())))?;
-    // SAFETY: `geteuid` cannot fail.
-    if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
-        return Err(said("is not a file that only you can read"));
+    if !meta.is_file() || meta.uid() != owner || meta.mode() & 0o077 != 0 {
+        return Err(not_private());
     }
     let mut text = String::new();
     file.read_to_string(&mut text)
@@ -118,22 +128,47 @@ fn read_private(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// Reads the file `MARFA_TELEMETRY_FILE` names, if it is set, into this
-/// process's environment. Called first in `main`, before any thread starts and
-/// before the telemetry settings are read. A fault is said on standard error
-/// and leaves the run without the settings.
-pub fn load() {
-    let Some(path) = std::env::var_os(FILE_ENV).filter(|path| !path.is_empty()) else {
-        return;
+/// The command whose run reads the file: the folder watch, which a login
+/// agent starts, and no other.
+const READER: &str = "marfa folders watch";
+
+/// Reads the file `file` names, if it is set and `command` is the folder
+/// watch, into the environment through `set`. A fault is returned for the
+/// caller to say, and leaves the run without the settings.
+fn load_with(
+    command: &str,
+    file: Option<std::ffi::OsString>,
+    owner: u32,
+    get: &impl Fn(&str) -> Option<String>,
+    set: &mut impl FnMut(&str, &str),
+) -> Result<(), String> {
+    if command != READER {
+        return Ok(());
+    }
+    let Some(path) = file.filter(|path| !path.is_empty()) else {
+        return Ok(());
     };
-    match read_private(Path::new(&path)) {
-        Ok(text) => apply(
-            &text,
-            &|name| std::env::var(name).ok(),
-            // SAFETY: the process is still single-threaded at this point.
-            &mut |name, value| unsafe { std::env::set_var(name, value) },
-        ),
-        Err(said) => eprintln!("marfa: {said}"),
+    apply(&read_private(Path::new(&path), owner)?, get, set);
+    Ok(())
+}
+
+/// Reads the file `MARFA_TELEMETRY_FILE` names into this process's
+/// environment, for the folder watch only. Called in `main` before any thread
+/// starts and before the telemetry settings are read. A fault is said on
+/// standard error and leaves the run without the settings.
+pub fn load(command: &str) {
+    // SAFETY: `geteuid` cannot fail.
+    let owner = unsafe { libc::geteuid() };
+    let result = load_with(
+        command,
+        std::env::var_os(FILE_ENV),
+        owner,
+        &|name| std::env::var(name).ok(),
+        // SAFETY: the process is still single-threaded at this point.
+        &mut |name, value| unsafe { std::env::set_var(name, value) },
+    );
+    if let Err(said) = result {
+        eprintln!("marfa: {said}");
     }
 }
 
@@ -244,5 +279,149 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("marfa-carried-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        dir
+    }
+
+    fn mine() -> u32 {
+        // SAFETY: `geteuid` cannot fail.
+        unsafe { libc::geteuid() }
+    }
+
+    fn file_with(dir: &Path, mode: u32) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = dir.join("folder-watch.env");
+        std::fs::write(&path, "OTEL_SERVICE_NAME=from-file\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("mode");
+        path
+    }
+
+    #[test]
+    fn reads_a_regular_file_only_its_owner_can_read() {
+        let dir = scratch("ok");
+        let path = file_with(&dir, 0o600);
+        assert_eq!(
+            read_private(&path, mine()).as_deref(),
+            Ok("OTEL_SERVICE_NAME=from-file\n")
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn refuses_a_file_others_can_access() {
+        for mode in [0o640, 0o604, 0o660, 0o644, 0o607] {
+            let dir = scratch(&format!("mode{mode:o}"));
+            let path = file_with(&dir, mode);
+            let said = read_private(&path, mine()).expect_err("refused");
+            assert!(said.contains("only you can read"), "{mode:o}: {said}");
+            assert!(!said.contains("from-file"));
+            std::fs::remove_dir_all(dir).ok();
+        }
+    }
+
+    #[test]
+    fn refuses_a_file_another_user_owns() {
+        let dir = scratch("owner");
+        let path = file_with(&dir, 0o600);
+        // Witness: the same file is read as its owner.
+        assert!(read_private(&path, mine()).is_ok());
+        let said = read_private(&path, mine().wrapping_add(1)).expect_err("refused");
+        assert!(said.contains("only you can read"), "{said}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn refuses_a_symbolic_link_even_to_a_good_file() {
+        let dir = scratch("link");
+        let target = file_with(&dir, 0o600);
+        let link = dir.join("link.env");
+        std::os::unix::fs::symlink(&target, &link).expect("link");
+        assert!(read_private(&target, mine()).is_ok());
+        let said = read_private(&link, mine()).expect_err("refused");
+        assert!(said.contains("only you can read"), "{said}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn refuses_what_is_no_regular_file_and_never_waits_on_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("fifo");
+        let pipe = dir.join("pipe.env");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .expect("mkfifo");
+        assert!(made.success());
+        // Private, so that only the type is what refuses it.
+        let private = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&pipe, private.clone()).expect("mode");
+        // A pipe with no writer would block a plain open for ever.
+        let said = read_private(&pipe, mine()).expect_err("refused");
+        assert!(said.contains("only you can read"), "{said}");
+        std::fs::set_permissions(&dir, private).expect("mode");
+        let said = read_private(&dir, mine()).expect_err("a directory is refused");
+        assert!(said.contains("only you can read"), "{said}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn an_empty_setting_does_not_hold_off_the_file() {
+        let mut set = Vec::new();
+        apply(
+            "OTEL_SERVICE_NAME=from-file\n",
+            &getter(&[("OTEL_SERVICE_NAME", "  ")]),
+            &mut |name, value| set.push((name.to_string(), value.to_string())),
+        );
+        assert_eq!(
+            set,
+            [("OTEL_SERVICE_NAME".to_string(), "from-file".to_string())]
+        );
+    }
+
+    #[test]
+    fn the_watch_gets_the_files_settings_and_no_other_command_reads_it() {
+        let dir = scratch("reach");
+        let path = file_with(&dir, 0o600);
+        let reach = |command: &str| {
+            let mut set = Vec::new();
+            let result = load_with(
+                command,
+                Some(path.clone().into_os_string()),
+                mine(),
+                &getter(&[]),
+                &mut |name, value| set.push((name.to_string(), value.to_string())),
+            );
+            (result, set)
+        };
+        let (result, set) = reach("marfa folders watch");
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            set,
+            [("OTEL_SERVICE_NAME".to_string(), "from-file".to_string())]
+        );
+        for command in [
+            "marfa folders list",
+            "marfa items list",
+            "marfa folders autostart on",
+        ] {
+            assert_eq!(reach(command), (Ok(()), vec![]), "{command}");
+        }
+        // A file that fails the gate reaches nothing and says why.
+        let loose = file_with(&scratch("reach-loose"), 0o644);
+        let mut set = Vec::new();
+        let result = load_with(
+            "marfa folders watch",
+            Some(loose.into_os_string()),
+            mine(),
+            &getter(&[]),
+            &mut |name, value| set.push((name.to_string(), value.to_string())),
+        );
+        assert!(result.is_err() && set.is_empty());
+        std::fs::remove_dir_all(dir).ok();
     }
 }

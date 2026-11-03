@@ -3,6 +3,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -451,6 +452,29 @@ describe("folder syncing from login", () => {
       }),
     );
     expect(same.changed).toBe(false);
+
+    // A file with the right text but a loose mode is made private again, and
+    // the watch is started again; so is one that became a link.
+    const sameEnv = { OTEL_SDK_DISABLED: "true", OTEL_SERVICE_NAME: "fixture" };
+    chmodSync(file, 0o644);
+    const loosePid = managerState(root).pid;
+    expect(
+      parsed<Switched>(autostart(root, "on", { registry, env: sameEnv }))
+        .changed,
+    ).toBe(true);
+    expect(statSync(file).mode & 0o077).toBe(0);
+    expect(managerState(root).pid).not.toBe(loosePid);
+    const target = `${file}.target`;
+    writeFileSync(target, readFileSync(file));
+    chmodSync(target, 0o600);
+    rmSync(file);
+    symlinkSync(target, file);
+    expect(
+      parsed<Switched>(autostart(root, "on", { registry, env: sameEnv }))
+        .changed,
+    ).toBe(true);
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    rmSync(target);
 
     // Run again with none set: the file goes, the agent names none, and the
     // command says it carried none.

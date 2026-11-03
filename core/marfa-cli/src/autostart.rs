@@ -929,15 +929,21 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
     if carried.content.is_some() {
         agent.telemetry_file = Some(telemetry_path.clone());
     }
-    // The settings are written before the agent names them, and only once the
-    // watch has been let go of, so a failure leaves the next `on` to try again.
-    let settle = || match &carried.content {
+    // Settings are written before the agent names them, and removed after the
+    // agent stops naming them, so the agent never names a file that is not
+    // there. Both wait until the watch has been let go of, so a failure leaves
+    // the next `on` to try again.
+    let settle_before = || match &carried.content {
         Some(content) => write_private(&telemetry_path, content),
+        None => Ok(()),
+    };
+    let settle_after = || match &carried.content {
+        Some(_) => Ok(()),
         None => remove(&telemetry_path),
     };
     let wanted = agent.render(place.manager)?;
     let changed = read_file(&place.file)?.as_deref() != Some(wanted.as_str())
-        || read_file(&telemetry_path)? != carried.content;
+        || !telemetry_file_is(&telemetry_path, carried.content.as_deref())?;
     let state = place
         .state()
         .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?;
@@ -951,8 +957,9 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
                 if loaded {
                     place.bootout()?;
                 }
-                settle()?;
+                settle_before()?;
                 write_file(&place.file, &wanted)?;
+                settle_after()?;
             }
             if changed || !loaded {
                 // An agent the person disabled is not loaded until enabled.
@@ -965,8 +972,9 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
             // A file written by an `on` that failed before systemd read it.
             let changed = changed || state.reload == Some(true);
             if changed {
-                settle()?;
+                settle_before()?;
                 write_file(&place.file, &wanted)?;
+                settle_after()?;
                 place.must(&["daemon-reload"])?;
                 place.must(&["enable", UNIT])?;
                 place.must(&["restart", UNIT])?;
@@ -1077,11 +1085,12 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
         }
         (Ok(_), _) => Ok(false),
     };
-    if let Some(path) = &telemetry_path {
-        remove(path)?;
-    }
+    // The agent goes first, and a failure to remove the settings is returned
+    // only once it has, so the watch never starts at login with a file kept.
+    let agent_removed = if existed { remove(&place.file) } else { Ok(()) };
+    let settings_removed = telemetry_path.as_deref().map_or(Ok(()), remove);
     if existed {
-        remove(&place.file)?;
+        agent_removed?;
         if place.manager == Manager::Systemd {
             match &stopping {
                 Ok(_) => place.must(&["daemon-reload"])?,
@@ -1091,6 +1100,7 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
             }
         }
     }
+    settings_removed?;
     let stopped = stopping.map_err(|error| {
         CliError::Io(std::io::Error::other(format!(
             "{}could not stop {}: {error}; the watch may run until it ends or you sign out",
@@ -1134,6 +1144,35 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
             )
         }
     })
+}
+
+/// Whether the telemetry file is what `on` would make: absent where nothing is
+/// carried, and otherwise a regular file of the person's own that only they
+/// can access, holding the text. A link, another owner or a looser mode is
+/// not, so that `on` makes it right.
+fn telemetry_file_is(path: &Path, content: Option<&str>) -> Result<bool, CliError> {
+    use std::os::unix::fs::MetadataExt as _;
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(content.is_none());
+        }
+        Err(error) => {
+            return Err(CliError::Io(std::io::Error::new(
+                error.kind(),
+                format!("cannot read {}: {error}", path.display()),
+            )));
+        }
+    };
+    let Some(content) = content else {
+        return Ok(false);
+    };
+    // SAFETY: `geteuid` cannot fail.
+    let mine = unsafe { libc::geteuid() };
+    Ok(meta.is_file()
+        && meta.uid() == mine
+        && meta.mode() & 0o077 == 0
+        && read_file(path)?.as_deref() == Some(content))
 }
 
 fn remove(path: &Path) -> Result<(), CliError> {
@@ -1467,6 +1506,33 @@ fn describe_status(place: &Place, report: &Status) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_telemetry_file_is_current_only_when_text_mode_owner_and_type_are_right() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("marfa-autostart-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("folder-watch.env");
+        // Nothing carried: absent is current, anything there is not.
+        assert!(telemetry_file_is(&path, None).expect("checked"));
+        assert!(!telemetry_file_is(&path, Some("a=b\n")).expect("checked"));
+        std::fs::write(&path, "a=b\n").expect("write");
+        assert!(!telemetry_file_is(&path, None).expect("checked"));
+        // Witness: right text, mode 0600 and own file is current.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+        assert!(telemetry_file_is(&path, Some("a=b\n")).expect("checked"));
+        assert!(!telemetry_file_is(&path, Some("a=c\n")).expect("checked"));
+        // Right text, loose mode.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        assert!(!telemetry_file_is(&path, Some("a=b\n")).expect("checked"));
+        // Right text and mode, but a link.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+        let link = dir.join("link.env");
+        std::os::unix::fs::symlink(&path, &link).expect("link");
+        assert!(!telemetry_file_is(&link, Some("a=b\n")).expect("checked"));
+        std::fs::remove_dir_all(dir).ok();
+    }
 
     fn agent(binary: &str) -> Agent {
         Agent {
