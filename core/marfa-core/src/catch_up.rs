@@ -1684,8 +1684,9 @@ fn may_owe(kind: &str) -> bool {
     kind.starts_with("edge.") || kind == "item.purged"
 }
 
-/// So many events moving branches are settled together, and no more, before
-/// the stream is read on: what a settle reads grows with the branches.
+/// So many events that may owe a settle (`may_owe`) are settled together,
+/// and no more, before the stream is read on: what a settle reads grows with
+/// the branches.
 const SETTLE_EVERY: usize = 500;
 
 /// Settles each branch top the events since the last settle owe
