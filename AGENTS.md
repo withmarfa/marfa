@@ -27,6 +27,16 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced.
 - A count, a list or a claim that nothing calls something is checked by running the query, never by trusting a comment.
 
+## Speed
+
+Guidance, not rules:
+
+- Measure a change that can affect speed or memory at the size people reach, before and after, and put both figures in the pull request.
+- Ask whether a cost grows with the data or with the change. It should grow with the change.
+- A background part with nothing to do uses almost no CPU. A loop that wakes itself is a bug.
+- No request holds up the others. A long job runs in pages and lets other requests through.
+- After a release that changes the folder watch, measure a watch at rest on a real folder.
+
 ## Writing
 
 - Public prose (README, docs, issues, pull requests) follows the Google developer documentation style guide, in American English, with docs organized by Diátaxis: tutorials, how-to guides, reference and explanation kept apart.
