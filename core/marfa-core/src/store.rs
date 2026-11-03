@@ -4010,9 +4010,38 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%' OR key LIKE 'beneath_owed/%';",
     )?;
     Ok(())
+}
+
+const BENEATH_OWED: &str = "beneath_owed/";
+
+/// Records that an event of `kind` moved the branch under `top` into or out
+/// of the slice's `beneath`, for the next settle to judge.
+pub(crate) fn owe_beneath(conn: &Connection, top: &str, kind: &str) -> Result<(), CoreError> {
+    meta_set(conn, &format!("{BENEATH_OWED}{top}"), kind)
+}
+
+/// Each branch top owed a settle, in id order, with the kind of the last
+/// event that moved it.
+pub(crate) fn owed_beneath(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    // A range, not `LIKE`, so the key's index is used.
+    let mut statement = conn.prepare_cached(
+        "SELECT substr(key, length(?1) + 1), value FROM meta
+         WHERE key >= ?1 AND key < ?2 ORDER BY key",
+    )?;
+    let end = format!("{}0", BENEATH_OWED.trim_end_matches('/'));
+    let owed = statement
+        .query_map([BENEATH_OWED, end.as_str()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(owed)
+}
+
+pub(crate) fn settled_beneath(conn: &Connection, top: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &format!("{BENEATH_OWED}{top}"))
 }
 
 fn edge_brought(id: &str) -> String {
@@ -4024,7 +4053,7 @@ fn edge_brought(id: &str) -> String {
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
-        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
+        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%' OR key LIKE 'beneath_owed/%';",
     )?;
     Ok(())
 }

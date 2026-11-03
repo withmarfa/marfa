@@ -1536,40 +1536,61 @@ pub(crate) fn read_with_edges(
     Ok(Some((read, edges)))
 }
 
-/// The rows the slice's listings bring under `root`, with every edge they
-/// draw: the slice's query with `root` in place of its own `beneath`, so a
-/// branch moved under the copy's root comes in by the listing a hydration
-/// would have read it by, a page at a time (`device/catch-up-beneath-enters`).
-pub(crate) fn listed_beneath(
+/// The edges `row` draws of each type not in `whole`, its overflow read
+/// too: the copy holds an edge of a whole type from the stream alone, which
+/// a read can run ahead of.
+pub(crate) fn drawn_edges(
     http: &Http,
+    stop: &AtomicBool,
+    row: &WireItemWithMetadata,
+    whole: &[String],
+) -> Result<Vec<WireEdge>> {
+    let mut edges = Vec::new();
+    for (edge_type, block) in row.item.edges.iter().flatten() {
+        if whole.contains(edge_type) {
+            continue;
+        }
+        edges.extend(block.data.iter().cloned());
+        edges.extend(fetch_overflow(http, stop, &row.item.id, edge_type, block)?);
+    }
+    Ok(edges)
+}
+
+/// Walks the slice's listings beneath `top`, the slice's query with `top`
+/// in place of its own `beneath`, so a branch comes in as a hydration would
+/// list it (`device/catch-up-beneath-enters`). Each page goes to `write`,
+/// with `drawn_edges` of its rows, before the next is asked for, and `stop`
+/// is looked at before each request.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn walk_beneath(
+    http: &Http,
+    stop: &AtomicBool,
     types: &[String],
     tier: SliceTier,
     query: &SliceQuery,
-    root: &str,
-) -> Result<(Vec<WireItemWithMetadata>, Vec<WireEdge>)> {
+    top: &str,
+    whole: &[String],
+    mut write: impl FnMut(&[WireItemWithMetadata], &[WireEdge]) -> Result<()>,
+) -> Result<()> {
     let mut narrowing = query.listing(false);
-    narrowing.beneath = Some(root.to_string());
-    let mut rows = Vec::new();
-    let mut edges = Vec::new();
+    narrowing.beneath = Some(top.to_string());
     for declared in types {
         let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
         let mut seen = std::collections::HashSet::new();
         let mut cursor: Option<String> = None;
         loop {
+            crate::catch_up::refuse_if_stopped(stop)?;
             let page = http.items_page(&ItemsQuery {
                 r#type: listing,
                 tier: listed_tier(listing, tier),
                 narrowing: Some(&narrowing),
                 cursor: cursor.as_deref(),
             })?;
-            let (page, overflow) = with_overflow(http, &crate::NEVER_STOPPED, page)?;
+            let mut edges = Vec::new();
             for row in &page.data {
-                for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                    edges.extend(block.data.iter().cloned());
-                }
+                edges.extend(drawn_edges(http, stop, row, whole)?);
             }
-            edges.extend(overflow);
-            rows.extend(page.data);
+            write(&page.data, &edges)?;
             match page.next_cursor {
                 // A server handing back a cursor it gave before would loop.
                 Some(next) if !seen.insert(next.clone()) => return Err(crate::reach::invalid()),
@@ -1578,7 +1599,7 @@ pub(crate) fn listed_beneath(
             }
         }
     }
-    Ok((rows, edges))
+    Ok(())
 }
 
 /// A row held at a later stamp came from an event since the read, and

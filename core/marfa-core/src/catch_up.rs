@@ -398,14 +398,10 @@ fn take(
         Context::capture_build(&conn)?
     };
     let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
-    let branch = entering_branch(core, &operation, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     operation.check(&tx)?;
-    let root = moves_beneath(slice, kind, payload);
-    let before = root
-        .map(|root| crate::slice::beneath_ids(&tx, root))
-        .transpose()?;
+    let moving = moving_beneath(&tx, slice, kind, payload)?;
     reach::cursor(id).ok_or_else(reach::invalid)?;
     // Judged outside the transaction: a row held or pinned since is taken
     // as any held row is, and judged again once taken.
@@ -431,11 +427,13 @@ fn take(
             store::take_server_edge(&tx, edge)?;
         }
     }
-    let moved = match (root, &before) {
-        (Some(root), Some(before)) => settle_beneath(&tx, catalog, root, before, branch.as_ref())?,
-        _ => false,
-    };
-    let applied = applied || moved;
+    if let Some((root, tops)) = moving {
+        for (top, reached) in tops {
+            if reached || crate::slice::reaches(&tx, root, &top)? {
+                store::owe_beneath(&tx, &top, kind)?;
+            }
+        }
+    }
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
@@ -564,6 +562,7 @@ pub(crate) fn replay_build(
     let mut greatest = reach::cursor(&cursor).ok_or_else(reach::invalid)?;
     let mut connected = false;
     let mut prologue_seen = false;
+    let mut unsettled = 0;
     loop {
         let wait = if prologue_seen {
             idle
@@ -624,6 +623,8 @@ pub(crate) fn replay_build(
                         {
                             report.cursor = cursor;
                         }
+                        report.applied +=
+                            settle_beneath(core, context, &catalog, &slice, stop)?.len() as u64;
                         reached_head = true;
                         break;
                     }
@@ -655,6 +656,12 @@ pub(crate) fn replay_build(
                             report.skipped += 1;
                         }
                         report.cursor = id.clone();
+                        unsettled += usize::from(may_owe(kind));
+                        if unsettled >= SETTLE_EVERY {
+                            unsettled = 0;
+                            report.applied +=
+                                settle_beneath(core, context, &catalog, &slice, stop)?.len() as u64;
+                        }
                     }
                 }
             }
@@ -1233,6 +1240,8 @@ fn read_stream(
     let mut head = None;
     let mut live_confirmed = false;
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
+    // A settle a stop or a failure cut short is owed from before this stream.
+    let mut unsettled = 1;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -1248,6 +1257,15 @@ fn read_stream(
                 if now().saturating_duration_since(heard) > pace.silence =>
             {
                 return Ok(Ended::Over);
+            }
+            Err(RecvTimeoutError::Timeout) if unsettled > 0 => {
+                unsettled = 0;
+                if let Some(ended) =
+                    settle_following(core, context, catalog, slice, stop, report, on_change)?
+                {
+                    return Ok(ended);
+                }
+                continue;
             }
             Err(RecvTimeoutError::Timeout) => continue,
         };
@@ -1289,6 +1307,12 @@ fn read_stream(
                     pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                 {
                     report.cursor = cursor;
+                }
+                unsettled = 0;
+                if let Some(ended) =
+                    settle_following(core, context, catalog, slice, stop, report, on_change)?
+                {
+                    return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
                 on_live(live_confirmed);
@@ -1338,12 +1362,60 @@ fn read_stream(
                     None => report.skipped += 1,
                 }
                 report.cursor = id;
+                unsettled += usize::from(may_owe(kind));
+                if unsettled >= SETTLE_EVERY {
+                    unsettled = 0;
+                    if let Some(ended) =
+                        settle_following(core, context, catalog, slice, stop, report, on_change)?
+                    {
+                        return Ok(ended);
+                    }
+                }
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced)?;
                 }
             }
         }
+    }
+}
+
+/// Settles a follow's owed branches, telling each kind of event whose
+/// branches changed the copy. A failure ends the stream as a failed take
+/// does; the branches stay owed, so the next stream settles them.
+fn settle_following(
+    core: &Core,
+    context: &Context,
+    catalog: &Catalog,
+    slice: &Slice,
+    stop: &AtomicBool,
+    report: &mut FollowReport,
+    on_change: &mut dyn FnMut(&Change),
+) -> Result<Option<Ended>> {
+    match settle_beneath(core, context, catalog, slice, stop) {
+        Ok(kinds) => {
+            for kind in kinds {
+                report.applied += 1;
+                on_change(&Change {
+                    event: ChangeEvent::Applied(kind),
+                    item_id: None,
+                    edge_id: None,
+                    cursor: report.cursor.clone(),
+                });
+            }
+            Ok(None)
+        }
+        Err(CoreError::Canceled) if stop.load(Ordering::Relaxed) => Ok(Some(Ended::Stopped)),
+        Err(ref error) if crate::folder::copy_changed(error) => {
+            context.same_copy(&*core.conn()?)?;
+            Ok(Some(Ended::Behind))
+        }
+        Err(error) if error.is_environmental() => {
+            report.failed_opens += 1;
+            report.last_failure = Some(error.to_string());
+            Ok(Some(Ended::Over))
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -1559,93 +1631,254 @@ fn moves_beneath<'a>(slice: &'a Slice, kind: &str, payload: &EventPayload) -> Op
     }
 }
 
-/// The rows a branch brings under the slice's root, with the edges they draw.
-struct Branch {
-    rows: Vec<crate::wire::WireItemWithMetadata>,
-    edges: Vec<WireEdge>,
-}
-
-/// Read outside the transaction, under the reach: the branch a `parent-of`
-/// edge joins under the root, where the root reaches the edge's source and
-/// not yet its target. Listed as a hydration lists the slice, so the server
-/// judges the branch's types, states and filter, and a big branch comes a
-/// page at a time.
-fn entering_branch(
-    core: &Core,
-    context: &Context,
-    slice: &Slice,
+/// Read in the event's transaction before it is applied: each branch top
+/// whose place under the root the event may move, and whether the root
+/// reached it before. An edge's target heads its branch, and so does the
+/// target a move takes the edge from, unless it is the root, whose own
+/// parent moves nothing under it; a purge takes the edges from its row, so
+/// each child of a row the root reached heads one.
+#[allow(clippy::type_complexity)]
+fn moving_beneath<'a>(
+    tx: &rusqlite::Connection,
+    slice: &'a Slice,
     kind: &str,
     payload: &EventPayload,
-) -> Result<Option<Branch>> {
-    let (Some(root), Some(query), Some(edge)) = (
-        moves_beneath(slice, kind, payload),
-        slice.query.as_ref(),
-        payload.edge.as_ref(),
-    ) else {
+) -> Result<Option<(&'a str, Vec<(String, bool)>)>> {
+    let Some(root) = moves_beneath(slice, kind, payload) else {
         return Ok(None);
     };
-    if !matches!(kind, "edge.created" | "edge.updated") {
-        return Ok(None);
-    }
-    let under = crate::slice::beneath_ids(&*core.conn()?, root)?;
-    if !under.contains(&edge.source_id) || under.contains(&edge.target_id) {
-        return Ok(None);
-    }
-    let http = context.http(core.http()?);
-    let (rows, edges) =
-        crate::hydrate::listed_beneath(&http, &slice.types, slice.tier, query, &edge.target_id)?;
-    Ok(Some(Branch { rows, edges }))
+    let tops = match (kind, &payload.item, &payload.edge) {
+        ("item.purged", Some(item), _) => {
+            if crate::slice::reaches(tx, root, &item.id)? {
+                crate::slice::children(tx, &item.id)?
+                    .into_iter()
+                    .map(|child| (child, true))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        (_, _, Some(edge)) => {
+            let mut targets = vec![edge.target_id.clone()];
+            if let Some(held) = store::edge_ends(tx, &edge.id)?
+                && held.target_id != edge.target_id
+            {
+                targets.push(held.target_id);
+            }
+            let mut tops = Vec::new();
+            for target in targets {
+                if target != root {
+                    let reached = crate::slice::reaches(tx, root, &target)?;
+                    tops.push((target, reached));
+                }
+            }
+            tops
+        }
+        _ => Vec::new(),
+    };
+    Ok(Some((root, tops)))
 }
 
-/// Judges again every id whose place under `root` the event moved
+/// Whether an event of `kind` may owe a branch a settle.
+fn may_owe(kind: &str) -> bool {
+    kind.starts_with("edge.") || kind == "item.purged"
+}
+
+/// So many events moving branches are settled together, and no more, before
+/// the stream is read on: what a settle reads grows with the branches.
+const SETTLE_EVERY: usize = 500;
+
+/// Settles each branch top the events since the last settle owe
 /// (`device/catch-up-beneath-enters`, `device/catch-up-beneath-leaves`),
-/// on the edges as the event left them: a row of `branch` the root now
-/// reaches is taken, and a row it no longer reaches is let go unless it is
-/// kept, so a bound, pinned or waiting row stays. Whether the copy changed.
+/// judged on the edges as those events left them, so a branch moved out
+/// and back between two settles lets nothing go and is read for nothing.
+///
+/// A top the root no longer reaches lets go of each row of its branch that
+/// is not kept. A top the root reaches whose branch the copy holds whole
+/// needs nothing; one with no children held is read by id, a hundred to a
+/// request, and one with children is listed beneath it, a page at a time.
+/// Each read is written in a transaction of its own, so a settle stopped or
+/// failed part way keeps what it wrote and the next settle reads the rest:
+/// a top stays owed until its read is whole. `stop` is looked at before each
+/// request. The kinds of the events whose branches changed the copy.
 fn settle_beneath(
+    core: &Core,
+    context: &Context,
+    catalog: &Catalog,
+    slice: &Slice,
+    stop: &AtomicBool,
+) -> Result<Vec<String>> {
+    let Some((root, query)) = slice
+        .query
+        .as_ref()
+        .and_then(|query| query.beneath.as_deref().map(|root| (root, query)))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut changed = Vec::new();
+    let (by_id, mut listed) = {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        let owed = store::owed_beneath(&tx)?;
+        if owed.is_empty() {
+            return Ok(changed);
+        }
+        let under = crate::slice::beneath_ids(&tx, root)?;
+        let mut by_id = Vec::new();
+        let mut listed = Vec::new();
+        for (top, kind) in owed {
+            let branch = crate::slice::beneath_ids(&tx, &top)?;
+            if under.contains(&top) {
+                let mut missing = false;
+                for id in &branch {
+                    if !holds_answered(&tx, id)? && !store::removed(&tx, Subject::Item, id)? {
+                        missing = true;
+                        break;
+                    }
+                }
+                match (missing, branch.len()) {
+                    (false, _) => store::settled_beneath(&tx, &top)?,
+                    (true, 1) => by_id.push((top, kind)),
+                    (true, _) => listed.push((top, kind)),
+                }
+            } else {
+                let mut left = false;
+                for id in &branch {
+                    if store::item_held(&tx, id)? {
+                        left |= store::let_go_unless_kept(&tx, catalog, id)?;
+                    }
+                }
+                if left {
+                    changed.push(kind);
+                }
+                store::settled_beneath(&tx, &top)?;
+            }
+        }
+        tx.commit()?;
+        (by_id, listed)
+    };
+    let http = context.http(core.http()?);
+    for chunk in by_id.chunks(crate::http::BULK_GET_LIMIT) {
+        refuse_if_stopped(stop)?;
+        let ids: Vec<String> = chunk.iter().map(|(top, _)| top.clone()).collect();
+        let mut rows = Vec::new();
+        let mut edges = Vec::new();
+        for row in http.items_by_id(&ids)? {
+            if row.listed == Some(true) && in_slice(catalog, slice, &row.item)? {
+                edges.extend(crate::hydrate::drawn_edges(
+                    &http,
+                    stop,
+                    &row,
+                    &slice.whole,
+                )?);
+            }
+            rows.push(row);
+        }
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        let taken: Vec<&crate::wire::WireItemWithMetadata> =
+            rows.iter().filter(|row| row.listed == Some(true)).collect();
+        let mut takes = Vec::new();
+        for row in taken {
+            if in_slice(catalog, slice, &row.item)? {
+                takes.push(row.clone());
+            }
+        }
+        let entered = enter_beneath(&tx, catalog, root, &slice.whole, &takes, &edges)?;
+        for (top, kind) in chunk {
+            // A row in the bin, which a read by id leaves out, is listed.
+            if rows.iter().any(|row| &row.item.id == top) {
+                store::settled_beneath(&tx, top)?;
+                if entered.contains(top) {
+                    changed.push(kind.clone());
+                }
+            } else {
+                listed.push((top.clone(), kind.clone()));
+            }
+        }
+        tx.commit()?;
+    }
+    for (top, kind) in &listed {
+        let mut entered = false;
+        crate::hydrate::walk_beneath(
+            &http,
+            stop,
+            &slice.types,
+            slice.tier,
+            query,
+            top,
+            &slice.whole,
+            |rows, edges| {
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                context.same_copy(&tx)?;
+                entered |=
+                    !enter_beneath(&tx, catalog, root, &slice.whole, rows, edges)?.is_empty();
+                tx.commit()?;
+                Ok(())
+            },
+        )?;
+        let conn = core.conn()?;
+        context.same_copy(&conn)?;
+        store::settled_beneath(&conn, top)?;
+        if entered {
+            changed.push(kind.clone());
+        }
+    }
+    changed.sort();
+    changed.dedup();
+    Ok(changed)
+}
+
+/// Whether the copy holds the row as the server last answered it: a refill
+/// keeps the rows it held until its sweep, which takes out one its walk or
+/// its replay did not answer.
+fn holds_answered(conn: &rusqlite::Connection, id: &str) -> Result<bool> {
+    Ok(store::item_held(conn, id)? && !(store::refilling(conn)? && !reach::answered(conn, id)?))
+}
+
+/// Holds each of `rows` the root reaches by the edges held, and that the
+/// copy does not hold as answered: a held row is as new as the stream has
+/// brought it, and a read may be older. A row a read gives that the root
+/// does not yet reach waits for the edge event that draws it in, which owes
+/// its own settle. Of `edges`, those drawn from a row taken are held. Each
+/// row taken is then judged by the query as held. The ids taken.
+fn enter_beneath(
     tx: &rusqlite::Connection,
     catalog: &Catalog,
     root: &str,
-    before: &HashSet<String>,
-    branch: Option<&Branch>,
-) -> Result<bool> {
-    let after = crate::slice::beneath_ids(tx, root)?;
-    let mut changed = false;
-    if let Some(branch) = branch {
-        // Only rows the copy does not hold: a held row is as new as the
-        // stream has brought it, and the listing may be older.
-        let mut entered = HashSet::new();
-        for row in &branch.rows {
-            let id = &row.item.id;
-            if !after.contains(id)
-                || entered.contains(id)
-                || store::item_held(tx, id)?
-                || store::removed(tx, Subject::Item, id)?
-            {
-                continue;
-            }
-            crate::hydrate::hold_row(tx, catalog, row, &[])?;
-            entered.insert(id.clone());
+    whole: &[String],
+    rows: &[crate::wire::WireItemWithMetadata],
+    edges: &[WireEdge],
+) -> Result<HashSet<String>> {
+    let mut entered = HashSet::new();
+    for row in rows {
+        let id = &row.item.id;
+        if entered.contains(id)
+            || holds_answered(tx, id)?
+            || store::removed(tx, Subject::Item, id)?
+            || !crate::slice::reaches(tx, root, id)?
+        {
+            continue;
         }
-        for edge in &branch.edges {
-            if entered.contains(&edge.source_id)
-                && !store::removed(tx, Subject::Edge, &edge.id)?
-                && !store::removed(tx, Subject::Item, &edge.target_id)?
-            {
-                store::take_server_edge(tx, edge)?;
-            }
-        }
-        for id in &entered {
-            store::let_go_unless_kept(tx, catalog, id)?;
-        }
-        changed |= !entered.is_empty();
+        crate::hydrate::hold_row(tx, catalog, row, &[])?;
+        entered.insert(id.clone());
     }
-    for id in before.difference(&after) {
-        if store::item_held(tx, id)? {
-            changed |= store::let_go_unless_kept(tx, catalog, id)?;
+    for edge in edges {
+        if entered.contains(&edge.source_id)
+            && !whole.contains(&edge.edge_type)
+            && !store::removed(tx, Subject::Edge, &edge.id)?
+            && !store::removed(tx, Subject::Item, &edge.target_id)?
+        {
+            store::take_server_edge(tx, edge)?;
         }
     }
-    Ok(changed)
+    for id in &entered {
+        store::let_go_unless_kept(tx, catalog, id)?;
+    }
+    Ok(entered)
 }
 
 /// `read_tags` stands in for the tags of a frame that carries none.

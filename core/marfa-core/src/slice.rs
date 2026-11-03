@@ -331,6 +331,34 @@ pub(crate) fn beneath_ids(
     Ok(ids)
 }
 
+/// Whether `root` reaches `id` by the `parent-of` edges held, `id` being
+/// `root` itself included: a walk up from `id`, which a parent-of tree keeps
+/// to the row's depth. `UNION` ends it on a cycle, as `beneath_walk` does.
+pub(crate) fn reaches(conn: &rusqlite::Connection, root: &str, id: &str) -> Result<bool> {
+    let mut statement = conn.prepare_cached(&format!(
+        "WITH RECURSIVE up(id) AS (
+           SELECT ?2
+           UNION
+           SELECT edges.source_id FROM edges JOIN up ON edges.target_id = up.id
+           WHERE edges.edge_type = '{}'
+         ) SELECT EXISTS (SELECT 1 FROM up WHERE id = ?1)",
+        crate::filter::PARENT_OF
+    ))?;
+    Ok(statement.query_row([root, id], |row| row.get(0))?)
+}
+
+/// The targets of the `parent-of` edges held from `id`.
+pub(crate) fn children(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
+    let mut statement = conn.prepare_cached(&format!(
+        "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}'",
+        crate::filter::PARENT_OF
+    ))?;
+    let children = statement
+        .query_map([id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(children)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

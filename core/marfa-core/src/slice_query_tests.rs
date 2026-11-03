@@ -160,6 +160,18 @@ fn replay(events: &[(&str, &str, String)]) -> Answer {
     scripted::stream(frames, Then::End)
 }
 
+/// A stream with nothing past `cursor`.
+fn at_head(cursor: &str) -> Answer {
+    scripted::stream(
+        vec![
+            scripted::connected(),
+            scripted::copy_marker("stream_cursor", cursor),
+            scripted::copy_marker("stream_live", cursor),
+        ],
+        Then::End,
+    )
+}
+
 fn catalog_answers(server: &Scripted, status: &[(&str, &str)]) {
     let types = json!({"data": [note_json(status)], "next_cursor": null});
     server.on(
@@ -934,6 +946,29 @@ fn an_edge_event_older_than_the_edge_held_moves_nothing() {
     assert!(held(&core, "branch"));
 }
 
+/// A move of the edge's target end takes `branch` out from under the root
+/// and draws `other` in, in one event.
+#[test]
+fn a_move_of_the_target_end_lets_one_branch_go_and_reads_the_other() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    server.on("/items/bulk-get", vec![read_by_id(&ids(&["other"]))]);
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.updated",
+            edge_event("edge.updated", "e-branch", "root", "other", 2),
+        )])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(held(&core, "other"), "the branch drawn in never arrived");
+    assert_eq!(held_of(&core), ["root", "bound", "waiting"]);
+}
+
 #[test]
 fn the_root_trashed_keeps_the_branch_and_the_root_purged_lets_it_go() {
     let server = Scripted::start();
@@ -962,37 +997,41 @@ fn the_root_trashed_keeps_the_branch_and_the_root_purged_lets_it_go() {
     assert_eq!(held_of(&core), ["bound", "waiting"]);
 }
 
+/// The event that draws `moved` in is applied, and `moved` stays owed
+/// until a read answers it.
 #[test]
-fn a_catch_up_stopped_before_the_branch_is_read_moves_nothing() {
+fn a_branch_whose_read_fails_is_read_at_the_next_catch_up() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
     let core = following_beneath(&server, dir.path());
     hold(&core, "root", "active", &[], json!({"title": "root"}));
     catalog_answers(&server, &[]);
     server.on(
-        "/items",
-        vec![certified(scripted::refusal(503, "unavailable"))],
+        "/items/bulk-get",
+        vec![
+            certified(scripted::refusal(503, "unavailable")),
+            read_by_id(&ids(&["moved"])),
+        ],
     );
     server.on(
         "/events",
-        vec![replay(&[(
-            "11",
-            "edge.created",
-            edge_event("edge.created", "e-in", "root", "moved", 1),
-        )])],
+        vec![
+            replay(&[(
+                "11",
+                "edge.created",
+                edge_event("edge.created", "e-in", "root", "moved", 1),
+            )]),
+            at_head("11"),
+        ],
     );
 
     assert!(core.catch_up().is_err());
+    assert_eq!(cursor_of(&core).as_deref(), Some("11"));
+    assert!(held_edge(&core, "e-in"));
+    assert!(!held(&core, "moved"));
 
-    let conn = core.conn().unwrap();
-    assert_eq!(
-        store::meta_get(&conn, store::META_EVENT_CURSOR)
-            .unwrap()
-            .as_deref(),
-        Some("10"),
-        "the cursor passed an event it did not apply"
-    );
-    assert!(store::edge_by_id(&conn, "e-in").unwrap().is_none());
+    core.catch_up().unwrap();
+    assert!(held(&core, "moved"), "the branch was not read again");
 }
 
 #[test]
@@ -1090,4 +1129,349 @@ fn hydration_lists_beneath_and_refuses_it_without_parent_of_whole() {
         counts.iter().all(|query| query.contains("beneath=root")),
         "{counts:?}"
     );
+}
+
+fn listed_row(id: &str, children: &[(&str, &str)]) -> Value {
+    let mut item = row(id, 1, "active", json!({"title": id}));
+    let edges: Vec<Value> = children
+        .iter()
+        .map(|(edge, child)| edge_json(edge, id, child, 1))
+        .collect();
+    item["edges"] = json!({PARENT_OF: {"data": edges, "next_cursor": null}});
+    json!({
+        "item": item,
+        "metadata": {"item_id": id, "tags": [], "extensions": {}},
+        "listed": true,
+    })
+}
+
+/// A listing page of childless active rows, with the cursor of the next.
+fn paged(ids: &[String], next: Option<&str>) -> Answer {
+    let data: Vec<Value> = ids.iter().map(|id| listed_row(id, &[])).collect();
+    certified(scripted::json(
+        200,
+        &json!({"data": data, "next_cursor": next}).to_string(),
+    ))
+}
+
+/// `POST /items/bulk-get` answering each of `ids`, in order.
+fn read_by_id(ids: &[String]) -> Answer {
+    let items: Vec<Value> = ids
+        .iter()
+        .map(|id| row(id, 1, "active", json!({"title": id})))
+        .collect();
+    let metadata: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"item_id": id, "tags": []}))
+        .collect();
+    let listed: Vec<bool> = ids.iter().map(|_| true).collect();
+    certified(scripted::json(
+        200,
+        &json!({"items": items, "metadata": metadata, "listed": listed}).to_string(),
+    ))
+}
+
+fn ids(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| name.to_string()).collect()
+}
+
+fn cursor_of(core: &Core) -> Option<String> {
+    store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap()
+}
+
+/// The listing of `moved` runs ahead of the stream: it gives `late`, drawn
+/// under `moved` by an edge the stream brings only in the next catch-up.
+#[test]
+fn a_row_drawn_into_an_entered_branch_after_its_listing_arrives() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following_beneath(&server, dir.path());
+    hold(&core, "root", "active", &[], json!({"title": "root"}));
+    hold_edge(&core, "e-kid", "moved", "kid", 1);
+    catalog_answers(&server, &[]);
+    server.on(
+        "/items",
+        vec![listed_page(&[
+            ("moved", &[("e-kid", "kid"), ("e-late", "late")]),
+            ("kid", &[]),
+            ("late", &[]),
+        ])],
+    );
+    server.on("/items/bulk-get", vec![read_by_id(&ids(&["late"]))]);
+    server.on(
+        "/events",
+        vec![
+            replay(&[(
+                "11",
+                "edge.created",
+                edge_event("edge.created", "e-in", "root", "moved", 1),
+            )]),
+            replay(&[(
+                "12",
+                "edge.created",
+                edge_event("edge.created", "e-late", "moved", "late", 1),
+            )]),
+        ],
+    );
+
+    core.catch_up().unwrap();
+    assert!(held(&core, "moved") && held(&core, "kid"));
+    assert!(
+        !held(&core, "late"),
+        "a row not yet under the root was taken"
+    );
+    assert!(
+        !held_edge(&core, "e-late"),
+        "an edge the stream has not brought was taken from the listing"
+    );
+
+    core.catch_up().unwrap();
+    assert!(held(&core, "late"), "the row drawn in later never arrived");
+}
+
+/// The device draws `top`, which it holds, under the root itself; `top` has
+/// a child on the server the copy does not hold. The echo of its own edge
+/// finds the edge held already.
+#[test]
+fn a_branch_the_devices_own_edge_draws_under_the_root_arrives() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following_beneath(&server, dir.path());
+    hold(&core, "root", "active", &[], json!({"title": "root"}));
+    hold(&core, "top", "active", &[], json!({"title": "top"}));
+    hold_edge(&core, "e-child", "top", "child", 1);
+    catalog_answers(&server, &[]);
+    hold_edge(&core, "e-own", "root", "top", 1);
+    assert!(
+        crate::slice::beneath_ids(&core.conn().unwrap(), "root")
+            .unwrap()
+            .contains("top"),
+        "the copy holds its own edge before the echo"
+    );
+    server.on(
+        "/items",
+        vec![listed_page(&[
+            ("top", &[("e-child", "child")]),
+            ("child", &[]),
+        ])],
+    );
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.created",
+            edge_event("edge.created", "e-own", "root", "top", 1),
+        )])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(held(&core, "child"), "the branch's child never arrived");
+    let listings: Vec<String> = server
+        .seen("/items")
+        .into_iter()
+        .map(|seen| seen.query)
+        .collect();
+    assert_eq!(listings.len(), 1, "{listings:?}");
+    assert!(listings[0].contains("beneath=top"), "{listings:?}");
+}
+
+/// `top` → `child` held as edges, so `top` is listed, five pages long.
+fn branch_of_five_pages(server: &Scripted, dir: &Path) -> (Arc<Core>, Vec<Vec<String>>) {
+    let core = following_beneath(server, dir);
+    hold(&core, "root", "active", &[], json!({"title": "root"}));
+    let pages: Vec<Vec<String>> = (0..5)
+        .map(|page| (0..3).map(|at| format!("p{page}-{at}")).collect())
+        .collect();
+    for (at, id) in pages.iter().flatten().enumerate() {
+        hold_edge(&core, &format!("e{at}"), "top", id, 1);
+    }
+    catalog_answers(server, &[]);
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.created",
+            edge_event("edge.created", "e-in", "root", "top", 1),
+        )])],
+    );
+    (core, pages)
+}
+
+fn page_of(pages: &[Vec<String>], at: usize) -> Answer {
+    let next = (at + 1 < pages.len()).then(|| format!("c{}", at + 1));
+    paged(&pages[at], next.as_deref())
+}
+
+#[test]
+fn a_branch_read_stops_between_pages_and_keeps_the_pages_read() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (core, pages) = branch_of_five_pages(&server, dir.path());
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/items",
+        vec![
+            page_of(&pages, 0),
+            Answer::WaitFor {
+                ready: Arc::clone(&ready),
+                answer: Box::new(page_of(&pages, 1)),
+            },
+            page_of(&pages, 2),
+        ],
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let caught = {
+        let (core, stop) = (Arc::clone(&core), Arc::clone(&stop));
+        std::thread::spawn(move || core.catch_up_until(&stop))
+    };
+    let started = std::time::Instant::now();
+    while server.seen("/items").len() < 2 {
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    ready.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let ended = caught.join().unwrap();
+    assert!(
+        matches!(&ended, Err(failed) if matches!(failed.error, CoreError::Canceled)),
+        "{:?}",
+        ended.map(|_| ())
+    );
+    assert_eq!(
+        server.seen("/items").len(),
+        2,
+        "a page was asked for after the stop"
+    );
+    assert!(
+        pages[0].iter().all(|id| held(&core, id)),
+        "the first page was lost"
+    );
+    assert!(!held(&core, &pages[2][0]));
+}
+
+#[test]
+fn a_branch_read_that_fails_part_way_keeps_its_pages_and_the_retry_completes() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (core, pages) = branch_of_five_pages(&server, dir.path());
+    let mut answers = vec![
+        page_of(&pages, 0),
+        page_of(&pages, 1),
+        certified(scripted::refusal(503, "unavailable")),
+    ];
+    answers.extend((0..5).map(|at| page_of(&pages, at)));
+    server.on("/items", answers);
+
+    assert!(core.catch_up().is_err());
+    assert!(
+        pages[..2].iter().flatten().all(|id| held(&core, id)),
+        "the pages read before the failure were lost"
+    );
+    assert!(!held(&core, &pages[2][0]));
+
+    server.on("/events", vec![at_head("11")]);
+    core.catch_up().unwrap();
+    assert!(
+        pages.iter().flatten().all(|id| held(&core, id)),
+        "the retry did not complete the branch"
+    );
+    assert_eq!(cursor_of(&core).as_deref(), Some("11"));
+}
+
+/// Another device imports `count` notes under the root: each is created,
+/// then drawn under the root.
+fn imported(count: usize) -> (Scripted, tempfile::TempDir, Arc<Core>, Vec<String>) {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following_beneath(&server, dir.path());
+    hold(&core, "root", "active", &[], json!({"title": "root"}));
+    catalog_answers(&server, &[]);
+    let notes: Vec<String> = (0..count).map(|at| format!("n{at:04}")).collect();
+    let mut events = Vec::new();
+    for (at, id) in notes.iter().enumerate() {
+        let created = json!({
+            "event_type": "item.created",
+            "item": row(id, 1, "active", json!({"title": id})),
+            "metadata": {"tags": []},
+            "listed": true,
+        })
+        .to_string();
+        events.push((format!("{}", 11 + 2 * at), "item.created", created));
+        events.push((
+            format!("{}", 12 + 2 * at),
+            "edge.created",
+            edge_event("edge.created", &format!("e-{id}"), "root", id, 1),
+        ));
+    }
+    let events: Vec<(&str, &str, String)> = events
+        .iter()
+        .map(|(id, kind, payload)| (id.as_str(), *kind, payload.clone()))
+        .collect();
+    server.on("/events", vec![replay(&events)]);
+    server.on(
+        "/items/bulk-get",
+        notes
+            .chunks(crate::http::BULK_GET_LIMIT)
+            .map(read_by_id)
+            .collect(),
+    );
+    server.on(
+        "/items",
+        notes
+            .iter()
+            .map(|id| paged(std::slice::from_ref(id), None))
+            .collect(),
+    );
+    (server, dir, core, notes)
+}
+
+#[test]
+fn notes_imported_under_the_root_are_read_by_id_in_bulk() {
+    let (server, _dir, core, notes) = imported(500);
+
+    core.catch_up().unwrap();
+
+    assert!(notes.iter().all(|id| held(&core, id)));
+    let (listings, reads) = (
+        server.seen("/items").len(),
+        server.seen("/items/bulk-get").len(),
+    );
+    assert_eq!((listings, reads), (0, 5), "listings and bulk reads");
+}
+
+#[test]
+fn a_branch_moved_out_and_back_within_one_catch_up_lets_nothing_go() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    server.on(
+        "/events",
+        vec![replay(&[
+            (
+                "11",
+                "edge.deleted",
+                edge_event("edge.deleted", "e-branch", "root", "branch", 1),
+            ),
+            (
+                "12",
+                "edge.created",
+                edge_event("edge.created", "e-again", "root", "branch", 1),
+            ),
+        ])],
+    );
+    let before = kept_beside_rows(&core);
+
+    core.catch_up().unwrap();
+
+    assert_eq!(
+        held_of(&core),
+        ["root", "branch", "plain", "bound", "waiting"]
+    );
+    assert!(
+        server.seen("/items").is_empty() && server.seen("/items/bulk-get").is_empty(),
+        "a branch held whole was read again"
+    );
+    assert_eq!(kept_beside_rows(&core), before);
 }
