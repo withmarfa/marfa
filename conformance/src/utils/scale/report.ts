@@ -209,7 +209,7 @@ function change(tonight: Figure, previous: Figure): string {
 }
 
 function cell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
 
 function label(figure: Figure): string {
