@@ -184,7 +184,7 @@
   "middleware/rate-limit.ts": {
     "boundary": "Existing operational exemption: request rate counters.",
     "calls": {
-      "RateLimitStore.incrementWindows": 2
+      "RateLimitStore.incrementWindows": 1
     }
   },
   "pubsub.ts": {
