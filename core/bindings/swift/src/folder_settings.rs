@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use marfa_core::folder::settings::{
-    Defaults, Query, RemovalThreshold as CoreRemovalThreshold, Settings,
-    AdditionThreshold as CoreAdditionThreshold,
+    AdditionThreshold as CoreAdditionThreshold, Defaults, Query,
+    RemovalThreshold as CoreRemovalThreshold, Settings,
 };
 use serde_json::{Map, Value};
 

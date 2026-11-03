@@ -59,7 +59,7 @@ pub struct FileStatus {
     pub warning: Option<String>,
 }
 #[napi(object)]
-pub struct PausedRemoval {
+pub struct FolderPaused {
     pub disk: i64,
     pub pull: i64,
     pub additions: i64,
@@ -91,7 +91,7 @@ pub struct WaitingFirstSync {
 pub struct FolderStatus {
     pub directories: Vec<FlaggedFile>,
     pub files: Vec<FileStatus>,
-    pub paused: PausedRemoval,
+    pub paused: FolderPaused,
     pub first_sync: Option<WaitingFirstSync>,
 }
 #[napi(object)]
@@ -178,7 +178,7 @@ pub struct UnsureFile {
     pub reason: String,
 }
 #[napi(object)]
-pub struct ConfirmedRemoval {
+pub struct ConfirmedFolder {
     pub deleted: i64,
     pub moved: i64,
     pub removed: i64,
@@ -284,9 +284,9 @@ impl Folders {
         AsyncTask::new(ConfirmFirstSync { dir, failed: None })
     }
 
-    #[napi(ts_return_type = "Promise<ConfirmedRemoval>")]
-    pub fn confirm(&self, dir: String) -> AsyncTask<ConfirmRemoval> {
-        AsyncTask::new(ConfirmRemoval { dir, failed: None })
+    #[napi(ts_return_type = "Promise<ConfirmedFolder>")]
+    pub fn confirm(&self, dir: String) -> AsyncTask<ConfirmFolder> {
+        AsyncTask::new(ConfirmFolder { dir, failed: None })
     }
 
     #[napi(ts_return_type = "Promise<RestoredRemoval>")]
@@ -473,7 +473,7 @@ impl Task for ReadFolderStatus {
                         })
                     })
                     .collect::<marfa_core::Result<_>>()?,
-                paused: PausedRemoval {
+                paused: FolderPaused {
                     disk: count(report.paused.disk as u64),
                     pull: count(report.paused.pull as u64),
                     additions: count(report.paused.additions as u64),
@@ -552,21 +552,21 @@ impl Task for ConfirmFirstSync {
     }
 }
 
-pub struct ConfirmRemoval {
+pub struct ConfirmFolder {
     dir: String,
     failed: Option<CoreError>,
 }
 #[napi]
-impl Task for ConfirmRemoval {
-    type Output = ConfirmedRemoval;
-    type JsValue = ConfirmedRemoval;
+impl Task for ConfirmFolder {
+    type Output = ConfirmedFolder;
+    type JsValue = ConfirmedFolder;
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
         Err(rejected(env, self.failed.take(), error, &self.dir))
     }
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> {
             let confirmed = working(&self.dir, None)?.confirm()?;
-            Ok(ConfirmedRemoval {
+            Ok(ConfirmedFolder {
                 deleted: count(confirmed.deleted as u64),
                 moved: count(confirmed.moved as u64),
                 removed: count(confirmed.removed as u64),

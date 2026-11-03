@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { folderHarness } from "./harness.js";
@@ -176,6 +176,53 @@ describe("a large drop of new files", () => {
       "a drop copied in slowly passed the threshold without being held",
     ).toBe(2);
     expect(sent(harness)).toBe(8);
+  });
+
+  it("does not count the edits and renames of bound files", async () => {
+    const harness = await six("additions-not-counted", tight);
+    // Two new files are not more than two. Counted with the edit and the
+    // rename they would be four, which is.
+    renameSync(
+      join(harness.dir, "note-5.md"),
+      join(harness.dir, "renamed-5.md"),
+    );
+    edit(harness, "note-0.md", "body", "an edit that is not a drop");
+    drop(harness, 2);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok && pushed.value.scan.paused_additions).toBe(0);
+    expect(sent(harness)).toBe(8);
+  });
+
+  it("is released when the threshold is raised past it", async () => {
+    const harness = await six("additions-raised", tight);
+    drop(harness, 3);
+    const held = await harness.folder.push();
+    expect(held.ok && held.value.scan.paused_additions).toBe(3);
+    harness.settings.settings = {
+      ...tight,
+      addition_threshold: { files: 3, fraction: 0.25 },
+    };
+    harness.settings.version += 1;
+    expect((await harness.folder.hydrate()).ok).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok && pushed.value.scan.paused_additions).toBe(0);
+    expect(sent(harness)).toBe(9);
+  });
+
+  it("is counted anew for the files that arrive after a confirm", async () => {
+    const harness = await six("additions-after-confirm", tight);
+    drop(harness, 3);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sent(harness)).toBe(9);
+    drop(harness, 3, 3);
+    const later = await harness.folder.push();
+    expect(
+      later.ok && later.value.scan.paused_additions,
+      "a drop after a confirm went through on the confirm's word",
+    ).toBe(3);
+    expect(sent(harness)).toBe(9);
   });
 
   it("is judged by its count alone in a folder that holds no files", async () => {

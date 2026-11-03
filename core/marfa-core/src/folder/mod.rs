@@ -211,6 +211,9 @@ pub struct Folder {
     health_status: std::sync::Mutex<Option<health::Computed>>,
     /// What the scans of this open last read of each file, by path.
     last_reads: std::sync::Mutex<HashMap<String, health::LastRead>>,
+    /// Set by `allow_additions` for the next scan alone and never stored, so
+    /// a scan that does not run leaves nothing for a later one to take.
+    every_addition: std::sync::atomic::AtomicBool,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -445,6 +448,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -575,6 +579,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced,
         })
     }
@@ -623,6 +628,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
         })
     }
@@ -6445,8 +6451,20 @@ mod tests {
         );
     }
 
+    /// Moves what the folder sent back by `minutes`, as that long passing
+    /// would.
+    fn minutes_pass(folder: &Folder, minutes: i64) {
+        let conn = folder.core.conn().unwrap();
+        let aged: Vec<(i64, usize)> = state::additions_sent(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|(minute, count)| (minute - minutes, count))
+            .collect();
+        state::set_additions_sent(&conn, &aged).unwrap();
+    }
+
     #[test]
-    fn a_drop_that_arrives_across_scans_is_held_once_the_run_passes_the_threshold() {
+    fn a_drop_that_arrives_across_scans_is_held_once_the_window_passes_the_threshold() {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_past_its_first_scan(
             "01a00000-0000-7000-8000-00000000a005",
@@ -6454,6 +6472,7 @@ mod tests {
         );
         drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
         assert_eq!(folder.scan().unwrap().created, 3);
+        minutes_pass(&folder, 2);
         drop_notes(dir.path(), &["d.md", "e.md"]);
         let held = folder.scan().unwrap();
         assert_eq!((held.created, held.paused_additions), (0, 2), "{held:?}");
@@ -6464,17 +6483,29 @@ mod tests {
             state::record_digest(&folder.core.conn().unwrap()).unwrap(),
             digest
         );
-        // Held files keep the run going however long they wait.
-        let conn = folder.core.conn().unwrap();
-        let mut run = state::additions_run(&conn).unwrap().unwrap();
-        run.at = crate::store::iso_at(crate::clock::system_time() - Duration::from_secs(3600));
-        state::set_additions_run(&conn, Some(&run)).unwrap();
-        drop(conn);
-        assert_eq!(folder.scan().unwrap().paused_additions, 2);
     }
 
     #[test]
-    fn a_quiet_spell_ends_the_run_so_two_small_drops_apart_are_not_one() {
+    fn a_scan_with_no_new_file_between_two_bursts_does_not_end_the_drop() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00d",
+            serde_json::json!({ "files": 4, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().created, 3);
+        // An edit's scan, which takes in nothing, and a few minutes.
+        std::fs::write(dir.path().join("first.md"), "first, edited\n").unwrap();
+        folder.scan().unwrap();
+        minutes_pass(&folder, 3);
+        folder.scan().unwrap();
+        drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.paused_additions), (0, 3), "{held:?}");
+    }
+
+    #[test]
+    fn two_small_drops_more_than_ten_minutes_apart_are_not_one() {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_past_its_first_scan(
             "01a00000-0000-7000-8000-00000000a006",
@@ -6482,14 +6513,42 @@ mod tests {
         );
         drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
         assert_eq!(folder.scan().unwrap().created, 3);
-        let conn = folder.core.conn().unwrap();
-        let mut run = state::additions_run(&conn).unwrap().unwrap();
-        run.at = crate::store::iso_at(crate::clock::system_time() - Duration::from_secs(3600));
-        state::set_additions_run(&conn, Some(&run)).unwrap();
-        drop(conn);
+        minutes_pass(&folder, 11);
         drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
         let sent = folder.scan().unwrap();
         assert_eq!((sent.created, sent.paused_additions), (3, 0), "{sent:?}");
+    }
+
+    #[test]
+    fn a_note_saved_every_few_minutes_is_never_held() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00e",
+            serde_json::json!({ "files": 3, "fraction": 0.0 }),
+        );
+        for n in 0..70 {
+            drop_notes(dir.path(), &[&format!("note-{n}.md")]);
+            let scanned = folder.scan().unwrap();
+            assert_eq!(
+                (scanned.created, scanned.paused_additions),
+                (1, 0),
+                "note {n}: {scanned:?}"
+            );
+            minutes_pass(&folder, 4);
+        }
+    }
+
+    #[test]
+    fn a_window_keeps_only_the_last_ten_minutes_and_a_record_that_is_small() {
+        let mut sent = vec![(100, 5), (105, 7), (109, 1)];
+        // A minute counts until its last second is ten minutes old.
+        assert_eq!(state::within_window(&mut sent, 111 * 60_000 - 1), 13);
+        assert_eq!(state::within_window(&mut sent, 111 * 60_000), 8);
+        assert_eq!(sent, [(105, 7), (109, 1)]);
+        state::record_sent(&mut sent, 109 * 60_000 + 59_000, 2);
+        assert_eq!(sent, [(105, 7), (109, 3)]);
+        assert_eq!(state::within_window(&mut sent, 120 * 60_000), 0);
+        assert!(sent.is_empty());
     }
 
     #[test]
@@ -6568,12 +6627,34 @@ mod tests {
             serde_json::json!({ "files": 2, "fraction": 0.0 }),
         );
         drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let digest = state::record_digest(&folder.core.conn().unwrap()).unwrap();
         folder.allow_additions().unwrap();
+        assert_eq!(
+            state::record_digest(&folder.core.conn().unwrap()).unwrap(),
+            digest,
+            "the permission was stored, where a scan that never ran would leave it for a later one"
+        );
         let sent = folder.scan().unwrap();
         assert_eq!((sent.created, sent.paused_additions), (3, 0), "{sent:?}");
         // It is for one scan.
         drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
         assert_eq!(folder.scan().unwrap().paused_additions, 3);
+    }
+
+    #[test]
+    fn a_confirm_reports_the_held_files_it_let_go_of_and_not_those_deleted_since() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00f",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        landed(&folder, "first.md");
+        folder.pull().unwrap();
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 3);
+        std::fs::remove_file(dir.path().join("c.md")).unwrap();
+        let confirmed = folder.confirm().unwrap();
+        assert_eq!(confirmed.added, 2, "{confirmed:?}");
     }
 
     #[test]

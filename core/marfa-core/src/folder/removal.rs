@@ -14,8 +14,7 @@ pub struct Confirmed {
     pub moved: usize,
     pub unsure: Vec<Unsure>,
     pub removed: usize,
-    /// Held new files the confirmation's scan made items of, sent at the
-    /// next push.
+    /// Held new files the confirmation let go of, sent at the next push.
     pub added: usize,
 }
 
@@ -97,25 +96,34 @@ impl Folder {
 
     /// Lets the new files the last scan held back become items, and no
     /// others: a file that arrived since waits for the threshold as before.
-    /// Answers how many items the scan made, which it queues for the next
-    /// push.
+    /// The scan queues them for the next push, here or in a watch that gets
+    /// there first. Answers how many held files it let go of, those still on
+    /// the disk.
     fn confirm_additions(&self) -> Result<usize> {
         let held = state::paused_additions(&*self.core.conn()?)?;
         if held.is_empty() {
             return Ok(0);
         }
-        state::set_additions_allowed(&*self.core.conn()?, Some(&state::Allowed::Paths(held)))?;
-        let scanned = self.scan();
-        // Taken by the scan, but a scan that failed before it read the
-        // folder leaves the confirmation for the next one.
-        Ok(scanned?.created)
+        let released = held
+            .iter()
+            .filter(|path| self.is_file(self.root.join(path)))
+            .count();
+        state::set_additions_allowed(&*self.core.conn()?, &held)?;
+        // A scan that failed before it read the folder leaves the
+        // confirmation for the next one.
+        self.scan()?;
+        Ok(released)
     }
 
-    /// Lets every new file of the next scan become an item, whatever its
-    /// size, for a push no person is at (`folders push --confirm-additions`).
+    /// Lets every new file of the next scan on this open become an item,
+    /// whatever its number, for a push no person is at (`folders push
+    /// --confirm-additions`). Kept in memory, so a scan that does not run
+    /// leaves nothing for a later one.
     pub fn allow_additions(&self) -> Result<()> {
         self.refuse_if_gone()?;
-        state::set_additions_allowed(&*self.core.conn()?, Some(&state::Allowed::All))
+        self.every_addition
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
 
     pub fn restore(&self) -> Result<Restored> {

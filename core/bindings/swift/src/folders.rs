@@ -92,7 +92,7 @@ pub struct FileStatus {
 /// A large removal, or a large drop of new files, waiting for `confirm`; a
 /// removal can also be cancelled by `restore`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
-pub struct PausedRemoval {
+pub struct FolderPaused {
     /// Files gone from the disk whose deletes are not sent.
     pub disk: u64,
     /// Files left in place whose items left the query elsewhere.
@@ -143,7 +143,7 @@ pub struct WaitingFirstSync {
 pub struct FolderStatus {
     pub directories: Vec<FlaggedFile>,
     pub files: Vec<FileStatus>,
-    pub paused: PausedRemoval,
+    pub paused: FolderPaused,
     /// Set while the folder's first sync waits to be confirmed.
     pub first_sync: Option<WaitingFirstSync>,
 }
@@ -278,16 +278,17 @@ pub struct UnsureFile {
     pub reason: String,
 }
 
-/// What letting a paused removal go did.
+/// What letting a folder's paused removal and paused new files go did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct ConfirmedRemoval {
+pub struct ConfirmedFolder {
     /// Deletes queued, sent at the next sync.
     pub deleted: u64,
     /// Files found in another folder on this machine, whose items stay.
     pub moved: u64,
     /// Files taken away whose items left elsewhere.
     pub removed: u64,
-    /// New files held back by the addition threshold, now queued as items.
+    /// New files held back by the addition threshold that the confirmation
+    /// let go, queued as items.
     pub added: u64,
     /// Files not let go, because the other folders could not all be read.
     pub unsure: Vec<UnsureFile>,
@@ -466,7 +467,7 @@ impl Folders {
                     })
                 })
                 .collect::<Result<_, MarfaError>>()?,
-            paused: PausedRemoval {
+            paused: FolderPaused {
                 disk: report.paused.disk as u64,
                 pull: report.paused.pull as u64,
                 additions: report.paused.additions as u64,
@@ -515,9 +516,9 @@ impl Folders {
     /// whose items left elsewhere are taken away. Refused while the first
     /// sync waits. Asks a watch that holds the folder to let it go, as `add`
     /// does.
-    pub fn confirm(&self, dir: String) -> Result<ConfirmedRemoval, MarfaError> {
+    pub fn confirm(&self, dir: String) -> Result<ConfirmedFolder, MarfaError> {
         let confirmed = working(&dir, None, None)?.confirm()?;
-        Ok(ConfirmedRemoval {
+        Ok(ConfirmedFolder {
             deleted: confirmed.deleted as u64,
             moved: confirmed.moved as u64,
             removed: confirmed.removed as u64,

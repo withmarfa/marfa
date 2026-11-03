@@ -757,65 +757,57 @@ pub fn set_paused_additions(conn: &Connection, paths: &[String]) -> Result<(), C
     set_list(conn, PAUSED_ADDITIONS, paths)
 }
 
-const ADDITIONS_RUN: &str = "folder_additions_run";
+const ADDITIONS_SENT: &str = "folder_additions_sent";
 
-/// The new files the folder has taken in since it was last quiet, so a drop
-/// that arrives across several scans counts as one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AdditionsRun {
-    /// The last scan that took in or held back new files.
-    pub at: String,
-    /// New files sent in this run.
-    pub sent: usize,
-    /// The folder's bound files when the run began, which the fraction is of.
-    pub of: usize,
+/// How long a sent new file counts towards the addition threshold.
+pub const ADDITIONS_WINDOW_MS: i64 = 10 * 60_000;
+
+/// The new files the folder sent lately, by the minute (since the epoch) it
+/// sent them in, so a drop is judged by how fast it arrives and the record
+/// stays small however many files come.
+pub fn additions_sent(conn: &Connection) -> Result<Vec<(i64, usize)>, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_SENT)?
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
 }
 
-pub fn additions_run(conn: &Connection) -> Result<Option<AdditionsRun>, CoreError> {
-    Ok(crate::store::meta_get(conn, ADDITIONS_RUN)?
-        .and_then(|json| serde_json::from_str(&json).ok()))
+/// Without the minutes that fell out of the window at `now_ms`, and how many
+/// files the rest hold.
+pub fn within_window(sent: &mut Vec<(i64, usize)>, now_ms: i64) -> usize {
+    sent.retain(|(minute, _)| (minute + 1) * 60_000 > now_ms - ADDITIONS_WINDOW_MS);
+    sent.iter().map(|(_, count)| count).sum()
 }
 
-pub fn set_additions_run(conn: &Connection, run: Option<&AdditionsRun>) -> Result<(), CoreError> {
-    match run {
-        Some(run) => {
-            let json = serde_json::to_string(run)?;
-            if crate::store::meta_get(conn, ADDITIONS_RUN)?.as_deref() == Some(json.as_str()) {
-                return Ok(());
-            }
-            crate::store::meta_set(conn, ADDITIONS_RUN, &json)
-        }
-        None => crate::store::meta_delete(conn, ADDITIONS_RUN),
+/// Adds `count` files sent at `now_ms` to a window.
+pub fn record_sent(sent: &mut Vec<(i64, usize)>, now_ms: i64, count: usize) {
+    let minute = now_ms.div_euclid(60_000);
+    match sent.iter_mut().find(|(at, _)| *at == minute) {
+        Some((_, total)) => *total += count,
+        None => sent.push((minute, count)),
     }
+}
+
+pub fn set_additions_sent(conn: &Connection, sent: &[(i64, usize)]) -> Result<(), CoreError> {
+    if sent.is_empty() {
+        return crate::store::meta_delete(conn, ADDITIONS_SENT);
+    }
+    let json = serde_json::to_string(sent)?;
+    if crate::store::meta_get(conn, ADDITIONS_SENT)?.as_deref() == Some(json.as_str()) {
+        return Ok(());
+    }
+    crate::store::meta_set(conn, ADDITIONS_SENT, &json)
 }
 
 const ADDITIONS_ALLOWED: &str = "folder_additions_allowed";
 
-/// What a person has let through the addition threshold, taken by the next
-/// scan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Allowed {
-    /// Every new file of the scan: an unattended push that was told so.
-    All,
-    /// The files the folder held back when the person confirmed them.
-    Paths(Vec<String>),
+/// The files the folder held back that a person has confirmed, taken by the
+/// next scan.
+pub fn additions_allowed(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, ADDITIONS_ALLOWED)
 }
 
-pub fn additions_allowed(conn: &Connection) -> Result<Option<Allowed>, CoreError> {
-    Ok(crate::store::meta_get(conn, ADDITIONS_ALLOWED)?
-        .and_then(|json| serde_json::from_str(&json).ok()))
-}
-
-pub fn set_additions_allowed(
-    conn: &Connection,
-    allowed: Option<&Allowed>,
-) -> Result<(), CoreError> {
-    match allowed {
-        Some(allowed) => {
-            crate::store::meta_set(conn, ADDITIONS_ALLOWED, &serde_json::to_string(allowed)?)
-        }
-        None => crate::store::meta_delete(conn, ADDITIONS_ALLOWED),
-    }
+pub fn set_additions_allowed(conn: &Connection, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, ADDITIONS_ALLOWED, paths)
 }
 
 const ADDITIONS_GATED: &str = "folder_additions_gated";

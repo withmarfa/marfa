@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::sync::atomic::Ordering;
 
 use crate::Seen;
 
@@ -157,10 +158,6 @@ pub(super) enum Missing {
 /// with its file written back rather than holding the sweep.
 const DECIDE_ATTEMPTS: usize = 3;
 
-/// How long the folder takes in no new file before a drop is over, so a
-/// slow copy is one drop and two pushes a day apart are two.
-const ADDITIONS_QUIET: Duration = Duration::from_secs(5 * 60);
-
 /// Read once for every missing file a sweep or a confirm lets go of.
 #[derive(Default)]
 pub(super) struct Sweep {
@@ -186,6 +183,11 @@ impl Sweep {
         );
         Ok(self.shown.get_or_init(|| loaded))
     }
+}
+
+fn millis_since_epoch(at: std::time::SystemTime) -> i64 {
+    at.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as i64)
 }
 
 /// A pair this cannot read has not passed, since a delete cannot be taken
@@ -1970,12 +1972,14 @@ impl Folder {
         }
     }
 
-    /// The new files of this pass that wait for the person: a drop of more
-    /// than `addition_threshold` new files, counted with those the folder
-    /// took in since it was last quiet, so a slow copy of a large directory
-    /// is held as a quick one is. A held file stays unbound and unsent, and
-    /// is counted again by every pass, so deleting some of them, or raising
-    /// the threshold, lets the rest go at the next scan.
+    /// The new files of this pass that wait for the person: those of a pass
+    /// that, with the new files the folder sent in the last ten minutes,
+    /// come to more than `addition_threshold` allows. The threshold judges
+    /// how fast files arrive, so a note saved now and then is never held and
+    /// a large directory is held however it is copied in. A held file stays
+    /// unbound and unsent and is counted again by every pass, so deleting
+    /// some of them, or raising the threshold, lets the rest go at the next
+    /// scan.
     fn hold_additions(
         &self,
         scan: &mut ScanState,
@@ -1983,8 +1987,9 @@ impl Folder {
         waiting: &Waiting,
     ) -> Result<HashSet<usize>> {
         let conn = self.core.conn()?;
-        let allowed = state::additions_allowed(&conn)?;
-        state::set_additions_allowed(&conn, None)?;
+        let confirmed = state::additions_allowed(&conn)?;
+        state::set_additions_allowed(&conn, &[])?;
+        let every = self.every_addition.swap(false, Ordering::AcqRel);
         let first_scan = !state::additions_gated(&conn)?;
         if first_scan && !super::first::waiting(&conn)? {
             // The first sync's scan takes in what the directory holds, which
@@ -2008,62 +2013,36 @@ impl Folder {
             .map(|(at, _)| at)
             .collect();
         let conn = self.core.conn()?;
-        let now = crate::store::iso_at(crate::clock::system_time());
-        let letting = |path: &str| match &allowed {
-            Some(state::Allowed::All) => true,
-            Some(state::Allowed::Paths(paths)) => paths.iter().any(|allowed| allowed == path),
-            None => false,
-        };
+        // A file a person let through is not a drop to count, now or against
+        // the next one.
         let counted: Vec<usize> = new
             .iter()
             .copied()
-            .filter(|at| !letting(&scan.files[*at].key))
+            .filter(|at| !every && !confirmed.contains(&scan.files[*at].key))
             .collect();
-        // A quiet scan, a confirmation and the first sync's scan each end
-        // the run: what they took in is not counted against the next drop.
-        // Held files keep the run going however long they wait.
-        let held_before = state::paused_additions(&conn)?;
-        let continuing = counted
-            .iter()
-            .any(|at| held_before.contains(&scan.files[*at].key));
-        let run = state::additions_run(&conn)?.filter(|run| {
-            !first_scan
-                && allowed.is_none()
-                && !new.is_empty()
-                && (continuing || !elapsed_past(&run.at, &now, ADDITIONS_QUIET))
-        });
+        let now_ms = millis_since_epoch(crate::clock::system_time());
+        let mut sent = state::additions_sent(&conn)?;
+        let lately = state::within_window(&mut sent, now_ms);
         let mut held = HashSet::new();
         let mut paths = Vec::new();
-        let mut run = run;
         if !first_scan && !counted.is_empty() {
-            let (sent, of) = match &run {
-                Some(run) => (run.sent, run.of),
-                None => (0, state::bound_count(&conn)?),
-            };
             let exceeded = scan
                 .settings
                 .addition_threshold
-                .exceeded(sent + counted.len(), of);
+                .exceeded(lately + counted.len(), state::bound_count(&conn)?);
             if exceeded {
                 for at in &counted {
                     paths.push(scan.files[*at].key.clone());
                     held.insert(*at);
                 }
+            } else {
+                // Held files are not sent, so they are not recorded as sent.
+                state::record_sent(&mut sent, now_ms, counted.len());
             }
-            // Held files are not sent, so they are not added to the run, and
-            // a pass that only holds them again leaves the record as it was,
-            // which a watch at rest would otherwise see change every pass.
-            run = Some(match (exceeded, run) {
-                (true, Some(run)) => run,
-                (true, None) => state::AdditionsRun { at: now, sent, of },
-                (false, _) => state::AdditionsRun {
-                    at: now,
-                    sent: sent + counted.len(),
-                    of,
-                },
-            });
         }
-        state::set_additions_run(&conn, run.as_ref())?;
+        // Written only where it changed, which a watch at rest would
+        // otherwise see at every pass.
+        state::set_additions_sent(&conn, &sent)?;
         paths.sort();
         state::set_paused_additions(&conn, &paths)?;
         scan.report.paused_additions = held.len();
