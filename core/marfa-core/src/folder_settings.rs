@@ -183,46 +183,54 @@ impl Core {
         if !settings.holds_state(made) {
             return Ok(false);
         }
-        let mut judged = settings.clone();
-        judged.query.state = None;
-        let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
-        let queued = crate::queue_create(&tx, catalog, draft, &[], self.credential().as_deref())?;
-        let Some(id) = queued.item_id else {
-            return Ok(true);
+        // The staged row is made in the draft's state, which `holds_state`
+        // has judged, so the query is read with its default states.
+        let judged = crate::slice::SliceQuery {
+            states: None,
+            ..settings.slice_query()
         };
-        for (end, edge_type, other) in edges {
-            let (source_id, target_id) = match end {
-                End::Target => (other.clone(), id.clone()),
-                End::Source => (id.clone(), other.clone()),
-            };
-            tx.execute_batch("SAVEPOINT default_edge")?;
-            match crate::queue_edge(
-                &tx,
-                &crate::model::EdgeDraft {
-                    source_id,
-                    target_id,
-                    edge_type: edge_type.clone(),
-                    ..Default::default()
-                },
-                &[],
-            ) {
-                Ok(_) => tx.execute_batch("RELEASE default_edge")?,
-                Err(error) if tolerated(&error) => {
-                    tx.execute_batch("ROLLBACK TO default_edge; RELEASE default_edge")?;
+        let mut scope = crate::slice::Scope::default();
+        settings.narrow_types(catalog, &mut scope.0, &mut scope.1)?;
+        let credential = self.credential();
+        let conn = self.conn()?;
+        let held = crate::slice::judge_staged(
+            &conn,
+            catalog,
+            &judged,
+            crate::slice::Reading::Shows,
+            scope,
+            |tx| {
+                let queued = crate::queue_create(tx, catalog, draft, &[], credential.as_deref())?;
+                let Some(id) = queued.item_id else {
+                    return Ok(None);
+                };
+                for (end, edge_type, other) in edges {
+                    let (source_id, target_id) = match end {
+                        End::Target => (other.clone(), id.clone()),
+                        End::Source => (id.clone(), other.clone()),
+                    };
+                    tx.execute_batch("SAVEPOINT default_edge")?;
+                    match crate::queue_edge(
+                        tx,
+                        &crate::model::EdgeDraft {
+                            source_id,
+                            target_id,
+                            edge_type: edge_type.clone(),
+                            ..Default::default()
+                        },
+                        &[],
+                    ) {
+                        Ok(_) => tx.execute_batch("RELEASE default_edge")?,
+                        Err(error) if tolerated(&error) => {
+                            tx.execute_batch("ROLLBACK TO default_edge; RELEASE default_edge")?;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
-                Err(error) => return Err(error),
-            }
-        }
-        let (mut clauses, mut values) = (Vec::new(), Vec::new());
-        judged.narrow(catalog, &[], &mut clauses, &mut values)?;
-        clauses.push("items.id = ?".into());
-        values.push(Value::String(id));
-        let held =
-            !query::list_where(&tx, &clauses, &values, Sort::default(), None, None)?.is_empty();
-        // Dropped without a commit.
-        drop(tx);
-        Ok(held)
+                Ok(Some(id))
+            },
+        )?;
+        Ok(held.unwrap_or(true))
     }
 
     /// Which of `ids` the folder's query holds, as `held_by` answers.
@@ -397,6 +405,7 @@ impl Core {
                     });
             if takes {
                 crate::hydrate::hold_row(&tx, &catalog, &row, &[])?;
+                store::let_go_unless_kept(&tx, &catalog, id)?;
             }
             tx.commit()?;
             Ok(())

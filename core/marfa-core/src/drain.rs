@@ -3547,13 +3547,16 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
                 return Ok(());
             }
             let catalog = Catalog::load(conn)?;
-            let let_go =
-                !store::slice_holds(conn, &catalog, item)? && !store::item_waits(conn, &item.id)?;
+            let let_go = !store::slice_holds(conn, &catalog, item)?
+                && !store::waiting_write_names(conn, &item.id)?;
             if let_go {
                 store::evict_item(conn, &item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
             }
-            store::take_server_item(conn, item, Some(&held.metadata.tags), &catalog)?;
+            // The query is judged on the row as taken, tags and all.
+            if store::take_server_item(conn, item, Some(&held.metadata.tags), &catalog)? {
+                store::let_go_unless_kept(conn, &catalog, &item.id)?;
+            }
         }
         ReadBack::Item {
             id,

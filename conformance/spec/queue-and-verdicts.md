@@ -2240,11 +2240,11 @@ If the server answers the lookup of a create's natural key `401` naming its cont
 
 ### `queue-and-verdicts/create-outside-pinned`
 
-When a caller creates an item the copy's slice does not take, by its type or its tier, a device MUST pin it when it is queued.
+When a caller creates an item the copy's slice does not take, by its type, its tier or its slice's query, a device MUST pin it when it is queued.
 
 **Reason:** the copy then holds what it shows through the answer and the event that follow, an attachment's file item of a type outside the slice among them; the pin follows the row as `device/pin-holds` says. A create the copy showed and then let go at its own event reads as saved and then lost.
 
-**Tests:** `device/queue.test.ts › holds a create the slice does not hold through its answer and its event`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› pins a create of a type the slice does not take when it is queued`.
+**Tests:** `device/queue.test.ts › holds a create the slice does not hold through its answer and its event`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› pins a create of a type the slice does not take when it is queued`, `device/folders-copy-shrink.test.ts › pins a create the query does not show, and holds it past its echo`.
 
 ## Drains that overlap
 

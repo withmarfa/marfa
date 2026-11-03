@@ -896,6 +896,62 @@ pub fn set_stats(
     Ok(())
 }
 
+/// Each file the server answered names an item it does not show, by path,
+/// with the id it named and the hash of the bytes that named it.
+pub fn unheld(conn: &Connection) -> Result<HashMap<String, (String, String)>, CoreError> {
+    let mut statement =
+        conn.prepare_cached("SELECT path, item_id, content_hash FROM folder_unheld")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// Records `answered`, each a file read this pass whose id the server does
+/// not show, and drops the row in `known` of every other file in `read`.
+pub fn set_unheld(
+    conn: &Connection,
+    known: &HashMap<String, (String, String)>,
+    read: &[&str],
+    answered: &HashMap<&str, (&str, &str)>,
+) -> Result<(), CoreError> {
+    let tx = conn.unchecked_transaction()?;
+    for path in read {
+        let was = known
+            .get(*path)
+            .map(|(item_id, hash)| (item_id.as_str(), hash.as_str()));
+        match answered.get(path) {
+            Some(&now) if was != Some(now) => {
+                tx.execute(
+                    "INSERT INTO folder_unheld (path, item_id, content_hash) VALUES (?1, ?2, ?3)
+                     ON CONFLICT (path) DO UPDATE SET
+                       item_id = excluded.item_id, content_hash = excluded.content_hash",
+                    [path, now.0, now.1],
+                )?;
+            }
+            None if was.is_some() => {
+                tx.execute("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
+            }
+            _ => {}
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Drops the row of each file the walk did not find.
+pub fn prune_unheld(
+    conn: &Connection,
+    found: &std::collections::HashSet<String>,
+) -> Result<(), CoreError> {
+    for path in unheld(conn)?.into_keys() {
+        if !found.contains(&path) {
+            conn.execute("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
+        }
+    }
+    Ok(())
+}
+
 pub fn set_paused(conn: &Connection, removal: Removal, paths: &[String]) -> Result<(), CoreError> {
     set_list(conn, removal.key(), paths)
 }
@@ -936,4 +992,31 @@ pub fn new_outside_state(conn: &Connection) -> Result<Vec<String>, CoreError> {
 
 pub fn set_new_outside_state(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
     set_list(conn, OUTSIDE_STATE, ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::{prune_unheld, set_unheld, unheld};
+
+    #[test]
+    fn keeps_an_unheld_answer_until_its_file_changes_is_bound_or_goes() {
+        let conn = crate::store::open_in_memory().unwrap();
+        let answered = HashMap::from([("a.md", ("one", "h1")), ("b.md", ("two", "h2"))]);
+        set_unheld(&conn, &HashMap::new(), &["a.md", "b.md", "c.md"], &answered).unwrap();
+        let known = unheld(&conn).unwrap();
+        assert_eq!(known.len(), 2);
+
+        // `a.md` changed and was answered again; `b.md` is bound now.
+        let answered = HashMap::from([("a.md", ("one", "h3"))]);
+        set_unheld(&conn, &known, &["a.md", "b.md"], &answered).unwrap();
+        assert_eq!(
+            unheld(&conn).unwrap(),
+            HashMap::from([("a.md".to_string(), ("one".to_string(), "h3".to_string()))])
+        );
+
+        prune_unheld(&conn, &HashSet::from(["c.md".to_string()])).unwrap();
+        assert!(unheld(&conn).unwrap().is_empty());
+    }
 }

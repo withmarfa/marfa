@@ -554,7 +554,9 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// Whether another folder's copy holds the item as a document.
+    /// Whether another folder's copy holds the item as a document. A copy
+    /// narrowed by its query still holds every item its folder's files name,
+    /// since each binding pins its item until the file is let go.
     pub(super) fn held_elsewhere(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.folder.as_ref().is_some_and(|folder| {

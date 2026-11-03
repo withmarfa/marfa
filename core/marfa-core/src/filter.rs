@@ -85,6 +85,39 @@ pub(crate) fn narrow(
     Ok(())
 }
 
+/// What an expression reads beyond the row's own columns, properties and tags.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Reads {
+    /// The catalog's status field of each type.
+    pub status: bool,
+    /// Edges, or the state of another row: a term the row alone cannot answer.
+    pub relational: bool,
+    /// A column a move between states changes: `state`, `updated_at` or
+    /// `version`.
+    pub moved: bool,
+}
+
+/// The system fields a move between states writes.
+const MOVED_FIELDS: [&str; 3] = ["state", "updated_at", "version"];
+
+pub(crate) fn reads(filter: &str) -> Result<Reads> {
+    let expression = parse(filter)?;
+    let mut reads = Reads::default();
+    for condition in &expression.conditions {
+        match condition.term {
+            Term::StatusGroup(_) => reads.status = true,
+            Term::Edge { .. } | Term::Part(_) => reads.relational = true,
+            Term::System { column, .. } if MOVED_FIELDS.contains(&column) => reads.moved = true,
+            Term::TagHeld
+            | Term::TagsPresent(_)
+            | Term::System { .. }
+            | Term::Property { .. }
+            | Term::Entry { .. } => {}
+        }
+    }
+    Ok(reads)
+}
+
 /// Refuses, before any read, what `narrow` would refuse for this expression
 /// on a copy that holds no edge type whole.
 pub(crate) fn check(filter: &str) -> Result<()> {

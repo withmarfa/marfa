@@ -221,7 +221,20 @@ pub struct ItemsQuery<'a> {
     pub r#type: Option<&'a str>,
     /// `all` lists both tiers.
     pub tier: SliceTier,
+    /// A slice query's narrowing; `None` lists every state.
+    pub(crate) narrowing: Option<&'a crate::slice::Listing>,
     pub cursor: Option<&'a str>,
+}
+
+/// The keys a slice query's narrowing adds to a listing or a count.
+fn narrowed<'a>(params: &mut Vec<(&'a str, &'a str)>, narrowing: &'a crate::slice::Listing) {
+    params.push(("state", &narrowing.state));
+    if let Some(filter) = &narrowing.filter {
+        params.push(("filter", filter));
+    }
+    if let Some(tags) = narrowing.tags {
+        params.push(("tags", tags));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -787,12 +800,12 @@ impl Http {
             .map(|declared| ("type", declared))
             .into_iter()
             .collect();
-        params.extend([
-            ("tier", query.tier.as_str()),
-            ("state", "any"),
-            ("include", "edges,metadata"),
-            ("limit", &limit),
-        ]);
+        params.push(("tier", query.tier.as_str()));
+        match query.narrowing {
+            Some(narrowing) => narrowed(&mut params, narrowing),
+            None => params.push(("state", "any")),
+        }
+        params.extend([("include", "edges,metadata"), ("limit", &limit)]);
         if let Some(cursor) = query.cursor {
             params.push(("cursor", cursor));
         }
@@ -816,18 +829,39 @@ impl Http {
         .map(drop)
     }
 
-    /// `GET /items/stats?by=type`: the rows of every state at `tier`, counted
-    /// by type, with `system.*` counted only where `system` asks for it. The
-    /// count is not a conditional read, so a transport under a reach is
-    /// refused it.
-    pub fn counts_by_type(
+    /// `lists` for a listing narrowed by a slice query, `None` naming every
+    /// type the key reads.
+    pub(crate) fn lists_narrowed(
+        &self,
+        declared: Option<&str>,
+        tier: SliceTier,
+        narrowing: &crate::slice::Listing,
+    ) -> Result<(), CoreError> {
+        let mut params: Vec<(&str, &str)> =
+            declared.map(|named| ("type", named)).into_iter().collect();
+        params.push(("tier", tier.as_str()));
+        narrowed(&mut params, narrowing);
+        params.extend([("include", "metadata"), ("limit", "1")]);
+        self.get_json::<serde_json::Value>(&["items"], &params)
+            .map(drop)
+    }
+
+    /// `GET /items/stats?by=type`: the rows at `tier`, counted by type, of
+    /// every state or of those `narrowing` names and filters, with
+    /// `system.*` counted only where `system` asks for it. The count is not
+    /// a conditional read, so a transport under a reach is refused it.
+    pub(crate) fn counts_by_type(
         &self,
         tier: SliceTier,
         system: bool,
+        narrowing: Option<&crate::slice::Listing>,
     ) -> Result<std::collections::HashMap<String, u64>, CoreError> {
         let mut params = vec![("by", "type"), ("tier", tier.as_str())];
         if system {
             params.push(("include", "system"));
+        }
+        if let Some(narrowing) = narrowing {
+            narrowed(&mut params, narrowing);
         }
         self.get_json(&["items", "stats"], &params)
     }
@@ -2516,6 +2550,7 @@ mod tests {
         let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
             r#type: None,
             tier: SliceTier::All,
+            narrowing: None,
             cursor: None,
         });
         assert!(
@@ -2571,6 +2606,7 @@ mod tests {
         let read = Http::new(&url, "k").unwrap().items_page(&ItemsQuery {
             r#type: None,
             tier: SliceTier::All,
+            narrowing: None,
             cursor: None,
         });
         assert!(matches!(read, Err(CoreError::Network(_))), "{read:?}");
@@ -2618,6 +2654,7 @@ mod tests {
                 .items_page(&ItemsQuery {
                     r#type: None,
                     tier: SliceTier::All,
+                    narrowing: None,
                     cursor: None,
                 })
                 .unwrap();
@@ -2937,6 +2974,7 @@ mod tests {
         http.items_page(&ItemsQuery {
             r#type: None,
             tier: SliceTier::All,
+            narrowing: None,
             cursor: None,
         })
         .unwrap();

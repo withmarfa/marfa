@@ -258,6 +258,16 @@ CREATE TABLE IF NOT EXISTS folder_stats (
   stat TEXT NOT NULL
 ) WITHOUT ROWID;
 
+-- An unbound file whose `marfa_id` names an item the copy does not hold and
+-- the server answered it does not show, so a pass asks again only once the
+-- file's bytes or its id change. A pass drops the row of a file it no longer
+-- finds or that is bound.
+CREATE TABLE IF NOT EXISTS folder_unheld (
+  path TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS folder_journal (
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,

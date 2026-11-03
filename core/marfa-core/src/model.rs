@@ -518,6 +518,10 @@ pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: SliceTier,
     pub edge_types: Vec<String>,
+    /// The slice's narrowing past its types and tier; `None` holds every row
+    /// of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<crate::slice::SliceQuery>,
     pub items: u64,
     pub edges: u64,
     /// The listing pages this call read, those of a walk it then started
@@ -1560,6 +1564,10 @@ pub struct Status {
     pub slice_types: Vec<String>,
     pub slice_tier: Option<SliceTier>,
     pub slice_edge_types: Vec<String>,
+    /// The slice's narrowing past its types and tier (`device/report-fields`);
+    /// `None` where the copy holds every row of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slice_query: Option<crate::slice::SliceQuery>,
     /// The rows held by id whatever the slice says of them.
     pub pinned: Vec<String>,
     pub event_cursor: Option<String>,

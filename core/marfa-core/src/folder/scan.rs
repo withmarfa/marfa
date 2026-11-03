@@ -112,6 +112,18 @@ struct ScanState {
     stale: HashMap<String, String>,
 }
 
+/// Why a file naming an id the copy does not hold waits, from the server's
+/// answer to that id: none where the server holds the item, or shows none,
+/// since an item the server will not show leaves a new item.
+fn unheld_waits(answer: Result<bool>) -> Option<String> {
+    match answer {
+        Ok(_) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => None,
+        Err(error) => Some(format!(
+            "it carries the id of an item this copy does not hold, which cannot be read yet ({error}); it is taken at the next push"
+        )),
+    }
+}
+
 fn bound_by_path(snapshot: &[state::Bound]) -> HashMap<&str, &state::Bound> {
     snapshot
         .iter()
@@ -1218,6 +1230,9 @@ impl Folder {
     fn record_stats(&self, scan: &ScanState) -> Result<()> {
         let conn = self.core.conn()?;
         state::set_stats(&conn, &scan.stats, scan.full)?;
+        if !scan.incomplete {
+            state::prune_unheld(&conn, &scan.seen)?;
+        }
         let stats: HashMap<&str, &str> = scan
             .stats
             .iter()
@@ -1574,6 +1589,31 @@ impl Folder {
             }
         };
 
+        // A copy bound to its own item before its id line was rewritten stays
+        // that item's file.
+        let kept_by_path = |file: &Scanned, id: &str| {
+            by_path
+                .get(file.key.as_str())
+                .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
+        };
+        let arriving = |file: &Scanned, id: &str| {
+            !kept_by_path(file, id) && named(file).is_none_or(|bound| bound.item_id != id)
+        };
+        let unheld = self.read_arrivals(
+            files,
+            &files
+                .iter()
+                .enumerate()
+                .filter_map(|(at, file)| {
+                    file.id
+                        .as_deref()
+                        .filter(|id| arriving(file, id))
+                        .map(|id| (at, id))
+                })
+                .collect::<Vec<_>>(),
+            peers,
+        )?;
+
         let mut contests: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         let mut waiting = Waiting::new();
         let members = OnceCell::new();
@@ -1581,16 +1621,11 @@ impl Folder {
             let Some(id) = file.id.as_deref() else {
                 continue;
             };
-            // A copy bound to its own item before its id line was rewritten
-            // stays that item's file.
-            if by_path
-                .get(file.key.as_str())
-                .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
-            {
+            if kept_by_path(file, id) {
                 continue;
             }
-            if named(file).is_none_or(|bound| bound.item_id != id) {
-                match self.arrival(id, settings, peers, &members)? {
+            if arriving(file, id) {
+                match self.arrival(id, settings, peers, &members, &unheld) {
                     Arrival::Copy => continue,
                     Arrival::Waits(reason) => {
                         waiting.insert(at, reason);
@@ -1814,7 +1849,7 @@ impl Folder {
             if by_item.contains_key(theirs.item_id.as_str()) || taken.contains(&theirs.item_id) {
                 continue;
             }
-            match self.read_moved(&theirs.item_id)? {
+            match self.read_unheld(&theirs.item_id)? {
                 Some(reason) => {
                     waiting.insert(at, reason);
                 }
@@ -1938,21 +1973,91 @@ impl Folder {
         settings: &Settings,
         peers: &Peers<'_>,
         members: &OnceCell<HashSet<String>>,
-    ) -> Result<Arrival> {
+        unheld: &HashMap<String, Option<String>>,
+    ) -> Arrival {
         if peers.carry(id) {
-            return Ok(if self.holds(id, settings, members) {
+            return if self.holds(id, settings, members) {
                 Arrival::Here
             } else {
                 Arrival::Copy
-            });
+            };
         }
-        if self.core.get(id)?.is_none() && peers.held_elsewhere(id) {
-            return Ok(match self.read_moved(id)? {
-                Some(reason) => Arrival::Waits(reason),
-                None => Arrival::Here,
-            });
+        match unheld.get(id) {
+            Some(Some(reason)) => Arrival::Waits(reason.clone()),
+            _ => Arrival::Here,
         }
-        Ok(Arrival::Here)
+    }
+
+    /// Reads together (`folders/narrowed-arrival-read-batched`) each id of
+    /// `arriving` that the copy does not hold and the server may: a narrowed
+    /// copy leaves out items the folder does not show, so such an id may
+    /// still name an item on the server, read before the file makes a new one
+    /// (`folders/narrowed-arrival-read`). Answers each id read with why its
+    /// file waits, if it does. A file whose id the server answered it does
+    /// not show is not asked again until its bytes or its id change
+    /// (`folders/narrowed-arrival-read-once`), and the bin is not asked,
+    /// since an item there leaves a new item too.
+    fn read_arrivals(
+        &self,
+        files: &[Scanned],
+        arriving: &[(usize, &str)],
+        peers: &Peers<'_>,
+    ) -> Result<HashMap<String, Option<String>>> {
+        let (narrowed, known) = {
+            let conn = self.core.conn()?;
+            (
+                crate::store::slice_query(&conn)?.is_some(),
+                state::unheld(&conn)?,
+            )
+        };
+        let mut answers: HashMap<String, Option<String>> = HashMap::new();
+        let mut remembered: HashMap<&str, (&str, &str)> = HashMap::new();
+        let mut asks: Vec<(&Scanned, &str)> = Vec::new();
+        let mut wanted: Vec<String> = Vec::new();
+        for &(at, id) in arriving {
+            let file = &files[at];
+            if peers.carry(id) {
+                continue;
+            }
+            // Peers read this copy's store as they load, so its lock is let go
+            // before they are asked.
+            let held = crate::store::item_held(&*self.core.conn()?, id)?;
+            if held || !(narrowed || peers.held_elsewhere(id)) {
+                continue;
+            }
+            if known
+                .get(&file.key)
+                .is_some_and(|(known_id, hash)| known_id == id && *hash == file.hash)
+            {
+                remembered.insert(&file.key, (id, &file.hash));
+                answers.entry(id.to_string()).or_insert(None);
+                continue;
+            }
+            asks.push((file, id));
+            if !answers.contains_key(id) {
+                answers.insert(id.to_string(), None);
+                wanted.push(id.to_string());
+            }
+        }
+        let mut not_shown: HashSet<String> = HashSet::new();
+        for (id, answer) in self.core.pin_many(&wanted) {
+            if matches!(answer, Ok(false)) {
+                not_shown.insert(id.clone());
+            }
+            answers.insert(id, unheld_waits(answer));
+        }
+        for (file, id) in asks {
+            if not_shown.contains(id) {
+                remembered.insert(&file.key, (id, &file.hash));
+            }
+        }
+        let read: Vec<&str> = files
+            .iter()
+            .filter(|file| !file.deferred)
+            .map(|file| file.key.as_str())
+            .collect();
+        state::set_unheld(&*self.core.conn()?, &known, &read, &remembered)?;
+        Ok(answers)
     }
 
     fn holds(&self, id: &str, settings: &Settings, members: &OnceCell<HashSet<String>>) -> bool {
@@ -1963,16 +2068,15 @@ impl Folder {
 
     /// `Some` with why where the item cannot be asked now. An item the server
     /// will not show leaves a new item.
-    fn read_moved(&self, id: &str) -> Result<Option<String>> {
-        if self.core.get(id)?.is_some() {
+    fn read_unheld(&self, id: &str) -> Result<Option<String>> {
+        if crate::store::item_held(&*self.core.conn()?, id)? {
             return Ok(None);
         }
-        match self.core.pin(id) {
-            Ok(_) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => Ok(None),
-            Err(error) => Ok(Some(format!(
-                "it carries the id of an item moved from another folder on this machine, which cannot be read yet ({error}); it is taken at the next push"
-            ))),
-        }
+        Ok(self
+            .core
+            .pin_many(&[id.to_string()])
+            .pop()
+            .and_then(|(_, answer)| unheld_waits(answer)))
     }
 
     /// The new files of this pass that wait for the person: those of a pass

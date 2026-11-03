@@ -238,9 +238,9 @@ describe("what a folder is", () => {
     ).toBe(true);
     expect(pushed.value.pull?.unmatched).toBe(1);
     expect(
-      pushed.value.catch_up.hydrated,
-      "the changed settings did not reach the copy's own row through its stream",
-    ).toBeNull();
+      pushed.value.catch_up.hydrated?.query,
+      "the changed settings did not hydrate the copy their query asks for",
+    ).toEqual({ states: ["active", "archived"], filter: 'tags contains "b"' });
 
     put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
     expect((await harness.folder.push()).ok).toBe(true);
@@ -4596,8 +4596,9 @@ describe("what a folder takes", () => {
   const keptId = "01a00000-0000-7000-8000-0000000055a5";
   const otherId = "01a00000-0000-7000-8000-0000000055a6";
 
-  /** A folder holding only the tagged note, whose copy also holds a note
-   *  outside its query that a write of the device's own conflicts on. */
+  /** A folder holding only the tagged note, whose copy also holds, by a
+   *  pin, a note outside its query that a write of the device's own
+   *  conflicts on. */
   async function conflictedElsewhere(label: string) {
     harness = await folderHarness(label, {
       settings: {
@@ -4628,6 +4629,7 @@ describe("what a folder takes", () => {
       },
     });
     expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await harness.folder.device().pin(otherId)).ok).toBe(true);
     door?.update(otherId, { properties: { body: "theirs\n" }, version: 1 });
     const queued = await harness.folder
       .device()

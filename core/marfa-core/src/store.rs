@@ -21,6 +21,11 @@ pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
+/// The slice's query past its types and tier, as JSON, and absent where the
+/// slice holds every row of its types and tier. A store written before the
+/// key existed reads as holding no query, so a folder asking for one sees
+/// its slice moved and hydrates again.
+pub const META_SLICE_QUERY: &str = "slice_query";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
 pub const META_INSTANCE_ID: &str = "instance_id";
@@ -1484,6 +1489,69 @@ pub fn slice_takes(
 
 pub(crate) fn is_system(r#type: &str) -> bool {
     r#type.starts_with("system.")
+}
+
+pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>, CoreError> {
+    match meta_get(conn, META_SLICE_QUERY)? {
+        Some(json) => serde_json::from_str(&json).map(Some).map_err(|error| {
+            CoreError::Store(format!(
+                "the store holds a slice query this build does not read: {error}"
+            ))
+        }),
+        None => Ok(None),
+    }
+}
+
+/// Whether the copy keeps the row it holds under `id`, judged on the row as
+/// held: pinned, named by a write still waiting (`waiting_write_names`), or
+/// listed and taken by the slice's types, tier and query. One rule for every
+/// path that takes a server row, so the copy holds the same rows whichever
+/// brought them.
+pub fn keeps_held(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    id: &str,
+) -> Result<bool, CoreError> {
+    if pinned(conn, id)? || waiting_write_names(conn, id)? {
+        return Ok(true);
+    }
+    let Some((types, tier)) = slice(conn)? else {
+        return Ok(false);
+    };
+    if !crate::reach::listed(conn, id)? {
+        return Ok(false);
+    }
+    let Some(held) = items_by_ids(conn, &[id.to_string()])?.pop() else {
+        return Ok(false);
+    };
+    if !slice_takes(catalog, &types, tier, &held.r#type, held.tier) {
+        return Ok(false);
+    }
+    match slice_query(conn)? {
+        Some(query) => crate::slice::judge_held(
+            conn,
+            catalog,
+            &query,
+            crate::slice::Reading::Holds,
+            crate::slice::Scope::default(),
+            id,
+        ),
+        None => Ok(true),
+    }
+}
+
+/// Evicts the row held under `id` where the copy does not keep it
+/// (`keeps_held`). Whether it did.
+pub fn let_go_unless_kept(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    id: &str,
+) -> Result<bool, CoreError> {
+    if keeps_held(conn, catalog, id)? {
+        return Ok(false);
+    }
+    evict_item(conn, id, &whole_edge_types(conn)?)?;
+    Ok(true)
 }
 
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {
@@ -3961,21 +4029,12 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The end of a hydration that filled the copy again in place, after its walk
-/// and its replay: takes out each row neither brought, but for a pinned row
-/// and one a waiting write names as its item or as an end of an edge, then
-/// each such edge but one a waiting write names. Answers the rows and the
-/// edges it took out.
-pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
-    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
-        let mut statement = conn.prepare(sql)?;
-        let rows = statement.query_map([], |row| row.get(0))?;
-        Ok(rows.collect::<Result<Vec<String>, _>>()?)
-    };
-    let whole = whole_edge_types(conn)?;
-    // An edge write's ends are the columns it was queued with, the ends a
-    // move in its payload names, and the ends the edge the copy shows has.
-    let named: HashSet<String> = unbrought(&format!(
+/// The ids a waiting write names: as its item or its target, or as an end
+/// of the edge it writes, whether the ends it was queued with, those a move
+/// in its payload names or those of the edge the copy shows. The one rule a
+/// copy keeps rows by for its waiting writes, whatever lets rows go.
+fn named_by_waiting() -> String {
+    format!(
         "SELECT id FROM (
          SELECT item_id AS id FROM queue WHERE {WAITING}
          UNION SELECT target_id FROM queue WHERE {WAITING}
@@ -3988,9 +4047,81 @@ pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
          UNION SELECT edges.target_id FROM edges JOIN queue ON queue.edge_id = edges.id
                 WHERE {WAITING}
          ) WHERE id IS NOT NULL"
-    ))?
-    .into_iter()
-    .collect();
+    )
+}
+
+fn named_by_waiting_writes(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(&named_by_waiting())?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<HashSet<String>, _>>()?)
+}
+
+/// Whether a waiting write names the row `id` (`named_by_waiting`).
+pub fn waiting_write_names(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT EXISTS (SELECT 1 FROM ({}) AS named WHERE named.id = ?1)",
+            named_by_waiting()
+        ),
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
+/// The ids the edge write `id` names as an end, as `named_by_waiting` reads
+/// them for one row. Empty for an item write.
+fn edge_write_ends(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT queue.item_id, queue.target_id,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.source_id') END,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.target_id') END,
+                edges.source_id, edges.target_id
+           FROM queue LEFT JOIN edges ON edges.id = queue.edge_id
+          WHERE queue.id = ?1 AND queue.edge_id IS NOT NULL",
+    )?;
+    let mut ends = Vec::new();
+    let mut rows = statement.query([id])?;
+    while let Some(row) = rows.next()? {
+        for column in 0..6 {
+            if let Some(end) = row.get::<_, Option<String>>(column)?
+                && !ends.contains(&end)
+            {
+                ends.push(end);
+            }
+        }
+    }
+    Ok(ends)
+}
+
+/// Judges again by the slice's query each held row in `ends` once the edge
+/// write naming it no longer waits, so a row kept only as its end leaves
+/// (`keeps_held`).
+fn let_go_of_ends(conn: &Connection, ends: &[String]) -> Result<(), CoreError> {
+    if ends.is_empty() || slice_query(conn)?.is_none() {
+        return Ok(());
+    }
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    for end in ends {
+        if item_held(conn, end)? {
+            let_go_unless_kept(conn, &catalog, end)?;
+        }
+    }
+    Ok(())
+}
+
+/// The end of a hydration that filled the copy again in place, after its walk
+/// and its replay: takes out each row neither brought, but for a pinned row
+/// and one a waiting write names as its item or as an end of an edge, then
+/// each such edge but one a waiting write names. Answers the rows and the
+/// edges it took out.
+pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
+    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
+        let mut statement = conn.prepare(sql)?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    };
+    let whole = whole_edge_types(conn)?;
+    let named = named_by_waiting_writes(conn)?;
     let mut items = 0;
     for id in unbrought(
         "SELECT id FROM items
@@ -5174,6 +5305,7 @@ fn record_verdict_inner(
 ) -> Result<(), CoreError> {
     let already_accepted =
         queued_write(conn, id)?.is_some_and(|row| row.verdict == Some(Verdict::Accepted));
+    let ends = edge_write_ends(conn, id)?;
     let changed = conn.execute(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
@@ -5225,6 +5357,10 @@ fn record_verdict_inner(
     }
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
+    }
+    // A blocked or dead write still waits, to be released or sent again.
+    if !matches!(answered.verdict, Verdict::Blocked | Verdict::Dead) {
+        let_go_of_ends(conn, &ends)?;
     }
     Ok(())
 }
@@ -5606,11 +5742,13 @@ fn take_out(
     for dependant in held {
         record_refusal(conn, dependant, &reason, None, false)?;
     }
+    let ends = edge_write_ends(conn, &row.id)?;
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
     meta_delete(conn, &chosen_tier_key(&row.id))?;
     meta_delete(conn, &cleared_time_key(&row.id))?;
-    put_back(conn, row)
+    put_back(conn, row)?;
+    let_go_of_ends(conn, &ends)
 }
 
 /// Never clears a row `release` takes (blocked, dead, or refused unsent), nor
@@ -5871,13 +6009,18 @@ pub fn withdraw_edge_writes(
             through,
         ],
     )?;
+    let mut ends = Vec::new();
     for row in &rows {
+        ends.extend(edge_write_ends(conn, &row.id)?);
         conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
         meta_delete(conn, &effect_key(&row.id))?;
     }
     for row in &rows {
         put_back(conn, row)?;
     }
+    ends.sort();
+    ends.dedup();
+    let_go_of_ends(conn, &ends)?;
     Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
@@ -10073,7 +10216,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "d3541678b8af07e2",
+            "30313fd29da08100",
             "the shape of a table changed, which refuses every store made before it"
         );
     }

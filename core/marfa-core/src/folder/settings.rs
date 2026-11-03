@@ -391,6 +391,18 @@ impl Settings {
         clauses: &mut Vec<String>,
         values: &mut Vec<Value>,
     ) -> Result<()> {
+        self.narrow_types(catalog, clauses, values)?;
+        self.slice_query()
+            .narrow(catalog, whole_edges, clauses, values)
+    }
+
+    /// The folder's types and tier, as clauses on `items`.
+    pub(crate) fn narrow_types(
+        &self,
+        catalog: &Catalog,
+        clauses: &mut Vec<String>,
+        values: &mut Vec<Value>,
+    ) -> Result<()> {
         if !self.names_every_type() {
             let mut alternatives = Vec::new();
             for named in &self.query.types {
@@ -408,23 +420,22 @@ impl Settings {
             clauses.push("items.tier = ?".into());
             values.push(Value::String(self.tier().as_str().into()));
         }
-        let states: Vec<&str> = match &self.query.state {
-            None => vec![ItemState::Active.as_str(), ItemState::Archived.as_str()],
-            Some(states) => states.iter().map(String::as_str).collect(),
-        };
-        clauses.push(format!(
-            "items.state IN ({})",
-            vec!["?"; states.len()].join(", ")
-        ));
-        values.extend(states.into_iter().map(|state| Value::String(state.into())));
-        crate::filter::narrow(
-            self.query.filter.as_deref(),
-            self.query.beneath.as_deref(),
-            whole_edges,
-            catalog,
-            clauses,
-            values,
-        )
+        Ok(())
+    }
+
+    /// The query past its types and tier.
+    pub(crate) fn slice_query(&self) -> crate::slice::SliceQuery {
+        crate::slice::SliceQuery {
+            states: self.query.state.clone(),
+            filter: self.query.filter.clone(),
+            beneath: self.query.beneath.clone(),
+        }
+    }
+
+    /// What a copy of the folder holds past its types and tier
+    /// (`folders/copy-holds-query`), `None` where that is all of them.
+    pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
+        self.slice_query().for_copy()
     }
 
     /// Refuses where the copy's slice does not take every item the query
@@ -488,6 +499,13 @@ impl Settings {
                     "the folder holds {named}, and this copy's slice does not take them; hydrate with them"
                 )
             }));
+        }
+        if let Some(held) = crate::store::slice_query(conn)?
+            && !held.covers(&self.slice_query())?
+        {
+            return Err(unanswerable(
+                "it holds only the items another folder's query shows; ask the server, or a copy that holds this query's items".into(),
+            ));
         }
         if self.query.beneath.is_some()
             && !crate::store::whole_edge_types(conn)?
