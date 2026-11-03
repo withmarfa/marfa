@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { KNOWN_OVER, distribution, fragmentOf, scalar } from "./figures.js";
+import {
+  CEILINGS,
+  KNOWN_OVER,
+  distribution,
+  fragmentOf,
+  scalar,
+} from "./figures.js";
 import {
   EXPECTED_STEPS,
   mergeFragments,
@@ -132,8 +138,10 @@ describe("the verdict", () => {
     ]);
   });
 
-  it("starts with no figure excused", () => {
-    expect(KNOWN_OVER).toEqual({});
+  it("excuses only figures that have a ceiling", () => {
+    for (const name of Object.keys(KNOWN_OVER)) {
+      expect(CEILINGS[name]?.ceiling ?? null, name).not.toBeNull();
+    }
   });
 
   it("does not fail on a figure that has no ceiling", () => {
