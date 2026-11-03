@@ -5463,6 +5463,7 @@ When `folders autostart on` runs again and the file `folders/autostart-telemetry
 When `folders autostart off` runs, the CLI MUST remove the file `folders/autostart-telemetry` names.
 
 **Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
 ### `folders/autostart-telemetry-said`
 
 When `folders autostart on` finishes, the CLI MUST say which telemetry settings it carried, by name and never by value, or that it carried none.
