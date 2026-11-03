@@ -6836,7 +6836,9 @@ Where a folder's settings name no `full_pass_interval_seconds`, a device MUST us
 
 ### `folders/watch-full-pass-interval-own`
 
-Where a folder's settings name `full_pass_interval_seconds`, a device MUST use that many seconds as that folder's full-pass interval, so that watches of several folders each keep their own.
+Where a folder's settings name `full_pass_interval_seconds`, a device MUST use that many seconds as that folder's full-pass interval.
+
+**Reason:** A watch of every folder runs one watch per folder, and each keeps the interval its own folder names.
 
 **Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`.
 

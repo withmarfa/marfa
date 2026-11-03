@@ -184,7 +184,7 @@ impl Folder {
     /// the folder takes, once it settles, and each change on the server starts
     /// a pass. A pass also runs every second while the last one left work that
     /// time alone moves on, such as a delete's grace running out, and a full
-    /// one every minute. A pass under way when `stop` is raised finishes
+    /// one each interval the folder names. A pass under way when `stop` is raised finishes
     /// first. On Apple platforms the calling thread runs at utility quality of
     /// service until this returns, and so do the threads the watch starts.
     pub fn watch<E>(
@@ -662,9 +662,9 @@ impl Passes {
     }
 
     /// Runs what a second's tick of a watch that hears no file event and no
-    /// server change runs: a full pass each interval the folder names, and otherwise a quick
-    /// pass only where the last pass left the folder short of rest. Answers
-    /// whether a pass ran.
+    /// server change runs: a full pass each interval the folder names, and
+    /// otherwise a quick pass only where the last pass left the folder short
+    /// of rest. Answers whether a pass ran.
     pub(super) fn tick(&mut self, folder: &Folder) -> Result<bool, CoreError> {
         self.ticks += 1;
         let kept = if self.every.is_zero() {
