@@ -16,7 +16,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection, setBusyBudgetMs, type RawDb } from "./connection.js";
+import {
+  createConnection,
+  markWriteProgress,
+  setBusyBudgetMs,
+  type RawDb,
+} from "./connection.js";
+import {
+  TransactionControl,
+  transactionControl,
+} from "./transaction-control.js";
 import { createSqliteStorage } from "./index.js";
 import type { Storage } from "../interface.js";
 
@@ -32,6 +41,35 @@ describe("SqliteStorage.runInTransaction", () => {
   afterEach(async () => {
     await storage.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lands the writes a store makes outside a transaction behind one that marks progress for longer than the budget", async () => {
+    setBusyBudgetMs(100);
+    try {
+      let begun!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        begun = resolve;
+      });
+      const holding = storage.runInTransaction(async () => {
+        await storage.settings.set("probe", "held");
+        begun();
+        for (let step = 0; step < 25; step++) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          markWriteProgress();
+        }
+      });
+      await opened;
+      const nowIso = new Date().toISOString();
+      const [windows] = await Promise.all([
+        storage.rateLimits.incrementWindows("probe", ["k"], 60_000, nowIso),
+        storage.settings.set("probe", "waited"),
+        holding,
+      ]);
+      expect(windows.get("k")?.count).toBe(1);
+      expect(await storage.settings.get("probe")).toBe("waited");
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
   });
 
   it("rolls back every write inside an async transaction body when the body throws", async () => {
@@ -191,6 +229,98 @@ describe("a raw transaction", () => {
       await third.execute("INSERT INTO probe (n) VALUES (3)");
       await third.commit();
       expect(await values()).toEqual([1, 3]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  /**
+   * A write transaction that writes and marks progress `MARKS` times, one
+   * tick apart: far longer than the budget in all, and never idle for more
+   * than a small part of it, however slow the runner.
+   */
+  const PROGRESS_BUDGET_MS = 500;
+  const MARKS = 30;
+  const TICK_MS = 30;
+  function markingWriter(): Promise<void> {
+    return transactionControl.run(new TransactionControl(), async () => {
+      const first = await raw.transaction("write");
+      await first.execute("INSERT INTO probe (n) VALUES (1)");
+      for (let step = 0; step < MARKS; step++) {
+        await new Promise((resolve) => setTimeout(resolve, TICK_MS));
+        markWriteProgress();
+      }
+      await first.commit();
+    });
+  }
+
+  it("keeps waiting behind a writer that marks progress, for longer than the budget", async () => {
+    setBusyBudgetMs(PROGRESS_BUDGET_MS);
+    try {
+      const holding = markingWriter();
+      await new Promise((resolve) => setImmediate(resolve));
+      const started = performance.now();
+      const second = await raw.transaction("write");
+      await second.execute("INSERT INTO probe (n) VALUES (2)");
+      await second.commit();
+      // Witness that the wait outlasted the budget.
+      expect(performance.now() - started).toBeGreaterThan(PROGRESS_BUDGET_MS);
+      await holding;
+      expect(await values()).toEqual([1, 2]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("keeps a write outside a transaction waiting behind a writer that marks progress, on one connection", async () => {
+    const open = () => readdirSync("/dev/fd").length;
+    const warm = await raw.transaction("write");
+    await warm.commit();
+    await raw.execute("SELECT 1");
+    setBusyBudgetMs(PROGRESS_BUDGET_MS);
+    try {
+      const before = open();
+      const holding = markingWriter();
+      await new Promise((resolve) => setImmediate(resolve));
+      const started = performance.now();
+      await raw.execute("INSERT INTO probe (n) VALUES (2)");
+      expect(performance.now() - started).toBeGreaterThan(PROGRESS_BUDGET_MS);
+      await holding;
+      expect(await values()).toEqual([1, 2]);
+      // A write retried against the lock drops its connection on every
+      // refusal, which a wait this long would make dozens.
+      expect(open() - before).toBeLessThanOrEqual(4);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("still refuses a write outside a transaction behind a writer that stalls", async () => {
+    setBusyBudgetMs(100);
+    try {
+      const first = await raw.transaction("write");
+      await first.execute("INSERT INTO probe (n) VALUES (1)");
+      await expect(
+        raw.execute("INSERT INTO probe (n) VALUES (2)"),
+      ).rejects.toMatchObject({ code: "write_contention", status: 503 });
+      await first.commit();
+      await raw.execute("INSERT INTO probe (n) VALUES (3)");
+      expect(await values()).toEqual([1, 3]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("does not mark progress for a writer outside a transaction", async () => {
+    setBusyBudgetMs(50);
+    try {
+      const first = await raw.transaction("write");
+      await first.execute("INSERT INTO probe (n) VALUES (1)");
+      const waiting = raw.transaction("write");
+      const marking = setInterval(markWriteProgress, 10);
+      await expect(waiting).rejects.toMatchObject({ code: "write_contention" });
+      clearInterval(marking);
+      await first.commit();
     } finally {
       setBusyBudgetMs(5_000);
     }

@@ -1,9 +1,12 @@
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import type { MiddlewareHandler } from "hono";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { credentialHandle } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
+import { runInBackground } from "../background-context.js";
 import * as clock from "../clock.js";
+import { lockNotFree, withoutWriteWait } from "../storage/sqlite/connection.js";
 
 export interface RateLimitConfig {
   /** Default requests per window. */
@@ -37,12 +40,13 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * the whole budget refreshes when the window lapses.
  *
  * The counter table sits in the same database every other table lives in,
- * so every process pointed at it increments the same rows and the cap
- * holds across all of them rather than per process.
+ * so the counts outlive a restart.
  *
- * Hot path: one upsert round-trip per gated request. The shared
- * `rate_limit_windows` rows have their own retention sweep
- * (`RateLimitWindowCleaner` in storage/retention.ts).
+ * Hot path: one upsert per gated request, in a write transaction that never
+ * waits for the lock (`WindowLedger` below says what happens when it is
+ * held, and what that costs). The shared `rate_limit_windows` rows have
+ * their own retention sweep (`RateLimitWindowCleaner` in
+ * storage/retention.ts).
  *
  * Configuration is required — there is no fallback that reads
  * `process.env`. `app.ts` constructs the config from `AppConfig`.
@@ -100,7 +104,6 @@ export function rateLimitMiddleware(
     const pathPrefix = matchedPrefix ?? path.split("/").slice(0, 2).join("/");
     const credentialWindowKey = `${identifier}:${pathPrefix}`;
     const now = clock.nowMs();
-    const nowIso = new Date(now).toISOString();
 
     // Both windows increment in ONE statement — same table, same
     // timestamp, previously sequential round trips on every request. One
@@ -119,11 +122,10 @@ export function rateLimitMiddleware(
     const aggregateWindowKey = `all:${identifier}`;
     const windowKeys = [credentialWindowKey];
     if (aggregateLimit > 0) windowKeys.push(aggregateWindowKey);
-    const windows = await config.storage.rateLimits.incrementWindows(
-      RATE_FAMILY,
+    const windows = await ledgerFor(config.storage).count(
       windowKeys,
       config.windowMs,
-      nowIso,
+      now,
     );
 
     const rejectOver = (
@@ -178,4 +180,211 @@ export function rateLimitMiddleware(
 
     await next();
   };
+}
+
+interface Window {
+  count: number;
+  expires_at: string;
+}
+
+const HELD_KEYS_MAX = 32_768;
+const SETTLE_RETRY_MS = 1_000;
+const SETTLE_KEYS_PER_STATEMENT = 500;
+
+function lockWasHeld(err: unknown): boolean {
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step instanceof MarfaError)
+      return step.code === ErrorCode.WRITE_CONTENTION;
+    if (step === null || typeof step !== "object") return false;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * Counts requests against the shared windows without waiting for the write
+ * lock: an atomic bulk page holds the lock for as long as it runs, and every
+ * request behind it would wait with it, or be refused `write_contention`
+ * once the busy budget had passed.
+ *
+ * With the lock free, a request is added to its windows in one statement,
+ * together with the requests held back for them, and judged on the counts
+ * that statement returns. With the lock held, it is judged on the shared
+ * window as it stands, which a read gets without waiting under WAL, plus the
+ * requests this process has held back for that window, plus itself, and is
+ * held back in turn. Counts run one at a time, so every counted request is
+ * in exactly one of the shared row and `held` whenever a count reads them.
+ *
+ * Within one process that is the cap exactly. Held requests are written
+ * about a second after the lock frees, or by the next count of their window.
+ * Until then they live only in this process's memory: if it exits, they are
+ * lost, and the caller may make that many more requests in the same window,
+ * at most one more limit's worth. Another process using the same database
+ * does not see them until they are written.
+ *
+ * The count runs outside the request's authority, as the single statement it
+ * replaces did: it writes only the limiter's own rows.
+ */
+class WindowLedger {
+  private readonly held = new Map<string, Window>();
+  private queue: Promise<unknown> = Promise.resolve();
+  private settling: Promise<void> | undefined;
+
+  constructor(private readonly storage: Storage) {}
+
+  count(
+    keys: string[],
+    windowMs: number,
+    now: number,
+  ): Promise<Map<string, Window>> {
+    return this.alone(() => this.countNow([...new Set(keys)], windowMs, now));
+  }
+
+  /** Waits until nothing counted here is still held back from the shared windows. */
+  async settled(): Promise<void> {
+    while (this.settling) await this.settling;
+  }
+
+  private alone<T>(work: () => Promise<T>): Promise<T> {
+    const turn = this.queue.then(() => runInBackground(work));
+    this.queue = turn.catch(() => undefined);
+    return turn;
+  }
+
+  /** A held request whose window has ended counts in no later window. */
+  private forgetEnded(nowIso: string): void {
+    for (const [key, window] of this.held)
+      if (window.expires_at <= nowIso) this.held.delete(key);
+  }
+
+  private async write(
+    keys: string[],
+    windowMs: number,
+    nowIso: string,
+    by: ReadonlyMap<string, Window>,
+  ): Promise<Map<string, Window>> {
+    return await withoutWriteWait(() =>
+      this.storage.runInTransaction(() =>
+        this.storage.rateLimits.incrementWindows(
+          RATE_FAMILY,
+          keys,
+          windowMs,
+          nowIso,
+          by,
+        ),
+      ),
+    );
+  }
+
+  private async countNow(
+    keys: string[],
+    windowMs: number,
+    now: number,
+  ): Promise<Map<string, Window>> {
+    const nowIso = new Date(now).toISOString();
+    this.forgetEnded(nowIso);
+    const by = new Map<string, Window>();
+    for (const key of keys) {
+      const owed = this.held.get(key);
+      if (owed)
+        by.set(key, { count: owed.count + 1, expires_at: owed.expires_at });
+    }
+    let stored: Map<string, Window>;
+    try {
+      stored = await this.write(keys, windowMs, nowIso, by);
+    } catch (error) {
+      if (!lockWasHeld(error)) throw error;
+      return await this.countHeld(keys, windowMs, now);
+    }
+    for (const key of keys) this.held.delete(key);
+    return stored;
+  }
+
+  private async countHeld(
+    keys: string[],
+    windowMs: number,
+    now: number,
+  ): Promise<Map<string, Window>> {
+    const nowIso = new Date(now).toISOString();
+    const unheld = keys.filter((key) => !this.held.has(key)).length;
+    // A request that could not be held back could not be judged on its
+    // window either, so it meets the lock as any other write would.
+    if (this.held.size + unheld > HELD_KEYS_MAX) throw lockNotFree();
+    const counted = new Map<string, Window>();
+    for (const key of keys) {
+      const shared = await this.storage.rateLimits.peekWindow(
+        RATE_FAMILY,
+        key,
+        nowIso,
+      );
+      const owed = this.held.get(key);
+      counted.set(key, {
+        count: (shared?.count ?? 0) + (owed?.count ?? 0) + 1,
+        expires_at:
+          shared?.expires_at ??
+          owed?.expires_at ??
+          new Date(now + windowMs).toISOString(),
+      });
+    }
+    for (const [key, window] of counted) {
+      const owed = this.held.get(key);
+      if (owed) owed.count += 1;
+      else this.held.set(key, { count: 1, expires_at: window.expires_at });
+    }
+    this.settle(windowMs);
+    return counted;
+  }
+
+  private settle(windowMs: number): void {
+    this.settling ??= runInBackground(async () => {
+      try {
+        while (this.held.size) {
+          await delay(SETTLE_RETRY_MS, undefined, { ref: false });
+          if (!(await this.alone(() => this.writeHeld(windowMs)))) break;
+        }
+      } finally {
+        this.settling = undefined;
+      }
+    });
+  }
+
+  /** Whether to try again later: false once the store refuses for a reason
+   *  other than the lock, whose held requests the next count writes instead. */
+  private async writeHeld(windowMs: number): Promise<boolean> {
+    const nowIso = clock.now().toISOString();
+    this.forgetEnded(nowIso);
+    const keys = [...this.held.keys()];
+    for (let at = 0; at < keys.length; at += SETTLE_KEYS_PER_STATEMENT) {
+      if (at > 0) await setImmediate();
+      const chunk = keys.slice(at, at + SETTLE_KEYS_PER_STATEMENT);
+      const by = new Map<string, Window>();
+      for (const key of chunk) {
+        const owed = this.held.get(key);
+        if (owed) by.set(key, { ...owed });
+      }
+      try {
+        await this.write(chunk, windowMs, nowIso, by);
+      } catch (error) {
+        return lockWasHeld(error);
+      }
+      for (const key of chunk) this.held.delete(key);
+    }
+    return true;
+  }
+}
+
+const ledgers = new WeakMap<Storage, WindowLedger>();
+
+function ledgerFor(storage: Storage): WindowLedger {
+  let ledger = ledgers.get(storage);
+  if (!ledger) {
+    ledger = new WindowLedger(storage);
+    ledgers.set(storage, ledger);
+  }
+  return ledger;
+}
+
+/** Waits until every request held back while the lock was held is in the shared windows. */
+export async function settleRateLimits(storage: Storage): Promise<void> {
+  await ledgers.get(storage)?.settled();
 }

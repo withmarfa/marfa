@@ -196,6 +196,15 @@ export function withoutWriteWait<T>(work: () => T): T {
   return writeWaitBudget.run(0, work);
 }
 
+/**
+ * Tells writes queued behind the open write transaction that it is still
+ * working, so their wait for the lock restarts. Call between the units of a
+ * long transaction, such as the entries of a bulk page.
+ */
+export function markWriteProgress(): void {
+  transactionControl.getStore()?.markProgress?.();
+}
+
 export function setBusyBudgetMs(ms: number | undefined): void {
   // `undefined` leaves the default standing rather than overwriting it
   // with a second copy of the same number, so `BUSY_BUDGET_MS` above is
@@ -260,39 +269,55 @@ export function lockNotFree(): MarfaError {
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs,
+  queueBehindWriters?: () => Promise<() => void>,
 ): Promise<T> {
-  const deadline = clock.monotonicMs() + budgetMs;
+  let deadline = clock.monotonicMs() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
-  for (;;) {
-    try {
-      return await attempt();
-    } catch (err) {
-      const remaining = deadline - clock.monotonicMs();
-      if (!isBusy(err)) throw err;
-      if (remaining <= 0) {
-        // The budget is spent and the lock is still held. Rethrowing
-        // the driver's own error hands the handler something with no
-        // code, which becomes a `500` — the instance reporting itself
-        // broken about the one failure that clears itself on its own.
-        // A device reads a `5xx` as retryable and a `500` as a fault, so
-        // the status would be right by accident while the code said the
-        // wrong thing.
-        throw contention(budgetMs);
+  let leave: (() => void) | undefined;
+  try {
+    for (;;) {
+      try {
+        return await attempt();
+      } catch (err) {
+        if (!isBusy(err)) throw err;
+        if (queueBehindWriters && !leave) {
+          // The holder may be a write transaction of this process. Waiting
+          // in its queue waits out one that keeps marking progress, and
+          // costs no connection per try; the budget then starts again for
+          // a holder in another process.
+          leave = await queueBehindWriters();
+          deadline = clock.monotonicMs() + budgetMs;
+          continue;
+        }
+        const remaining = deadline - clock.monotonicMs();
+        if (remaining <= 0) {
+          // The budget is spent and the lock is still held. Rethrowing
+          // the driver's own error hands the handler something with no
+          // code, which becomes a `500` — the instance reporting itself
+          // broken about the one failure that clears itself on its own.
+          // A device reads a `5xx` as retryable and a `500` as a fault, so
+          // the status would be right by accident while the code said the
+          // wrong thing.
+          throw contention(budgetMs);
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, Math.min(wait, remaining));
+        });
+        wait = Math.min(wait * 2, BUSY_RETRY_MAX_MS);
       }
-      await new Promise((resolve) => {
-        setTimeout(resolve, Math.min(wait, remaining));
-      });
-      wait = Math.min(wait * 2, BUSY_RETRY_MAX_MS);
     }
+  } finally {
+    leave?.();
   }
 }
 
 /**
  * The client with every entry point that can meet the write lock retried
  * under `untilNotBusy`: a statement, a batch, the `BEGIN IMMEDIATE` a
- * transaction opens with, and a script. A statement issued inside an open
- * transaction already holds the lock and goes through the transaction
- * object as it is.
+ * transaction opens with, and a script. A statement refused the lock waits
+ * its turn behind this process's write transactions before it retries. A
+ * statement issued inside an open transaction already holds the lock and
+ * goes through the transaction object as it is.
  *
  * Two more things the wrapper does, because of what a refused statement
  * leaves behind. A connection whose statement was refused with
@@ -315,6 +340,8 @@ function waitingForTheLock(url: string): {
   const client = createClient({ url });
   let concurrentSnapshots = false;
   const transactions = transactionConnections(url, () => concurrentSnapshots);
+  const behindWriters = <T>(attempt: () => Promise<T>) =>
+    untilNotBusy(attempt, undefined, transactions.queueBehindWriters);
   let tail: Promise<unknown> = Promise.resolve();
   const one = <T>(attempt: () => Promise<T>): Promise<T> => {
     const turn = tail.then(
@@ -332,7 +359,7 @@ function waitingForTheLock(url: string): {
       return client.protocol;
     },
     execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
-      untilNotBusy(() =>
+      behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
@@ -342,20 +369,20 @@ function waitingForTheLock(url: string): {
         }),
       ),
     batch: (stmts, mode) =>
-      untilNotBusy(() =>
+      behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
           return client.batch(stmts, mode);
         }),
       ),
-    migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
+    migrate: (stmts) => behindWriters(() => one(() => client.migrate(stmts))),
     // Implementing the interface includes its deprecated no-argument overload.
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     transaction: (mode: TransactionMode = "write") =>
       untilNotBusy(() => transactions.begin(mode)),
     executeMultiple: (sql) =>
-      untilNotBusy(() => one(() => client.executeMultiple(sql))),
+      behindWriters(() => one(() => client.executeMultiple(sql))),
     sync: () => client.sync(),
     close: () => {
       client.close();
@@ -420,10 +447,12 @@ const BEGIN: Record<TransactionMode, string> = {
  * So a write transaction waits here for the one before it in this process
  * to end, rather than meeting its lock in `BEGIN IMMEDIATE`: every refusal
  * the retry absorbed cost a connection, up to a hundred of them for one
- * wait. The wait is held to the same budget as the retry and ends in the
- * same refusal. A lock another process holds still meets the retry, and
- * still costs a connection per refusal, because no client call resets the
- * refused statement.
+ * wait. A statement outside a transaction that meets the lock joins the same
+ * queue after its first refusal. The wait is held to the same budget as the
+ * retry and ends in the same refusal, except that a holder marking progress
+ * with `markWriteProgress` restarts it. A lock another process holds still
+ * meets the retry, and still costs a connection per refusal, because no
+ * client call resets the refused statement.
  */
 type CaptureRead = <T>(
   capture: (reader: Transaction) => Promise<T>,
@@ -435,30 +464,45 @@ function transactionConnections(
   concurrentSnapshots: () => boolean,
 ): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
+  queueBehindWriters: () => Promise<() => void>;
   close: () => void;
   captureRead: CaptureRead;
   closeReads: () => Promise<void>;
 } {
-  const idle: Client[] = [];
+  // Kept apart by mode because `PRAGMA query_only` expires every statement
+  // the connection has prepared, and the driver never finalizes its own, so
+  // switching per transaction made each one cost more than the last.
+  const idle = { read: [] as Client[], write: [] as Client[] };
+  const pool = (mode: TransactionMode) =>
+    mode === "read" ? idle.read : idle.write;
   let shut = false;
+  let writerProgressAt = Number.NEGATIVE_INFINITY;
+  // The budget runs from the later of joining the queue and the open
+  // writer's last unit of work, so a short write waits out a long bulk
+  // page that keeps writing, and is still refused behind one that stalls.
   const awaitTurn = async (turn: Promise<void>): Promise<void> => {
     const budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs;
+    const joined = clock.monotonicMs();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         turn,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(contention(budgetMs));
-          }, budgetMs);
+          const check = () => {
+            const idleFor =
+              clock.monotonicMs() - Math.max(joined, writerProgressAt);
+            if (idleFor >= budgetMs) reject(contention(budgetMs));
+            else timer = setTimeout(check, budgetMs - idleFor);
+          };
+          timer = setTimeout(check, budgetMs);
         }),
       ]);
     } finally {
       clearTimeout(timer);
     }
   };
-  const handBack = (conn: Client, sound: boolean) => {
-    if (sound && !shut && !conn.closed) idle.push(conn);
+  const handBack = (conn: Client, mode: TransactionMode, sound: boolean) => {
+    if (sound && !shut && !conn.closed) pool(mode).push(conn);
     else conn.close();
   };
 
@@ -512,15 +556,15 @@ function transactionConnections(
         throw error;
       }
     }
-    const conn = idle.pop() ?? createClient({ url });
+    const pooled = pool(mode).pop();
+    const conn = pooled ?? createClient({ url });
     try {
       // The native READONLY begin accepts writes; query_only supplies the backstop.
-      await conn.execute(
-        mode === "read" ? "PRAGMA query_only = ON" : "PRAGMA query_only = OFF",
-      );
+      if (!pooled && mode === "read")
+        await conn.execute("PRAGMA query_only = ON");
       await conn.execute(BEGIN[mode]);
     } catch (err) {
-      handBack(conn, false);
+      handBack(conn, mode, false);
       leave();
       throw err;
     }
@@ -529,13 +573,17 @@ function transactionConnections(
       new TransactionControl();
     control.begun = true;
     let open = true;
+    if (mode === "write")
+      control.markProgress = () => {
+        if (open) writerProgressAt = clock.monotonicMs();
+      };
     const closedError = () =>
       control.error() ??
       new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
     const finish = (sound: boolean) => {
       open = false;
       if (control.outcome === "rolled_back") control.participant?.rolledBack();
-      handBack(conn, sound);
+      handBack(conn, mode, sound);
       leave();
     };
     const discard = async (holdWriter = false) => {
@@ -550,7 +598,7 @@ function transactionConnections(
       }
       if (holdWriter) {
         open = false;
-        handBack(conn, false);
+        handBack(conn, mode, false);
       } else finish(false);
     };
     const loadRegistry = async (): Promise<{
@@ -648,7 +696,6 @@ function transactionConnections(
         }
         await conn.execute(statement);
         if (injected === "ack-lost") throw commitFailure(injected);
-        if (mode === "read") await conn.execute("PRAGMA query_only = OFF");
         control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
         if (statement === "COMMIT") control.participant?.committed();
       } catch (error) {
@@ -893,6 +940,7 @@ function transactionConnections(
   };
   return {
     begin,
+    queueBehindWriters: () => writerAdmission(awaitTurn),
     captureRead,
     closeReads: async () => {
       shut = true;
@@ -901,7 +949,8 @@ function transactionConnections(
     },
     close: () => {
       shut = true;
-      for (const conn of idle.splice(0)) conn.close();
+      for (const conn of [...idle.read.splice(0), ...idle.write.splice(0)])
+        conn.close();
     },
   };
 }

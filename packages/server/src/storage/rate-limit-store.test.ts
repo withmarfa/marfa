@@ -274,6 +274,47 @@ describe("RateLimitStore — batched increments", () => {
     );
   });
 
+  it("adds a given amount to a live window, and starts a window at the expiry given", async () => {
+    ctx = await createTestContext();
+    const now = new Date(1_000_000).toISOString();
+    await ctx.storage.rateLimits.incrementWindow(
+      "rate",
+      "by-live",
+      60_000,
+      now,
+    );
+    const startsAt = new Date(1_030_000).toISOString();
+    const map = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      ["by-live", "by-fresh", "by-one"],
+      60_000,
+      now,
+      new Map([
+        ["by-live", { count: 5, expires_at: startsAt }],
+        ["by-fresh", { count: 3, expires_at: startsAt }],
+      ]),
+    );
+    // A live window keeps its own horizon and takes the whole amount.
+    expect(map.get("by-live")).toStrictEqual({
+      count: 6,
+      expires_at: new Date(1_060_000).toISOString(),
+    });
+    expect(map.get("by-fresh")).toStrictEqual({
+      count: 3,
+      expires_at: startsAt,
+    });
+    expect(map.get("by-one")?.count).toBe(1);
+    await expect(
+      ctx.storage.rateLimits.incrementWindows(
+        "rate",
+        ["by-zero"],
+        60_000,
+        now,
+        new Map([["by-zero", { count: 0, expires_at: startsAt }]]),
+      ),
+    ).rejects.toThrow("is not a count to add");
+  });
+
   it("duplicate keys collapse to one increment, and an empty batch is a no-op", async () => {
     ctx = await createTestContext();
     const now = new Date(1_000_000).toISOString();

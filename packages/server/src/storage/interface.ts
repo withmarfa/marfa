@@ -2995,12 +2995,16 @@ export interface RateLimitStore {
    * table, same method, same timestamp — and three sequential round
    * trips on the hot path were pure multiplier. Keys are deduplicated.
    * Returns a map keyed by window key.
+   *
+   * A key in `by` is increased by its `count` instead of 1, and a window it
+   * starts ends at its `expires_at` instead of `nowIso + windowMs`.
    */
   incrementWindows(
     family: string,
     keys: string[],
     windowMs: number,
     nowIso: string,
+    by?: ReadonlyMap<string, { count: number; expires_at: string }>,
   ): Promise<Map<string, { count: number; expires_at: string }>>;
   /**
    * Drop every row whose `expires_at` is strictly older than `nowIso`.

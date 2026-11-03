@@ -1716,6 +1716,20 @@ When the server reads a `POST /items/bulk` page under `atomic: true` that holds 
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses an atomic page for an entry's source or type before a stale entry ahead of it`.
 
+### `items/bulk-answers-reads`
+
+While a `POST /items/bulk` page is being written, the server MUST answer a read that arrives without waiting for the page to end.
+
+**Reason:** a page may hold thousands of entries, and an instance that stops answering for its length looks down to every other caller.
+
+**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an atomic items page is updating, with the item as it was`, `› answers a read in the middle of an items page under atomic: false`.
+
+### `items/bulk-atomic-unseen`
+
+While a `POST /items/bulk` page under `atomic: true` is being written, the server MUST answer a read of an item the page writes with the item as it stood before the page.
+
+**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an atomic items page is updating, with the item as it was`.
+
 ### `items/bulk-best-effort`
 
 If an entry of a `POST /items/bulk` page under `atomic: false` is refused, then the server MUST report it `errored` with its `error.code` and `error.details`.

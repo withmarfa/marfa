@@ -127,6 +127,7 @@ import { instantColumnValues } from "../storage/instant-columns.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
 import { edgeKindReadable } from "./_edge-visibility.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -417,13 +418,6 @@ const ITERATIONS_PER_YIELD = 20_000;
  */
 export const MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS = 2_000_000;
 
-/** Hand the event loop one turn: `setImmediate` runs after the pending
- *  I/O and timer callbacks rather than ahead of them, which a resolved
- *  promise would not, being a microtask. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 /** The type whose items this route reads: the one declaring the event shape. */
 const EVENT_TYPE = "core.event";
 
@@ -502,7 +496,7 @@ async function scanEvents<T>(
     // walk of tens of thousands of rows is then a single stretch of
     // synchronous reads and JSON parsing with every other request on
     // the process behind it.
-    if (cursor !== undefined) await yieldToEventLoop();
+    if (cursor !== undefined) await yieldBulkWork();
   } while (cursor !== undefined);
   return kept;
 }
@@ -1291,7 +1285,7 @@ export function occurrenceRoutes(
       ) {
         seriesSinceYield = 0;
         iterationsSinceYield = 0;
-        await yieldToEventLoop();
+        await yieldBulkWork();
       }
 
       // Initialized empty rather than assigned in every path: a series

@@ -36,6 +36,8 @@ export class TransactionControl {
   callbackCause: unknown;
   /** How a conformance fault makes this transaction's commit fail; set only under the test hooks. */
   commitFault?: CommitFault;
+  /** Set by the connection that opened the root write transaction. */
+  markProgress?: () => void;
   private failure: TransactionFailure | undefined;
   private settled: Exclude<TransactionOutcome, "active"> | undefined;
   private readonly settlementCallbacks: ((

@@ -298,11 +298,11 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the 
 
 ### `errors/contention`
 
-If a write cannot get the store's write lock within the instance's busy budget, then the server MUST answer `503 write_contention`.
+If a write cannot get the store's write lock within the instance's busy budget, and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
 
 **Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
 
-**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`.
+**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held from outside for longer than the budget`.
 
 ### `errors/contention-declared`
 
@@ -323,6 +323,14 @@ When the server answers `503 write_contention`, the server MUST carry the busy b
 When a write meets a write lock that is released inside the instance's busy budget, the server MUST land the write.
 
 **Tests:** `compliance/write-contention.test.ts › waits out a briefly held lock on the default budget`.
+
+### `errors/contention-bulk-wait`
+
+While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every busy budget, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
+
+**Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
+
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget`.
 
 ### `errors/contention-read`
 

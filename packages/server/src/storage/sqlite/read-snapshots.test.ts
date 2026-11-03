@@ -36,6 +36,8 @@ const fault = vi.hoisted(() => ({
   reconstructionFails: false,
   reads: 0,
   failSql: "",
+  clients: 0,
+  begun: [] as { client: number; query: string }[],
 }));
 vi.mock("@libsql/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@libsql/client")>();
@@ -43,13 +45,16 @@ vi.mock("@libsql/client", async (importOriginal) => {
     ...actual,
     createClient: (...args: Parameters<typeof actual.createClient>) => {
       const client = actual.createClient(...args),
-        execute = client.execute.bind(client);
+        execute = client.execute.bind(client),
+        id = ++fault.clients;
       let read = false;
       client.execute = async (
         statement: InStatement | string,
         ...rest: unknown[]
       ) => {
         const query = typeof statement === "string" ? statement : statement.sql;
+        if (query.startsWith("BEGIN") || query.startsWith("PRAGMA query_only"))
+          fault.begun.push({ client: id, query });
         if (query === "BEGIN TRANSACTION READONLY") {
           read = true;
           fault.reads++;
@@ -980,22 +985,54 @@ it("precommit seals escaped writers before the generation flush can await", asyn
   expect(getTypeSchema("example.escaped")).toBeUndefined();
 });
 
-it("native query_only reset failure discards the lease without certifying or poisoning the next writer", async () => {
-  const entered = gate(),
-    release = gate();
-  const reading = storage.runInReadSnapshot(async () => {
-    entered.resolve();
-    await release.promise;
-    return "late";
-  });
-  await entered.promise;
-  fault.failSql = "PRAGMA query_only = OFF";
-  const rejected = expect(reading).rejects.toThrow("native reset witness");
-  release.resolve();
-  await rejected;
-  await storage.runInTransaction(() => storage.settings.set("healthy", "yes"));
-  expect(await storage.settings.get("healthy")).toBe("yes");
-  await storage.runInReadSnapshot(() => undefined);
+it("sets query_only once per reading connection and never lends one to a writer", async () => {
+  // Each `PRAGMA query_only` expires every statement the connection has
+  // prepared, which grows without bound inside a long page of transactions.
+  fault.begun.length = 0;
+  for (let n = 0; n < 20; n++) {
+    await storage.runInReadSnapshot(() => storage.settings.get("healthy"));
+    await storage.runInTransaction(() =>
+      storage.settings.set("healthy", String(n)),
+    );
+  }
+  expect(await storage.settings.get("healthy")).toBe("19");
+  const readers = new Set(
+    fault.begun
+      .filter(({ query }) => query === "BEGIN TRANSACTION READONLY")
+      .map(({ client }) => client),
+  );
+  const writers = new Set(
+    fault.begun
+      .filter(({ query }) => query === "BEGIN IMMEDIATE")
+      .map(({ client }) => client),
+  );
+  const pragmas = fault.begun.filter(({ query }) =>
+    query.startsWith("PRAGMA query_only"),
+  );
+  expect(readers.size).toBeGreaterThan(0);
+  expect(writers.size).toBeGreaterThan(0);
+  expect([...readers].filter((client) => writers.has(client))).toEqual([]);
+  // Witness: the pragma does run, once for each connection that reads.
+  expect(pragmas.map(({ query }) => query)).toEqual(
+    [...readers].map(() => "PRAGMA query_only = ON"),
+  );
+});
+
+it("a reading connection whose query_only fails is discarded without poisoning the next writer", async () => {
+  // A fresh storage has no reading connection pooled yet.
+  const fresh = await createSqliteStorage(join(path, "test.db"));
+  try {
+    fault.failSql = "PRAGMA query_only = ON";
+    await expect(fresh.runInReadSnapshot(() => "late")).rejects.toThrow(
+      "native reset witness",
+    );
+    expect(fault.failSql).toBe("");
+    await fresh.runInTransaction(() => fresh.settings.set("healthy", "yes"));
+    expect(await fresh.settings.get("healthy")).toBe("yes");
+    await fresh.runInReadSnapshot(() => undefined);
+  } finally {
+    await fresh.close();
+  }
 });
 
 it.each(["-1", "01", "9223372036854775808", "invalid"])(
