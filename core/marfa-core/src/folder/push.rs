@@ -294,7 +294,7 @@ pub(super) fn file_item_draft(
             catalog,
             &file_type,
             &crate::blob::Taken {
-                hash: crate::blob::hash_of(bytes),
+                hash: crate::blob::name_of(bytes),
                 size: bytes.len() as u64,
             },
             &crate::blob::mime_type_for(&file.path, None),
