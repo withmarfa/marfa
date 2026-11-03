@@ -7008,19 +7008,19 @@ Where a folder's `outside_query` is `hold`, a device MUST NOT send a new file wh
 
 ### `folders/outside-query-unwritten`
 
-While a new file is held outside the query, a device MUST NOT write to it, including a `marfa_id` line
+While a new file is held outside the query, a device MUST NOT write to it, including a `marfa_id` line.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is held unsent and unwritten, shown in status and listed as unmatched`.
 
 ### `folders/outside-query-report`
 
-While new files are held outside the query, a device MUST count them as `held_outside` in the scan report
+While new files are held outside the query, a device MUST count them as `held_outside` in the scan report.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is held unsent and unwritten, shown in status and listed as unmatched`.
 
 ### `folders/outside-query-status`
 
-While a new file is held outside the query, a device MUST report it as a `held` file with the `outside_query` flag and no item, and count it as `paused.outside_query`
+While a new file is held outside the query, a device MUST report it as a `held` file with the `outside_query` flag and no item, and count it as `paused.outside_query`.
 
 **Reason:** The flag differs from `addition` and from a paused removal, so each shows what is waiting and why.
 
@@ -7028,37 +7028,37 @@ While a new file is held outside the query, a device MUST report it as a `held` 
 
 ### `folders/outside-query-text`
 
-While new files are held outside the query, a device MUST say so in its text, apart from a paused addition
+While new files are held outside the query, a device MUST say so in its text, apart from a paused addition.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is held unsent and unwritten, shown in status and listed as unmatched`.
 
 ### `folders/outside-query-unmatched`
 
-While a new file is held outside the query, a device MUST list it in the unmatched files with the reason it is held and no item, and `folders unmatched --remove` MUST NOT delete it
+While a new file is held outside the query, a device MUST list it in the unmatched files with the reason it is held and no item, and `folders unmatched --remove` MUST NOT delete it.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is held unsent and unwritten, shown in status and listed as unmatched`.
 
 ### `folders/outside-query-matches`
 
-When a file held outside the query is edited so that its item would be held by the query, a device MUST send it as a new item at the next scan
+When a file held outside the query is edited so that its item would be held by the query, a device MUST send it as a new item at the next scan.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is sent once its content matches the query`.
 
 ### `folders/outside-query-setting-send`
 
-When a folder's `outside_query` changes to `send`, a device MUST send the new files it held outside the query at the next scan
+When a folder's `outside_query` changes to `send`, a device MUST send the new files it held outside the query at the next scan.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is sent once the folder's setting goes back to send`.
 
 ### `folders/outside-query-not-counted`
 
-A device MUST NOT count a new file held outside the query towards `addition_threshold`
+A device MUST NOT count a new file held outside the query towards `addition_threshold`.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is not counted towards the addition threshold`, `device/binding-folders-additions.test.ts › a new file outside the query › is held, shown in status and not counted towards the addition threshold`.
 
 ### `folders/outside-query-binding`
 
-Where a device is a binding, it MUST report the held files as `heldOutside` in a scan and as `paused.outsideQuery` in a status
+Where a device is a binding, it MUST report the held files as `heldOutside` in a scan and as `paused.outsideQuery` in a status.
 
 **Tests:** `device/binding-folders-additions.test.ts › a new file outside the query › is held, shown in status and not counted towards the addition threshold`.
 
