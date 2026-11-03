@@ -6605,6 +6605,54 @@ mod tests {
     }
 
     #[test]
+    fn a_new_document_is_judged_beneath_with_the_edge_lines_it_writes() {
+        let (_, _registry) = registry::tests::own_registry();
+        let settings = || {
+            serde_json::json!({
+                "query": { "beneath": SHELF },
+                "outside_query": "hold",
+            })
+        };
+        let other = "01a00000-0000-7000-8000-0000000000b3";
+        for (mode, line, created, held) in [
+            ("send", format!("child-of: \"[[{SHELF}]]\"\n"), 1, 0),
+            ("hold", format!("child-of: \"[[{SHELF}]]\"\n"), 1, 0),
+            ("hold", format!("child-of: \"[[{other}]]\"\n"), 0, 1),
+            (
+                "hold",
+                "child-of: \"[[nothing here by this name]]\"\n".into(),
+                0,
+                1,
+            ),
+            ("hold", String::new(), 0, 1),
+        ] {
+            let mut settings = settings();
+            settings["outside_query"] = mode.into();
+            let (dir, folder) = folder_beside_shelves(settings);
+            crate::store::upsert_item(
+                &folder.core.conn().unwrap(),
+                &crate::store::testing::wire_item(
+                    other,
+                    "core.collection",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": other }),
+                ),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            write_note(dir.path(), "own.md", &line);
+            let scanned = folder.scan().unwrap();
+            assert_eq!(
+                (scanned.created, scanned.held_outside),
+                (created, held),
+                "{mode} {line:?}: {scanned:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_new_file_is_judged_by_the_properties_its_bytes_give_it() {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with(

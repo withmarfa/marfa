@@ -7002,7 +7002,7 @@ Where a folder's `outside_query` is absent or `send`, a device MUST send a new f
 
 Where a folder's `outside_query` is `hold`, a device MUST NOT send a new file whose item the folder's query would not hold.
 
-**Reason:** A new file has no item. A file bound to an item, or taken in from another folder on the machine, is not new, and `folders/unmatched-file-kept` governs it. The query is judged on the item the file would become: its type, tier, state, tags and `filter`, the properties its bytes give a file item, and `beneath`, by the edges the folder's `defaults.edges` would give the item and the ones the file itself writes.
+**Reason:** A new file has no item. A file bound to an item, or taken in from another folder on the machine, is not new, and `folders/unmatched-file-kept` governs it. The query is judged on the item the file would become: its type, tier, state, tags and `filter`, the properties its bytes give a file item, and `beneath`, by the edges the folder's `defaults.edges` would give the item and the edge lines the file's frontmatter writes, each name resolved as the create resolves it. A line whose name resolves to no item adds no edge.
 
 **Tests:** `device/folders-outside-query.test.ts › a new file outside the query › is held unsent and unwritten, shown in status and listed as unmatched`.
 

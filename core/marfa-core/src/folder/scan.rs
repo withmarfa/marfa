@@ -2143,7 +2143,12 @@ impl Folder {
             return Some(false);
         }
         let state = made.read.lines.state.unwrap_or(ItemState::Active);
-        let edges = default_edges_of(settings, Some((&document.front, edge_types)));
+        let mut edges = default_edges_of(settings, Some((&document.front, edge_types)));
+        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+        edges.extend(
+            self.own_edges(&document.front, edge_types, catalog, &mut resolver)
+                .ok()?,
+        );
         self.judge_outside(settings, catalog, &made.draft, state, &edges)
     }
 
