@@ -754,6 +754,47 @@ mod tests {
     }
 
     #[test]
+    fn gives_an_archive_thirty_minutes_to_begin_and_ndjson_the_ordinary_budget() {
+        let archive = request(&ExportArgs {
+            format: Some(ExportFormat::Archive),
+            ..ExportArgs::default()
+        })
+        .unwrap();
+        assert_eq!(archive.wait, Some(Duration::from_secs(30 * 60)));
+        for format in [Some(ExportFormat::Ndjson), None] {
+            let ndjson = request(&ExportArgs {
+                format,
+                ..ExportArgs::default()
+            })
+            .unwrap();
+            assert_eq!(ndjson.wait, None, "{format:?}");
+        }
+    }
+
+    #[test]
+    fn remarks_first_at_five_seconds_and_then_every_fifteen() {
+        assert_eq!(FIRST_REMARK, Duration::from_secs(5));
+        assert_eq!(REMARK_EVERY, Duration::from_secs(15));
+
+        // The same logic at a hundredth of the pace: 50 ms, then 150 ms apart.
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let remarks = {
+            let said = Arc::clone(&said);
+            Remarks::every(FIRST_REMARK / 100, REMARK_EVERY / 100, move |waited| {
+                said.lock().unwrap().push(waited)
+            })
+        };
+        std::thread::sleep(Duration::from_millis(500));
+        drop(remarks);
+        let said = said.lock().unwrap();
+        assert!(said.len() >= 3, "{said:?}");
+        assert!(said[0] >= Duration::from_millis(50) && said[0] < Duration::from_millis(140));
+        for pair in said.windows(2) {
+            assert!(pair[1] - pair[0] >= Duration::from_millis(140), "{said:?}");
+        }
+    }
+
+    #[test]
     fn remarks_on_a_wait_until_it_ends_and_then_stops() {
         let said = Arc::new(Mutex::new(Vec::new()));
         let remarks = {
