@@ -97,7 +97,12 @@ describe("a large drop of new files", () => {
     const status = await harness.folder.status();
     expect(status.ok).toBe(true);
     if (!status.ok) return;
-    expect(status.value.paused).toEqual({ disk: 0, pull: 0, additions: 3 });
+    expect(status.value.paused).toEqual({
+      disk: 0,
+      pull: 0,
+      additions: 3,
+      outside_query: 0,
+    });
     const files = status.value.files.filter((file) =>
       file.path.startsWith("drop-"),
     );
