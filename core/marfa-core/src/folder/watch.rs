@@ -307,7 +307,18 @@ impl Folder {
             let heard = match unread.take() {
                 Some(wake) => Ok(wake),
                 None => {
-                    crate::clock::recv_timeout(events, stop, gate.listen_for(crate::clock::now()))
+                    let now = crate::clock::now();
+                    // Where a pass is due, only the events already queued are
+                    // read first. One write arrives as several events, and
+                    // after the last one, passed over, nothing else would wake
+                    // the loop for a tick.
+                    let due = changed && send_again_at.is_none_or(|at| now >= at) && gate.due(now);
+                    let wait = if due {
+                        Duration::ZERO
+                    } else {
+                        gate.listen_for(now)
+                    };
+                    crate::clock::recv_timeout(events, stop, wait)
                 }
             };
             match heard {
@@ -1059,6 +1070,17 @@ fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> b
         && drain.report.unclaimed_sources.is_empty()
 }
 
+/// Whether the pass did anything a person would want told: its edits and the
+/// server's answers to them too, which leave a later pass no work.
+fn happened(
+    settings: &SettingsFileReport,
+    scan: &ScanReport,
+    drain: &Drained,
+    pull: &PullReport,
+) -> bool {
+    stirred(settings, scan, drain, pull) || scan.updated + drain.report.answered > 0
+}
+
 /// Whether the pass changed something a later pass still needs to observe.
 /// A completed edit or writeback alone leaves no work for that pass.
 fn stirred(
@@ -1234,7 +1256,7 @@ impl Telling {
         {
             scan.lookup_refused = before.lookup_refused.clone();
         }
-        let happened = stirred(&settings, &scan, &drain, &pull);
+        let happened = happened(&settings, &scan, &drain, &pull);
         let flagged = super::merged_flagged(&scan.flagged, &pull.flagged);
         let mut embeds: Vec<Flagged> = Vec::new();
         for embed in scan.embeds.iter().chain(&pull.embeds) {
@@ -1636,6 +1658,8 @@ mod tests {
             ..PullReport::default()
         };
         assert!(!stirred(&settings, &scan, &drain, &pull));
+        // It is still told, as an eventful pass.
+        assert!(happened(&settings, &scan, &drain, &pull));
         // The witness: a file the pass has yet to see made, or moved, is work.
         scan.created = 1;
         assert!(stirred(&settings, &scan, &drain, &pull));
