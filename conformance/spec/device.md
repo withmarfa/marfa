@@ -1190,17 +1190,17 @@ Where a slice's query has a filter, when an `item.deleted`, `item.restored` or `
 
 ### `device/catch-up-beneath-enters`
 
-Where a slice's query names an item to narrow beneath, when the events a catch-up has applied leave the item reaching, by the `parent-of` edges the copy holds, a row the copy does not hold, a device MUST read that row and hold it if the query takes it.
+Where a slice's query names an item to narrow beneath, when the events a catch-up has applied, the device's own `parent-of` writes or the server's refusals of them leave the item reaching, by the `parent-of` edges the copy holds, a row the copy does not hold, a device MUST read that row and hold it if the query takes it.
 
-**Reason:** an edge event names the branch's top row alone. The copy holds `parent-of` whole, so its own edges say which rows came beneath the item, and a row read by id, or through the item listing beneath the branch's top, is held only where those edges reach it: a read can run ahead of the stream, and a row it shows beneath the branch that the stream has not yet drawn there arrives with the event that does. A row stays owed until a read answers it, so a catch-up stopped or failed part way reads the rest at the next.
+**Reason:** an edge event names the branch's top row alone. The copy holds `parent-of` whole, so its own edges say which rows came beneath the item, and a row read by id, or through the item listing beneath the branch's top, is held only where those edges reach it: a read can run ahead of the stream, and a row it shows beneath the branch that the stream has not yet drawn there arrives with the event that does. A refill in place walks only the edges it has brought again and those a waiting write names, since any other edge the copy holds is from before it went stale. Only a branch that comes beneath the item is read: a move that keeps it beneath reads nothing. A row stays owed until a read answers it, so a catch-up stopped or failed part way reads the rest at the next.
 
 **Tests:** `device/folders-copy-shrink.test.ts › holds a branch moved beneath the item, and writes its files`.
 
 ### `device/catch-up-beneath-leaves`
 
-Where a slice's query names an item to narrow beneath, when the events a catch-up has applied move, remove or purge a `parent-of` edge or the item so that the item no longer reaches a row the copy holds, a device MUST let the row go unless the row is pinned or a write of the device's own to it waits.
+Where a slice's query names an item to narrow beneath, when the events a catch-up has applied, the device's own `parent-of` writes or the server's refusals of them move, remove or purge a `parent-of` edge or the item so that the item no longer reaches a row the copy holds, a device MUST let the row go unless the row is pinned or a write of the device's own to it waits.
 
-**Reason:** the item's own state does not narrow the walk, so a branch stays while the item is in the bin and leaves once the item is purged. Judged on the edges as the applied events leave them, a branch an edge's delete and a new edge's create move out and back again lets nothing go and is read for nothing.
+**Reason:** the item's own state does not narrow the walk, so a branch stays while the item is in the bin and leaves once the item is purged. A branch is judged when the catch-up settles it, on the edges as the applied events leave them; until then, an event about one of its rows judges that row as the last settle held the branch. So a branch an edge's delete and a new edge's create move out and back again lets nothing go and is read for nothing, even where an event about one of its rows comes between.
 
 **Tests:** `device/folders-copy-shrink.test.ts › lets go of a branch moved out from beneath the item, but a row a waiting write names`, `› keeps the branch while the item is in the bin, and lets it go once the item is purged`.
 
