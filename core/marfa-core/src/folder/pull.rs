@@ -2637,10 +2637,18 @@ impl Folder {
         // Unreadable now, offline or gone: the line names it by id. A pin the
         // server refuses lets go of the pin it took, which moves the copy
         // revision, so a watch's next pass pulls and asks again.
-        for (id, answer) in self.core.pin_many(&unheld) {
+        let answers = self.core.pin_many(&unheld);
+        // Every pin taken is recorded before any failure is handled: one a
+        // later `?` skipped would look like another holder's next pass and
+        // never be let go.
+        for (id, answer) in &answers {
+            if matches!(answer, Ok(true)) {
+                state::hold_edge_end(&*self.core.conn()?, id, true)?;
+            }
+        }
+        for (id, answer) in answers {
             match answer {
-                Ok(true) => state::hold_edge_end(&*self.core.conn()?, &id, true)?,
-                Ok(false) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {}
+                Ok(_) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {}
                 Err(error) => unread(&id, error)?,
             }
         }
@@ -2781,6 +2789,79 @@ mod tests {
             assert!(!dir.path().join("fixture.bin").exists());
             assert_eq!(server.seen(&format!("/blobs/{hash}/url")).len(), 1);
         }
+    }
+
+    #[test]
+    fn a_failure_while_holding_ends_still_records_the_pins_taken() {
+        use crate::store;
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let db = dir.path().join(STATE_DIR).join("core.sqlite");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let core = working(Core::open(&db, None).unwrap()).unwrap();
+        settings_file::bind(&core, "folder").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        drop(core);
+        let folder = Folder::open(
+            dir.path(),
+            Some(Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let wanted: std::collections::BTreeSet<String> =
+            (0..200).map(|at| format!("end-{at:03}")).collect();
+        let second: Vec<&String> = wanted.iter().skip(100).collect();
+        let rows: Vec<serde_json::Value> = second
+            .iter()
+            .map(|id| {
+                serde_json::from_str::<serde_json::Value>(&crate::scripted::item_payload(
+                    "item.updated",
+                    id,
+                    "core.note",
+                    1,
+                ))
+                .unwrap()["item"]
+                    .clone()
+            })
+            .collect();
+        let metadata: Vec<serde_json::Value> = second
+            .iter()
+            .map(|id| serde_json::json!({"item_id": id, "tags": [], "extensions": {}}))
+            .collect();
+        let body = serde_json::json!({
+            "items": rows, "metadata": metadata, "listed": vec![true; second.len()]
+        });
+        server.on(
+            "/items/bulk-get",
+            vec![
+                crate::scripted::certified(crate::scripted::refusal(400, "invalid_request")),
+                crate::scripted::certified(crate::scripted::json(200, &body.to_string())),
+            ],
+        );
+
+        let failed = folder.hold_ends(&wanted, |_, error| Err(error));
+
+        assert!(failed.is_err());
+        let recorded: Vec<String> = state::edge_ends(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let mut taken: Vec<String> = second.iter().map(|id| (*id).clone()).collect();
+        taken.sort();
+        let mut recorded = recorded;
+        recorded.sort();
+        assert_eq!(recorded, taken, "a pin taken was left out of the record");
+        assert_eq!(store::pins(&folder.core.conn().unwrap()).unwrap(), taken);
     }
 
     #[test]

@@ -915,21 +915,44 @@ impl Core {
         }
     }
 
-    /// `pin` for many rows, reading each hundred with one request. Answers
-    /// each id in the order given with whether the pin took, or why it
-    /// failed: a failure of a page, or of the copy as a whole, is each of its
-    /// ids' own, and a later page is still read. A row the server holds none
-    /// of, in its bin or out of it, or leaves out as the key may not read it,
-    /// is `Ok(false)` and stays unpinned: the callers here treat `pin`'s
-    /// `NotFound` and `Forbidden` alike, and a row the copy does not hold has
-    /// nothing to let go or keep, so the bin is asked about only for a row it
-    /// does hold.
+    /// `pin` for many rows the copy does not hold, reading each hundred with
+    /// one request. Answers each id in the order given with whether the pin
+    /// took, or why it failed. A row the server holds none of, or leaves out
+    /// as the key may not read it, is `Ok(false)` and stays unpinned: the
+    /// callers here treat `pin`'s `NotFound` and `Forbidden` alike, and a row
+    /// the copy does not hold has nothing to let go or keep.
+    ///
+    /// A failure of one page is its ids' own and a later page is still read,
+    /// unless it would end a pass (`Canceled`, an environmental failure such
+    /// as offline or rate limited, or what ends a drain, an expired copy
+    /// among it): the rest are answered with that error, unread. A row the
+    /// copy holds is the caller's to filter out, since a read by id answers a
+    /// row in the bin as gone and this does not ask the bin.
     pub(crate) fn pin_many(&self, ids: &[String]) -> Vec<(String, Result<bool>)> {
+        debug_assert!(
+            self.conn().is_ok_and(|conn| {
+                ids.iter()
+                    .all(|id| !store::item_held(&conn, id).unwrap_or(false))
+            }),
+            "pin_many is for rows the copy does not hold"
+        );
         let mut answered = Vec::with_capacity(ids.len());
+        let mut ended: Option<CoreError> = None;
         for page in ids.chunks(http::BULK_GET_LIMIT) {
-            match self.pin_page(page) {
+            let read = match &ended {
+                Some(error) => Err(error.clone()),
+                None => self.pin_page(page),
+            };
+            match read {
                 Ok(held) => answered.extend(page.iter().cloned().zip(held.into_iter().map(Ok))),
                 Err(error) => {
+                    if ended.is_none()
+                        && (drain::ends_the_drain(&error)
+                            || matches!(error, CoreError::Canceled | CoreError::NoServer)
+                            || error.is_environmental())
+                    {
+                        ended = Some(error.clone());
+                    }
                     answered.extend(page.iter().map(|id| (id.clone(), Err(error.clone()))));
                 }
             }
@@ -941,19 +964,16 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
         let (added, context) = {
-            let conn = self.conn()?;
+            let mut conn = self.conn()?;
             store::refuse_unless_hydrated(&conn)?;
+            let tx = conn.transaction()?;
             let mut added = Vec::with_capacity(ids.len());
             for id in ids {
-                added.push(store::pin(&conn, id)?);
+                added.push(store::pin(&tx, id)?);
             }
-            (added, reach::Context::capture(&conn)?)
-        };
-        let own_create = |conn: &Connection, id: &str| -> Result<bool> {
-            Ok(store::waiting_writes_for_item(conn, id)?
-                .iter()
-                .any(|row| row.kind == WriteKind::CreateItem)
-                && store::item_held(conn, id)?)
+            let context = reach::Context::capture(&tx)?;
+            tx.commit()?;
+            (added, context)
         };
         let read = (|| -> Result<Vec<bool>> {
             let http = context.http(http);
@@ -973,18 +993,6 @@ impl Core {
                 }
                 whole.insert(row.item.id.clone(), (row, edges));
             }
-            let mut binned = std::collections::HashSet::new();
-            for id in ids {
-                if !whole.contains_key(id) {
-                    let conn = self.conn()?;
-                    if !own_create(&conn, id)? && store::item_held(&conn, id)? {
-                        drop(conn);
-                        if http.trashed_item(id)?.is_some() {
-                            binned.insert(id.clone());
-                        }
-                    }
-                }
-            }
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
@@ -996,13 +1004,7 @@ impl Core {
                         hydrate::hold_row(&tx, &catalog, row, edges)?;
                         true
                     }
-                    None if own_create(&tx, id)? => true,
-                    None => {
-                        if !binned.contains(id) {
-                            store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
-                        }
-                        false
-                    }
+                    None => false,
                 });
             }
             tx.commit()?;

@@ -2972,47 +2972,10 @@ mod tests {
     fn pinning_a_page_with_rows_that_are_gone_or_refused_pins_only_the_rest() {
         let server = Scripted::start();
         let core = hydrated_copy(&server);
-        // The server answers a row the copy holds as gone, once in its bin
-        // and once out of it.
-        server.on("/items/bulk-get", vec![bulk(&[("kept", true)])]);
-        core.pin_many(&["kept".into()]);
-        server.on("/items/bulk-get", vec![bulk(&[("binned", true)])]);
-        core.pin_many(&["binned".into()]);
-        server.on("/items/bulk-get", vec![bulk(&[("gone", true)])]);
-        core.pin_many(&["gone".into()]);
-        for id in ["kept", "binned", "gone"] {
-            core.unpin(id).unwrap();
-        }
-        let mut trashed: Value = serde_json::from_str::<Value>(&scripted::item_payload(
-            "item.updated",
-            "binned",
-            "core.note",
-            1,
-        ))
-        .unwrap()["item"]
-            .clone();
-        trashed["state"] = json!("trashed");
-        let mut bin = bulk_body(&[("binned", true)]);
-        bin["items"] = json!([trashed]);
-        let mut page = bulk_body(&[]);
-        page["data"] = json!([{"item": bin["items"][0].clone(), "metadata": bin["metadata"][0].clone(), "listed": true}]);
-        page["next_cursor"] = Value::Null;
-        server.on(
-            "/items",
-            vec![
-                scripted::certified(scripted::json(200, &page.to_string())),
-                scripted::certified(scripted::json(200, r#"{"data":[],"next_cursor":null}"#)),
-            ],
-        );
-        // `kept` is read; `binned`, `gone` and `refused` are left out.
-        server.on(
-            "/items/bulk-get",
-            vec![bulk(&[("kept", true), ("fresh", true)])],
-        );
+        // `gone` and `refused` are left out of the answer.
+        server.on("/items/bulk-get", vec![bulk(&[("fresh", true)])]);
 
-        let wanted: Vec<String> = ["kept", "binned", "gone", "refused", "fresh"]
-            .map(String::from)
-            .into();
+        let wanted: Vec<String> = ["gone", "refused", "fresh"].map(String::from).into();
         let answered: Vec<(String, bool)> = core
             .pin_many(&wanted)
             .into_iter()
@@ -3022,24 +2985,69 @@ mod tests {
         assert_eq!(
             answered,
             [
-                ("kept".to_string(), true),
-                ("binned".to_string(), false),
                 ("gone".to_string(), false),
                 ("refused".to_string(), false),
                 ("fresh".to_string(), true),
             ]
         );
         let conn = core.conn().unwrap();
-        assert_eq!(store::pins(&conn).unwrap(), ["fresh", "kept"]);
-        assert!(
-            store::item_held(&conn, "binned").unwrap(),
-            "a row in the bin was let go"
-        );
-        assert!(
-            !store::item_held(&conn, "gone").unwrap(),
-            "a row the server holds none of was kept"
-        );
+        assert_eq!(store::pins(&conn).unwrap(), ["fresh"]);
+        assert!(!store::item_held(&conn, "gone").unwrap());
         assert!(!store::item_held(&conn, "refused").unwrap());
+        assert!(!store::pinned(&conn, "gone").unwrap());
+    }
+
+    #[test]
+    fn a_page_that_ends_the_pass_leaves_the_later_pages_unread() {
+        for refusal in [
+            scripted::refusal(503, "unavailable"),
+            scripted::refusal(429, "rate_limited"),
+        ] {
+            let server = Scripted::start();
+            let core = hydrated_copy(&server);
+            let wanted = ids(0..250);
+            server.on(
+                "/items/bulk-get",
+                vec![bulk_of(&wanted[..100]), refusal, bulk_of(&wanted[200..])],
+            );
+
+            let answered = core.pin_many(&wanted);
+
+            assert_eq!(
+                server.seen("/items/bulk-get").len(),
+                2,
+                "a page was read after it"
+            );
+            assert_eq!(answered.len(), 250);
+            assert!(
+                answered[..100]
+                    .iter()
+                    .all(|(_, held)| matches!(held, Ok(true)))
+            );
+            assert!(answered[100..].iter().all(|(_, held)| held.is_err()));
+            let conn = core.conn().unwrap();
+            assert_eq!(store::pins(&conn).unwrap(), wanted[..100].to_vec());
+        }
+    }
+
+    #[test]
+    fn a_pin_page_whose_pins_cannot_all_be_taken_leaves_none() {
+        let server = Scripted::start();
+        let core = hydrated_copy(&server);
+        {
+            let conn = core.conn().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER refuse_third BEFORE INSERT ON pins WHEN NEW.item_id = 'end-002'
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            )
+            .unwrap();
+        }
+        let wanted = ids(0..3);
+
+        let answered = core.pin_many(&wanted);
+
+        assert!(answered.iter().all(|(_, held)| held.is_err()));
+        assert!(store::pins(&core.conn().unwrap()).unwrap().is_empty());
     }
 
     #[test]
