@@ -269,39 +269,55 @@ export function lockNotFree(): MarfaError {
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs,
+  queueBehindWriters?: () => Promise<() => void>,
 ): Promise<T> {
-  const deadline = clock.monotonicMs() + budgetMs;
+  let deadline = clock.monotonicMs() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
-  for (;;) {
-    try {
-      return await attempt();
-    } catch (err) {
-      const remaining = deadline - clock.monotonicMs();
-      if (!isBusy(err)) throw err;
-      if (remaining <= 0) {
-        // The budget is spent and the lock is still held. Rethrowing
-        // the driver's own error hands the handler something with no
-        // code, which becomes a `500` — the instance reporting itself
-        // broken about the one failure that clears itself on its own.
-        // A device reads a `5xx` as retryable and a `500` as a fault, so
-        // the status would be right by accident while the code said the
-        // wrong thing.
-        throw contention(budgetMs);
+  let leave: (() => void) | undefined;
+  try {
+    for (;;) {
+      try {
+        return await attempt();
+      } catch (err) {
+        if (!isBusy(err)) throw err;
+        if (queueBehindWriters && !leave) {
+          // The holder may be a write transaction of this process. Waiting
+          // in its queue waits out one that keeps marking progress, and
+          // costs no connection per try; the budget then starts again for
+          // a holder in another process.
+          leave = await queueBehindWriters();
+          deadline = clock.monotonicMs() + budgetMs;
+          continue;
+        }
+        const remaining = deadline - clock.monotonicMs();
+        if (remaining <= 0) {
+          // The budget is spent and the lock is still held. Rethrowing
+          // the driver's own error hands the handler something with no
+          // code, which becomes a `500` — the instance reporting itself
+          // broken about the one failure that clears itself on its own.
+          // A device reads a `5xx` as retryable and a `500` as a fault, so
+          // the status would be right by accident while the code said the
+          // wrong thing.
+          throw contention(budgetMs);
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, Math.min(wait, remaining));
+        });
+        wait = Math.min(wait * 2, BUSY_RETRY_MAX_MS);
       }
-      await new Promise((resolve) => {
-        setTimeout(resolve, Math.min(wait, remaining));
-      });
-      wait = Math.min(wait * 2, BUSY_RETRY_MAX_MS);
     }
+  } finally {
+    leave?.();
   }
 }
 
 /**
  * The client with every entry point that can meet the write lock retried
  * under `untilNotBusy`: a statement, a batch, the `BEGIN IMMEDIATE` a
- * transaction opens with, and a script. A statement issued inside an open
- * transaction already holds the lock and goes through the transaction
- * object as it is.
+ * transaction opens with, and a script. A statement refused the lock waits
+ * its turn behind this process's write transactions before it retries. A
+ * statement issued inside an open transaction already holds the lock and
+ * goes through the transaction object as it is.
  *
  * Two more things the wrapper does, because of what a refused statement
  * leaves behind. A connection whose statement was refused with
@@ -324,6 +340,8 @@ function waitingForTheLock(url: string): {
   const client = createClient({ url });
   let concurrentSnapshots = false;
   const transactions = transactionConnections(url, () => concurrentSnapshots);
+  const behindWriters = <T>(attempt: () => Promise<T>) =>
+    untilNotBusy(attempt, undefined, transactions.queueBehindWriters);
   let tail: Promise<unknown> = Promise.resolve();
   const one = <T>(attempt: () => Promise<T>): Promise<T> => {
     const turn = tail.then(
@@ -341,7 +359,7 @@ function waitingForTheLock(url: string): {
       return client.protocol;
     },
     execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
-      untilNotBusy(() =>
+      behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
@@ -351,20 +369,20 @@ function waitingForTheLock(url: string): {
         }),
       ),
     batch: (stmts, mode) =>
-      untilNotBusy(() =>
+      behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
           return client.batch(stmts, mode);
         }),
       ),
-    migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
+    migrate: (stmts) => behindWriters(() => one(() => client.migrate(stmts))),
     // Implementing the interface includes its deprecated no-argument overload.
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     transaction: (mode: TransactionMode = "write") =>
       untilNotBusy(() => transactions.begin(mode)),
     executeMultiple: (sql) =>
-      untilNotBusy(() => one(() => client.executeMultiple(sql))),
+      behindWriters(() => one(() => client.executeMultiple(sql))),
     sync: () => client.sync(),
     close: () => {
       client.close();
@@ -429,11 +447,12 @@ const BEGIN: Record<TransactionMode, string> = {
  * So a write transaction waits here for the one before it in this process
  * to end, rather than meeting its lock in `BEGIN IMMEDIATE`: every refusal
  * the retry absorbed cost a connection, up to a hundred of them for one
- * wait. The wait is held to the same budget as the retry and ends in the
- * same refusal, except that a holder marking progress with
- * `markWriteProgress` restarts it. A lock another process holds still meets the retry, and
- * still costs a connection per refusal, because no client call resets the
- * refused statement.
+ * wait. A statement outside a transaction that meets the lock joins the same
+ * queue after its first refusal. The wait is held to the same budget as the
+ * retry and ends in the same refusal, except that a holder marking progress
+ * with `markWriteProgress` restarts it. A lock another process holds still
+ * meets the retry, and still costs a connection per refusal, because no
+ * client call resets the refused statement.
  */
 type CaptureRead = <T>(
   capture: (reader: Transaction) => Promise<T>,
@@ -445,6 +464,7 @@ function transactionConnections(
   concurrentSnapshots: () => boolean,
 ): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
+  queueBehindWriters: () => Promise<() => void>;
   close: () => void;
   captureRead: CaptureRead;
   closeReads: () => Promise<void>;
@@ -920,6 +940,7 @@ function transactionConnections(
   };
   return {
     begin,
+    queueBehindWriters: () => writerAdmission(awaitTurn),
     captureRead,
     closeReads: async () => {
       shut = true;

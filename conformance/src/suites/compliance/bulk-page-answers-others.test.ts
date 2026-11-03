@@ -8,6 +8,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HeldLock } from "../../utils/held-lock.js";
+import { issuerOrigin } from "../../utils/signed-in.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * Other requests during a long bulk page.
@@ -205,6 +207,32 @@ describe("a write that waits behind a bulk page", () => {
     expect(single.status).toBe(201);
     // Witness that the page held the lock for longer than the budget, so
     // the write above was not admitted on the budget alone.
+    expect(waitedMs).toBeGreaterThan(BUDGET_MS);
+  }, 120_000);
+
+  it("counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget", async () => {
+    // A password attempt is counted before the password is checked, in a
+    // write of its own outside any transaction.
+    const origin = await issuerOrigin(server);
+    await seed("waiting-sign-in");
+    const page = track(
+      send("POST", "/items/bulk", notes("waiting-sign-in", "after", true)),
+    );
+    await untilLockHeld(page);
+    const started = performance.now();
+
+    const attempt = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({
+        email: TEST_OWNER.email,
+        password: "not the owner's password",
+      }),
+    });
+    const waitedMs = performance.now() - started;
+
+    expect((await page.response).status).toBe(200);
+    expect(attempt.status).toBe(401);
     expect(waitedMs).toBeGreaterThan(BUDGET_MS);
   }, 120_000);
 

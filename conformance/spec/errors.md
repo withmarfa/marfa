@@ -330,7 +330,7 @@ While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget`.
 
 ### `errors/contention-read`
 
