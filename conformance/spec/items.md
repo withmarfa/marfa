@@ -2170,7 +2170,7 @@ When a key creates, changes or revokes a folder, the server MUST announce `item.
 
 ### `items/folder-settings`
 
-The server MUST take as a folder's settings `title`, `query` with `types`, `tier`, `state`, `filter` and `beneath`, `defaults` with `type`, `tier`, `properties`, `tags` and `edges`, `include`, `ignore`, `first_placement`, `removal_threshold` and `full_pass_interval_seconds`, and no other key.
+The server MUST take as a folder's settings `title`, `query` with `types`, `tier`, `state`, `filter` and `beneath`, `defaults` with `type`, `tier`, `properties`, `tags` and `edges`, `include`, `ignore`, `first_placement`, `removal_threshold`, `addition_threshold` and `full_pass_interval_seconds`, and no other key.
 
 **Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`, `› refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
@@ -2274,7 +2274,7 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with negative `files` or a `fraction` outside 0 to 1, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
 

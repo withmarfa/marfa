@@ -244,6 +244,8 @@ pub struct ScanReport {
     pub directories: Vec<Flagged>,
     pub secrets: Vec<String>,
     pub paused: usize,
+    /// New files held back for confirmation, which `folders confirm` sends.
+    pub paused_additions: usize,
     pub warnings: Vec<Flagged>,
     /// Why the pass read nothing, where the folder's directory is gone.
     pub root_gone: Option<String>,
@@ -6327,6 +6329,272 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    fn creates_queued(folder: &Folder) -> usize {
+        folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .filter(|write| write.kind == crate::model::WriteKind::CreateItem)
+            .count()
+    }
+
+    fn drop_notes(dir: &Path, names: &[&str]) {
+        for name in names {
+            std::fs::write(dir.join(name), format!("{name} words\n")).unwrap();
+        }
+    }
+
+    /// A folder whose first scan has run over one note, so the addition
+    /// threshold applies to what comes next.
+    fn folder_past_its_first_scan(id: &str, threshold: Value) -> (tempfile::TempDir, Folder) {
+        let (dir, folder) = folder_with(
+            id,
+            serde_json::json!({ "query": {}, "addition_threshold": threshold }),
+            None,
+        );
+        drop_notes(dir.path(), &["first.md"]);
+        assert_eq!(folder.scan().unwrap().created, 1);
+        (dir, folder)
+    }
+
+    #[test]
+    fn a_drop_of_new_files_past_the_threshold_is_held_and_confirm_sends_it() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a001",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        let before = creates_queued(&folder);
+        landed(&folder, "first.md");
+        folder.pull().unwrap();
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.paused_additions), (0, 3), "{held:?}");
+        assert_eq!(creates_queued(&folder), before, "a held file was sent");
+        assert!(dir.path().join("a.md").is_file(), "a held file stays");
+        let status = folder.status().unwrap();
+        assert_eq!(status.paused.additions, 3);
+        let flagged: Vec<_> = status
+            .files
+            .iter()
+            .filter(|file| file.flag == Some("addition"))
+            .map(|file| (file.path.as_str(), file.status))
+            .collect();
+        assert_eq!(
+            flagged,
+            [("a.md", "held"), ("b.md", "held"), ("c.md", "held")]
+        );
+        let again = folder.scan().unwrap();
+        assert_eq!((again.created, again.paused_additions), (0, 3));
+
+        let confirmed = folder.confirm().unwrap();
+        assert_eq!(confirmed.added, 3, "{confirmed:?}");
+        assert_eq!(creates_queued(&folder), before + 3);
+        assert_eq!(folder.status().unwrap().paused.additions, 0);
+        assert!(
+            state::paused_additions(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        // Nothing is held again by the scan after.
+        assert_eq!(folder.scan().unwrap().paused_additions, 0);
+    }
+
+    #[test]
+    fn a_drop_at_the_threshold_is_sent_and_one_past_it_is_held() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a002",
+            serde_json::json!({ "files": 3, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.paused_additions), (3, 0), "{sent:?}");
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a003",
+            serde_json::json!({ "files": 3, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md", "d.md"]);
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.paused_additions), (0, 4), "{held:?}");
+    }
+
+    #[test]
+    fn a_hold_clears_by_itself_when_the_files_are_deleted_or_the_threshold_is_met() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a004",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 3);
+        std::fs::remove_file(dir.path().join("c.md")).unwrap();
+        let cleared = folder.scan().unwrap();
+        assert_eq!(
+            (cleared.created, cleared.paused_additions),
+            (2, 0),
+            "{cleared:?}"
+        );
+        assert!(
+            state::paused_additions(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_drop_that_arrives_across_scans_is_held_once_the_run_passes_the_threshold() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a005",
+            serde_json::json!({ "files": 4, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().created, 3);
+        drop_notes(dir.path(), &["d.md", "e.md"]);
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.paused_additions), (0, 2), "{held:?}");
+        // A pass that holds them again writes nothing to the record.
+        let digest = state::record_digest(&folder.core.conn().unwrap()).unwrap();
+        folder.scan().unwrap();
+        assert_eq!(
+            state::record_digest(&folder.core.conn().unwrap()).unwrap(),
+            digest
+        );
+        // Held files keep the run going however long they wait.
+        let conn = folder.core.conn().unwrap();
+        let mut run = state::additions_run(&conn).unwrap().unwrap();
+        run.at = crate::store::iso_at(crate::clock::system_time() - Duration::from_secs(3600));
+        state::set_additions_run(&conn, Some(&run)).unwrap();
+        drop(conn);
+        assert_eq!(folder.scan().unwrap().paused_additions, 2);
+    }
+
+    #[test]
+    fn a_quiet_spell_ends_the_run_so_two_small_drops_apart_are_not_one() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a006",
+            serde_json::json!({ "files": 4, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().created, 3);
+        let conn = folder.core.conn().unwrap();
+        let mut run = state::additions_run(&conn).unwrap().unwrap();
+        run.at = crate::store::iso_at(crate::clock::system_time() - Duration::from_secs(3600));
+        state::set_additions_run(&conn, Some(&run)).unwrap();
+        drop(conn);
+        drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.paused_additions), (3, 0), "{sent:?}");
+    }
+
+    #[test]
+    fn a_folder_with_no_bound_files_is_judged_by_the_count_alone() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000a007",
+            serde_json::json!({ "query": {}, "addition_threshold": { "files": 2 } }),
+            None,
+        );
+        // Past its first sync, with nothing in it.
+        state::gate_additions(&folder.core.conn().unwrap()).unwrap();
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.paused_additions), (0, 3), "{held:?}");
+    }
+
+    #[test]
+    fn the_first_scan_takes_what_the_directory_holds_whatever_its_size() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000a008",
+            serde_json::json!({ "query": {}, "addition_threshold": { "files": 1, "fraction": 0.0 } }),
+            None,
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let first = folder.scan().unwrap();
+        assert_eq!((first.created, first.paused_additions), (3, 0), "{first:?}");
+        // The witness: the next drop of the same size is held.
+        drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 3);
+    }
+
+    #[test]
+    fn a_waiting_first_sync_is_not_counted_by_the_addition_threshold() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000a009",
+            serde_json::json!({ "query": {}, "addition_threshold": { "files": 1, "fraction": 0.0 } }),
+            None,
+        );
+        folder.wait_for_confirmation().unwrap();
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        let planned = folder.scan().unwrap();
+        assert_eq!(
+            (planned.created, planned.paused_additions),
+            (3, 0),
+            "{planned:?}"
+        );
+        assert!(
+            !state::additions_gated(&folder.core.conn().unwrap()).unwrap()
+                || state::bound_count(&folder.core.conn().unwrap()).unwrap() > 0
+        );
+    }
+
+    #[test]
+    fn edits_and_renames_of_bound_files_still_go_while_new_files_are_held() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00a",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        landed(&folder, "first.md");
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        std::fs::write(dir.path().join("first.md"), "first, edited\n").unwrap();
+        let held = folder.scan().unwrap();
+        assert_eq!(held.paused_additions, 3);
+        assert_eq!(held.updated, 1, "{held:?}");
+    }
+
+    #[test]
+    fn a_push_told_to_pass_additions_sends_a_large_drop() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00b",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        folder.allow_additions().unwrap();
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.paused_additions), (3, 0), "{sent:?}");
+        // It is for one scan.
+        drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 3);
+    }
+
+    #[test]
+    fn a_confirmed_drop_does_not_let_through_files_that_arrived_after_the_pause() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_past_its_first_scan(
+            "01a00000-0000-7000-8000-00000000a00c",
+            serde_json::json!({ "files": 2, "fraction": 0.0 }),
+        );
+        landed(&folder, "first.md");
+        folder.pull().unwrap();
+        drop_notes(dir.path(), &["a.md", "b.md", "c.md"]);
+        assert_eq!(folder.scan().unwrap().paused_additions, 3);
+        drop_notes(dir.path(), &["d.md", "e.md", "f.md"]);
+        let confirmed = folder.confirm().unwrap();
+        assert_eq!(confirmed.added, 3, "{confirmed:?}");
+        // The three held went; the three that came after are held now.
+        assert_eq!(
+            state::paused_additions(&folder.core.conn().unwrap()).unwrap(),
+            ["d.md", "e.md", "f.md"]
+        );
     }
 
     #[cfg(debug_assertions)]

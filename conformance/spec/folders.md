@@ -6832,6 +6832,88 @@ When item and edge catalogs refresh during a folder status read, a device MUST u
 
 **Tests:** `device/binding-folders-placement.test.ts › uses the item and edge catalogs from one revision while a refresh commits between their reads`.
 
+## Paused additions
+
+### `folders/addition-threshold`
+
+When a scan finds new files that would create items, a device MUST pause them only when their count exceeds both `addition_threshold.files` and `addition_threshold.fraction` of the folder's bound files, defaulting to 50 and 0.25.
+
+**Reason:** A person who drops a handful of files into a folder means to; one who drops thousands may have chosen the wrong folder.
+
+**Tests:** `device/folders-additions.test.ts › is held past both default halves of the threshold and sent at them`.
+
+### `folders/addition-threshold-empty-folder`
+
+Where a folder holds no bound files after its first sync, a device MUST judge a drop of new files by its count alone against `addition_threshold.files`.
+
+**Tests:** `device/folders-additions.test.ts › is judged by its count alone in a folder that holds no files`.
+
+### `folders/addition-counts`
+
+A device MUST count towards `addition_threshold` only the new files a scan would send as new items, and MUST NOT count edits, renames or files whose items another folder on the machine already holds.
+
+**Tests:** `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-additions.test.ts › does not hold the edit of a bound file made in the same scan`.
+
+### `folders/addition-run`
+
+When a drop of new files arrives across scans, a device MUST count the files it has sent since the folder was last quiet together with the files it finds, so that a drop copied in slowly is held once it passes the threshold.
+
+**Reason:** A scan that counted only its own files would let a slow copy through in small pieces.
+
+**Tests:** `device/folders-additions.test.ts › is counted across pushes when it arrives a few files at a time`.
+
+### `folders/first-sync-not-counted`
+
+A device MUST NOT count the files of a folder's first sync towards `addition_threshold`; the first sync waits for confirmation by `folders/first-sync-waits`.
+
+**Tests:** `device/folders-additions.test.ts › is not counted in the first sync, whatever its size`.
+
+### `folders/addition-paused`
+
+When new files exceed the addition threshold, a device MUST NOT send them, MUST leave them on the disk and MUST count them as `paused_additions` in the scan report.
+
+**Tests:** `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`.
+
+### `folders/addition-paused-status`
+
+While new files are paused, a device MUST report each as a `held` file with the `addition` flag, report their count as `paused.additions`, and say so in its text, apart from a paused removal.
+
+**Tests:** `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`.
+
+### `folders/addition-paused-edits-go`
+
+While new files are paused, a device MUST go on sending the edits, renames and deletes of files it already holds.
+
+**Tests:** `device/folders-additions.test.ts › does not hold the edit of a bound file made in the same scan`.
+
+### `folders/addition-confirm`
+
+When a person confirms a folder with paused additions, a device MUST queue the paused files as new items, send them with the next push, and count them as `added`; files that arrive after the pause remain subject to the threshold.
+
+**Tests:** `device/folders-additions.test.ts › is sent once confirmed, and not held again`.
+
+### `folders/addition-confirm-flag`
+
+When a push is told to confirm additions, a device MUST send every new file the scan finds, however many.
+
+**Reason:** A script that no one attends has no one to run `folders confirm`.
+
+**Tests:** `device/folders-additions.test.ts › is sent by a push told to confirm additions`.
+
+### `folders/addition-clears`
+
+When the files of a paused addition are deleted, or the threshold is raised past them, a device MUST release the pause at the next scan without sending the deleted files.
+
+**Reason:** The pause is derived from the disk and the folder's store, so it survives a crash and needs no record that a person must clear.
+
+**Tests:** `device/folders-additions.test.ts › is let go of when the files are deleted`.
+
+### `folders/addition-watch`
+
+While new files are paused, a device that watches the folder MUST say so once, MUST go on watching and sending edits, and MUST NOT fail.
+
+**Tests:** `device/folders-additions.test.ts › says it once, keeps watching, keeps sending edits and never fails`, `device/folders-additions.test.ts › goes on with the other folders when one of the folders it watches pauses`.
+
 ## Watching and executable files
 
 ### `folders/watch-unchanged-unread`

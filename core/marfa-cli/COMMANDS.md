@@ -3124,6 +3124,7 @@ marfa device folders create [OPTIONS]
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
+| `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -3153,6 +3154,7 @@ marfa device folders change [OPTIONS] --version <VERSION> <ID>
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
+| `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -3920,7 +3922,7 @@ marfa folders health [OPTIONS] <ID>
 
 ### marfa folders confirm
 
-Let a folder's first sync go, or a paused large removal: its deletes are queued, and files whose items left elsewhere are taken away.
+Let a folder's first sync go, or what it holds back: a paused large removal, whose deletes are queued and whose files that items left elsewhere are taken away, and new files held for being more than the addition threshold lets in at once, which are queued as new items.
 
 ```text
 marfa folders confirm [OPTIONS] <DIR>
@@ -3993,6 +3995,7 @@ marfa folders push [OPTIONS] <DIR>
 | Option | Description |
 | --- | --- |
 | `--send-only` | Send what the folder holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the folder's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
+| `--confirm-additions` | Send every new file this push finds, however many, in place of holding a drop of more than the folder's `addition_threshold` for `folders confirm`. For a script that no one is at; the decision is the script's. |
 
 ### marfa folders unmatched
 
@@ -4031,6 +4034,7 @@ marfa folders create [OPTIONS]
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
+| `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders change
@@ -4058,6 +4062,7 @@ marfa folders change [OPTIONS] --version <VERSION> <ID>
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
+| `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders revoke

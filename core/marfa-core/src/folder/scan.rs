@@ -2,13 +2,14 @@ use std::cell::RefCell;
 
 use crate::Seen;
 
+use super::push::{admission_hold, new_document};
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, captured_identities, carries_frontmatter, changed_within, copy_refused, document,
-    embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, bytes_type, captured_identities, carries_frontmatter, changed_within, copy_refused,
+    document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
     stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
@@ -155,6 +156,10 @@ pub(super) enum Missing {
 /// Bounded, so a row another device keeps changing ends the sweep's decision
 /// with its file written back rather than holding the sweep.
 const DECIDE_ATTEMPTS: usize = 3;
+
+/// How long the folder takes in no new file before a drop is over, so a
+/// slow copy is one drop and two pushes a day apart are two.
+const ADDITIONS_QUIET: Duration = Duration::from_secs(5 * 60);
 
 /// Read once for every missing file a sweep or a confirm lets go of.
 #[derive(Default)]
@@ -770,6 +775,7 @@ impl Folder {
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
+        let held_back = self.hold_additions(scan, &claims, &waiting)?;
         let by_path = bound_by_path(&scan.snapshot);
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
@@ -876,6 +882,10 @@ impl Folder {
                 other => other,
             };
             match claim {
+                None if held_back.contains(&at) => {
+                    // Read again by the next pass, which counts the drop anew.
+                    unsettled.insert(file.key.clone());
+                }
                 None => {
                     if self.queue_create(
                         file,
@@ -1957,6 +1967,123 @@ impl Folder {
             Err(error) => Ok(Some(format!(
                 "it carries the id of an item moved from another folder on this machine, which cannot be read yet ({error}); it is taken at the next push"
             ))),
+        }
+    }
+
+    /// The new files of this pass that wait for the person: a drop of more
+    /// than `addition_threshold` new files, counted with those the folder
+    /// took in since it was last quiet, so a slow copy of a large directory
+    /// is held as a quick one is. A held file stays unbound and unsent, and
+    /// is counted again by every pass, so deleting some of them, or raising
+    /// the threshold, lets the rest go at the next scan.
+    fn hold_additions(
+        &self,
+        scan: &mut ScanState,
+        claims: &[Option<Claim>],
+        waiting: &Waiting,
+    ) -> Result<HashSet<usize>> {
+        let conn = self.core.conn()?;
+        let allowed = state::additions_allowed(&conn)?;
+        state::set_additions_allowed(&conn, None)?;
+        let first_scan = !state::additions_gated(&conn)?;
+        if first_scan && !super::first::waiting(&conn)? {
+            // The first sync's scan takes in what the directory holds, which
+            // the first sync's own gate asked about.
+            state::gate_additions(&conn)?;
+        }
+        drop(conn);
+        let new: Vec<usize> = scan
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(at, file)| {
+                claims[*at].is_none()
+                    && !waiting.contains_key(at)
+                    && !file.deferred
+                    && file.unreadable.is_none()
+                    && !(scan.only_embedded.contains(&file.key)
+                        && !scan.embedded.contains(&file.key))
+            })
+            .filter(|(_, file)| self.would_send(file, scan))
+            .map(|(at, _)| at)
+            .collect();
+        let conn = self.core.conn()?;
+        let now = crate::store::iso_at(crate::clock::system_time());
+        let letting = |path: &str| match &allowed {
+            Some(state::Allowed::All) => true,
+            Some(state::Allowed::Paths(paths)) => paths.iter().any(|allowed| allowed == path),
+            None => false,
+        };
+        let counted: Vec<usize> = new
+            .iter()
+            .copied()
+            .filter(|at| !letting(&scan.files[*at].key))
+            .collect();
+        // A quiet scan, a confirmation and the first sync's scan each end
+        // the run: what they took in is not counted against the next drop.
+        // Held files keep the run going however long they wait.
+        let held_before = state::paused_additions(&conn)?;
+        let continuing = counted
+            .iter()
+            .any(|at| held_before.contains(&scan.files[*at].key));
+        let run = state::additions_run(&conn)?.filter(|run| {
+            !first_scan
+                && allowed.is_none()
+                && !new.is_empty()
+                && (continuing || !elapsed_past(&run.at, &now, ADDITIONS_QUIET))
+        });
+        let mut held = HashSet::new();
+        let mut paths = Vec::new();
+        let mut run = run;
+        if !first_scan && !counted.is_empty() {
+            let (sent, of) = match &run {
+                Some(run) => (run.sent, run.of),
+                None => (0, state::bound_count(&conn)?),
+            };
+            let exceeded = scan
+                .settings
+                .addition_threshold
+                .exceeded(sent + counted.len(), of);
+            if exceeded {
+                for at in &counted {
+                    paths.push(scan.files[*at].key.clone());
+                    held.insert(*at);
+                }
+            }
+            // Held files are not sent, so they are not added to the run, and
+            // a pass that only holds them again leaves the record as it was,
+            // which a watch at rest would otherwise see change every pass.
+            run = Some(match (exceeded, run) {
+                (true, Some(run)) => run,
+                (true, None) => state::AdditionsRun { at: now, sent, of },
+                (false, _) => state::AdditionsRun {
+                    at: now,
+                    sent: sent + counted.len(),
+                    of,
+                },
+            });
+        }
+        state::set_additions_run(&conn, run.as_ref())?;
+        paths.sort();
+        state::set_paused_additions(&conn, &paths)?;
+        scan.report.paused_additions = held.len();
+        Ok(held)
+    }
+
+    /// Whether a new file would be sent as an item: not one the scan holds
+    /// as a document the copy would refuse, which no threshold need ask about.
+    fn would_send(&self, file: &Scanned, scan: &ScanState) -> bool {
+        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        let embedded = scan.embedded.contains(&file.key);
+        let file_type = self
+            .file_type_of(&file.path, settings, catalog)
+            .or_else(|| embedded.then(|| bytes_type(&file.path, catalog)).flatten());
+        if file_type.is_some() {
+            return true;
+        }
+        match new_document(&file.key, &file.document(), (settings, catalog, edge_types)) {
+            Ok(made) => admission_hold(catalog, &file.key, &made.draft).is_none(),
+            Err(_) => false,
         }
     }
 

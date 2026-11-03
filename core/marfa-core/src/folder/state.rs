@@ -745,6 +745,94 @@ fn list(conn: &Connection, key: &str) -> Result<Vec<String>, CoreError> {
         .unwrap_or_default())
 }
 
+const PAUSED_ADDITIONS: &str = "folder_paused_add";
+
+/// The new files the last scan held back for confirmation, which no file's
+/// binding shows: a paused file is not bound until it is let go.
+pub fn paused_additions(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, PAUSED_ADDITIONS)
+}
+
+pub fn set_paused_additions(conn: &Connection, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, PAUSED_ADDITIONS, paths)
+}
+
+const ADDITIONS_RUN: &str = "folder_additions_run";
+
+/// The new files the folder has taken in since it was last quiet, so a drop
+/// that arrives across several scans counts as one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdditionsRun {
+    /// The last scan that took in or held back new files.
+    pub at: String,
+    /// New files sent in this run.
+    pub sent: usize,
+    /// The folder's bound files when the run began, which the fraction is of.
+    pub of: usize,
+}
+
+pub fn additions_run(conn: &Connection) -> Result<Option<AdditionsRun>, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_RUN)?
+        .and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+pub fn set_additions_run(conn: &Connection, run: Option<&AdditionsRun>) -> Result<(), CoreError> {
+    match run {
+        Some(run) => {
+            let json = serde_json::to_string(run)?;
+            if crate::store::meta_get(conn, ADDITIONS_RUN)?.as_deref() == Some(json.as_str()) {
+                return Ok(());
+            }
+            crate::store::meta_set(conn, ADDITIONS_RUN, &json)
+        }
+        None => crate::store::meta_delete(conn, ADDITIONS_RUN),
+    }
+}
+
+const ADDITIONS_ALLOWED: &str = "folder_additions_allowed";
+
+/// What a person has let through the addition threshold, taken by the next
+/// scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Allowed {
+    /// Every new file of the scan: an unattended push that was told so.
+    All,
+    /// The files the folder held back when the person confirmed them.
+    Paths(Vec<String>),
+}
+
+pub fn additions_allowed(conn: &Connection) -> Result<Option<Allowed>, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_ALLOWED)?
+        .and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+pub fn set_additions_allowed(
+    conn: &Connection,
+    allowed: Option<&Allowed>,
+) -> Result<(), CoreError> {
+    match allowed {
+        Some(allowed) => {
+            crate::store::meta_set(conn, ADDITIONS_ALLOWED, &serde_json::to_string(allowed)?)
+        }
+        None => crate::store::meta_delete(conn, ADDITIONS_ALLOWED),
+    }
+}
+
+const ADDITIONS_GATED: &str = "folder_additions_gated";
+
+/// Whether the folder has had its first scan after its first sync, which no
+/// threshold counts. A folder that holds files has had it already.
+pub fn additions_gated(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_GATED)?.is_some() || bound_count(conn)? > 0)
+}
+
+pub fn gate_additions(conn: &Connection) -> Result<(), CoreError> {
+    if crate::store::meta_get(conn, ADDITIONS_GATED)?.is_none() {
+        crate::store::meta_set(conn, ADDITIONS_GATED, "1")?;
+    }
+    Ok(())
+}
+
 /// The file metadata last recorded by a scan or pull.
 pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreError> {
     Ok(conn

@@ -38,6 +38,10 @@
       "type": "integer",
       "description": "Seconds between the watch's passes that read every file in the folder, from 60 to 86400. Defaults to 600."
     },
+    "addition_threshold": {
+      "type": "object",
+      "description": "When new files pause for confirmation: a scan that would add more than `files` files and more than `fraction` of the folder's files. Defaults to 50 and 0.25."
+    },
     "revoked_at": {
       "type": "datetime",
       "description": "When the folder was revoked."

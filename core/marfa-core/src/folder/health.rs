@@ -1442,7 +1442,11 @@ mod tests {
                 file("paused.md", Some("removal"), "held"),
                 file("bad.md", Some("unreadable"), "held"),
             ],
-            paused: Paused { disk: 1, pull: 2 },
+            paused: Paused {
+                disk: 1,
+                pull: 2,
+                additions: 0,
+            },
             directories: Vec::new(),
             first_sync: None,
         };

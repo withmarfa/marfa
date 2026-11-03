@@ -14,6 +14,9 @@ pub struct Confirmed {
     pub moved: usize,
     pub unsure: Vec<Unsure>,
     pub removed: usize,
+    /// Held new files the confirmation's scan made items of, sent at the
+    /// next push.
+    pub added: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -83,10 +86,36 @@ impl Folder {
                 confirmed.removed += 1;
             }
         }
-        let conn = self.core.conn()?;
-        state::set_paused(&conn, state::Removal::Disk, &[])?;
-        state::set_paused(&conn, state::Removal::Pull, &[])?;
+        {
+            let conn = self.core.conn()?;
+            state::set_paused(&conn, state::Removal::Disk, &[])?;
+            state::set_paused(&conn, state::Removal::Pull, &[])?;
+        }
+        confirmed.added = self.confirm_additions()?;
         Ok(confirmed)
+    }
+
+    /// Lets the new files the last scan held back become items, and no
+    /// others: a file that arrived since waits for the threshold as before.
+    /// Answers how many items the scan made, which it queues for the next
+    /// push.
+    fn confirm_additions(&self) -> Result<usize> {
+        let held = state::paused_additions(&*self.core.conn()?)?;
+        if held.is_empty() {
+            return Ok(0);
+        }
+        state::set_additions_allowed(&*self.core.conn()?, Some(&state::Allowed::Paths(held)))?;
+        let scanned = self.scan();
+        // Taken by the scan, but a scan that failed before it read the
+        // folder leaves the confirmation for the next one.
+        Ok(scanned?.created)
+    }
+
+    /// Lets every new file of the next scan become an item, whatever its
+    /// size, for a push no person is at (`folders push --confirm-additions`).
+    pub fn allow_additions(&self) -> Result<()> {
+        self.refuse_if_gone()?;
+        state::set_additions_allowed(&*self.core.conn()?, Some(&state::Allowed::All))
     }
 
     pub fn restore(&self) -> Result<Restored> {

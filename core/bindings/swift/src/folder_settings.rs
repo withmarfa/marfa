@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use marfa_core::folder::settings::{
     Defaults, Query, RemovalThreshold as CoreRemovalThreshold, Settings,
+    AdditionThreshold as CoreAdditionThreshold,
 };
 use serde_json::{Map, Value};
 
@@ -35,6 +36,7 @@ pub struct FolderSettings {
     /// to 86400; `None` is 600.
     #[uniffi(default = None)]
     pub full_pass_interval_seconds: Option<u64>,
+    pub addition_threshold: AdditionThreshold,
 }
 
 /// The query that decides which items a folder holds.
@@ -83,6 +85,17 @@ pub struct RemovalThreshold {
     pub fraction: Option<f64>,
 }
 
+/// How large a drop of new files must be to wait for confirmation.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct AdditionThreshold {
+    /// `None` is 50.
+    #[uniffi(default = None)]
+    pub files: Option<u64>,
+    /// `None` is 0.25.
+    #[uniffi(default = None)]
+    pub fraction: Option<f64>,
+}
+
 /// Only the settings named are sent, each replacing the folder's whole.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
 pub struct FolderSettingsChange {
@@ -102,6 +115,7 @@ pub struct FolderSettingsChange {
     pub removal_threshold: Option<RemovalThreshold>,
     #[uniffi(default = None)]
     pub full_pass_interval_seconds: Option<u64>,
+    pub addition_threshold: Option<AdditionThreshold>,
 }
 
 /// A `system.folder` and the settings it carries.
@@ -223,6 +237,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
         first_placement,
         removal_threshold,
         full_pass_interval_seconds,
+        addition_threshold,
     } = settings;
     Ok(FolderSettings {
         title,
@@ -256,6 +271,10 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
             fraction: removal_threshold.fraction,
         },
         full_pass_interval_seconds,
+        addition_threshold: AdditionThreshold {
+            files: addition_threshold.files,
+            fraction: addition_threshold.fraction,
+        },
     })
 }
 
@@ -269,6 +288,7 @@ fn core_settings(settings: FolderSettings) -> Result<Settings, MarfaError> {
         first_placement: settings.first_placement.into_iter().collect(),
         removal_threshold: core_threshold(settings.removal_threshold),
         full_pass_interval_seconds: settings.full_pass_interval_seconds,
+        addition_threshold: core_addition_threshold(settings.addition_threshold),
     })
 }
 
@@ -300,6 +320,13 @@ fn core_defaults(defaults: FolderDefaults) -> Result<Defaults, MarfaError> {
 
 fn core_threshold(threshold: RemovalThreshold) -> CoreRemovalThreshold {
     CoreRemovalThreshold {
+        files: threshold.files,
+        fraction: threshold.fraction,
+    }
+}
+
+fn core_addition_threshold(threshold: AdditionThreshold) -> CoreAdditionThreshold {
+    CoreAdditionThreshold {
         files: threshold.files,
         fraction: threshold.fraction,
     }
@@ -340,6 +367,13 @@ fn change_body(change: FolderSettingsChange) -> Result<Map<String, Value>, Marfa
     if let Some(seconds) = change.full_pass_interval_seconds {
         put("full_pass_interval_seconds", Ok(Value::from(seconds))).map_err(encoding)?;
     }
+    if let Some(threshold) = change.addition_threshold {
+        put(
+            "addition_threshold",
+            serde_json::to_value(core_addition_threshold(threshold)),
+        )
+        .map_err(encoding)?;
+    }
     Ok(body)
 }
 
@@ -372,6 +406,7 @@ mod tests {
             "first_placement": { "core.note": "Notes" },
             "removal_threshold": { "files": 4, "fraction": 0.5 },
             "full_pass_interval_seconds": 3600,
+            "addition_threshold": { "files": 80, "fraction": 0.5 },
         });
         let core: Settings = serde_json::from_value(properties).unwrap();
         let crossed = settings(core.clone()).unwrap();

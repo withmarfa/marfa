@@ -7670,6 +7670,24 @@
         "additionalProperties": false,
         "description": "A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files."
       },
+      "FolderAdditionThreshold": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "New files wait to be confirmed only if they number more than this. Absent means 50."
+          },
+          "fraction": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "New files wait to be confirmed only if they number more than this fraction of the folder's files. Absent means 0.25."
+          }
+        },
+        "additionalProperties": false,
+        "description": "New files wait to be confirmed when a scan would add more than `files` files and more than `fraction` of the folder's files."
+      },
       "InvalidIdOrInvalidPropertiesOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
@@ -38783,6 +38801,9 @@
                     "minimum": 60,
                     "maximum": 86400,
                     "description": "Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600."
+                  },
+                  "addition_threshold": {
+                    "$ref": "#/components/schemas/FolderAdditionThreshold"
                   }
                 },
                 "required": [
@@ -39277,6 +39298,9 @@
                     "minimum": 60,
                     "maximum": 86400,
                     "description": "Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600."
+                  },
+                  "addition_threshold": {
+                    "$ref": "#/components/schemas/FolderAdditionThreshold"
                   }
                 },
                 "required": [

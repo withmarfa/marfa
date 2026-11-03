@@ -54,6 +54,8 @@ pub struct FirstSyncStatus {
 pub struct Paused {
     pub disk: usize,
     pub pull: usize,
+    /// New files on the disk that the addition threshold holds back.
+    pub additions: usize,
 }
 
 const WAITS: [&str; 11] = [
@@ -121,7 +123,7 @@ impl Folder {
         };
         let lists = settings.lists()?;
         let walked = walked.unwrap_or_else(|| self.walked(&lists));
-        let (snapshot, disk, pull, unmatched) = {
+        let (snapshot, disk, pull, unmatched, added) = {
             let conn = self.core.conn()?;
             (
                 // As the next scan settles any write a crash cut off.
@@ -132,8 +134,10 @@ impl Folder {
                 state::paused(&conn, state::Removal::Disk)?,
                 state::paused(&conn, state::Removal::Pull)?,
                 state::unmatched(&conn)?,
+                state::paused_additions(&conn)?,
             )
         };
+        let added: HashSet<String> = added.into_iter().collect();
         let disk: HashSet<String> = disk.into_iter().collect();
         let pull: HashSet<String> = pull.into_iter().collect();
         let unmatched: HashSet<String> = unmatched.into_iter().collect();
@@ -195,6 +199,10 @@ impl Folder {
                     &unmatched,
                     &waiting,
                 )?,
+                None if added.contains(key) => FileStatus::new(key, None, "held").because(
+                    "addition",
+                    "is one of more new files than the addition threshold lets in at once, so it is not sent: `folders confirm` sends it, and deleting the files you did not mean to add cancels that",
+                ),
                 None => self.unbound_status(
                     key,
                     path,
@@ -268,12 +276,17 @@ impl Folder {
             reads.finish(self, &walked);
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
+        let additions = files
+            .iter()
+            .filter(|file| file.flag == Some("addition"))
+            .count();
         Ok(StatusReport {
             files,
             directories: walked.directories,
             paused: Paused {
                 disk: disk.len(),
                 pull: pull.len(),
+                additions,
             },
             first_sync: if self.awaiting_confirmation()? {
                 Some(FirstSyncStatus {

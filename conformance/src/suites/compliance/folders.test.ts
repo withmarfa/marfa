@@ -89,6 +89,7 @@ describe("the folder door", () => {
       first_placement: { "core.note": "Notes" },
       removal_threshold: { files: 20, fraction: 0.5 },
       full_pass_interval_seconds: 3600,
+      addition_threshold: { files: 80, fraction: 0.5 },
     };
     const r = await client.createFolder(settings);
     expect(r.status).toBe(201);
@@ -428,6 +429,16 @@ describe("the folder door", () => {
       { full_pass_interval_seconds: 600.5 },
       "validation_error",
       "full_pass_interval_seconds",
+    ],
+    [
+      { addition_threshold: { fraction: 1.5 } },
+      "validation_error",
+      "addition_threshold.fraction",
+    ],
+    [
+      { addition_threshold: { files: -1 } },
+      "validation_error",
+      "addition_threshold.files",
     ],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",

@@ -89,13 +89,17 @@ pub struct FileStatus {
     pub warning: Option<String>,
 }
 
-/// A large removal waiting for `confirm` or `restore`.
+/// A large removal, or a large drop of new files, waiting for `confirm`; a
+/// removal can also be cancelled by `restore`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct PausedRemoval {
     /// Files gone from the disk whose deletes are not sent.
     pub disk: u64,
     /// Files left in place whose items left the query elsewhere.
     pub pull: u64,
+    /// New files held back for being more than the folder's addition
+    /// threshold lets in at once. `confirm` sends them.
+    pub additions: u64,
 }
 
 /// What a folder's first sync will do, read from the folder as it stands.
@@ -185,6 +189,8 @@ pub struct FolderScan {
     pub moved_away: u64,
     /// Deletes a large removal holds back.
     pub paused: u64,
+    /// New files a large drop holds back, so they are not sent.
+    pub paused_additions: u64,
     /// Files found in no folder on this machine, whose items were trashed.
     pub trashed: Vec<String>,
     /// Files not taken because their names are ones secrets go by.
@@ -281,6 +287,8 @@ pub struct ConfirmedRemoval {
     pub moved: u64,
     /// Files taken away whose items left elsewhere.
     pub removed: u64,
+    /// New files held back by the addition threshold, now queued as items.
+    pub added: u64,
     /// Files not let go, because the other folders could not all be read.
     pub unsure: Vec<UnsureFile>,
 }
@@ -461,6 +469,7 @@ impl Folders {
             paused: PausedRemoval {
                 disk: report.paused.disk as u64,
                 pull: report.paused.pull as u64,
+                additions: report.paused.additions as u64,
             },
             first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                 plan: waiting.plan.map(Into::into),
@@ -512,6 +521,7 @@ impl Folders {
             deleted: confirmed.deleted as u64,
             moved: confirmed.moved as u64,
             removed: confirmed.removed as u64,
+            added: confirmed.added as u64,
             unsure: confirmed
                 .unsure
                 .into_iter()
@@ -809,6 +819,7 @@ fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
         skipped: scan.skipped as u64,
         moved_away: scan.moved_away as u64,
         paused: scan.paused as u64,
+        paused_additions: scan.paused_additions as u64,
         trashed: scan.trashed,
         secrets: scan.secrets,
         warnings: scan.warnings.into_iter().map(flagged_file).collect(),
