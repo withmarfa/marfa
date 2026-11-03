@@ -390,6 +390,14 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", ...OFFLINE],
     ],
     [
+      "the nightly scale benchmark, which only the offline lane tests",
+      [
+        "conformance/src/utils/scale/report.ts",
+        "conformance/scripts/scale/seed.ts",
+      ],
+      ["ci-sqlite", "workspace", ...OFFLINE],
+    ],
+    [
       "a helper no test file is, which every fixture may import",
       ["conformance/src/utils/shard-drift.ts"],
       [
