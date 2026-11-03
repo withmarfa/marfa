@@ -7034,7 +7034,13 @@ While new files are held outside the query, a device MUST say so in its text, ap
 
 ### `folders/outside-query-unmatched`
 
-While a new file is held outside the query, a device MUST list it in the unmatched files with the reason it is held and no item, and `folders unmatched --remove` MUST NOT delete it.
+While a new file is held outside the query, a device MUST list it in the unmatched files with the reason it is held and no item.
+
+**Tests:** `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`.
+
+### `folders/outside-query-not-removed`
+
+While a new file is held outside the query, the CLI MUST NOT delete it on `folders unmatched --remove`.
 
 **Tests:** `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`.
 
@@ -7054,13 +7060,13 @@ When a folder's `outside_query` changes to `send`, a device MUST send the new fi
 
 A device MUST NOT count a new file held outside the query towards `addition_threshold`.
 
-**Tests:** `device/folders-outside-query.test.ts › is not counted towards the addition threshold`, `device/binding-folders-additions.test.ts › a new file outside the query › is held, shown in status and not counted towards the addition threshold`.
+**Tests:** `device/folders-outside-query.test.ts › is not counted towards the addition threshold`, `device/binding-folders-additions.test.ts › is held, shown in status and not counted towards the addition threshold`.
 
 ### `folders/outside-query-binding`
 
-Where a device is a binding, it MUST report the held files as `heldOutside` in a scan and as `paused.outsideQuery` in a status.
+Where a device is a binding, a device MUST report the held files as `heldOutside` in a scan and as `paused.outsideQuery` in a status.
 
-**Tests:** `device/binding-folders-additions.test.ts › a new file outside the query › is held, shown in status and not counted towards the addition threshold`.
+**Tests:** `device/binding-folders-additions.test.ts › is held, shown in status and not counted towards the addition threshold`.
 
 ## Watching and executable files
 
