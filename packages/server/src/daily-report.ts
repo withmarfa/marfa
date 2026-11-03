@@ -125,9 +125,12 @@ export function startDailyReport(options: {
       sent.catch(() => undefined);
       await Promise.race([sent, limit]);
     } catch (error) {
-      warn("The daily server report was not sent; the next one tries again", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      warn(
+        "The daily server report was not handed to PostHog; the next one tries again",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
     } finally {
       if (timeout) clearTimeout(timeout);
       running = false;

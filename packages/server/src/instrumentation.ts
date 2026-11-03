@@ -78,8 +78,9 @@ declare global {
    * Send one named event of numbers to the same PostHog project exception
    * reports go to, with a fixed identity (the environment and the random
    * instance id) and no operator-chosen attribute. Set here only when
-   * exception reporting is configured; undefined otherwise. It settles once
-   * the event is sent or when sending is off, and rejects if the client
+   * exception reporting is configured; undefined otherwise. It resolves once
+   * the client has been handed the event, or at once when sending is off,
+   * even when PostHog never takes the event; it rejects only if the client
    * throws.
    */
   var __marfaSendReport:

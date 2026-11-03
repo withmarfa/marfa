@@ -168,4 +168,34 @@ describe("counting off the request path", () => {
     });
     expect(timers).not.toHaveBeenCalled();
   });
+
+  it("does not keep a count that read nothing as current, and retries after a minute", async () => {
+    let now = 1_000_000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const fail = () => Promise.reject(new Error("busy"));
+    const failing = {
+      ...ctx.storage,
+      items: { ...ctx.storage.items, stats: fail },
+      versions: { count: fail },
+      eventLog: { count: fail },
+      audit: { count: fail },
+    } as unknown as typeof ctx.storage;
+    const spy = vi.spyOn(failing.versions, "count");
+    const keeper = figuresFor(failing, join(ctx.tmpDir, "retry.db"), "v1");
+    keeper.refreshInBackground();
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(keeper.last()).toBeUndefined();
+    now += 30 * 1000;
+    keeper.refreshInBackground();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spy).toHaveBeenCalledTimes(1);
+    now += 31 * 1000;
+    keeper.refreshInBackground();
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+  });
 });

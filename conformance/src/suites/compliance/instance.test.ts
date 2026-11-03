@@ -773,6 +773,30 @@ describe("the instance", () => {
     expect(refused.error?.error.code).toBe("forbidden");
   });
 
+  it("reports the row counts once the background count has finished", async () => {
+    // The first request starts a count in the background and answers with
+    // none; a later one reads it. A server that always answers null fails.
+    const operator = getManagementClient();
+    type Metrics = {
+      items: { total: number };
+      storage: {
+        rows: Record<string, number | null>;
+        counted_at: string | null;
+      };
+    };
+    let last: Metrics | undefined;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const r = await operator.rawRequest<Metrics>("/metrics");
+      expect(r.status).toBe(200);
+      last = r.data;
+      if (typeof last.storage.counted_at === "string") break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(typeof last?.storage.counted_at).toBe("string");
+    expect(last?.storage.rows.items).toBe(last?.items.total);
+  });
+
   it("publishes exactly the operations the coverage table knows", async () => {
     // spec/coverage.md is the referee's inventory. A published operation
     // missing from it is coverage nobody has decided about; a row the

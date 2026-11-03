@@ -17,6 +17,9 @@ import { fileSystemPath } from "./storage/sqlite/connection.js";
 /** How long a count stays current. */
 export const COUNT_STALE_AFTER_MS = 60 * 60 * 1000;
 
+/** How long to wait before recounting after a count that read nothing. */
+export const COUNT_RETRY_AFTER_MS = 60 * 1000;
+
 const BYTES_PER_KIB = 1024;
 
 /** A figure the process could not read is `null`, and the others still stand. */
@@ -133,6 +136,7 @@ function createFiguresKeeper(
   const databasePath =
     sqlitePath === ":memory:" ? undefined : fileSystemPath(sqlitePath);
   let latest: { counts: TableCounts; at: number } | undefined;
+  let failedAt: number | undefined;
   let counting: Promise<TableCounts> | undefined;
 
   // One table to a statement, so other work runs between them.
@@ -158,7 +162,20 @@ function createFiguresKeeper(
   function count(): Promise<TableCounts> {
     counting ??= countTables()
       .then((counts) => {
-        latest = { counts, at: clock.monotonicMs() };
+        // A count that read nothing (a busy or closed database) is not kept
+        // as current: the last good count stands, and a retry comes soon.
+        const readNothing = [
+          counts.items,
+          counts.versions,
+          counts.event_log,
+          counts.audit_log,
+        ].every((figure) => figure === null);
+        if (readNothing) {
+          failedAt = clock.monotonicMs();
+        } else {
+          failedAt = undefined;
+          latest = { counts, at: clock.monotonicMs() };
+        }
         return counts;
       })
       .finally(() => {
@@ -179,9 +196,11 @@ function createFiguresKeeper(
   return {
     last: () => latest?.counts,
     refreshInBackground() {
-      if (latest && clock.monotonicMs() - latest.at < COUNT_STALE_AFTER_MS) {
+      const now = clock.monotonicMs();
+      if (failedAt !== undefined && now - failedAt < COUNT_RETRY_AFTER_MS) {
         return;
       }
+      if (latest && now - latest.at < COUNT_STALE_AFTER_MS) return;
       void count();
     },
     count,
