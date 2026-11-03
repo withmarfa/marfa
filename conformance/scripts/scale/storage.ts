@@ -2,7 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
-import { judgeItemTotal } from "../../src/utils/scale/pages.js";
+import { judgeItemTotal } from "../../src/utils/scale/judging.js";
 import {
   api,
   readFragment,

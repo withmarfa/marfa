@@ -22,7 +22,7 @@ import {
   judgePage,
   sumPageErrors,
   type PageJudgement,
-} from "../../src/utils/scale/pages.js";
+} from "../../src/utils/scale/judging.js";
 import {
   api,
   log,

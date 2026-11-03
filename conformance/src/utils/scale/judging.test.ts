@@ -4,7 +4,7 @@ import {
   judgePage,
   sumPageErrors,
   totalOfStats,
-} from "./pages.js";
+} from "./judging.js";
 
 const body = (created: number, updated = 0, errored = 0, skipped = 0) =>
   JSON.stringify({

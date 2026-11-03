@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
-import { totalOfStats } from "../../src/utils/scale/pages.js";
+import { totalOfStats } from "../../src/utils/scale/judging.js";
 import { api, connect, log, Recorder, sleep, stateDir } from "./context.js";
 
 const POLL_MS = 250;
