@@ -358,12 +358,11 @@ mod tests {
             .expect("mkfifo");
         assert!(made.success());
         // Private, so that only the type is what refuses it.
-        let private = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&pipe, private.clone()).expect("mode");
+        std::fs::set_permissions(&pipe, std::fs::Permissions::from_mode(0o600)).expect("mode");
         // A pipe with no writer would block a plain open for ever.
         let said = read_private(&pipe, mine()).expect_err("refused");
         assert!(said.contains("only you can read"), "{said}");
-        std::fs::set_permissions(&dir, private).expect("mode");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("mode");
         let said = read_private(&dir, mine()).expect_err("a directory is refused");
         assert!(said.contains("only you can read"), "{said}");
         std::fs::remove_dir_all(dir).ok();
