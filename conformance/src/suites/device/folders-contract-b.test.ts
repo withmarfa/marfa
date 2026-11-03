@@ -157,6 +157,7 @@ it.each(["trashed", "archived"] as const)(
       disk: 0,
       pull: 0,
       additions: 0,
+      outside_query: 0,
     });
     for (const n of [0, 1, 2])
       expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
@@ -224,6 +225,7 @@ it.each([
       disk: paused,
       pull: 0,
       additions: 0,
+      outside_query: 0,
     });
   },
 );
