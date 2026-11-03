@@ -1342,7 +1342,7 @@ pub fn paused_line(count: usize, from_pull: bool) -> String {
 
 pub fn paused_additions_line(count: usize) -> String {
     format!(
-        "a large addition waits: {count} new file(s) held, not sent; `folders confirm` sends them, and deleting the files you did not mean to add cancels it"
+        "a large addition waits: {count} new file(s) held, not sent; `folders confirm` sends them, and deleting the files you did not mean to add cancels it; new files that arrive meanwhile join it"
     )
 }
 

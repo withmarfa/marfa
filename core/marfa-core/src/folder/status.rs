@@ -201,7 +201,7 @@ impl Folder {
                 )?,
                 None if added.contains(key) => FileStatus::new(key, None, "held").because(
                     "addition",
-                    "is one of more new files than the addition threshold lets in at once, so it is not sent: `folders confirm` sends it, and deleting the files you did not mean to add cancels that",
+                    "is held with a drop of new files that passed the addition threshold, so it is not sent, and any new file that arrives joins the hold until you decide: `folders confirm` sends them, and deleting the files you did not mean to add cancels it",
                 ),
                 None => self.unbound_status(
                     key,
