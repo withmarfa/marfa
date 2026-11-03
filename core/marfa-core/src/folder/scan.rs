@@ -1283,6 +1283,8 @@ impl Folder {
         }
         if !incomplete && self.root_gone().is_none() {
             self.sweep_journal(settings, peers, scan.full, report)?;
+        } else {
+            self.note_kept_look_passed()?;
         }
         Ok(ControlFlow::Continue(()))
     }
@@ -2024,6 +2026,7 @@ impl Folder {
             let paths: Vec<String> = journaled.into_iter().map(|row| row.path).collect();
             state::set_paused(&*self.core.conn()?, state::Removal::Disk, &paths)?;
             report.paused = paths.len();
+            self.note_kept_look_passed()?;
             return Ok(());
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
@@ -2066,7 +2069,25 @@ impl Folder {
                 Missing::Gone => {}
             }
         }
-        if kept {
+        if kept && look {
+            *self
+                .kept_looked
+                .lock()
+                .map_err(|_| CoreError::Store("the kept look's record was poisoned".into()))? =
+                Some(crate::clock::now());
+        }
+        Ok(())
+    }
+
+    /// Counts a pass that could not sweep, or stopped at the removal
+    /// threshold, as the look at the files a sweep kept, once one is due, so
+    /// the next look is `KEPT_LOOK` off and a watch at rest wakes no sooner.
+    fn note_kept_look_passed(&self) -> Result<()> {
+        if self.kept_look_due()?
+            && state::journaled(&*self.core.conn()?)?
+                .iter()
+                .any(|row| row.kept.is_some())
+        {
             *self
                 .kept_looked
                 .lock()
@@ -2096,13 +2117,15 @@ impl Folder {
         {
             return Ok(None);
         }
-        let looked = *self
+        // A watch that has not looked yet, as one just started over a kept
+        // file, counts from now, so it never wakes each tick for a look due
+        // in the past.
+        let mut looked = self
             .kept_looked
             .lock()
             .map_err(|_| CoreError::Store("the kept look's record was poisoned".into()))?;
-        Ok(Some(
-            looked.map_or_else(crate::clock::now, |at| at + KEPT_LOOK),
-        ))
+        let at = *looked.get_or_insert_with(crate::clock::now);
+        Ok(Some(at + KEPT_LOOK))
     }
 
     /// Lets `by` pass on the clock a kept file's look is counted by.

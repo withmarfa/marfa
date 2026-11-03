@@ -413,6 +413,148 @@ fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move
     assert_eq!(deletes_queued(&folder).len(), 1);
 }
 
+/// A watch whose registry cannot be read, over notes named `names` that are
+/// each landed and settled, with `a.md` deleted past the grace and kept as
+/// `Unsure` by one quick pass.
+fn watch_keeping_one(
+    id: &str,
+    names: &[&str],
+    properties: serde_json::Value,
+) -> (
+    tempfile::TempDir,
+    Folder,
+    Scripted,
+    watch::Passes,
+    impl Sized,
+) {
+    let (registry, guard) = super::registry::tests::own_registry();
+    let (dir, folder) = folder_with(id, properties, None);
+    for name in names {
+        std::fs::write(dir.path().join(name), "words\n").unwrap();
+    }
+    assert_eq!(folder.scan().unwrap().created, names.len());
+    for name in names {
+        landed(&folder, name);
+    }
+    answered(&folder);
+    let (folder, server) = served(dir.path(), folder);
+    let mut passes = watch::Passes::default();
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+    std::fs::remove_file(dir.path().join("a.md")).unwrap();
+    assert_eq!(folder.scan().unwrap().missing, 1);
+    past_the_grace(&folder, "a.md");
+    std::fs::write(registry.path(), "not a registry").unwrap();
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "{:?}",
+        kept(&folder, "a.md")
+    );
+    (dir, folder, server, passes, guard)
+}
+
+#[test]
+fn a_quiet_watch_over_a_kept_file_and_a_paused_removal_passes_at_most_once_a_minute() {
+    let (_dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e4",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    // The threshold now stops the sweep before it looks.
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE items SET properties = json_set(properties, '$.removal_threshold', json('{\"files\":0,\"fraction\":0.0}')), version = version + 1 WHERE id = ?1",
+            [folder.folder.as_str()],
+        )
+        .unwrap();
+    passes.run(&folder, false).unwrap();
+    let paused = state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap();
+    assert_eq!(paused, ["a.md"], "the witness: the removal stands paused");
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_quiet_watch_over_a_kept_file_and_an_unreadable_directory_passes_at_most_once_a_minute() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e5",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    let shut = dir.path().join("shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::write(shut.join("inside.md"), "inside\n").unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let open = |shut: &Path| {
+        std::fs::set_permissions(shut, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    // A superuser reads every directory, so there is nothing to stand.
+    if std::fs::read_dir(&shut).is_ok() {
+        open(&shut);
+        return;
+    }
+    passes.run(&folder, false).unwrap();
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    open(&shut);
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the file stays kept"
+    );
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[test]
+fn a_restarted_watch_over_a_persisted_kept_file_passes_at_most_once_a_minute() {
+    let (dir, folder, _server, _passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e6",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    let (folder, _server) = served(dir.path(), folder);
+    let mut passes = watch::Passes::default();
+    // The restarted watch's pass is a quick one: no full pass has run yet.
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the file stays kept"
+    );
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[test]
+fn a_new_missing_file_does_not_postpone_the_look_at_an_older_kept_one() {
+    let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e7",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    for _ in 0..30 {
+        passes.tick(&folder).unwrap();
+    }
+    std::fs::remove_file(dir.path().join("b.md")).unwrap();
+    // A quick pass, since a full scan would look at the older file itself.
+    passes.run(&folder, false).unwrap();
+    past_the_grace(&folder, "b.md");
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "b.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the new file's own check kept it"
+    );
+    let ran = ticks_of_full_passes(&mut passes, &folder, 40);
+    assert_eq!(
+        ran,
+        [30],
+        "the older file's look is a minute after its last"
+    );
+}
+
 #[test]
 fn a_quiet_watch_over_a_paused_removal_rests_until_the_full_pass_finds_the_file_back() {
     let (_, _registry) = super::registry::tests::own_registry();
