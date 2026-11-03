@@ -3291,7 +3291,7 @@ describe("files and items", () => {
       expect(
         harness.server.requests
           .slice(sent)
-          .filter((request) => request.method !== "GET")
+          .filter(isContentWrite)
           .map((request) => `${request.method} ${request.pathname}`),
         "a partial copy sent a write",
       ).toEqual([]);
