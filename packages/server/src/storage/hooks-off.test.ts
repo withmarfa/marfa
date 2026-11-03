@@ -608,7 +608,7 @@ it("adds no webhook response hold until a fault is armed", async () => {
 });
 
 /** A job over more rows than one chunk of 100 takes, so it has a place between chunks. */
-async function jobOverTwoChunks(tag: string) {
+async function jobOverTwoChunks(tag: string, arm?: () => void) {
   const made = await request(ctx.app, "POST", "/items/bulk", {
     key: ctx.workingKey,
     body: {
@@ -621,6 +621,7 @@ async function jobOverTwoChunks(tag: string) {
     },
   });
   expect(made.status).toBe(200);
+  arm?.();
   return runBulkActionAsync(
     ctx,
     { action: "update_tags", add: ["held"], filter: { tags: [tag] } },
@@ -637,8 +638,9 @@ it("waits at no job hold point when no fault is set", async () => {
 it.each(HOLDS)(
   "reaches %s once a fault holds it, which is the witness for the absence above",
   async (point) => {
-    setFault(`hold:${point}`, null);
-    const ran = jobOverTwoChunks(`holds-on-${point}`);
+    const ran = jobOverTwoChunks(`holds-on-${point}`, () => {
+      setFault(`hold:${point}`, null);
+    });
     await vi.waitFor(() => {
       expect(spies.hold).toHaveBeenCalledWith(point);
     });
