@@ -135,3 +135,39 @@ export function judgeItemTotal(
   }
   return { value: total, errors: 0, note: null };
 }
+
+/**
+ * A count that must equal what was generated: the stats of a source and type
+ * the step alone writes. Above it is as wrong as below, since an extra item
+ * means something wrote what it should not.
+ */
+export function judgeExactCount(
+  status: number,
+  text: string,
+  generated: number,
+  what: string,
+): ItemTotal {
+  if (status < 200 || status >= 300) {
+    return {
+      value: 0,
+      errors: 1,
+      note: `/items/stats answered ${status}`,
+    };
+  }
+  const total = totalOfStats(text);
+  if (total === null) {
+    return {
+      value: 0,
+      errors: 1,
+      note: `/items/stats has no counts: ${text.slice(0, 120)}`,
+    };
+  }
+  if (total !== generated) {
+    return {
+      value: total,
+      errors: Math.abs(total - generated),
+      note: `the folder holds ${total.toLocaleString("en-US")} ${what}s and was given ${generated.toLocaleString("en-US")}`,
+    };
+  }
+  return { value: total, errors: 0, note: null };
+}

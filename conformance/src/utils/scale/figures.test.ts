@@ -132,3 +132,62 @@ describe("a fragment", () => {
     expect(fragmentOf("restart", figures).items).toBeNull();
   });
 });
+
+describe("the folder and device figures", () => {
+  it("takes each ceiling from the budget or the issue that set it", () => {
+    expect(CEILINGS.folder_scan).toEqual({ ceiling: 60, issue: 2610 });
+    expect(CEILINGS.folder_first_sync).toEqual({ ceiling: 300, issue: null });
+    expect(CEILINGS.folder_edit_to_server).toEqual({
+      ceiling: 2000,
+      issue: 2611,
+    });
+    expect(CEILINGS.folder_watch_cpu).toEqual({ ceiling: 0.5, issue: 2608 });
+    expect(CEILINGS.device_hydrate).toEqual({ ceiling: 60, issue: null });
+    expect(CEILINGS.device_follow_change).toEqual({
+      ceiling: 1000,
+      issue: null,
+    });
+  });
+
+  it("only records what has no budget", () => {
+    for (const name of [
+      "folder_hydrate",
+      "folder_push",
+      "folder_notes_synced",
+      "folder_watch_rss",
+      "device_copy_size",
+    ]) {
+      expect(CEILINGS[name]?.ceiling, name).toBeNull();
+    }
+  });
+
+  it("judges a quiet watch by CPU seconds a minute", () => {
+    expect(scalar("folder_watch_cpu", "cpu_s_per_min", 0.4).passed).toBe(true);
+    expect(scalar("folder_watch_cpu", "cpu_s_per_min", 26).passed).toBe(false);
+  });
+
+  it("judges an edit's time to the server by its p95 over at least 30 edits", () => {
+    const fast = Array.from({ length: 30 }, () => 1_900);
+    expect(distribution("folder_edit_to_server", "ms", fast).passed).toBe(true);
+    const slow = [...fast.slice(1), 7_500, 7_500, 7_500];
+    expect(distribution("folder_edit_to_server", "ms", slow).passed).toBe(
+      false,
+    );
+  });
+
+  it("fails an edit that never arrived, however quick the others were", () => {
+    const figure = distribution(
+      "folder_edit_to_server",
+      "ms",
+      Array.from({ length: 29 }, () => 100),
+      { errors: 1 },
+    );
+    expect(figure.passed).toBe(false);
+  });
+
+  it("does not pass a device change figure on a handful of samples", () => {
+    expect(
+      distribution("device_follow_change", "ms", [10, 10, 10]).passed,
+    ).toBe(false);
+  });
+});

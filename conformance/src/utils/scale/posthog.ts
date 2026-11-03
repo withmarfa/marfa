@@ -14,6 +14,7 @@ const SUFFIX: Record<Unit, string> = {
   ratio: "ratio",
   per_s: "per_s",
   count: "count",
+  cpu_s_per_min: "cpu_s_per_min",
 };
 
 /** `get_item_p95_ms` for a distribution's p95, `rss_at_rest_mb` for a scalar. */

@@ -21,6 +21,9 @@ export const EXPECTED_STEPS = [
   "edges",
   "export",
   "storage",
+  "device",
+  "folder",
+  "watch",
 ] as const;
 
 export interface FiguresFile {
@@ -131,7 +134,15 @@ export function failedCount(file: FiguresFile): number {
   );
 }
 
-const UNITS: readonly Unit[] = ["ms", "s", "MB", "ratio", "per_s", "count"];
+const UNITS: readonly Unit[] = [
+  "ms",
+  "s",
+  "MB",
+  "ratio",
+  "per_s",
+  "count",
+  "cpu_s_per_min",
+];
 
 function isFigure(value: unknown): value is Figure {
   if (typeof value !== "object" || value === null) return false;
@@ -181,10 +192,15 @@ const UNIT_LABEL: Record<Unit, string> = {
   ratio: "x",
   per_s: "/s",
   count: "",
+  cpu_s_per_min: " CPU s/min",
 };
 
 function digits(unit: Unit): number {
-  return unit === "count" ? 0 : unit === "ratio" ? 2 : 1;
+  return unit === "count"
+    ? 0
+    : unit === "ratio" || unit === "cpu_s_per_min"
+      ? 2
+      : 1;
 }
 
 function number(value: number, unit: Unit): string {

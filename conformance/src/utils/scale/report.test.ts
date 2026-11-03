@@ -144,6 +144,49 @@ describe("the verdict", () => {
     }
   });
 
+  it("excuses the folder's edit time and quiet watch while their issues are open", () => {
+    const fragments = healthyFragments();
+    fragments[1] = fragmentOf("restart", [
+      scalar("folder_watch_cpu", "cpu_s_per_min", 26),
+      distribution(
+        "folder_edit_to_server",
+        "ms",
+        Array.from({ length: 30 }, () => 7_500),
+      ),
+    ]);
+    const file = mergeFragments(fragments, run);
+    expect(verdictOf(file).passed).toBe(true);
+    expect(renderSummary(file, null)).toContain("over, #2608 open");
+    expect(renderSummary(file, null)).toContain("over, #2611 open");
+    expect(verdictOf(file, {}).failedFigures).toEqual([
+      "folder_watch_cpu",
+      "folder_edit_to_server",
+    ]);
+  });
+
+  it("does not excuse an edit that never arrived, even on a listed figure", () => {
+    const fragments = healthyFragments();
+    fragments[1] = fragmentOf("restart", [
+      distribution(
+        "folder_edit_to_server",
+        "ms",
+        Array.from({ length: 29 }, () => 100),
+        { errors: 1 },
+      ),
+    ]);
+    expect(verdictOf(mergeFragments(fragments, run)).failedFigures).toEqual([
+      "folder_edit_to_server",
+    ]);
+  });
+
+  it("names the device, folder and watch steps when they leave no figures", () => {
+    expect(EXPECTED_STEPS).toEqual(
+      expect.arrayContaining(["device", "folder", "watch"]),
+    );
+    const fragments = healthyFragments().filter((f) => f.step !== "watch");
+    expect(mergeFragments(fragments, run).missingSteps).toEqual(["watch"]);
+  });
+
   it("does not fail on a figure that has no ceiling", () => {
     const fragments = healthyFragments();
     fragments[1] = fragmentOf("restart", [scalar("seed_rate", "per_s", 1)]);
