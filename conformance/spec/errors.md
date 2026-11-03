@@ -302,7 +302,7 @@ If a write cannot get the store's write lock within the instance's busy budget, 
 
 **Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
 
-**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`.
+**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held from outside for longer than the budget`.
 
 ### `errors/contention-declared`
 
@@ -330,7 +330,7 @@ While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`, `› is still refused 503 write_contention behind a lock held from outside for longer than the budget`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`.
 
 ### `errors/contention-read`
 
