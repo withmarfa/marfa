@@ -669,12 +669,13 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
 /// Every write to an indexed table inside a transaction keeps a statement
 /// journal. SQLite moves one past 64 KiB to a temporary file, where every
 /// later statement in the transaction writes its pages again, which is nearly
-/// a third of the time a hydration spends writing a page. In memory, a
-/// statement journal is let go when its statement ends. It holds every page
-/// its statement changes, which for one row is small, and for a statement
-/// that clears a large copy could be most of it, so the connection takes up
-/// the default again once the transaction ends. SQLite reads the setting
-/// when the transaction starts to write, and cannot change it inside one.
+/// a third of the time a hydration spends writing a page. The in-memory
+/// journal releases pages when the statement or enclosing savepoint ends.
+/// It holds the pages changed within that scope, which for one row is small,
+/// and for a statement that clears a large copy could be most of it, so the
+/// connection takes up the default again once the transaction ends. SQLite
+/// reads the setting when the transaction starts to write, and cannot change
+/// it inside one.
 pub(crate) fn with_journals_in_memory<T>(
     conn: &mut Connection,
     write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,

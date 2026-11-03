@@ -410,10 +410,9 @@ impl Folder {
         })
     }
 
-    /// Queues what a file's links, embeds and lines change, adding each write
-    /// to `queued` as it is made, so a failure later keeps the earlier ones
-    /// tied to the file; a line read no way it was written changes nothing of
-    /// its type.
+    /// A file's edge writes commit together. Only after they commit are their
+    /// IDs added to `queued`, so a failed batch leaves no partial record. A
+    /// line read no way it was written changes nothing of its type.
     ///
     /// With `removals`, only the edges the file's lines no longer name are
     /// removed, each line added to it, and the outcome is not the file's: a
