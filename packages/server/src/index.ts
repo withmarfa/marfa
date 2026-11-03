@@ -1,4 +1,7 @@
-import { bindErrorReporting } from "./error-reporting.js";
+import {
+  bindErrorReporting,
+  errorReportingEnabled,
+} from "./error-reporting.js";
 import { reservePublicListener } from "./public-listener.js";
 import { getClaimStatus, issueSetupCode } from "./auth/instance-claim.js";
 import { startControlSocket } from "./control/socket.js";
@@ -226,7 +229,6 @@ async function main() {
       // twice. Re-entering would re-run every `stop()` and race two exits.
       if (shuttingDown) return;
       shuttingDown = true;
-      figures.stop();
       dailyReport?.stop();
       // A held run would otherwise keep the stop waiting for it.
       clearFaults();
@@ -252,18 +254,11 @@ async function main() {
         createApp(storage, blobs, housekeeping, config, instanceId).fetch,
       );
       log("info", `Marfa server listening on port ${String(config.port)}`);
-      figures.start();
-      const send = (
-        globalThis as {
-          __marfaSendReport?: (
-            event: string,
-            properties: Record<string, string | number>,
-          ) => Promise<void>;
-        }
-      ).__marfaSendReport;
+      const send = globalThis.__marfaSendReport;
       if (send) {
         dailyReport = startDailyReport({
           keeper: figures,
+          enabled: errorReportingEnabled,
           send,
           warn: (message, data) => {
             log("warn", message, data);

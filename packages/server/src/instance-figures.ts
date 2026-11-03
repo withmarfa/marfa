@@ -5,66 +5,74 @@ import { fileSystemPath } from "./storage/sqlite/connection.js";
 
 /**
  * The server's own size and cost, as `GET /metrics` shows it and as the daily
- * report sends it. One function builds both, so the two cannot drift.
+ * report sends it.
  *
  * Counting a table of a million rows takes the SQLite driver several
- * milliseconds to tens of them, during which it answers nothing else. So the
- * counts are taken off the request path, one table to a statement so that
- * other work runs between them, and a reader gets the last count with the
- * time it was taken.
+ * milliseconds to tens of them, during which it answers nothing else. So a
+ * request never counts: it reads the last count and, when there is none or it
+ * is over an hour old, starts one refresh in the background. Nothing counts
+ * when nobody asks. The daily report counts fresh before it sends.
  */
 
-/** How long a count stays current while the hourly refresh is not running. */
-const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
-export const COUNT_REFRESH_MS = 60 * 60 * 1000;
+/** How long a count stays current. */
+export const COUNT_STALE_AFTER_MS = 60 * 60 * 1000;
 
 const BYTES_PER_KIB = 1024;
 
+/** A figure the process could not read is `null`, and the others still stand. */
 export interface ProcessFigures {
   release: string;
-  rss_bytes: number;
-  rss_peak_bytes: number;
-  heap_used_bytes: number;
-  heap_total_bytes: number;
+  rss_bytes: number | null;
+  rss_peak_bytes: number | null;
+  heap_used_bytes: number | null;
+  heap_total_bytes: number | null;
   /** CPU seconds since the process started. */
-  cpu_user_seconds: number;
-  cpu_system_seconds: number;
+  cpu_user_seconds: number | null;
+  cpu_system_seconds: number | null;
   uptime_seconds: number;
 }
 
-/** A figure that could not be read is `null`, and the others still stand. */
-export interface StorageFigures {
+export interface FileSizes {
   database_bytes: number | null;
   wal_bytes: number | null;
+}
+
+/** Rows of the tables that grow without bound, taken at `counted_at`. */
+export interface TableCounts {
   items: number | null;
   versions: number | null;
   event_log: number | null;
   audit_log: number | null;
-  blobs: number | null;
-  blob_bytes: number | null;
-  items_by_state: Record<string, number> | null;
   counted_at: string;
 }
 
-export interface InstanceFigures {
+/** Everything the daily report sends, read fresh. */
+export interface ReportFigures {
   process: ProcessFigures;
-  storage: StorageFigures;
+  files: FileSizes;
+  counts: TableCounts;
+  blobs: { count: number; total_bytes: number } | null;
 }
 
-const startedAt = clock.monotonicMs();
+function safe(read: () => number): number | null {
+  try {
+    const value = read();
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readProcessFigures(release: string): ProcessFigures {
-  const memory = process.memoryUsage();
-  const cpu = process.cpuUsage();
   return {
     release,
-    rss_bytes: memory.rss,
-    rss_peak_bytes: process.resourceUsage().maxRSS * BYTES_PER_KIB,
-    heap_used_bytes: memory.heapUsed,
-    heap_total_bytes: memory.heapTotal,
-    cpu_user_seconds: cpu.user / 1_000_000,
-    cpu_system_seconds: cpu.system / 1_000_000,
-    uptime_seconds: Math.floor((clock.monotonicMs() - startedAt) / 1000),
+    rss_bytes: safe(() => process.memoryUsage().rss),
+    rss_peak_bytes: safe(() => process.resourceUsage().maxRSS * BYTES_PER_KIB),
+    heap_used_bytes: safe(() => process.memoryUsage().heapUsed),
+    heap_total_bytes: safe(() => process.memoryUsage().heapTotal),
+    cpu_user_seconds: safe(() => process.cpuUsage().user / 1_000_000),
+    cpu_system_seconds: safe(() => process.cpuUsage().system / 1_000_000),
+    uptime_seconds: Math.floor(process.uptime()),
   };
 }
 
@@ -86,13 +94,19 @@ async function fileBytes(path: string, absent: number | null) {
 }
 
 export interface FiguresKeeper {
-  /** The last count, taken now when there is none or it has gone stale. */
-  read(): Promise<InstanceFigures>;
-  /** Count again, whoever asks; callers during a count share it. */
-  refresh(): Promise<StorageFigures>;
-  /** Refresh every hour, off every request, until {@link stop}. */
-  start(): void;
-  stop(): void;
+  /** The last count, or `undefined` before the first. */
+  last(): TableCounts | undefined;
+  /**
+   * Start one count in the background when there is none or the last is over
+   * an hour old. Returns at once; one runs at a time.
+   */
+  refreshInBackground(): void;
+  /** Count now, whoever asks; callers during a count share it. */
+  count(): Promise<TableCounts>;
+  /** The file sizes, which a stat reads without touching the database. */
+  files(): Promise<FileSizes>;
+  /** Process, files, a fresh count and the blob totals, for the report. */
+  reportFigures(): Promise<ReportFigures>;
 }
 
 const keepers = new WeakMap<Storage, FiguresKeeper>();
@@ -118,58 +132,34 @@ function createFiguresKeeper(
 ): FiguresKeeper {
   const databasePath =
     sqlitePath === ":memory:" ? undefined : fileSystemPath(sqlitePath);
-  let latest: { figures: StorageFigures; at: number } | undefined;
-  let counting: Promise<StorageFigures> | undefined;
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let latest: { counts: TableCounts; at: number } | undefined;
+  let counting: Promise<TableCounts> | undefined;
 
-  async function count(): Promise<StorageFigures> {
-    const itemsByState = await (async () => {
-      try {
-        return await storage.items.stats({ all_states: true });
-      } catch {
-        return null;
-      }
-    })();
+  // One table to a statement, so other work runs between them.
+  async function countTables(): Promise<TableCounts> {
+    const items = await readNumber(async () =>
+      Object.values(await storage.items.stats({ all_states: true })).reduce(
+        (a, b) => a + b,
+        0,
+      ),
+    );
     const versions = await readNumber(() => storage.versions.count());
     const eventLog = await readNumber(() => storage.eventLog.count());
     const auditLog = await readNumber(() => storage.audit.count());
-    let blobs: number | null = null;
-    let blobBytes: number | null = null;
-    try {
-      const row = await storage.blobs.count();
-      blobs = row.count;
-      blobBytes = row.total_size_bytes;
-    } catch {
-      /* The other figures still stand. */
-    }
-    const databaseBytes = databasePath
-      ? await fileBytes(databasePath, null)
-      : null;
-    // A checkpoint can remove the log file; no file is no log.
-    const walBytes = databasePath
-      ? await fileBytes(`${databasePath}-wal`, 0)
-      : null;
     return {
-      database_bytes: databaseBytes,
-      wal_bytes: walBytes,
-      items: itemsByState
-        ? Object.values(itemsByState).reduce((a, b) => a + b, 0)
-        : null,
+      items,
       versions,
       event_log: eventLog,
       audit_log: auditLog,
-      blobs,
-      blob_bytes: blobBytes,
-      items_by_state: itemsByState,
       counted_at: clock.now().toISOString(),
     };
   }
 
-  function refresh(): Promise<StorageFigures> {
-    counting ??= count()
-      .then((figures) => {
-        latest = { figures, at: clock.monotonicMs() };
-        return figures;
+  function count(): Promise<TableCounts> {
+    counting ??= countTables()
+      .then((counts) => {
+        latest = { counts, at: clock.monotonicMs() };
+        return counts;
       })
       .finally(() => {
         counting = undefined;
@@ -177,25 +167,37 @@ function createFiguresKeeper(
     return counting;
   }
 
+  async function files(): Promise<FileSizes> {
+    if (!databasePath) return { database_bytes: null, wal_bytes: null };
+    return {
+      database_bytes: await fileBytes(databasePath, null),
+      // A checkpoint can remove the log file; no file is no log.
+      wal_bytes: await fileBytes(`${databasePath}-wal`, 0),
+    };
+  }
+
   return {
-    refresh,
-    async read() {
-      const fresh =
-        latest && clock.monotonicMs() - latest.at < STALE_AFTER_MS
-          ? latest.figures
-          : await refresh();
-      return { process: readProcessFigures(release), storage: fresh };
+    last: () => latest?.counts,
+    refreshInBackground() {
+      if (latest && clock.monotonicMs() - latest.at < COUNT_STALE_AFTER_MS) {
+        return;
+      }
+      void count();
     },
-    start() {
-      if (timer) return;
-      timer = setInterval(() => {
-        void refresh().catch(() => undefined);
-      }, COUNT_REFRESH_MS);
-      timer.unref();
-    },
-    stop() {
-      if (timer) clearInterval(timer);
-      timer = undefined;
+    count,
+    files,
+    async reportFigures() {
+      const counts = await count();
+      const blobs = await storage.blobs.count().then(
+        (row) => ({ count: row.count, total_bytes: row.total_size_bytes }),
+        () => null,
+      );
+      return {
+        process: readProcessFigures(release),
+        files: await files(),
+        counts,
+        blobs,
+      };
     },
   };
 }

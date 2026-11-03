@@ -6,16 +6,9 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import * as clock from "../clock.js";
 import type { AppConfig } from "../config.js";
-import { figuresFor } from "../instance-figures.js";
+import { figuresFor, readProcessFigures } from "../instance-figures.js";
 
 const CACHE_TTL_MS = 60_000;
-
-// Every admitted caller sees the same instance-wide counts.
-interface CacheEntry {
-  response: Record<string, unknown>;
-  at: number;
-}
-let metricsCache: CacheEntry | undefined;
 
 const MetricCountSchema = z
   .object({ total: z.number().describe("Number of records.") })
@@ -55,24 +48,40 @@ const MetricsResponseSchema = z.object({
       release: z.string().describe("The release this server runs."),
       memory_rss_bytes: z
         .number()
-        .describe("Memory the server process holds in RAM, in bytes."),
+        .nullable()
+        .describe(
+          "Memory the server process holds in RAM, in bytes. `null` if it can't be read.",
+        ),
       memory_rss_peak_bytes: z
         .number()
-        .describe("The most memory the process has held in RAM, in bytes."),
+        .nullable()
+        .describe(
+          "The most memory the process has held in RAM, in bytes. `null` if it can't be read.",
+        ),
       heap_used_bytes: z
         .number()
+        .nullable()
         .describe(
-          "Memory the JavaScript engine uses for live objects, in bytes.",
+          "Memory the JavaScript engine uses for live objects, in bytes. `null` if it can't be read.",
         ),
       heap_total_bytes: z
         .number()
-        .describe("Memory the JavaScript engine has reserved, in bytes."),
+        .nullable()
+        .describe(
+          "Memory the JavaScript engine has reserved, in bytes. `null` if it can't be read.",
+        ),
       cpu_user_seconds: z
         .number()
-        .describe("CPU seconds the process has spent on its own work."),
+        .nullable()
+        .describe(
+          "CPU seconds the process has spent on its own work since it started. `null` if it can't be read.",
+        ),
       cpu_system_seconds: z
         .number()
-        .describe("CPU seconds the process has spent in the operating system."),
+        .nullable()
+        .describe(
+          "CPU seconds the process has spent in the operating system since it started. `null` if it can't be read.",
+        ),
     })
     .describe("What this server process costs, since it started."),
   storage: z
@@ -106,19 +115,34 @@ const MetricsResponseSchema = z.object({
             .describe("Number of audit log entries."),
         })
         .describe(
-          "Row counts of the largest tables. `null` if one can't be read.",
+          "Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes.",
         ),
       counted_at: z
         .string()
+        .nullable()
         .describe(
-          "When the item, blob and row counts were taken, in UTC. Marfa recounts about once an hour.",
+          "When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background.",
         ),
     })
     .describe("Database size and row counts."),
   cached_at: z
     .string()
-    .describe("When the other counters were collected, in UTC."),
+    .describe(
+      "When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request.",
+    ),
 });
+
+// Every admitted caller sees the same instance-wide counters. The cache holds
+// the ones read live; the process and storage blocks are built per request.
+type LiveCounters = Pick<
+  z.infer<typeof MetricsResponseSchema>,
+  "items" | "blobs" | "types" | "keys" | "webhooks" | "cached_at"
+>;
+interface CacheEntry {
+  counters: LiveCounters;
+  at: number;
+}
+let liveCache: CacheEntry | undefined;
 
 const getMetricsRoute = createRoute({
   operationId: "getInstanceMetrics",
@@ -159,80 +183,77 @@ const getMetricsRoute = createRoute({
 });
 
 export function metricsRoutes(storage: Storage, config: AppConfig) {
-  const keeper = figuresFor(
-    storage,
-    config.sqlitePath,
-    config.versionSha ?? "dev",
-  );
+  const release = config.versionSha ?? "dev";
+  const keeper = figuresFor(storage, config.sqlitePath, release);
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
-    const now = clock.monotonicMs();
-    if (metricsCache && now - metricsCache.at < CACHE_TTL_MS) {
-      return c.json(
-        metricsCache.response as z.infer<typeof MetricsResponseSchema>,
-        200,
-      );
-    }
+    // A request never counts the big tables: it reads the last count as it
+    // stands now and starts a background count when that is missing or old.
+    const counts = keeper.last();
+    keeper.refreshInBackground();
 
-    const [figures, keyCount, webhookCount, registeredTypeCount] =
-      await Promise.all([
-        keeper.read(),
+    const now = clock.monotonicMs();
+    if (!liveCache || now - liveCache.at >= CACHE_TTL_MS) {
+      const [
+        itemStats,
+        blobStats,
+        keyCount,
+        webhookCount,
+        registeredTypeCount,
+      ] = await Promise.all([
+        storage.items.stats({ all_states: true }),
+        storage.blobs.count(),
         storage.keys.count(),
         storage.outboundWebhooks.count(),
         storage.types.countRegistered(),
       ]);
-    const { process: p, storage: s } = figures;
-    if (s.items_by_state === null || s.items === null || s.blobs === null) {
-      throw new Error("The item and blob counts could not be read");
+      const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
+      liveCache = {
+        at: now,
+        counters: {
+          items: { total, by_state: itemStats },
+          blobs: {
+            count: blobStats.count,
+            total_bytes: blobStats.total_size_bytes,
+          },
+          types: { core: ALL_TYPES.length, registered: registeredTypeCount },
+          keys: { total: keyCount },
+          webhooks: { total: webhookCount },
+          cached_at: clock.now().toISOString(),
+        },
+      };
     }
 
-    const response = {
-      items: {
-        total: s.items,
-        by_state: s.items_by_state,
-      },
-      blobs: {
-        count: s.blobs,
-        total_bytes: s.blob_bytes ?? 0,
-      },
-      types: {
-        core: ALL_TYPES.length,
-        registered: registeredTypeCount,
-      },
-      keys: {
-        total: keyCount,
-      },
-      webhooks: {
-        total: webhookCount,
-      },
-      uptime_seconds: p.uptime_seconds,
-      process: {
-        release: p.release,
-        memory_rss_bytes: p.rss_bytes,
-        memory_rss_peak_bytes: p.rss_peak_bytes,
-        heap_used_bytes: p.heap_used_bytes,
-        heap_total_bytes: p.heap_total_bytes,
-        cpu_user_seconds: p.cpu_user_seconds,
-        cpu_system_seconds: p.cpu_system_seconds,
-      },
-      storage: {
-        database_bytes: s.database_bytes,
-        wal_bytes: s.wal_bytes,
-        rows: {
-          items: s.items,
-          versions: s.versions,
-          event_log: s.event_log,
-          audit_log: s.audit_log,
+    const p = readProcessFigures(release);
+    const files = await keeper.files();
+
+    return c.json(
+      {
+        ...liveCache.counters,
+        uptime_seconds: p.uptime_seconds,
+        process: {
+          release: p.release,
+          memory_rss_bytes: p.rss_bytes,
+          memory_rss_peak_bytes: p.rss_peak_bytes,
+          heap_used_bytes: p.heap_used_bytes,
+          heap_total_bytes: p.heap_total_bytes,
+          cpu_user_seconds: p.cpu_user_seconds,
+          cpu_system_seconds: p.cpu_system_seconds,
         },
-        counted_at: s.counted_at,
+        storage: {
+          ...files,
+          rows: {
+            items: counts?.items ?? null,
+            versions: counts?.versions ?? null,
+            event_log: counts?.event_log ?? null,
+            audit_log: counts?.audit_log ?? null,
+          },
+          counted_at: counts?.counted_at ?? null,
+        },
       },
-      cached_at: clock.now().toISOString(),
-    };
-
-    metricsCache = { response, at: now };
-
-    return c.json(response, 200);
+      200,
+    );
   });
 
   return router;

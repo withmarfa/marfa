@@ -705,7 +705,7 @@ describe("the instance", () => {
         database_bytes: number | null;
         wal_bytes: number | null;
         rows: Record<string, number | null>;
-        counted_at: string;
+        counted_at: string | null;
       };
     }>("/metrics");
     expect(r.status).toBe(200);
@@ -752,8 +752,18 @@ describe("the instance", () => {
       "items",
       "versions",
     ]);
-    expect(r.data.storage.rows.items).toBe(r.data.items.total);
-    expect(typeof r.data.storage.counted_at).toBe("string");
+    // The row counts come from a background count that this request may
+    // have started, so each is a number or `null`, and the time agrees.
+    for (const [table, rows] of Object.entries(r.data.storage.rows)) {
+      expect(
+        rows === null || typeof rows === "number",
+        `storage.rows.${table}`,
+      ).toBe(true);
+    }
+    expect(
+      r.data.storage.counted_at === null ||
+        typeof r.data.storage.counted_at === "string",
+    ).toBe(true);
 
     await expectMatchesSchema("GET", "/metrics", 200, r.data);
 

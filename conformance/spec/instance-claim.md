@@ -282,7 +282,7 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 
 ### `instance-claim/management-metrics-resources`
 
-When a credential with `instance.read` requests `GET /metrics`, the server MUST include the memory and CPU its process uses, its release, and the size and row counts of its database, each a number, and `null` for a figure it cannot read.
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `process` block (the memory and CPU its process uses, and its release) and a `storage` block (the size of its database and the row counts of its largest tables, with the time they were counted), each figure but the release a number, or `null` where the server cannot read it or has not counted it yet.
 
 **Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
 

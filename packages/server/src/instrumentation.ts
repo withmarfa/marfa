@@ -76,10 +76,11 @@ declare global {
     | undefined;
   /**
    * Send one named event of numbers to the same PostHog project exception
-   * reports go to, under the same instance identity. Set here only when
+   * reports go to, with a fixed identity (the environment and the random
+   * instance id) and no operator-chosen attribute. Set here only when
    * exception reporting is configured; undefined otherwise. It settles once
-   * the event is sent or when sending is off, and rejects when PostHog does
-   * not take it.
+   * the event is sent or when sending is off, and rejects if the client
+   * throws.
    */
   var __marfaSendReport:
     | ((
@@ -314,29 +315,24 @@ async function start(): Promise<void> {
     };
     globalThis.__marfaSendReport = async (event, properties) => {
       if (stopping || !(await errorReportingEnabled())) return;
-      // The client reports a send that fails on its error channel and still
-      // resolves, so the failure is read from there.
-      let failure: Error | undefined;
-      const stopListening = client.on("error", (error) => {
-        failure ??= error instanceof Error ? error : new Error(String(error));
-      });
-      try {
-        await clock.withRealTime(() =>
-          client.captureImmediate({
-            event,
-            properties: {
-              ...staticAttributes,
-              ...(instanceId === undefined || instanceChosen
-                ? {}
-                : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
-              ...properties,
-            },
-          }),
-        );
-      } finally {
-        stopListening();
-      }
-      if (failure) throw failure;
+      // The report carries its own figures and a fixed identity: the
+      // environment exception reports name and the instance's random id.
+      // Nothing an operator put in `OTEL_RESOURCE_ATTRIBUTES` goes with it.
+      const environment = staticAttributes["deployment.environment"];
+      await clock.withRealTime(() =>
+        client.captureImmediate({
+          event,
+          properties: {
+            ...(environment === undefined
+              ? {}
+              : { "deployment.environment": environment }),
+            ...(instanceId === undefined
+              ? {}
+              : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+            ...properties,
+          },
+        }),
+      );
     };
   }
 

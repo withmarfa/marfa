@@ -60377,28 +60377,46 @@
                           "description": "The release this server runs."
                         },
                         "memory_rss_bytes": {
-                          "type": "number",
-                          "description": "Memory the server process holds in RAM, in bytes."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the server process holds in RAM, in bytes. `null` if it can't be read."
                         },
                         "memory_rss_peak_bytes": {
-                          "type": "number",
-                          "description": "The most memory the process has held in RAM, in bytes."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "The most memory the process has held in RAM, in bytes. `null` if it can't be read."
                         },
                         "heap_used_bytes": {
-                          "type": "number",
-                          "description": "Memory the JavaScript engine uses for live objects, in bytes."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the JavaScript engine uses for live objects, in bytes. `null` if it can't be read."
                         },
                         "heap_total_bytes": {
-                          "type": "number",
-                          "description": "Memory the JavaScript engine has reserved, in bytes."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the JavaScript engine has reserved, in bytes. `null` if it can't be read."
                         },
                         "cpu_user_seconds": {
-                          "type": "number",
-                          "description": "CPU seconds the process has spent on its own work."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "CPU seconds the process has spent on its own work since it started. `null` if it can't be read."
                         },
                         "cpu_system_seconds": {
-                          "type": "number",
-                          "description": "CPU seconds the process has spent in the operating system."
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "CPU seconds the process has spent in the operating system since it started. `null` if it can't be read."
                         }
                       },
                       "required": [
@@ -60467,11 +60485,14 @@
                             "event_log",
                             "audit_log"
                           ],
-                          "description": "Row counts of the largest tables. `null` if one can't be read."
+                          "description": "Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes."
                         },
                         "counted_at": {
-                          "type": "string",
-                          "description": "When the item, blob and row counts were taken, in UTC. Marfa recounts about once an hour."
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background."
                         }
                       },
                       "required": [
@@ -60484,7 +60505,7 @@
                     },
                     "cached_at": {
                       "type": "string",
-                      "description": "When the other counters were collected, in UTC."
+                      "description": "When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request."
                     }
                   },
                   "required": [
