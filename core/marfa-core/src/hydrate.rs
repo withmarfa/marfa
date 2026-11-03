@@ -12,6 +12,7 @@ use crate::http::{Http, ItemsQuery, Registration, Replacement};
 use crate::model::{
     Draft, EdgeDraft, HydrateReport, HydrateRestart, SliceTier, Tier, UnregisteredType, WriteKind,
 };
+use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata, WirePage};
@@ -29,30 +30,37 @@ pub(crate) enum Fill {
     InPlaceOnly,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn hydrate(
     core: &Core,
     http: &Http,
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    query: Option<&SliceQuery>,
     fill: Fill,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let result = hydrate_inner(core, http, types, tier, edge_types, fill, stop);
+    let result = hydrate_inner(core, http, types, tier, edge_types, query, fill, stop);
     crate::catch_up::unless_stopped(result, stop)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hydrate_inner(
     core: &Core,
     http: &Http,
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    query: Option<&SliceQuery>,
     fill: Fill,
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
+    if let Some(query) = query {
+        declared_query(query)?;
+    }
     let mut restart = None;
     let mut pages = 0;
     loop {
@@ -63,6 +71,7 @@ fn hydrate_inner(
             &types,
             tier,
             &edge_types,
+            query,
             fill,
             restart,
             &mut pages,
@@ -161,8 +170,8 @@ fn take_pins(tx: &rusqlite::Connection, pins: &EarlyPins) -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Reached {
     phase: Phase,
-    /// The declared type, `store::EVERY_TYPE` for the listing naming none, or
-    /// the edge type, whose listing is walked next.
+    /// The item listing (`listings` names them) or the edge type whose
+    /// listing is walked next.
     listing: Option<String>,
     /// The page cursor to send next, `None` for the listing's first page.
     cursor: Option<String>,
@@ -255,11 +264,13 @@ fn attempt(
     types: &[String],
     tier: SliceTier,
     edge_types: &[String],
+    query: Option<&SliceQuery>,
     fill: Fill,
     restart: Option<HydrateRestart>,
     pages: &mut u64,
     stop: &AtomicBool,
 ) -> Result<Attempt> {
+    let listings = listings(types, query);
     // Nothing is cleared until the copy is about to be replaced, so a stop
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
@@ -277,6 +288,7 @@ fn attempt(
                 types,
                 tier,
                 edge_types,
+                query,
             },
         )
     };
@@ -307,7 +319,23 @@ fn attempt(
     refuse_unheld(&catalog_rows, types, edge_types)?;
     let start = match restart.or(ended) {
         Some(reason) => Start::Fresh(Some(reason)),
-        None => resume_point(core, http, &instance, &fence, types, tier, edge_types, stop)?,
+        None => resume_point(
+            core,
+            http,
+            &instance,
+            &fence,
+            &Built {
+                instance: &instance,
+                cursor: &cursor,
+                fence: &fence,
+                types,
+                tier,
+                edge_types,
+                query,
+            },
+            &listings,
+            stop,
+        )?,
     };
     if fill == Fill::InPlaceOnly
         && let Start::Fresh(Some(HydrateRestart::HeadPastLog)) = start
@@ -328,6 +356,11 @@ fn attempt(
     // (`items/source-own`), so a copy's first such create finds the row it
     // holds under it. A resume carries on under the reach its walk was
     // allowed under, so it asks no first page again.
+    if reached.is_none()
+        && let Some(query) = query
+    {
+        refuse_unlisted_query(http, types, tier, query)?;
+    }
     if let Some(source) = refuse_unreadable(http, types, tier, &catalog_rows, reached.is_none())? {
         store::learn_source(
             &*core.conn()?,
@@ -347,7 +380,7 @@ fn attempt(
     let reached = match reached {
         Some(reached) => reached,
         None => {
-            let counts = counted(plain, types, tier);
+            let counts = counted(plain, types, tier, query);
             let pinned = read_pins(core, http, stop)?;
             crate::catch_up::refuse_if_stopped(stop)?;
             let mut conn = core.conn()?;
@@ -367,6 +400,7 @@ fn attempt(
                 types,
                 tier,
                 edge_types,
+                query,
             };
             let not_in_place = match restarted {
                 Some(HydrateRestart::HeadPastLog) => Some(HydrateRestart::HeadPastLog.as_str()),
@@ -399,6 +433,12 @@ fn attempt(
                 store::META_SLICE_EDGE_TYPES,
                 &serde_json::to_string(edge_types)?,
             )?;
+            match query {
+                Some(query) => {
+                    store::meta_set(&tx, store::META_SLICE_QUERY, &serde_json::to_string(query)?)?
+                }
+                None => store::meta_delete(&tx, store::META_SLICE_QUERY)?,
+            }
             crate::body::rule::before_rebuild(&tx)?;
             store::forget_removals(&tx)?;
             if in_place {
@@ -427,7 +467,7 @@ fn attempt(
                 None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
             }
             store::meta_set(&tx, store::META_ITEMS_LISTED, "0")?;
-            let first = Reached::first(types, edge_types);
+            let first = Reached::first(&listings, edge_types);
             first.keep(&tx)?;
             tx.commit()?;
             // A drain waiting on the store would otherwise wait out the hold
@@ -450,13 +490,15 @@ fn attempt(
             let conn = core.conn()?;
             Catalog::load(&conn)?
         };
-        let Some((item_from, edge_from)) = reached.indices(types, edge_types) else {
+        let Some((item_from, edge_from)) = reached.indices(&listings, edge_types) else {
             return Ok(Attempt::Again(HydrateRestart::SliceChanged));
         };
         let mut pages_total = reached.pages;
 
-        for (index, declared) in types.iter().enumerate().skip(item_from) {
-            let listing = (declared != store::EVERY_TYPE).then(|| declared.clone());
+        for (index, key) in listings.iter().enumerate().skip(item_from) {
+            let (declared, conflicted) = listing_of(key);
+            let listing = (declared != store::EVERY_TYPE).then(|| declared.to_string());
+            let narrowing = query.map(|query| query.listing(conflicted));
             let from = if index == item_from {
                 reached.cursor.clone()
             } else {
@@ -467,6 +509,7 @@ fn attempt(
                 http.items_page(&ItemsQuery {
                     r#type: listing,
                     tier: listed_tier(listing, tier),
+                    narrowing: narrowing.as_ref(),
                     cursor,
                 })
             };
@@ -496,13 +539,15 @@ fn attempt(
                         context.check(tx)?;
                         // The expected count is of the slice's listings, so pinned
                         // rows and queued creates, which `items` also counts, stay
-                        // out of this one. A row two listings bring counts once.
+                        // out of this one, as do the conflicted copies a query
+                        // lists apart. A row two listings bring counts once.
                         let mut listed: u64 = store::meta_get(tx, store::META_ITEMS_LISTED)?
                             .and_then(|count| count.parse().ok())
                             .unwrap_or(0);
                         for row in &page.data {
-                            if !crate::reach::answered(tx, &row.item.id)?
-                                || crate::reach::early(tx, &row.item.id)?
+                            if !conflicted
+                                && (!crate::reach::answered(tx, &row.item.id)?
+                                    || crate::reach::early(tx, &row.item.id)?)
                             {
                                 listed += 1;
                             }
@@ -531,11 +576,13 @@ fn attempt(
                         match page.next_cursor {
                             Some(next) => Reached {
                                 phase: Phase::Items,
-                                listing: Some(declared.clone()),
+                                listing: Some(key.clone()),
                                 cursor: Some(next),
                                 pages: pages_total,
                             },
-                            None => Reached::after_items(types, edge_types, index + 1, pages_total),
+                            None => {
+                                Reached::after_items(&listings, edge_types, index + 1, pages_total)
+                            }
                         }
                         .keep(tx)
                     })
@@ -696,6 +743,7 @@ fn attempt(
             types: types.to_vec(),
             tier,
             edge_types: edge_types.to_vec(),
+            query: query.cloned(),
             items,
             edges,
             pages: *pages,
@@ -722,6 +770,7 @@ struct Built<'a> {
     types: &'a [String],
     tier: SliceTier,
     edge_types: &'a [String],
+    query: Option<&'a SliceQuery>,
 }
 
 /// `None` where a fill of the copy under `built` would be in place: a stale
@@ -749,17 +798,77 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
         Some(HydrateRestart::InstanceChanged.as_str())
     } else if refill.reach != built.fence {
         Some(HydrateRestart::ReachChanged.as_str())
-    } else if store::meta_get(conn, store::META_SLICE_TYPES)?
-        != Some(serde_json::to_string(built.types)?)
-        || store::meta_get(conn, store::META_SLICE_TIER)?.as_deref() != Some(built.tier.as_str())
-        || store::whole_edge_types(conn)? != built.edge_types
-    {
+    } else if !holds_built_slice(conn, built)? {
         Some(HydrateRestart::SliceChanged.as_str())
     } else if !not_behind(built.cursor, &refill.cursor) {
         Some(HydrateRestart::HeadPastLog.as_str())
     } else {
         None
     })
+}
+
+/// Whether the copy declares the slice `built` asks for: its types, tier,
+/// edge types held whole and query.
+fn holds_built_slice(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<bool> {
+    Ok(
+        store::meta_get(conn, store::META_SLICE_TYPES)? == Some(serde_json::to_string(built.types)?)
+            && store::meta_get(conn, store::META_SLICE_TIER)?.as_deref()
+                == Some(built.tier.as_str())
+            && store::whole_edge_types(conn)? == built.edge_types
+            && store::slice_query(conn)?.as_ref() == built.query,
+    )
+}
+
+/// The item listings a slice walks, in order: one for each declared type,
+/// and, under a query that leaves conflicted copies out of it, one more
+/// beside it for them (`device/hydrate-listing-conflicted`).
+fn listings(types: &[String], query: Option<&SliceQuery>) -> Vec<String> {
+    let apart = query.is_some_and(SliceQuery::lists_conflicted_apart);
+    types
+        .iter()
+        .flat_map(|declared| {
+            let conflicted =
+                apart.then(|| format!("{declared} {}", crate::slice::CONFLICTED_COPY_LISTING));
+            std::iter::once(declared.clone()).chain(conflicted)
+        })
+        .collect()
+}
+
+/// The declared type a listing walks, and whether it is the one of its
+/// conflicted copies.
+fn listing_of(key: &str) -> (&str, bool) {
+    match key.strip_suffix(crate::slice::CONFLICTED_COPY_LISTING) {
+        Some(declared) => (declared.trim_end(), true),
+        None => (key, false),
+    }
+}
+
+/// A query a copy can be narrowed by: one whose every term the row and its
+/// tags answer, so an event can be judged by the row it carries.
+fn declared_query(query: &SliceQuery) -> Result<()> {
+    query.check()?;
+    if query.relational()? {
+        return Err(CoreError::Invalid(
+            "a slice's query narrows by edges or another row, which a working copy cannot yet be narrowed by; hydrate with its states alone".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The server refuses a filter it cannot read only once asked to list by
+/// it, so one narrowed listing of a row is asked for before anything is
+/// cleared (`device/hydrate-query-refused`).
+fn refuse_unlisted_query(
+    http: &Http,
+    types: &[String],
+    tier: SliceTier,
+    query: &SliceQuery,
+) -> Result<()> {
+    let Some(declared) = types.first() else {
+        return Ok(());
+    };
+    let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
+    http.lists_narrowed(listing, listed_tier(listing, tier), &query.listing(false))
 }
 
 /// The `copy_expired` reason a fill asked to happen only in place gives a
@@ -820,15 +929,13 @@ fn expire_if_built_elsewhere(
 /// started from still in the server's event log, so the replay after its
 /// pages can start there. The catalog is held to the copy's as the resume
 /// begins. Otherwise why it cannot, where there was one.
-#[allow(clippy::too_many_arguments)]
 fn resume_point(
     core: &Core,
     http: &Http,
     instance: &str,
     fence: &str,
-    types: &[String],
-    tier: SliceTier,
-    edge_types: &[String],
+    built: &Built<'_>,
+    listings: &[String],
     stop: &AtomicBool,
 ) -> Result<Start> {
     let (reached, head) = {
@@ -850,11 +957,8 @@ fn resume_point(
         if store::meta_get(&conn, crate::reach::FENCE)?.as_deref() != Some(fence) {
             return Ok(Start::Fresh(Some(HydrateRestart::ReachChanged)));
         }
-        if store::meta_get(&conn, store::META_SLICE_TYPES)? != Some(serde_json::to_string(types)?)
-            || store::meta_get(&conn, store::META_SLICE_TIER)?.as_deref() != Some(tier.as_str())
-            || store::meta_get(&conn, store::META_SLICE_EDGE_TYPES)?
-                != Some(serde_json::to_string(edge_types)?)
-            || reached.indices(types, edge_types).is_none()
+        if !holds_built_slice(&conn, built)?
+            || reached.indices(listings, built.edge_types).is_none()
         {
             return Ok(Start::Fresh(Some(HydrateRestart::SliceChanged)));
         }
@@ -1176,12 +1280,18 @@ pub(crate) fn type_id(name: &str) -> Result<bool> {
 /// hydration starts so a copy filling up can say how far it has come. `None`
 /// where the server does not answer, and where one count cannot say it: a
 /// slice at one tier that names a `system.*` type lists that type at both.
-fn counted(http: &Http, types: &[String], tier: SliceTier) -> Option<HashMap<String, u64>> {
+fn counted(
+    http: &Http,
+    types: &[String],
+    tier: SliceTier,
+    query: Option<&SliceQuery>,
+) -> Option<HashMap<String, u64>> {
     let system = types.iter().any(|declared| store::is_system(declared));
     if system && tier != SliceTier::All {
         return None;
     }
-    http.counts_by_type(tier, system).ok()
+    let narrowing = query.map(|query| query.listing(false));
+    http.counts_by_type(tier, system, narrowing.as_ref()).ok()
 }
 
 /// The counts were read at the slice's tier, so only the types are matched.

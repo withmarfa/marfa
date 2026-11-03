@@ -21,6 +21,11 @@ pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
+/// The slice's query past its types and tier, as JSON, and absent where the
+/// slice holds every row of its types and tier. A store written before the
+/// key existed reads as holding no query, so a folder asking for one sees
+/// its slice moved and hydrates again.
+pub const META_SLICE_QUERY: &str = "slice_query";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
 pub const META_INSTANCE_ID: &str = "instance_id";
@@ -1484,6 +1489,61 @@ pub fn slice_takes(
 
 pub(crate) fn is_system(r#type: &str) -> bool {
     r#type.starts_with("system.")
+}
+
+pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>, CoreError> {
+    match meta_get(conn, META_SLICE_QUERY)? {
+        Some(json) => serde_json::from_str(&json).map(Some).map_err(|error| {
+            CoreError::Store(format!(
+                "the store holds a slice query this build does not read: {error}"
+            ))
+        }),
+        None => Ok(None),
+    }
+}
+
+/// Whether the copy keeps the row it holds under `id`, judged on the row as
+/// held: pinned, named by a write still waiting, or listed and taken by the
+/// slice's types, tier and query. One rule for every path that takes a
+/// server row, so the copy holds the same rows whichever brought them.
+pub fn keeps_held(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    id: &str,
+) -> Result<bool, CoreError> {
+    if pinned(conn, id)? || item_waits(conn, id)? {
+        return Ok(true);
+    }
+    let Some((types, tier)) = slice(conn)? else {
+        return Ok(false);
+    };
+    if !crate::reach::listed(conn, id)? {
+        return Ok(false);
+    }
+    let Some(held) = items_by_ids(conn, &[id.to_string()])?.pop() else {
+        return Ok(false);
+    };
+    if !slice_takes(catalog, &types, tier, &held.r#type, held.tier) {
+        return Ok(false);
+    }
+    match slice_query(conn)? {
+        Some(query) => crate::slice::takes_held(conn, catalog, &query, &whole_edge_types(conn)?, id),
+        None => Ok(true),
+    }
+}
+
+/// Evicts the row held under `id` where the copy does not keep it
+/// (`keeps_held`). Whether it did.
+pub fn let_go_unless_kept(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    id: &str,
+) -> Result<bool, CoreError> {
+    if keeps_held(conn, catalog, id)? {
+        return Ok(false);
+    }
+    evict_item(conn, id, &whole_edge_types(conn)?)?;
+    Ok(true)
 }
 
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {

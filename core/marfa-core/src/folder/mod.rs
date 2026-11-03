@@ -816,8 +816,13 @@ impl Folder {
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
-        self.core
-            .hydrate_until(&settings.slice_types(), settings.tier(), &whole, stop)
+        self.core.hydrate_sliced(
+            &settings.slice_types(),
+            settings.tier(),
+            &whole,
+            settings.copy_query()?.as_ref(),
+            stop,
+        )
     }
 
     /// `None` where the copy already answers for the slice the settings ask.
@@ -854,7 +859,13 @@ impl Folder {
             whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
                 .into_iter()
                 .collect();
-        Ok(held != asked || tier != settings.tier() || whole != wanted)
+        let Ok(query) = settings.copy_query() else {
+            return Ok(true);
+        };
+        Ok(held != asked
+            || tier != settings.tier()
+            || whole != wanted
+            || crate::store::slice_query(&conn)? != query)
     }
 
     pub fn catch_up(&self) -> Result<CaughtUp> {

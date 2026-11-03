@@ -518,6 +518,10 @@ pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: SliceTier,
     pub edge_types: Vec<String>,
+    /// The slice's narrowing past its types and tier; `None` holds every row
+    /// of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<crate::slice::SliceQuery>,
     pub items: u64,
     pub edges: u64,
     /// The listing pages this call read, those of a walk it then started

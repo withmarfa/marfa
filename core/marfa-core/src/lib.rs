@@ -63,6 +63,7 @@ mod scaffold;
 #[cfg(test)]
 mod scripted;
 mod search;
+mod slice;
 mod sse;
 #[cfg(test)]
 mod stop_tests;
@@ -133,6 +134,7 @@ pub use model::{
     UnregisteredType, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
+pub use slice::SliceQuery;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
@@ -800,7 +802,23 @@ impl Core {
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
-        self.hydrate_filling(types, tier, edge_types, Fill::Any, stop)
+        self.hydrate_filling(types, tier, edge_types, None, Fill::Any, stop)
+    }
+
+    /// `hydrate_until` for a slice narrowed past its types and tier by
+    /// `query`: the copy then holds, of the rows its types and tier take,
+    /// those the query takes (`device/slice-query-outside`). `None` is
+    /// `hydrate_until`. A query that narrows by edges or another row is
+    /// `Invalid`, since an event cannot be judged by the row it carries.
+    pub fn hydrate_sliced(
+        &self,
+        types: &[String],
+        tier: SliceTier,
+        edge_types: &[String],
+        query: Option<&SliceQuery>,
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
+        self.hydrate_filling(types, tier, edge_types, query, Fill::Any, stop)
     }
 
     /// `hydrate_until` for a copy that must only ever be filled again in
@@ -820,7 +838,7 @@ impl Core {
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
-        self.hydrate_filling(types, tier, edge_types, Fill::InPlaceOnly, stop)
+        self.hydrate_filling(types, tier, edge_types, None, Fill::InPlaceOnly, stop)
     }
 
     fn hydrate_filling(
@@ -828,13 +846,23 @@ impl Core {
         types: &[String],
         tier: SliceTier,
         edge_types: &[String],
+        query: Option<&SliceQuery>,
         fill: Fill,
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
-        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, fill, stop)?;
+        let report = hydrate::hydrate(
+            self,
+            self.http()?,
+            types,
+            tier,
+            edge_types,
+            query,
+            fill,
+            stop,
+        )?;
         taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)
@@ -3516,17 +3544,8 @@ fn keep_relocated_origin(
 /// Lets go of a pin, and of the row where the slice does not take it.
 fn unpin_held(tx: &Connection, id: &str) -> Result<bool> {
     let pinned = store::unpin(tx, id)?;
-    if pinned
-        && store::waiting_writes_for_item(tx, id)?.is_empty()
-        && let Some((types, tier)) = store::slice(tx)?
-        && let Some(held) = store::items_by_ids(tx, &[id.to_string()])?.pop()
-    {
-        let catalog = catalog::Catalog::load(tx)?;
-        if !reach::listed(tx, id)?
-            || !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier)
-        {
-            store::evict_item(tx, id, &store::whole_edge_types(tx)?)?;
-        }
+    if pinned && store::slice(tx)?.is_some() && store::item_held(tx, id)? {
+        store::let_go_unless_kept(tx, &catalog::Catalog::load(tx)?, id)?;
     }
     Ok(pinned)
 }
@@ -3786,9 +3805,21 @@ fn queue_create(
     }
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
-    let declared = store::slice(tx)?.is_some_and(|(types, tier)| {
-        store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier)
-    });
+    let declared = match store::slice(tx)? {
+        Some((types, tier)) if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) => {
+            match store::slice_query(tx)? {
+                Some(query) => crate::slice::takes_held(
+                    tx,
+                    catalog,
+                    &query,
+                    &store::whole_edge_types(tx)?,
+                    &id,
+                )?,
+                None => true,
+            }
+        }
+        _ => false,
+    };
     if !declared {
         store::pin(tx, &id)?;
     }

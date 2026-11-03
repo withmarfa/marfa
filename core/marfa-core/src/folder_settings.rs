@@ -397,6 +397,7 @@ impl Core {
                     });
             if takes {
                 crate::hydrate::hold_row(&tx, &catalog, &row, &[])?;
+                store::let_go_unless_kept(&tx, &catalog, id)?;
             }
             tx.commit()?;
             Ok(())

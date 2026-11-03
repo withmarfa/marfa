@@ -16,6 +16,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
+use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::telemetry::Carried;
@@ -72,6 +73,7 @@ struct Slice {
     types: Vec<String>,
     tier: SliceTier,
     whole: Vec<String>,
+    query: Option<SliceQuery>,
 }
 
 const ITEM_CHANGES: [&str; 6] = [
@@ -291,7 +293,16 @@ fn start_build(conn: &rusqlite::Connection) -> Result<(Slice, String)> {
     reach::cursor(&cursor).ok_or_else(reach::invalid)?;
     let (types, tier) = store::slice(conn)?.ok_or_else(reach::invalid)?;
     let whole = store::whole_edge_types(conn)?;
-    Ok((Slice { types, tier, whole }, cursor))
+    let query = store::slice_query(conn)?;
+    Ok((
+        Slice {
+            types,
+            tier,
+            whole,
+            query,
+        },
+        cursor,
+    ))
 }
 
 fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
@@ -304,19 +315,38 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 /// Written only where it differs from the one held, so a reader told of every
 /// save is not told of this. `changed` is set once a changed catalog is
 /// committed, before it is read back, so a caller learns of it even where
-/// the read fails.
+/// the read fails. A slice whose query reads a type's status field holds
+/// the rows the old field admitted, and no event says which the new one
+/// does, so a change to the fields ends the copy `catalog_changed`
+/// (`device/catch-up-query-catalog`).
 fn adopt(
     core: &Core,
     context: &Context,
     catalog: &WireCatalog,
     changed: &mut bool,
 ) -> Result<Catalog> {
-    let conn = core.conn()?;
-    context.same_copy(&conn)?;
-    if store::replace_catalog(&conn, catalog)?.is_changed() {
-        *changed = true;
+    let statuses = {
+        let conn = core.conn()?;
+        context.same_copy(&conn)?;
+        let reads = match store::slice_query(&conn)? {
+            Some(query) => query.reads_status()?,
+            None => false,
+        };
+        let before = reads
+            .then(|| Catalog::load(&conn).map(|held| held.status_fields()))
+            .transpose()?;
+        if store::replace_catalog(&conn, catalog)?.is_changed() {
+            *changed = true;
+        }
+        let adopted = Catalog::load(&conn)?;
+        (before, adopted)
+    };
+    match statuses {
+        (Some(before), adopted) if before != adopted.status_fields() => {
+            Err(context.expire(core, crate::model::HydrateRestart::CatalogChanged.as_str())?)
+        }
+        (_, adopted) => Ok(adopted),
     }
-    Catalog::load(&conn)
 }
 
 /// The reading thread outlives a caller that lets the frames go: it learns
@@ -367,7 +397,7 @@ fn take(
         context.same_copy(&conn)?;
         Context::capture_build(&conn)?
     };
-    let brought = edges_of_entering_row(core, &operation, catalog, slice, kind, payload)?;
+    let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     operation.check(&tx)?;
@@ -377,9 +407,18 @@ fn take(
         let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
         reach::set_listed(&tx, &item.id, listed)?;
     }
-    let applied = apply(&tx, catalog, slice, kind, payload)?;
+    // Judged outside the transaction: a row held or pinned since is taken
+    // as any held row is, and judged again once taken.
+    let outside = entering.outside
+        && match &payload.item {
+            Some(item) => {
+                !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?
+            }
+            None => false,
+        };
+    let applied = !outside && apply(&tx, catalog, slice, kind, payload, entering.tags.as_deref())?;
     if applied {
-        for edge in &brought {
+        for edge in &entering.edges {
             store::take_server_edge(&tx, edge)?;
         }
     }
@@ -1357,49 +1396,133 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
     ))
 }
 
+/// What a row entering the copy brings that its frame does not: the edges it
+/// draws, and its tags where the frame carries none.
+#[derive(Default)]
+struct Entering {
+    edges: Vec<WireEdge>,
+    tags: Option<Vec<String>>,
+    /// The query does not take the row, or its tags could not be read.
+    outside: bool,
+}
+
+impl Entering {
+    fn outside() -> Self {
+        Entering {
+            outside: true,
+            ..Entering::default()
+        }
+    }
+}
+
 /// Read outside the transaction. A created row's edges need no read: they
-/// follow as frames.
-fn edges_of_entering_row(
+/// follow as frames. Under a query, a row the query does not take is read
+/// for nothing, and a row whose frame carries no tags is read by id for
+/// them first, from the bin for a row the frame binned
+/// (`device/catch-up-unknown-tags`), where the query reads tags.
+fn entering_row(
     core: &Core,
     context: &Context,
     catalog: &Catalog,
     slice: &Slice,
     kind: &str,
     payload: &EventPayload,
-) -> Result<Vec<WireEdge>> {
+) -> Result<Entering> {
     let Some(item) = &payload.item else {
-        return Ok(Vec::new());
+        return Ok(Entering::default());
     };
-    if kind == "item.created" || !ITEM_CHANGES.contains(&kind) {
-        return Ok(Vec::new());
+    if !ITEM_CHANGES.contains(&kind) {
+        return Ok(Entering::default());
     }
-    {
+    let pinned = {
         let conn = core.conn()?;
         if store::removed(&conn, Subject::Item, &item.id)? {
-            return Ok(Vec::new());
+            return Ok(Entering::default());
         }
         // A refill keeps the rows it held until its sweep, which takes the
         // edges of a held row neither its walk nor its replay brought: one
         // only the replay brings enters as a row the copy does not hold.
         let entering = !store::item_held(&conn, &item.id)?
             || (store::refilling(&conn)? && !reach::answered(&conn, &item.id)?);
-        if !entering || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?) {
-            return Ok(Vec::new());
+        let pinned = store::pinned(&conn, &item.id)?;
+        if !entering || !(in_slice(catalog, slice, item)? || pinned) {
+            return Ok(Entering::default());
         }
+        pinned
+    };
+    let http = context.http(core.http()?);
+    let mut tags = None;
+    if !pinned && let Some(query) = &slice.query {
+        let known = match &payload.metadata {
+            Some(metadata) => Some(metadata.tags.clone()),
+            // Only a filter reads tags: its own terms, and the conflicted
+            // copies it lets in whatever it says.
+            None if query.filter.is_some() => {
+                let read = if kind == "item.deleted" {
+                    http.trashed_item(&item.id)?
+                } else {
+                    http.item(&item.id)?
+                };
+                read.map(|row| row.metadata.tags)
+            }
+            None => Some(Vec::new()),
+        };
+        // Tags the server would not give leave the row out: a copy cannot
+        // take a row it cannot judge.
+        let Some(known) = known else {
+            return Ok(Entering::outside());
+        };
+        if !query_takes(core, catalog, slice, query, payload, item, &known)? {
+            return Ok(Entering::outside());
+        }
+        tags = payload.metadata.is_none().then_some(known);
     }
-    Ok(
-        crate::hydrate::read_with_edges(&context.http(core.http()?), &item.id)?
-            .map(|(_, edges)| edges)
-            .unwrap_or_default(),
-    )
+    if kind == "item.created" {
+        return Ok(Entering {
+            tags,
+            ..Entering::default()
+        });
+    }
+    let read = crate::hydrate::read_with_edges(&http, &item.id)?;
+    if tags.is_none() && payload.metadata.is_none() {
+        tags = read.as_ref().map(|(row, _)| row.metadata.tags.clone());
+    }
+    Ok(Entering {
+        edges: read.map(|(_, edges)| edges).unwrap_or_default(),
+        tags,
+        outside: false,
+    })
 }
 
+/// Whether the query takes the row as the frame would leave it, judged in
+/// a transaction that is rolled back, so the copy is as it was.
+fn query_takes(
+    core: &Core,
+    catalog: &Catalog,
+    slice: &Slice,
+    query: &SliceQuery,
+    payload: &EventPayload,
+    item: &WireItem,
+    tags: &[String],
+) -> Result<bool> {
+    let conn = core.conn()?;
+    let trial =
+        rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Deferred)?;
+    reach::set_listed(&trial, &item.id, payload.listed == Some(true))?;
+    store::put_server_item(&trial, item, Some(tags), catalog)?;
+    let takes = crate::slice::takes_held(&trial, catalog, query, &slice.whole, &item.id)?;
+    trial.rollback()?;
+    Ok(takes)
+}
+
+/// `read_tags` stands in for the tags of a frame that carries none.
 fn apply(
     tx: &rusqlite::Connection,
     catalog: &Catalog,
     slice: &Slice,
     kind: &str,
     payload: &EventPayload,
+    read_tags: Option<&[String]>,
 ) -> Result<bool> {
     match kind {
         "item.purged" => {
@@ -1427,8 +1550,14 @@ fn apply(
                 let tags = payload
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.tags.as_slice());
-                store::take_server_item(tx, item, tags, catalog)?;
+                    .map(|metadata| metadata.tags.as_slice())
+                    .or(read_tags);
+                let taken = store::take_server_item(tx, item, tags, catalog)?;
+                // Judged on the row as taken, so the copy and the folder read
+                // it alike (`device/catch-up-query-takes`).
+                if taken && slice.query.is_some() {
+                    store::let_go_unless_kept(tx, catalog, &item.id)?;
+                }
                 Ok(true)
             } else {
                 store::evict_item(tx, &item.id, &slice.whole)
@@ -2937,6 +3066,7 @@ mod tests {
             types: vec![declared.into()],
             tier: SliceTier::Library,
             whole: Vec::new(),
+            query: None,
         };
         let event = |r#type: &str| {
             let image = "data:image/png;base64,iVBORw0KGgo=";
@@ -3036,11 +3166,12 @@ mod tests {
                 types: vec![NOTE.into()],
                 tier,
                 whole: Vec::new(),
+                query: None,
             };
             let tx = conn.unchecked_transaction().unwrap();
-            apply(&tx, &catalog, &slice, "item.created", &event(1, "feed")).unwrap();
+            apply(&tx, &catalog, &slice, "item.created", &event(1, "feed"), None).unwrap();
             assert_eq!(held(&tx), at_feed, "a slice at {tier} before the move");
-            apply(&tx, &catalog, &slice, "item.updated", &event(2, "library")).unwrap();
+            apply(&tx, &catalog, &slice, "item.updated", &event(2, "library"), None).unwrap();
             assert_eq!(held(&tx), after_move, "a slice at {tier} after the move");
             tx.rollback().unwrap();
         }
