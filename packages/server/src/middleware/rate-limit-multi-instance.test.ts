@@ -11,7 +11,8 @@ import type { TestContext } from "../test-utils.js";
  * The cap is one budget, not one per middleware.
  *
  * Two middleware instances bound to the same `Storage` handle. Neither
- * holds a count of its own — every request goes to the row — so the
+ * holds a count of its own: with the lock free, every request goes to the
+ * row, so the
  * property is that the same `(family, window_key)` row is seen by both,
  * and a caller cannot buy a second budget by reaching a second instance.
  *
