@@ -166,9 +166,9 @@ When a current settings file omits a setting that the last write named, a device
 
 ### `folders/settings-rehydrate`
 
-When changed folder settings require another type or tier slice, a device MUST hydrate that slice at the next push.
+When changed folder settings require another type or tier slice, or name other member states or another filter, a device MUST hydrate that slice at the next push.
 
-**Tests:** `device/folders.test.ts › hydrates again where its changed settings ask for another slice`.
+**Tests:** `device/folders.test.ts › hydrates again where its changed settings ask for another slice`, `› takes settings changed on another device`, `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`.
 
 ### `folders/settings-read-permission`
 
@@ -557,6 +557,44 @@ When a watch of every folder refuses a folder's store `wrong_schema` without rep
 **Tests:** `device/folders-refused-store-live.test.ts › watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`.
 
 ## Query and defaults
+
+### `folders/copy-holds-query`
+
+Where a folder's query names a filter that names no edge, backreference or part, or member states other than `active` and `archived`, a device MUST hydrate the folder's copy with a slice whose query is the folder's member states and filter, without its `beneath`.
+
+**Reason:** the copy then holds about the rows the folder shows, so a folder of six files does not hold every note on the server. The item listing cannot yet be narrowed by `beneath`, so a folder that names it holds every row its filter shows.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+
+### `folders/copy-query-relational`
+
+Where a folder's query filters by an edge, a backreference or a part, a device MUST hydrate the folder's copy without the query's filter, with the query's member states where they are other than `active` and `archived`.
+
+**Reason:** the item listing cannot yet be narrowed by edges, so such a folder's copy holds every row of its types, as it did before copies were narrowed.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates with the query's states alone a query that filters by an edge`.
+
+### `folders/copy-query-change-hydrates`
+
+When a folder's copy holds a slice whose query differs from the one the folder's settings now ask for, including a copy filled with no query, a device MUST hydrate the copy at the folder's next pass.
+
+**Reason:** a store an earlier build filled holds every row of its types and records no query, so its next pass shrinks it to what the folder shows.
+
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`.
+
+### `folders/copy-shrink-keeps-unsent`
+
+When a device hydrates a folder's copy again, a device MUST keep every queued write with its verdict, the folder's record of its files, its journal, its pins and its paused removals.
+
+**Reason:** a hydration removes rows of the copy and nothing the person has not yet sent, so a push after it sends every unsent write.
+
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
+
+### `folders/copy-shrink-files-unchanged`
+
+When a device hydrates a folder's copy again, a device MUST NOT change, add or remove a file of the folder during the hydration.
+
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
 
 ### `folders/search-match`
 
@@ -1932,7 +1970,7 @@ When the copy cannot determine whether an edge's designated writing end carries 
 
 ### `folders/edge-title-format`
 
-When a target has one unambiguous title that link syntax can represent, a device MUST render an edge target as `[[title]]`.
+When a target has a title that link syntax can represent and that no other row the folder's copy holds shares, a device MUST render an edge target as `[[title]]`.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`.
 
@@ -5863,6 +5901,14 @@ When a signal stops `folders watch` after it moved the log aside while it ran (`
 **Tests:** `device/folders-autostart.test.ts › writes the stop line to the fresh log after the file reached 1 MiB while the watch ran`.
 
 ## Taking in another folder’s file
+
+### `folders/cross-folder-unheld-read`
+
+When a device judges a file that moved between two folders on one machine, and the copy of the folder it reaches does not hold the file's item while the other folder's record names it, a device MUST read the item by id before it decides whether the folder holds it.
+
+**Reason:** a narrowed copy does not hold every row of its types, so a row it does not hold may still be one its folder shows.
+
+**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/take-in-file`
 

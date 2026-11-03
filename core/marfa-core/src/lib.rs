@@ -3200,6 +3200,7 @@ impl Core {
             slice_types,
             slice_tier,
             slice_edge_types: store::whole_edge_types(&tx)?,
+            slice_query: store::slice_query(&tx)?,
             pinned: store::pins(&tx)?,
             event_cursor,
             hydration,

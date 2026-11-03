@@ -1564,6 +1564,10 @@ pub struct Status {
     pub slice_types: Vec<String>,
     pub slice_tier: Option<SliceTier>,
     pub slice_edge_types: Vec<String>,
+    /// The slice's narrowing past its types and tier (`device/report-fields`);
+    /// `None` where the copy holds every row of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slice_query: Option<crate::slice::SliceQuery>,
     /// The rows held by id whatever the slice says of them.
     pub pinned: Vec<String>,
     pub event_cursor: Option<String>,

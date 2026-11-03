@@ -336,6 +336,9 @@ export function scriptHydration(
     /** Drops the connection on the first page of each listing, as a server
      *  that cannot be reached does. */
     firstPageDropped?: boolean;
+    /** A reading of a filter the scripted one does not read, such as a
+     *  `status_group` term, which needs the catalog the fixture serves. */
+    reading?: FilterReading;
   },
 ): void {
   server.answer(
@@ -424,7 +427,7 @@ export function scriptHydration(
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
-  scriptStats(server, rows, options.statsHeldUntil);
+  scriptStats(server, rows, options.statsHeldUntil, options.reading);
   const pageHeld = (request: RecordedRequest, page: Answer): Answer => {
     const first =
       request.query.get("cursor") === null &&
@@ -449,21 +452,34 @@ export function scriptHydration(
     // holds only active rows (`device/list-default-active`). `any` is the only value
     // hydration sends, so anything else narrows the same way the server's
     // listing does.
-    const asked = request.query.get("state") ?? "active";
+    // A copy narrowed by its folder's query names its states as a list.
+    const asked = inStates(request.query.get("state") ?? "active");
     // The tier is honored for the same reason: `all`, or none, is both.
     const tier = request.query.get("tier");
-    const inState = (
-      asked === "any"
-        ? forType
-        : forType.filter((row) => (row.item.state ?? "active") === asked)
-    ).filter(
-      (row) =>
-        tier === null ||
-        tier === "all" ||
-        (row.item.tier ?? "library") === tier,
-    );
+    const allOf = (request.query.get("tags") ?? "")
+      .split(",")
+      .filter((tag) => tag !== "");
     const filter = request.query.get("filter");
-    if (filter === null) {
+    const byId = filter === null ? null : /^id eq "([^"]*)"$/.exec(filter);
+    // A folder's own filter is evaluated as the server would, so a copy
+    // that lists less than it should goes red (`device/hydrate-listing-query`).
+    const matches =
+      filter === null || byId !== null
+        ? null
+        : (options.reading?.(filter) ?? scriptedFilter(filter));
+    if (matches === undefined)
+      return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+    const inState = forType
+      .filter((row) => asked(row.item.state ?? "active"))
+      .filter(
+        (row) =>
+          tier === null ||
+          tier === "all" ||
+          (row.item.tier ?? "library") === tier,
+      )
+      .filter((row) => allOf.every((tag) => (row.tags ?? []).includes(tag)))
+      .filter((row) => matches === null || matches(row));
+    if (byId === null) {
       const size = options.pageSize ?? Math.max(inState.length, 1);
       const offset = Number(request.query.get("cursor") ?? "0");
       const dropped = offset > 0 ? options.drop?.(offset) : undefined;
@@ -481,17 +497,98 @@ export function scriptHydration(
       );
     }
     // A pin that a read by id answers 404 asks the bin for the row this way.
-    const byId = /^id eq "([^"]*)"$/.exec(filter);
-    if (byId !== null) {
-      return itemsPage(
-        inState
-          .filter((row) => row.item.id === byId[1])
-          .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
-      );
-    }
-    return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+    return itemsPage(
+      inState
+        .filter((row) => row.item.id === byId[1])
+        .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+    );
   });
   scriptTitles(server, rows, options.lookup, options.catalog);
+}
+
+/** Whether a row's state is one a listing's `state` parameter names:
+ *  `any`, one state, or a comma-separated list of them. */
+function inStates(asked: string): (state: string) => boolean {
+  if (asked === "any") return () => true;
+  const states = asked.split(",");
+  return (state) => states.includes(state);
+}
+
+/** A row as a scripted filter reads it. */
+type FilteredRow = { item: WireItemOptions; tags?: string[] };
+
+/** Which rows a filter selects, or `undefined` where it is not read. */
+export type FilterReading = (
+  filter: string,
+) => ((row: FilteredRow) => boolean) | undefined;
+
+/**
+ * The scripted server's reading of a filter a folder narrows its copy by:
+ * terms on `tags`, `source`, `id` and `properties.<name>`, joined by `AND`
+ * and `OR` (AND binding tighter). Anything else is `undefined`, which the
+ * listing refuses, so a fixture never passes on a filter the scripted
+ * server did not read.
+ */
+export function scriptedFilter(
+  filter: string,
+): ((row: FilteredRow) => boolean) | undefined {
+  const anyOf = filter.split(/\s+OR\s+/).map((part) =>
+    part.split(/\s+AND\s+/).map(scriptedTerm),
+  );
+  if (anyOf.some((allOf) => allOf.some((term) => term === undefined)))
+    return undefined;
+  const terms = anyOf as Array<Array<(row: FilteredRow) => boolean>>;
+  return (row) => terms.some((allOf) => allOf.every((term) => term(row)));
+}
+
+function scriptedTerm(
+  term: string,
+): ((row: FilteredRow) => boolean) | undefined {
+  const parts =
+    /^(tags|source|id|properties\.[A-Za-z0-9_]+) (eq|neq|gt|gte|lt|lte|contains|exists|not_exists)(?: (".*"|-?[0-9.]+|true|false))?$/.exec(
+      term.trim(),
+    );
+  if (parts === null) return undefined;
+  const [, field, op, raw] = parts;
+  const value: unknown = raw === undefined ? undefined : JSON.parse(raw);
+  const read = (row: FilteredRow): unknown => {
+    if (field === "tags") return row.tags ?? [];
+    const item = wireItem(row.item);
+    if (field === "source" || field === "id") return item[field];
+    return (item.properties as Record<string, unknown>)[
+      field.slice("properties.".length)
+    ];
+  };
+  const present = (held: unknown) =>
+    held !== undefined &&
+    held !== null &&
+    !(Array.isArray(held) && held.length === 0);
+  switch (op) {
+    case "exists":
+      return raw === undefined ? (row) => present(read(row)) : undefined;
+    case "not_exists":
+      return raw === undefined ? (row) => !present(read(row)) : undefined;
+    case "contains":
+      if (field !== "tags" || typeof value !== "string") return undefined;
+      return (row) => (read(row) as string[]).includes(value);
+    case "eq":
+      return raw === undefined ? undefined : (row) => read(row) === value;
+    case "neq":
+      return raw === undefined ? undefined : (row) => read(row) !== value;
+    default: {
+      if (typeof value !== "number") return undefined;
+      const compare = {
+        gt: (a: number) => a > value,
+        gte: (a: number) => a >= value,
+        lt: (a: number) => a < value,
+        lte: (a: number) => a <= value,
+      }[op as "gt" | "gte" | "lt" | "lte"];
+      return (row) => {
+        const held = read(row);
+        return typeof held === "number" && compare(held);
+      };
+    }
+  }
 }
 
 /** The white space Unicode names, which the server trims from a name. */
@@ -605,14 +702,20 @@ export function scriptTitles(
  */
 export function scriptStats(
   server: ScriptedServer,
-  rows: Record<string, Array<{ item: WireItemOptions }>> = {},
+  rows: Record<string, Array<FilteredRow>> = {},
   heldUntil?: Promise<void>,
+  reading?: FilterReading,
 ): void {
   server.answer("GET", "/items/stats", (request) => {
     if (request.headers["x-marfa-reach"] !== undefined)
       return refusal(400, "validation_error", "not a conditional read");
     const tier = request.query.get("tier");
-    const state = request.query.get("state");
+    const state = inStates(request.query.get("state") ?? "any");
+    const filter = request.query.get("filter");
+    const matches =
+      filter === null ? null : (reading?.(filter) ?? scriptedFilter(filter));
+    if (matches === undefined)
+      return refusal(400, "validation_error", `no scripted filter: ${filter}`);
     const system = request.query.get("include") === "system";
     const byType = request.query.get("by") === "type";
     const counts: Record<string, number> = {};
@@ -627,7 +730,8 @@ export function scriptStats(
         )
           continue;
         const rowState = row.item.state ?? "active";
-        if (state !== null && state !== "any" && rowState !== state) continue;
+        if (!state(rowState)) continue;
+        if (matches !== null && !matches(row)) continue;
         const key = byType ? type : rowState;
         counts[key] = (counts[key] ?? 0) + 1;
       }
@@ -886,6 +990,9 @@ export async function folderHarness(
     pagesHeldUntil?: Promise<void>;
     /** Drops the first page of each listing, as `scriptHydration` takes it. */
     firstPageDropped?: boolean;
+    /** A reading of a filter the scripted one does not read, as
+     *  `scriptHydration` takes it. */
+    reading?: FilterReading;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -936,6 +1043,7 @@ export async function folderHarness(
       statsHeldUntil: options.statsHeldUntil,
       pagesHeldUntil: options.pagesHeldUntil,
       firstPageDropped: options.firstPageDropped,
+      reading: options.reading,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

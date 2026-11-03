@@ -52,6 +52,14 @@ export interface Item {
   tags: string[];
 }
 
+/** What narrows a slice past its types and tier: a folder's member states
+ *  and filter. */
+export interface SliceQuery {
+  states?: string[];
+  filter?: string;
+  beneath?: string;
+}
+
 /** Why a hydration began again from the first page. */
 export type HydrateRestart =
   | "instance_changed"
@@ -67,6 +75,8 @@ export interface HydrateReport {
   tier: SliceTier;
   /** The edge types held whole, every edge of each the key can read. */
   edge_types: string[];
+  /** The slice's narrowing past its types and tier, absent where it has none. */
+  query?: SliceQuery;
   items: number;
   edges: number;
   /** The listing pages this call read, those of a walk it then started
@@ -209,6 +219,9 @@ export interface Status {
   slice_tier?: SliceTier | null;
   /** The edge types the slice holds whole. */
   slice_edge_types: string[];
+  /** The slice's narrowing past its types and tier, absent where the copy
+   *  holds every row of them (`device/report-fields`). */
+  slice_query?: SliceQuery;
   /** The rows held by id whatever the slice says of them. */
   pinned: string[];
   event_cursor?: string | null;

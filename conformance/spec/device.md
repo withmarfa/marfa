@@ -4,13 +4,13 @@ A device holds a working copy: a local store of one slice of one server, hydrate
 
 ## The working copy
 
-A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A pin holds one row by id whatever the slice says of it.
+A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states and its filter (`folders/copy-holds-query`). A slice takes a row when the row's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the row is in one of the query's states or in the bin and the filter matches it, or the row is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one row by id whatever the slice says of it.
 
 ### `device/slice-held`
 
-A device MUST hold a row the item listing marks as listed whose type is a type its slice names, or a type under one by name or by declared parent, at a tier its slice holds.
+A device MUST hold a row the item listing marks as listed that its slice takes.
 
-**Tests:** `device/hydration.test.ts › asks the item listing for each declared type at the slice's tier, every state`, `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `› holds one tier and not the other`, `device/catch-up.test.ts › holds an item whose type was registered after the stream opened, in the slice through its parent`.
+**Tests:** `device/hydration.test.ts › asks the item listing for each declared type at the slice's tier, every state`, `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `device/working-copy.test.ts › holds the declared types and their subtrees and nothing else`, `› holds one tier and not the other`, `device/catch-up.test.ts › holds an item whose type was registered after the stream opened, in the slice through its parent`.
 
 ### `device/slice-type-outside`
 
@@ -23,6 +23,30 @@ Where a row is not pinned, a device MUST NOT hold it while its type is outside t
 Where a row is not pinned and its type is not a `system.*` type, a device MUST NOT hold it at a tier its slice does not hold.
 
 **Tests:** `device/working-copy.test.ts › holds one tier and not the other`.
+
+### `device/slice-query-outside`
+
+Where a slice has a query, and a row of a type and a tier it takes is not pinned and no write of the device's own to the row waits, a device MUST NOT hold the row while the query does not take it.
+
+**Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays until the server answers the write, as a pinned row stays, so the person's write is shown and sent against the row it changes.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`.
+
+### `device/slice-query-bin`
+
+Where a slice has a query, a device MUST hold a row of a type and a tier the slice takes that is in the bin and that the query's filter matches.
+
+**Reason:** a person who puts a folder's file in the bin and restores it gets the same item back, across a hydration as well as a catch-up.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+
+### `device/slice-query-conflicted`
+
+Where a slice has a query, a device MUST hold a conflicted copy of a type and a tier the slice takes that is in one of the query's states or in the bin, whether or not the query's filter matches it.
+
+**Reason:** a conflicted copy is written beside the file it came from (`folders/conflicted-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
 ### `device/slice-edge-whole`
 
@@ -516,9 +540,9 @@ While its copy has never hydrated, a device MUST answer a local read from what t
 
 ### `device/report-fields`
 
-A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds, when it last synced (`device/synced-at-hydration`) and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
+A device MUST report its state as the origin it is bound to, the instance it was hydrated from, its slice's types and tier, the edge types it holds whole, its slice's query where it has one, the rows it holds pinned, its cursor, how many items and edges it holds, the version of the catalog it holds, when it last synced (`device/synced-at-hydration`) and its hydration, with the items expected under `device/report-items-expected` and the items listed under `device/report-items-listed`.
 
-**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`, `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`.
+**Tests:** `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › keeps a pinned row outside the slice current`, `› answers reads marked stale after the cursor ages out, until a hydration fills it in place`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `device/catalog.test.ts › moves the catalog version when a catch-up reads a changed catalog, and only then`, `device/synced-at.test.ts › reports no synced_at on a new store, and the time a hydration completed once one has, across a reopen`, `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
 ### `device/report-before-hydration`
 
@@ -558,11 +582,11 @@ While its copy is stale (`device/stale-kept`), whether or not a refill has start
 
 ### `device/report-items-expected`
 
-Where the server counted the items of its slice when a hydration started, while that hydration has not completed, a device MUST report the count as `items_expected`.
+Where the server counted the items its slice's listings answer when a hydration started, while that hydration has not completed, a device MUST report the count as `items_expected`.
 
 **Reason:** a caller shows how far a long hydration has come by setting `items_listed` against it. `items` is not that figure: it also counts the rows the copy holds pinned outside the slice and the creates still waiting, so set against the count it can pass the whole.
 
-**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`.
+**Tests:** `device/working-copy.test.ts › reports the items it holds and the items the server counted while a hydration fills the copy`, `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
 ### `device/report-items-listed`
 
@@ -752,6 +776,28 @@ When a device hydrates, a device MUST read the item listing for each type its sl
 
 **Tests:** `device/hydration.test.ts › asks the item listing for each declared type at the slice's tier, every state`, `device/working-copy.test.ts › holds both tiers in a slice of both, hydrated again from one of them`.
 
+### `device/hydrate-listing-query`
+
+Where a slice has a query, when a device hydrates, a device MUST read the item listing for each type its slice names, at the slice's tier, in the query's states and `trashed`, with the query's filter, and count the items with the same keys.
+
+**Reason:** the server narrows the listing, so a folder of a few rows reads a few rows rather than every row of its types.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+
+### `device/hydrate-listing-conflicted`
+
+Where a slice has a query with a filter, when a device hydrates, a device MUST also read the item listing for each type its slice names, at the slice's tier, in the query's states and `trashed`, of the rows tagged `conflicted-copy`, without the filter.
+
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+
+### `device/hydrate-query-refused`
+
+If the server refuses the narrowed listing of a hydration, then a device MUST end the hydration before it removes a row, an edge or a cursor of the copy.
+
+**Reason:** a device reads one row of the narrowed listing before it clears anything, so a filter the server will not take leaves the copy the person had.
+
+**Tests:** `device/folders-copy-shrink.test.ts › keeps the copy it had when the server refuses the query's listing`.
+
 ### `device/hydrate-page-walk`
 
 When a device hydrates, a device MUST read each item listing until a page answers no `next_cursor`, past a page that is empty.
@@ -862,9 +908,9 @@ When a device hydrates after a hydration completed, a device MUST read every pag
 
 ### `device/hydrate-restart-slice`
 
-If a device hydrates other types, another tier or other edge types than an interrupted hydration declared, then a device MUST read the slice again from its first page and report the hydration `restarted` with `slice_changed`.
+If a device hydrates other types, another tier, other edge types or another query than an interrupted hydration declared, then a device MUST read the slice again from its first page and report the hydration `restarted` with `slice_changed`.
 
-**Tests:** `device/hydration.test.ts › starts again from the first page for another slice`.
+**Tests:** `device/hydration.test.ts › starts again from the first page for another slice`, `device/folders-copy-shrink.test.ts › keeps every unsent write when a shrink stopped midway is resumed`.
 
 ### `device/hydrate-restart-instance`
 
@@ -972,7 +1018,7 @@ When a hydration completes, a device MUST report whether it was a refill as `in_
 
 ### `device/refill-in-place-only`
 
-If a caller asks a hydration to fill its copy only in place, and the hydration would not be a refill, or would remove the rows and edges of the copy under `device/refill-restart-clears` or `device/refill-restored-clears`, then a device MUST end the hydration `copy_expired` before it removes anything, with the reason `instance_changed` for a copy built from another instance, `not_stale` for any other copy that is not stale, `reach_changed` for another reach, `slice_changed` for other types, tier or edge types, and `head_past_log` for a server restored behind the copy.
+If a caller asks a hydration to fill its copy only in place, and the hydration would not be a refill, or would remove the rows and edges of the copy under `device/refill-restart-clears` or `device/refill-restored-clears`, then a device MUST end the hydration `copy_expired` before it removes anything, with the reason `instance_changed` for a copy built from another instance, `not_stale` for any other copy that is not stale, `reach_changed` for another reach, `slice_changed` for other types, tier, edge types or query, and `head_past_log` for a server restored behind the copy.
 
 **Reason:** an app that refills a stale copy by itself can ask for a fill only in place, so that a copy is never emptied, or its queued writes sent to another server, without a person seeing why. The reason says what the person decides between: hydrate the copy afresh, or keep it stale.
 
@@ -1114,9 +1160,33 @@ When a device takes a row from any read of the server, a device MUST NOT replace
 
 ### `device/catch-up-leaves-slice`
 
-When an event shows that a row that is not pinned has left the slice by its type or its tier, a device MUST let the row go, whether or not a write of its own to the row still waits.
+When an event shows that a row that is not pinned has left the slice by its type or its tier, a device MUST let the row go, whether or not a write of its own to the row still waits, as it does not for a row that leaves by its slice's query (`device/catch-up-query-takes`).
 
 **Tests:** `device/catch-up.test.ts › evicts a row that leaves the slice`, `› learns a row retyped out of its slice, asking the stream for every type`, `› applies nothing on a held stream from outside its slice`, `› lets an unpinned row kept for a waiting write go at the next catch-up that touches it, keeping the write`.
+
+### `device/catch-up-query-takes`
+
+Where a slice has a query, when an event shows that a row the copy holds, that is not pinned and that no write of the device's own waits on, is one the query does not take, a device MUST let the row go.
+
+**Reason:** the copy stream cannot be narrowed (`reach/copy-query-refused`), so the device judges each item event by the query, as it judges a folder's files.
+
+**Tests:** `device/folders-copy-shrink.test.ts › lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`.
+
+### `device/catch-up-unknown-tags`
+
+Where a slice's query filters by tags, when an item event that carries no metadata names a row of a type and a tier the slice takes that the copy does not hold, a device MUST read the row by id before it decides whether the query takes it.
+
+**Reason:** `item.deleted` and `item.purged` frames carry no metadata, so the event alone cannot say whether a row put in the bin is one the folder shows.
+
+**Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`.
+
+### `device/catch-up-query-catalog`
+
+Where a slice's query reads a type's status field, when a catch-up reads a catalog that changes the status field of a type, a device MUST end the catch-up with its copy expired, giving the reason `catalog_changed`.
+
+**Reason:** which rows a `status_group` term takes follows the catalog, so the copy no longer holds what its query shows until it is filled again.
+
+**Tests:** `device/folders-copy-shrink.test.ts › expires the copy when the catalog changes the status field its query reads`.
 
 ### `device/catch-up-unlisted`
 
@@ -1226,11 +1296,17 @@ When an event creates a row the slice takes, a device MUST take the row's edges 
 
 ### `device/catch-up-entering-edges`
 
-When an event brings a row the copy did not hold into the slice by a retype or a move of tier, a device MUST read every page of the row's edges before it applies the event.
+When an event brings a row the copy did not hold into the slice by a retype, a move of tier or a change its slice's query takes, a device MUST read every page of the row's edges before it applies the event.
 
 **Reason:** the frames of the edges the row drew went by while the copy did not hold it.
 
-**Tests:** `device/catch-up.test.ts › adds a row entering the slice by retype, with its tags and its edges`, `› adds a row entering the slice by a move of tier, with its edges`, `› adds a row entering the slice with every page of its edges`.
+**Tests:** `device/catch-up.test.ts › adds a row entering the slice by retype, with its tags and its edges`, `› adds a row entering the slice by a move of tier, with its edges`, `› adds a row entering the slice with every page of its edges`, `device/folders-copy-shrink.test.ts › lets a row go when an event takes it out of the query, and holds one an event brings into it`.
+
+### `device/catch-up-entering-read-tags`
+
+When a device reads a row entering the slice under `device/catch-up-entering-edges` or `device/catch-up-unknown-tags` for an event that carries no metadata, a device MUST hold the row with the tags that read answers.
+
+**Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`.
 
 ### `device/catch-up-entering-read-fails`
 
@@ -1991,6 +2067,14 @@ When a caller lists a saved view's items from a copy that holds the view, the vi
 **Reason:** a view that lists one thing on the server and another on a device would give a person two lists under one name.
 
 **Tests:** `device/views-items-live.test.ts › lists a view's items in the order the server does, for each sort and query`.
+
+### `device/view-narrowed-copy`
+
+If a caller lists or searches a saved view's items from a copy whose slice has a query, and the view's query does not name the same member states and filter, then a device MUST refuse the call with `invalid`.
+
+**Reason:** a copy narrowed by one folder's query does not hold the rows another query shows, so its answer would leave rows out without saying so.
+
+**Tests:** `device/folders-copy-shrink.test.ts › refuses a view the copy's query does not cover, and answers one it does`.
 
 ### `device/beneath-references`
 
