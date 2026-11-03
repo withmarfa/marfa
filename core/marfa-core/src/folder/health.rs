@@ -1452,7 +1452,11 @@ mod tests {
                 file("paused.md", Some("removal"), "held"),
                 file("bad.md", Some("unreadable"), "held"),
             ],
-            paused: Paused { disk: 1, pull: 2 },
+            paused: Paused {
+                disk: 1,
+                pull: 2,
+                additions: 0,
+            },
             directories: Vec::new(),
             first_sync: None,
         };
@@ -1574,6 +1578,7 @@ mod tests {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
             root_dir,
             state_dir,

@@ -1,14 +1,16 @@
 use std::cell::RefCell;
+use std::sync::atomic::Ordering;
 
 use crate::Seen;
 
+use super::push::{admission_hold, new_document};
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, captured_identities, carries_frontmatter, changed_within, copy_refused, document,
-    embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, bytes_type, captured_identities, carries_frontmatter, changed_within, copy_refused,
+    document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
     stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
@@ -181,6 +183,11 @@ impl Sweep {
         );
         Ok(self.shown.get_or_init(|| loaded))
     }
+}
+
+fn millis_since_epoch(at: std::time::SystemTime) -> i64 {
+    at.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as i64)
 }
 
 /// A pair this cannot read has not passed, since a delete cannot be taken
@@ -770,6 +777,7 @@ impl Folder {
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
         let (mode, settle) = (scan.mode, scan.settle);
         let reread_embeds = scan.reread_embeds;
+        let held_back = self.hold_additions(scan, &claims, &waiting)?;
         let by_path = bound_by_path(&scan.snapshot);
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
@@ -876,6 +884,10 @@ impl Folder {
                 other => other,
             };
             match claim {
+                None if held_back.contains(&at) => {
+                    // Read again by the next pass, which counts the drop anew.
+                    unsettled.insert(file.key.clone());
+                }
                 None => {
                     if self.queue_create(
                         file,
@@ -1957,6 +1969,117 @@ impl Folder {
             Err(error) => Ok(Some(format!(
                 "it carries the id of an item moved from another folder on this machine, which cannot be read yet ({error}); it is taken at the next push"
             ))),
+        }
+    }
+
+    /// The new files of this pass that wait for the person: those of a pass
+    /// that, with the new files the folder sent in the last ten minutes,
+    /// come to more than `addition_threshold` allows. The threshold judges
+    /// how fast files arrive, so a note saved now and then is never held and
+    /// a large directory is held however it is copied in. A held file stays
+    /// unbound and unsent and is counted again by every pass, so deleting
+    /// some of them, or raising the threshold, lets the rest go at the next
+    /// scan.
+    fn hold_additions(
+        &self,
+        scan: &mut ScanState,
+        claims: &[Option<Claim>],
+        waiting: &Waiting,
+    ) -> Result<HashSet<usize>> {
+        let conn = self.core.conn()?;
+        let confirmed = state::additions_allowed(&conn)?;
+        state::set_additions_allowed(&conn, &[])?;
+        let every = self.every_addition.swap(false, Ordering::AcqRel);
+        let first_scan = !state::additions_gated(&conn)?;
+        if first_scan && !super::first::waiting(&conn)? {
+            // The first sync's scan takes in what the directory holds, which
+            // the first sync's own gate asked about.
+            state::gate_additions(&conn)?;
+        }
+        drop(conn);
+        let new: Vec<usize> = scan
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(at, file)| {
+                claims[*at].is_none()
+                    && !waiting.contains_key(at)
+                    && !file.deferred
+                    && file.unreadable.is_none()
+                    && !(scan.only_embedded.contains(&file.key)
+                        && !scan.embedded.contains(&file.key))
+            })
+            .filter(|(_, file)| self.would_send(file, scan))
+            .map(|(at, _)| at)
+            .collect();
+        let conn = self.core.conn()?;
+        // A file a person let through is not a drop to count, now or against
+        // the next one.
+        let counted: Vec<usize> = new
+            .iter()
+            .copied()
+            .filter(|at| !every && !confirmed.contains(&scan.files[*at].key))
+            .collect();
+        let now_ms = millis_since_epoch(crate::clock::system_time());
+        let mut sent = state::additions_sent(&conn)?;
+        let lately = state::within_window(&mut sent, now_ms);
+        let mut held = HashSet::new();
+        let mut paths = Vec::new();
+        if !first_scan && !counted.is_empty() {
+            // While a pause stands the files that arrive join it and the set
+            // is judged against the window as it was when the pause began,
+            // so the window emptying never lets it go. A pause stands only
+            // while a file it held is still here.
+            let standing = {
+                let held = state::paused_additions(&conn)?;
+                counted.iter().any(|at| held.contains(&scan.files[*at].key))
+            };
+            if !standing {
+                state::clear_paused_base(&conn)?;
+            }
+            let base = if standing {
+                state::paused_base(&conn)?
+            } else {
+                lately
+            };
+            let exceeded = scan
+                .settings
+                .addition_threshold
+                .exceeded(base + counted.len(), state::bound_count(&conn)?);
+            if exceeded {
+                for at in &counted {
+                    paths.push(scan.files[*at].key.clone());
+                    held.insert(*at);
+                }
+                state::set_paused_base(&conn, base)?;
+            } else {
+                // Held files are not sent, so they are not recorded as sent.
+                state::record_sent(&mut sent, now_ms, counted.len());
+            }
+        }
+        // Written only where it changed, which a watch at rest would
+        // otherwise see at every pass.
+        state::set_additions_sent(&conn, &sent)?;
+        paths.sort();
+        state::set_paused_additions(&conn, &paths)?;
+        scan.report.paused_additions = held.len();
+        Ok(held)
+    }
+
+    /// Whether a new file would be sent as an item: not one the scan holds
+    /// as a document the copy would refuse, which no threshold need ask about.
+    fn would_send(&self, file: &Scanned, scan: &ScanState) -> bool {
+        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        let embedded = scan.embedded.contains(&file.key);
+        let file_type = self
+            .file_type_of(&file.path, settings, catalog)
+            .or_else(|| embedded.then(|| bytes_type(&file.path, catalog)).flatten());
+        if file_type.is_some() {
+            return true;
+        }
+        match new_document(&file.key, &file.document(), (settings, catalog, edge_types)) {
+            Ok(made) => admission_hold(catalog, &file.key, &made.draft).is_none(),
+            Err(_) => false,
         }
     }
 

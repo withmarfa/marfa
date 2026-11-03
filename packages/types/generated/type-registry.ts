@@ -674,6 +674,7 @@ const systemFolder: TypeSchema = {
     first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type to a directory under the folder's root." },
     removal_threshold: { type: "object", description: "When removing files pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Defaults to 10 and 0.25." },
     full_pass_interval_seconds: { type: "integer", description: "Seconds between the watch's passes that read every file in the folder, from 60 to 86400. Defaults to 600." },
+    addition_threshold: { type: "object", description: "When new files pause for confirmation: a scan that would add more than `files` files and more than `fraction` of the folder's files. Defaults to 50 and 0.25." },
     revoked_at: { type: "datetime", description: "When the folder was revoked." },
   },
 };
@@ -2577,6 +2578,9 @@ export const SHIPPED_TYPE_SHAPES = {
   },
   "system.folder": {
     "fields": {
+      "addition_threshold": {
+        "type": "object"
+      },
       "defaults": {
         "type": "object"
       },

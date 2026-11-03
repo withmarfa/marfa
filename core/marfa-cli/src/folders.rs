@@ -80,8 +80,10 @@ pub enum FoldersCommand {
         /// The folder's `system.folder` id.
         id: String,
     },
-    /// Let a folder's first sync go, or a paused large removal: its deletes
-    /// are queued, and files whose items left elsewhere are taken away.
+    /// Let a folder's first sync go, or what it holds back: a paused large
+    /// removal, whose deletes are queued and whose files that items left
+    /// elsewhere are taken away, and new files held for being more than the
+    /// addition threshold lets in at once, which are queued as new items.
     Confirm {
         /// The folder.
         dir: PathBuf,
@@ -121,6 +123,12 @@ pub enum FoldersCommand {
         /// the first sync waits to be confirmed.
         #[arg(long)]
         send_only: bool,
+        /// Send every new file this push finds, however many, in place of
+        /// holding a drop of more than the folder's `addition_threshold` for
+        /// `folders confirm`. For a script that no one is at; the decision is
+        /// the script's.
+        #[arg(long)]
+        confirm_additions: bool,
     },
     /// List the files the folder keeps whose items its query does not match,
     /// as the last pull left them, and with `--remove` take them away. A file
@@ -384,6 +392,7 @@ pub fn run(
                     "moved": confirmed.moved,
                     "unsure": confirmed.unsure,
                     "removed": confirmed.removed,
+                    "added": confirmed.added,
                 }),
                 json,
                 || {
@@ -392,10 +401,11 @@ pub fn run(
                             .into();
                     }
                     format!(
-                        "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
+                        "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away; {} new file(s) queued as items, sent at the next push{}",
                         confirmed.deleted,
                         confirmed.moved,
                         confirmed.removed,
+                        confirmed.added,
                         confirmed
                             .unsure
                             .iter()
@@ -444,8 +454,12 @@ pub fn run(
         FoldersCommand::Push {
             dir,
             send_only: true,
+            confirm_additions,
         } => {
             let folder = working(&dir, Some(named.session()?))?;
+            if confirm_additions {
+                folder.allow_additions()?;
+            }
             let SendReport {
                 hydrated,
                 settings,
@@ -487,8 +501,12 @@ pub fn run(
         FoldersCommand::Push {
             dir,
             send_only: false,
+            confirm_additions,
         } => {
             let folder = working(&dir, Some(named.session()?))?;
+            if confirm_additions {
+                folder.allow_additions()?;
+            }
             let SyncReport {
                 hydrated,
                 settings,
@@ -1210,6 +1228,9 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
             report.paused.disk, report.paused.pull
         ));
     }
+    if report.paused.additions > 0 {
+        lines.push(paused_additions_line(report.paused.additions));
+    }
     if let Some(waiting) = &report.first_sync {
         lines.push(match &waiting.plan {
             Some(plan) => format!("the first sync waits for confirmation: {}", plan_line(plan)),
@@ -1319,6 +1340,12 @@ pub fn paused_line(count: usize, from_pull: bool) -> String {
     }
 }
 
+pub fn paused_additions_line(count: usize) -> String {
+    format!(
+        "a large addition waits: {count} new file(s) held, not sent; `folders confirm` sends them, and deleting the files you did not mean to add cancels it; new files that arrive meanwhile join it"
+    )
+}
+
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if let Some(gone) = &report.root_gone {
         return format!("nothing scanned: {gone}");
@@ -1386,6 +1413,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if report.paused > 0 {
         line.push('\n');
         line.push_str(&paused_line(report.paused, false));
+    }
+    if report.paused_additions > 0 {
+        line.push('\n');
+        line.push_str(&paused_additions_line(report.paused_additions));
     }
     for said in directory_lines(&report.directories)
         .into_iter()

@@ -1219,6 +1219,7 @@ export interface FolderSettings {
   first_placement?: Record<string, string>;
   removal_threshold?: { files?: number; fraction?: number };
   full_pass_interval_seconds?: number;
+  addition_threshold?: { files?: number; fraction?: number };
 }
 
 export interface ScanReport {
@@ -1269,6 +1270,9 @@ export interface ScanReport {
   /** Deletes of files gone from the disk that wait, a large removal
    *  (`folders/disk-removal-paused`). */
   paused: number;
+  /** New files a large drop holds back, so they are not sent
+   *  (`folders/addition-paused`). */
+  paused_additions: number;
   /** Texts near the server's limit, each flagged `size` (`folders/size-warning`). */
   warnings: FlaggedFile[];
   /** Why the scan read nothing, where the folder's directory is gone
@@ -1294,7 +1298,7 @@ export interface StatusReport {
     reason?: string;
     warning?: string;
   }>;
-  paused: { disk: number; pull: number };
+  paused: { disk: number; pull: number; additions: number };
   /** Present while the first sync waits to be confirmed (`folders/first-sync-status`). */
   first_sync?: {
     plan: { write: number; send: number; beside: number; left: number } | null;
@@ -1548,6 +1552,7 @@ export class CliFolder {
       moved: number;
       unsure: Array<{ path: string; reason: string }>;
       removed: number;
+      added: number;
     }>
   > {
     return this.run(["folders", "confirm", this.dir]);
@@ -1624,6 +1629,17 @@ export class CliFolder {
 
   async push(): Promise<Outcome<PushReport>> {
     return this.device().rootReport<PushReport>(["folders", "push", this.dir]);
+  }
+
+  /** A push told to send every new file, however many
+   *  (`folders/addition-confirm-flag`). */
+  async pushConfirmingAdditions(): Promise<Outcome<PushReport>> {
+    return this.device().rootReport<PushReport>([
+      "folders",
+      "push",
+      this.dir,
+      "--confirm-additions",
+    ]);
   }
 
   /** A push that sends what the folder holds and pulls nothing. */

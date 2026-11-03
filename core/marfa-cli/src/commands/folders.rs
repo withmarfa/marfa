@@ -47,6 +47,9 @@ pub struct SettingsArgs {
     /// folder, from 60 to 86400; unset is 600.
     #[arg(long, value_name = "SECONDS")]
     pub full_pass_interval_seconds: Option<u64>,
+    /// When new files pause, as a JSON object: `files` and `fraction`.
+    #[arg(long, value_name = "JSON")]
+    pub addition_threshold: Option<String>,
 }
 
 impl SettingsArgs {
@@ -89,6 +92,12 @@ impl SettingsArgs {
         }
         if let Some(seconds) = self.full_pass_interval_seconds {
             flags.insert("full_pass_interval_seconds".into(), json!(seconds));
+        }
+        if let Some(threshold) = &self.addition_threshold {
+            flags.insert(
+                "addition_threshold".into(),
+                Value::Object(object(threshold, "--addition-threshold")?),
+            );
         }
         for (key, value) in flags {
             if settings.contains_key(&key) {

@@ -841,6 +841,8 @@ export interface BindingFolderScan {
   skipped: number;
   movedAway: number;
   paused: number;
+  /** New files a large drop holds back (`folders/addition-paused`). */
+  pausedAdditions: number;
   trashed: string[];
   rootGone?: string;
   /** Why links by name wait though the server answered
@@ -890,7 +892,7 @@ export interface BindingFolderStatus {
     reason?: string;
   }>;
   directories: Array<{ path: string; flag: string; reason: string }>;
-  paused: { disk: number; pull: number };
+  paused: { disk: number; pull: number; additions: number };
   firstSync?: {
     plan?: { write: number; send: number; beside: number; left: number };
   };
@@ -949,6 +951,7 @@ export class BindingFolder {
     deleted: number;
     moved: number;
     removed: number;
+    added: number;
     unsure: Array<{ path: string; reason: string }>;
   }> {
     return this.device.folderCall("confirm", this.dir);

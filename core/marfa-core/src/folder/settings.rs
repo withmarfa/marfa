@@ -34,6 +34,8 @@ pub struct Settings {
     pub removal_threshold: RemovalThreshold,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_pass_interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub addition_threshold: AdditionThreshold,
 }
 
 /// The fewest and most seconds between a watch's full passes.
@@ -92,8 +94,43 @@ impl RemovalThreshold {
     }
 
     pub fn exceeded(&self, count: usize, of: usize) -> bool {
-        count as u64 > self.files() && count as f64 > self.fraction() * of as f64
+        past(self.files(), self.fraction(), count, of)
     }
+}
+
+/// How many new files one drop may bring before the folder asks. It is
+/// shaped as `RemovalThreshold` is, and its default is higher: a removal
+/// loses things, and an addition only makes items.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdditionThreshold {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fraction: Option<f64>,
+}
+
+impl AdditionThreshold {
+    pub fn files(&self) -> u64 {
+        self.files.unwrap_or(50)
+    }
+
+    pub fn fraction(&self) -> f64 {
+        self.fraction.unwrap_or(0.25)
+    }
+
+    /// Whether `count` new files wait for confirmation in a folder that holds
+    /// `of` files. A folder with none has no fraction to compare, and the
+    /// count alone decides.
+    pub fn exceeded(&self, count: usize, of: usize) -> bool {
+        past(self.files(), self.fraction(), count, of)
+    }
+}
+
+/// More than `files` and more than `fraction` of `of`. Where `of` is 0 the
+/// fraction is 0 and any count above `files` passes it.
+fn past(files: u64, fraction: f64, count: usize, of: usize) -> bool {
+    count as u64 > files && count as f64 > fraction * of as f64
 }
 
 impl Settings {
@@ -246,6 +283,13 @@ impl Settings {
         {
             return Err(CoreError::Invalid(format!(
                 "a folder's full_pass_interval_seconds is {seconds}, and a full pass runs every {FULL_PASS_INTERVAL_LEAST} to {FULL_PASS_INTERVAL_MOST} seconds"
+            )));
+        }
+        if let Some(fraction) = self.addition_threshold.fraction
+            && !(0.0..=1.0).contains(&fraction)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a folder's addition threshold names a fraction of {fraction}, and a fraction of the folder runs from 0 to 1"
             )));
         }
         if let Some(tier) = self.defaults.tier
@@ -562,6 +606,9 @@ mod tests {
         assert!(read(json!({ "removal_threshold": { "fraction": 1.5 } })).is_err());
         assert!(read(json!({ "removal_threshold": { "files": -1 } })).is_err());
         assert!(read(json!({ "removal_threshold": { "share": 1 } })).is_err());
+        assert!(read(json!({ "addition_threshold": { "fraction": 1.5 } })).is_err());
+        assert!(read(json!({ "addition_threshold": { "files": -1 } })).is_err());
+        assert!(read(json!({ "addition_threshold": { "share": 1 } })).is_err());
         let misspelt = read(json!({ "ignores": ["drafts/"] })).unwrap_err();
         assert!(misspelt.to_string().contains("ignores"), "{misspelt}");
         let empty = Map::new();
@@ -706,6 +753,45 @@ mod tests {
             .removal_threshold;
         assert!(set.exceeded(3, 4));
         assert!(!set.exceeded(2, 4));
+    }
+
+    #[test]
+    fn an_addition_waits_past_both_halves_of_its_threshold() {
+        let default = AdditionThreshold::default();
+        assert!(!default.exceeded(50, 60), "fifty is not more than fifty");
+        assert!(default.exceeded(51, 60));
+        assert!(
+            !default.exceeded(51, 204),
+            "fifty-one is not more than a quarter of 204"
+        );
+        assert!(default.exceeded(52, 204));
+        let set = read(json!({ "addition_threshold": { "files": 1, "fraction": 0.5 } }))
+            .unwrap()
+            .addition_threshold;
+        assert!(set.exceeded(3, 4));
+        assert!(!set.exceeded(2, 4));
+    }
+
+    #[test]
+    fn an_addition_to_a_folder_with_no_files_is_judged_by_its_count_alone() {
+        let default = AdditionThreshold::default();
+        assert!(!default.exceeded(50, 0));
+        assert!(default.exceeded(51, 0));
+        let fraction_only = read(json!({ "addition_threshold": { "files": 0 } }))
+            .unwrap()
+            .addition_threshold;
+        assert!(fraction_only.exceeded(1, 0));
+        assert!(!fraction_only.exceeded(0, 0));
+    }
+
+    #[test]
+    fn the_two_thresholds_have_their_own_defaults() {
+        assert_eq!(RemovalThreshold::default().files(), 10);
+        assert_eq!(AdditionThreshold::default().files(), 50);
+        assert_eq!(AdditionThreshold::default().fraction(), 0.25);
+        let settings = read(json!({ "addition_threshold": { "files": 7 } })).unwrap();
+        assert_eq!(settings.removal_threshold, RemovalThreshold::default());
+        assert_eq!(settings.addition_threshold.files(), 7);
     }
 
     #[test]

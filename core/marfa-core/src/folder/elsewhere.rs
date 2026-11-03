@@ -130,6 +130,7 @@ impl Peer {
                 barred: std::sync::Mutex::new(None),
                 health_status: std::sync::Mutex::new(None),
                 last_reads: std::sync::Mutex::default(),
+                every_addition: std::sync::atomic::AtomicBool::new(false),
                 replaced: None,
             })
         });

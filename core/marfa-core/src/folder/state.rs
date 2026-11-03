@@ -745,6 +745,110 @@ fn list(conn: &Connection, key: &str) -> Result<Vec<String>, CoreError> {
         .unwrap_or_default())
 }
 
+const PAUSED_ADDITIONS: &str = "folder_paused_add";
+
+/// The new files the last scan held back for confirmation, which no file's
+/// binding shows: a paused file is not bound until it is let go.
+pub fn paused_additions(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, PAUSED_ADDITIONS)
+}
+
+pub fn set_paused_additions(conn: &Connection, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, PAUSED_ADDITIONS, paths)
+}
+
+const PAUSED_BASE: &str = "folder_paused_add_base";
+
+/// How many new files the window held when the standing pause began.
+pub fn paused_base(conn: &Connection) -> Result<usize, CoreError> {
+    Ok(crate::store::meta_get(conn, PAUSED_BASE)?
+        .and_then(|text| text.parse().ok())
+        .unwrap_or_default())
+}
+
+pub fn set_paused_base(conn: &Connection, base: usize) -> Result<(), CoreError> {
+    if crate::store::meta_get(conn, PAUSED_BASE)?.as_deref() == Some(base.to_string().as_str()) {
+        return Ok(());
+    }
+    crate::store::meta_set(conn, PAUSED_BASE, &base.to_string())
+}
+
+pub fn clear_paused_base(conn: &Connection) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, PAUSED_BASE)
+}
+
+const ADDITIONS_SENT: &str = "folder_additions_sent";
+
+/// How long a sent new file counts towards the addition threshold.
+pub const ADDITIONS_WINDOW_MS: i64 = 10 * 60_000;
+
+/// The new files the folder sent lately, by the minute (since the epoch) it
+/// sent them in, so a drop is judged by how fast it arrives and the record
+/// stays small however many files come.
+pub fn additions_sent(conn: &Connection) -> Result<Vec<(i64, usize)>, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_SENT)?
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
+}
+
+/// Without the minutes that fell out of the window at `now_ms`, and without
+/// those after the current minute, which a clock set back leaves behind, and
+/// how many files the rest hold.
+pub fn within_window(sent: &mut Vec<(i64, usize)>, now_ms: i64) -> usize {
+    let now_minute = now_ms.div_euclid(60_000);
+    sent.retain(|(minute, _)| {
+        *minute <= now_minute && (minute + 1) * 60_000 > now_ms - ADDITIONS_WINDOW_MS
+    });
+    sent.iter().map(|(_, count)| count).sum()
+}
+
+/// Adds `count` files sent at `now_ms` to a window.
+pub fn record_sent(sent: &mut Vec<(i64, usize)>, now_ms: i64, count: usize) {
+    let minute = now_ms.div_euclid(60_000);
+    match sent.iter_mut().find(|(at, _)| *at == minute) {
+        Some((_, total)) => *total += count,
+        None => sent.push((minute, count)),
+    }
+}
+
+pub fn set_additions_sent(conn: &Connection, sent: &[(i64, usize)]) -> Result<(), CoreError> {
+    if sent.is_empty() {
+        return crate::store::meta_delete(conn, ADDITIONS_SENT);
+    }
+    let json = serde_json::to_string(sent)?;
+    if crate::store::meta_get(conn, ADDITIONS_SENT)?.as_deref() == Some(json.as_str()) {
+        return Ok(());
+    }
+    crate::store::meta_set(conn, ADDITIONS_SENT, &json)
+}
+
+const ADDITIONS_ALLOWED: &str = "folder_additions_allowed";
+
+/// The files the folder held back that a person has confirmed, taken by the
+/// next scan.
+pub fn additions_allowed(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, ADDITIONS_ALLOWED)
+}
+
+pub fn set_additions_allowed(conn: &Connection, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, ADDITIONS_ALLOWED, paths)
+}
+
+const ADDITIONS_GATED: &str = "folder_additions_gated";
+
+/// Whether the folder has had its first scan after its first sync, which no
+/// threshold counts. A folder that holds files has had it already.
+pub fn additions_gated(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(crate::store::meta_get(conn, ADDITIONS_GATED)?.is_some() || bound_count(conn)? > 0)
+}
+
+pub fn gate_additions(conn: &Connection) -> Result<(), CoreError> {
+    if crate::store::meta_get(conn, ADDITIONS_GATED)?.is_none() {
+        crate::store::meta_set(conn, ADDITIONS_GATED, "1")?;
+    }
+    Ok(())
+}
+
 /// The file metadata last recorded by a scan or pull.
 pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreError> {
     Ok(conn

@@ -59,9 +59,10 @@ pub struct FileStatus {
     pub warning: Option<String>,
 }
 #[napi(object)]
-pub struct PausedRemoval {
+pub struct FolderPaused {
     pub disk: i64,
     pub pull: i64,
+    pub additions: i64,
 }
 #[napi(object)]
 pub struct FirstSyncPlan {
@@ -90,7 +91,7 @@ pub struct WaitingFirstSync {
 pub struct FolderStatus {
     pub directories: Vec<FlaggedFile>,
     pub files: Vec<FileStatus>,
-    pub paused: PausedRemoval,
+    pub paused: FolderPaused,
     pub first_sync: Option<WaitingFirstSync>,
 }
 #[napi(object)]
@@ -120,6 +121,7 @@ pub struct FolderScan {
     pub skipped: i64,
     pub moved_away: i64,
     pub paused: i64,
+    pub paused_additions: i64,
     pub trashed: Vec<String>,
     pub secrets: Vec<String>,
     pub warnings: Vec<FlaggedFile>,
@@ -176,10 +178,11 @@ pub struct UnsureFile {
     pub reason: String,
 }
 #[napi(object)]
-pub struct ConfirmedRemoval {
+pub struct ConfirmedFolder {
     pub deleted: i64,
     pub moved: i64,
     pub removed: i64,
+    pub added: i64,
     pub unsure: Vec<UnsureFile>,
 }
 #[napi(object)]
@@ -281,9 +284,9 @@ impl Folders {
         AsyncTask::new(ConfirmFirstSync { dir, failed: None })
     }
 
-    #[napi(ts_return_type = "Promise<ConfirmedRemoval>")]
-    pub fn confirm(&self, dir: String) -> AsyncTask<ConfirmRemoval> {
-        AsyncTask::new(ConfirmRemoval { dir, failed: None })
+    #[napi(ts_return_type = "Promise<ConfirmedFolder>")]
+    pub fn confirm(&self, dir: String) -> AsyncTask<ConfirmFolder> {
+        AsyncTask::new(ConfirmFolder { dir, failed: None })
     }
 
     #[napi(ts_return_type = "Promise<RestoredRemoval>")]
@@ -470,9 +473,10 @@ impl Task for ReadFolderStatus {
                         })
                     })
                     .collect::<marfa_core::Result<_>>()?,
-                paused: PausedRemoval {
+                paused: FolderPaused {
                     disk: count(report.paused.disk as u64),
                     pull: count(report.paused.pull as u64),
+                    additions: count(report.paused.additions as u64),
                 },
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
@@ -548,24 +552,25 @@ impl Task for ConfirmFirstSync {
     }
 }
 
-pub struct ConfirmRemoval {
+pub struct ConfirmFolder {
     dir: String,
     failed: Option<CoreError>,
 }
 #[napi]
-impl Task for ConfirmRemoval {
-    type Output = ConfirmedRemoval;
-    type JsValue = ConfirmedRemoval;
+impl Task for ConfirmFolder {
+    type Output = ConfirmedFolder;
+    type JsValue = ConfirmedFolder;
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
         Err(rejected(env, self.failed.take(), error, &self.dir))
     }
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> {
             let confirmed = working(&self.dir, None)?.confirm()?;
-            Ok(ConfirmedRemoval {
+            Ok(ConfirmedFolder {
                 deleted: count(confirmed.deleted as u64),
                 moved: count(confirmed.moved as u64),
                 removed: count(confirmed.removed as u64),
+                added: count(confirmed.added as u64),
                 unsure: confirmed
                     .unsure
                     .into_iter()
@@ -894,6 +899,7 @@ fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
         skipped: count(scan.skipped as u64),
         moved_away: count(scan.moved_away as u64),
         paused: count(scan.paused as u64),
+        paused_additions: count(scan.paused_additions as u64),
         trashed: scan.trashed,
         secrets: scan.secrets,
         warnings: scan.warnings.into_iter().map(flagged_file).collect(),

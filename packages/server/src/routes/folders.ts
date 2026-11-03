@@ -132,6 +132,30 @@ const RemovalThresholdSchema = z
       "How large a removal must be to wait for confirmation before it goes ahead.",
   });
 
+const AdditionThresholdSchema = z
+  .strictObject({
+    files: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "New files wait to be confirmed only if they number more than this. Absent means 50.",
+      ),
+    fraction: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe(
+        "New files wait to be confirmed only if they number more than this fraction of the folder's files. Absent means 0.25.",
+      ),
+  })
+  .openapi("FolderAdditionThreshold", {
+    description:
+      "How large a drop of new files must be to wait for confirmation before it is sent.",
+  });
+
 const settingsShape = {
   query: FolderQuerySchema.describe("Which items the folder holds."),
   defaults: FolderDefaultsSchema.describe(
@@ -159,6 +183,9 @@ const settingsShape = {
     .describe(
       `Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: ${String(MIN_FULL_PASS_INTERVAL_SECONDS)} to ${String(MAX_FULL_PASS_INTERVAL_SECONDS)}. Absent means 600.`,
     ),
+  addition_threshold: AdditionThresholdSchema.describe(
+    "New files wait to be confirmed when a scan would add more than `files` files and more than `fraction` of the folder's files.",
+  ),
 };
 
 type Settings = {
@@ -177,6 +204,7 @@ const CreateFolderSchema = z.strictObject({
   removal_threshold: settingsShape.removal_threshold.optional(),
   full_pass_interval_seconds:
     settingsShape.full_pass_interval_seconds.optional(),
+  addition_threshold: settingsShape.addition_threshold.optional(),
 });
 
 const UpdateFolderSchema = z.strictObject({
@@ -198,6 +226,7 @@ const UpdateFolderSchema = z.strictObject({
   removal_threshold: settingsShape.removal_threshold.optional(),
   full_pass_interval_seconds:
     settingsShape.full_pass_interval_seconds.optional(),
+  addition_threshold: settingsShape.addition_threshold.optional(),
 });
 
 const IdParam = z.object({

@@ -116,6 +116,9 @@ impl Folder {
         };
         if plan.nothing() {
             self.confirm_first_sync()?;
+            // Read now, the directory's files are not a drop the threshold
+            // has to ask about later.
+            super::state::gate_additions(&*self.core.conn()?)?;
             return Ok(None);
         }
         store::meta_set(

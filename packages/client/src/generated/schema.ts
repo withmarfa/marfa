@@ -5324,6 +5324,13 @@ export interface components {
             /** @description A removal waits to be confirmed only if it takes more than this fraction of the folder's files. Absent means 0.25. */
             fraction?: number;
         };
+        /** @description New files wait to be confirmed when a scan would add more than `files` files and more than `fraction` of the folder's files. */
+        FolderAdditionThreshold: {
+            /** @description New files wait to be confirmed only if they number more than this. Absent means 50. */
+            files?: number;
+            /** @description New files wait to be confirmed only if they number more than this fraction of the folder's files. Absent means 0.25. */
+            fraction?: number;
+        };
         /** @description An error response. */
         InvalidIdOrInvalidPropertiesOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
             /** @description What went wrong. */
@@ -20194,6 +20201,7 @@ export interface operations {
                     removal_threshold?: components["schemas"]["FolderRemovalThreshold"];
                     /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
                     full_pass_interval_seconds?: number;
+                    addition_threshold?: components["schemas"]["FolderAdditionThreshold"];
                 };
             };
         };
@@ -20413,6 +20421,7 @@ export interface operations {
                     removal_threshold?: components["schemas"]["FolderRemovalThreshold"];
                     /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
                     full_pass_interval_seconds?: number;
+                    addition_threshold?: components["schemas"]["FolderAdditionThreshold"];
                 };
             };
         };
