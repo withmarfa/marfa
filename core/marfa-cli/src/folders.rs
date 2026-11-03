@@ -136,7 +136,8 @@ pub enum FoldersCommand {
     /// while its bytes are the ones the folder wrote (for a file made from a
     /// new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in
     /// Marfa as it was, and the folder's placement of it ends, sent at the
-    /// next push. Takes away no `held`, `outside` or `unreached` file. With
+    /// next push. Also lists, with why, the new files a folder whose `outside_query` is `hold` holds because its query would not hold them; they have no item and
+    /// are never taken away. Takes away no `held`, `outside` or `unreached` file. With
     /// `--remove`, a watch holding the folder lets it go while this runs, and
     /// this is refused if the process holding the folder does not let it go
     /// within 10 seconds. Delete an unmatched file with this, not by hand: a
@@ -679,7 +680,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
     let files = folder.unmatched_files()?;
     let going: Vec<String> = files
         .iter()
-        .filter(|file| file.kept.is_none())
+        .filter(|file| file.kept.is_none() && file.held.is_none())
         .map(|file| file.path.clone())
         .collect();
     let agreed = going.is_empty() || yes || asks_to_remove(dir, &going)?;
@@ -734,14 +735,18 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
     if files.is_empty() {
         return "no unmatched files".into();
     }
-    let removable = files.iter().filter(|file| file.kept.is_none()).count();
+    let removable = files
+        .iter()
+        .filter(|file| file.kept.is_none() && file.held.is_none())
+        .count();
     let mut lines = vec![format!(
         "{} unmatched file(s), {removable} of them removable with `folders unmatched --remove`",
         files.len()
     )];
-    lines.extend(files.iter().map(|file| match &file.kept {
-        Some(reason) => format!("{} would be kept: {reason}", file.path),
-        None => file.path.clone(),
+    lines.extend(files.iter().map(|file| match (&file.kept, &file.held) {
+        (_, Some(reason)) => format!("{} {reason}", file.path),
+        (Some(reason), None) => format!("{} would be kept: {reason}", file.path),
+        (None, None) => file.path.clone(),
     }));
     lines.join("\n")
 }
@@ -1231,6 +1236,9 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
     if report.paused.additions > 0 {
         lines.push(paused_additions_line(report.paused.additions));
     }
+    if report.paused.outside_query > 0 {
+        lines.push(held_outside_line(report.paused.outside_query));
+    }
     if let Some(waiting) = &report.first_sync {
         lines.push(match &waiting.plan {
             Some(plan) => format!("the first sync waits for confirmation: {}", plan_line(plan)),
@@ -1346,6 +1354,12 @@ pub fn paused_additions_line(count: usize) -> String {
     )
 }
 
+pub fn held_outside_line(count: usize) -> String {
+    format!(
+        "{count} new file(s) held outside the query, not sent: the folder's outside_query is hold, so each is sent once it matches the query or the setting is send; `folders unmatched` lists them"
+    )
+}
+
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if let Some(gone) = &report.root_gone {
         return format!("nothing scanned: {gone}");
@@ -1417,6 +1431,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if report.paused_additions > 0 {
         line.push('\n');
         line.push_str(&paused_additions_line(report.paused_additions));
+    }
+    if report.held_outside > 0 {
+        line.push('\n');
+        line.push_str(&held_outside_line(report.held_outside));
     }
     for said in directory_lines(&report.directories)
         .into_iter()

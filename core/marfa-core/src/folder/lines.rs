@@ -149,6 +149,43 @@ struct Group<'t> {
     typed: Option<std::result::Result<Vec<Typed>, String>>,
 }
 
+/// The edge groups a file's frontmatter writes, one for each edge type and
+/// end, with the reason for each line that is not read. The real create and
+/// the dry run that judges a new file both read lines through it.
+fn front_groups<'t>(
+    front: &Map<String, Value>,
+    types: &'t EdgeTypes,
+    reasons: &mut Vec<String>,
+) -> BTreeMap<(String, End), Group<'t>> {
+    let mut groups = BTreeMap::new();
+    for (key, value) in front {
+        let Some((def, end)) = types.named(key) else {
+            continue;
+        };
+        if def.written_at == WrittenAt::None {
+            reasons.push(if def.id == PLACEMENT_EDGE {
+                format!("its {key} line is not read: a file's place in the folder is where it sits")
+            } else {
+                format!(
+                    "its {key} line is not read: no file writes {} edges",
+                    def.id
+                )
+            });
+            continue;
+        }
+        groups.insert(
+            (def.id.clone(), end),
+            Group {
+                name: key.clone(),
+                edge_type: def,
+                end,
+                typed: Some(edge_types::typed(value)),
+            },
+        );
+    }
+    groups
+}
+
 /// An edge write a file's lines ask for, and what its answer changes.
 struct Planned {
     op: EdgeOp,
@@ -522,34 +559,7 @@ impl Folder {
             }
         };
 
-        let mut groups: BTreeMap<(String, End), Group<'_>> = BTreeMap::new();
-        for (key, value) in &work.front {
-            let Some((def, end)) = types.named(key) else {
-                continue;
-            };
-            if def.written_at == WrittenAt::None {
-                reasons.push(if def.id == PLACEMENT_EDGE {
-                    format!(
-                        "its {key} line is not read: a file's place in the folder is where it sits"
-                    )
-                } else {
-                    format!(
-                        "its {key} line is not read: no file writes {} edges",
-                        def.id
-                    )
-                });
-                continue;
-            }
-            groups.insert(
-                (def.id.clone(), end),
-                Group {
-                    name: key.clone(),
-                    edge_type: def,
-                    end,
-                    typed: Some(edge_types::typed(value)),
-                },
-            );
-        }
+        let mut groups = front_groups(&work.front, types, &mut reasons);
         let recorded_keys: BTreeSet<(String, End)> = work
             .had_lines
             .iter()
@@ -854,6 +864,48 @@ impl Folder {
                 .filter(|item| bytes_of(item, catalog).is_some())
                 .map(|item| item.id),
         ))
+    }
+
+    /// The edges a new document's own frontmatter lines would make, as the
+    /// create reads them, for the dry run that judges where it lands. A name
+    /// that resolves to no item, or a line the create would not act on,
+    /// contributes nothing.
+    pub(super) fn own_edges(
+        &self,
+        front: &Map<String, Value>,
+        types: &EdgeTypes,
+        catalog: &Catalog,
+        resolver: &mut Resolver<'_>,
+    ) -> Result<Vec<(End, String, String)>> {
+        let mut reasons = Vec::new();
+        let known = BTreeMap::new();
+        let mut unresolved = Unresolved {
+            known: &known,
+            waiting: false,
+            unmatched: false,
+            refused: BTreeMap::new(),
+        };
+        let mut edges = Vec::new();
+        for ((edge_type, end), group) in &front_groups(front, types, &mut reasons) {
+            let other_of = |edge: &Edge| match end {
+                End::Source => edge.target_id.clone(),
+                End::Target => edge.source_id.clone(),
+            };
+            let desired = self.desired(
+                group,
+                "",
+                &[],
+                &other_of,
+                catalog,
+                resolver,
+                &mut reasons,
+                &mut unresolved,
+            )?;
+            for other in desired.into_iter().flatten() {
+                edges.push((*end, edge_type.clone(), other));
+            }
+        }
+        Ok(edges)
     }
 
     /// The items a group's line names, or `None` where it changes nothing,

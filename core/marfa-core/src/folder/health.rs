@@ -1456,6 +1456,7 @@ mod tests {
                 disk: 1,
                 pull: 2,
                 additions: 0,
+                outside_query: 0,
             },
             directories: Vec::new(),
             first_sync: None,

@@ -74,6 +74,43 @@ fn end_of(edge_type: &str) -> End {
     }
 }
 
+/// The edges the folder's defaults give a new item, one line each. A type
+/// the file's own frontmatter writes a line for is no blank, so it gives none.
+pub(super) fn default_lines(
+    settings: &Settings,
+    front: Option<(&Map<String, Value>, &super::EdgeTypes)>,
+) -> Vec<state::Line> {
+    let mut lines = Vec::new();
+    for (edge_type, targets) in &settings.defaults.edges {
+        let end = end_of(edge_type);
+        if let Some((front, types)) = front
+            && let Some(name) = types.get(edge_type).and_then(|def| def.name_at(end))
+            && front.contains_key(name)
+        {
+            continue;
+        }
+        for target in targets {
+            lines.push(state::Line {
+                edge_type: edge_type.clone(),
+                end,
+                other: target.clone(),
+            });
+        }
+    }
+    lines
+}
+
+/// What `default_lines` asks of the dry run that judges a new file.
+pub(super) fn default_edges_of(
+    settings: &Settings,
+    front: Option<(&Map<String, Value>, &super::EdgeTypes)>,
+) -> Vec<(End, String, String)> {
+    default_lines(settings, front)
+        .into_iter()
+        .map(|line| (line.end, line.edge_type, line.other))
+        .collect()
+}
+
 impl Folder {
     /// The defaults' edges for a new item. A `parent-of` default names the
     /// parent, as the child's file writes it, so a new file lands beneath
@@ -92,29 +129,15 @@ impl Folder {
             file: front.is_none(),
             ..Defaulted::default()
         };
-        for (edge_type, targets) in &settings.defaults.edges {
-            let end = end_of(edge_type);
-            if let Some((front, types)) = front
-                && let Some(name) = types.get(edge_type).and_then(|def| def.name_at(end))
-                && front.contains_key(name)
-            {
-                continue;
-            }
-            for target in targets {
-                let line = state::Line {
-                    edge_type: edge_type.clone(),
-                    end,
-                    other: target.clone(),
-                };
-                match self.make_default_edge(item_id, &line)? {
-                    Ok(id) => defaulted.queued.push(id),
-                    Err(reason) => {
-                        flagged.push(Flagged::default_edge_refused(
-                            path,
-                            default_reason(&line, defaulted.file, &reason),
-                        ));
-                        defaulted.refused.push((line, reason));
-                    }
+        for line in default_lines(settings, front) {
+            match self.make_default_edge(item_id, &line)? {
+                Ok(id) => defaulted.queued.push(id),
+                Err(reason) => {
+                    flagged.push(Flagged::default_edge_refused(
+                        path,
+                        default_reason(&line, defaulted.file, &reason),
+                    ));
+                    defaulted.refused.push((line, reason));
                 }
             }
         }

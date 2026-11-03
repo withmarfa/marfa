@@ -90,6 +90,7 @@ describe("the folder door", () => {
       removal_threshold: { files: 20, fraction: 0.5 },
       full_pass_interval_seconds: 3600,
       addition_threshold: { files: 80, fraction: 0.5 },
+      outside_query: "hold",
     };
     const r = await client.createFolder(settings);
     expect(r.status).toBe(201);
@@ -440,6 +441,8 @@ describe("the folder door", () => {
       "validation_error",
       "addition_threshold.files",
     ],
+    [{ outside_query: "keep" }, "validation_error", "outside_query"],
+    [{ outside_query: null }, "validation_error", "outside_query"],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {

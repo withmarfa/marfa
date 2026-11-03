@@ -270,6 +270,45 @@ pub(super) fn new_document(
     Ok(NewDocument { draft, read })
 }
 
+/// The draft of a new file item. Its type is its bytes', so of the defaults
+/// it takes only the tier and the tags. It carries the properties the copy
+/// gives the item from its bytes, as the create does, so the query is judged
+/// on the item the file becomes.
+pub(super) fn file_item_draft(
+    file: &Scanned,
+    file_type: String,
+    settings: &Settings,
+    catalog: &Catalog,
+) -> Draft {
+    let mut properties = Map::new();
+    properties.insert(
+        fields::title_field(catalog, &file_type).into(),
+        Value::String(name_of(&file.key).into()),
+    );
+    if file.executable == Some(true) {
+        properties.insert(executable::FIELD.into(), Value::Bool(true));
+    }
+    if let Some(bytes) = &file.source {
+        crate::name_bytes(
+            &mut properties,
+            catalog,
+            &file_type,
+            &crate::blob::Taken {
+                hash: crate::blob::name_of(bytes),
+                size: bytes.len() as u64,
+            },
+            &crate::blob::mime_type_for(&file.path, None),
+        );
+    }
+    Draft {
+        r#type: file_type,
+        properties,
+        tags: settings.defaults.tags.clone(),
+        tier: Some(settings.new_tier()),
+        ..Default::default()
+    }
+}
+
 /// What the copy says of a draft before queueing it: the hold the scan puts
 /// on a document the copy would refuse.
 pub(super) fn admission_hold(catalog: &Catalog, key: &str, draft: &Draft) -> Option<Flagged> {
@@ -397,21 +436,7 @@ impl Folder {
         withheld: &placement::Withheld,
         flagged: &mut Vec<Flagged>,
     ) -> Result<()> {
-        let mut properties = Map::new();
-        properties.insert(
-            fields::title_field(catalog, &file_type).into(),
-            Value::String(name_of(&file.key).into()),
-        );
-        if file.executable == Some(true) {
-            properties.insert(executable::FIELD.into(), Value::Bool(true));
-        }
-        let draft = Draft {
-            r#type: file_type,
-            properties,
-            tags: settings.defaults.tags.clone(),
-            tier: Some(settings.new_tier()),
-            ..Default::default()
-        };
+        let draft = file_item_draft(file, file_type, settings, catalog);
         let item_id = named_item(
             self.core.create_file_item_from(
                 &file.path,

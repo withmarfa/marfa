@@ -38804,6 +38804,14 @@
                   },
                   "addition_threshold": {
                     "$ref": "#/components/schemas/FolderAdditionThreshold"
+                  },
+                  "outside_query": {
+                    "type": "string",
+                    "enum": [
+                      "send",
+                      "hold"
+                    ],
+                    "description": "What a machine does with a new file whose item the query would not hold. `send` makes it an item and keeps it in the folder, flagged unmatched. `hold` leaves it on the disk, not sent and with no item, until it matches the query or the setting is `send`. A file that already has an item is never affected. Absent means `send`."
                   }
                 },
                 "required": [
@@ -39301,6 +39309,14 @@
                   },
                   "addition_threshold": {
                     "$ref": "#/components/schemas/FolderAdditionThreshold"
+                  },
+                  "outside_query": {
+                    "type": "string",
+                    "enum": [
+                      "send",
+                      "hold"
+                    ],
+                    "description": "What a machine does with a new file whose item the query would not hold. `send` makes it an item and keeps it in the folder, flagged unmatched. `hold` leaves it on the disk, not sent and with no item, until it matches the query or the setting is `send`. A file that already has an item is never affected. Absent means `send`."
                   }
                 },
                 "required": [

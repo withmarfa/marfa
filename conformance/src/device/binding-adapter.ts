@@ -843,6 +843,8 @@ export interface BindingFolderScan {
   paused: number;
   /** New files a large drop holds back (`folders/addition-paused`). */
   pausedAdditions: number;
+  /** New files the query would not hold, left unsent (`folders/outside-query-held`). */
+  heldOutside: number;
   trashed: string[];
   rootGone?: string;
   /** Why links by name wait though the server answered
@@ -892,7 +894,12 @@ export interface BindingFolderStatus {
     reason?: string;
   }>;
   directories: Array<{ path: string; flag: string; reason: string }>;
-  paused: { disk: number; pull: number; additions: number };
+  paused: {
+    disk: number;
+    pull: number;
+    additions: number;
+    outsideQuery: number;
+  };
   firstSync?: {
     plan?: { write: number; send: number; beside: number; left: number };
   };

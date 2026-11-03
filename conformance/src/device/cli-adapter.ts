@@ -1220,6 +1220,9 @@ export interface FolderSettings {
   removal_threshold?: { files?: number; fraction?: number };
   full_pass_interval_seconds?: number;
   addition_threshold?: { files?: number; fraction?: number };
+  /** What the folder does with a new file its query would not hold
+   *  (`folders/outside-query-default-send`). */
+  outside_query?: "send" | "hold";
 }
 
 export interface ScanReport {
@@ -1273,6 +1276,9 @@ export interface ScanReport {
   /** New files a large drop holds back, so they are not sent
    *  (`folders/addition-paused`). */
   paused_additions: number;
+  /** New files the query would not hold, left unsent by `outside_query: "hold"`
+   *  (`folders/outside-query-held`). */
+  held_outside: number;
   /** Texts near the server's limit, each flagged `size` (`folders/size-warning`). */
   warnings: FlaggedFile[];
   /** Why the scan read nothing, where the folder's directory is gone
@@ -1298,7 +1304,12 @@ export interface StatusReport {
     reason?: string;
     warning?: string;
   }>;
-  paused: { disk: number; pull: number; additions: number };
+  paused: {
+    disk: number;
+    pull: number;
+    additions: number;
+    outside_query: number;
+  };
   /** Present while the first sync waits to be confirmed (`folders/first-sync-status`). */
   first_sync?: {
     plan: { write: number; send: number; beside: number; left: number } | null;
@@ -1481,6 +1492,9 @@ export interface UnmatchedFile {
   item_id?: string;
   /** Why removing the file would keep it, where it would. */
   kept?: string;
+  /** Why the file has no item, where its folder holds it outside the query
+   *  (`folders/outside-query-unmatched`). */
+  held?: string;
 }
 
 /** What `folders unmatched --remove` did (`folders/unmatched-remove-file`). */

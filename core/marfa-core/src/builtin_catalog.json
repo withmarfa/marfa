@@ -2457,6 +2457,14 @@
      "type": "object",
      "description": "When new files pause for confirmation: a scan that would add more than `files` files and more than `fraction` of the folder's files. Defaults to 50 and 0.25."
     },
+    "outside_query": {
+     "type": "enum",
+     "description": "What the folder does with a new file its query would not hold: send it and keep it flagged unmatched, or hold it on disk, not sent. Defaults to send.",
+     "enum_values": [
+      "send",
+      "hold"
+     ]
+    },
     "revoked_at": {
      "type": "datetime",
      "description": "When the folder was revoked."

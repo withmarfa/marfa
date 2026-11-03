@@ -628,6 +628,10 @@ fn standing(
                     .then(|| folders::paused_additions_line(scanned.paused_additions)),
             )
             .chain(
+                (scanned.held_outside > 0)
+                    .then(|| folders::held_outside_line(scanned.held_outside)),
+            )
+            .chain(
                 scanned
                     .warnings
                     .iter()

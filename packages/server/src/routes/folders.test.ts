@@ -263,6 +263,8 @@ describe("POST /folders", () => {
       "validation_error",
       "addition_threshold.fraction",
     ],
+    [{ outside_query: "keep" }, "validation_error", "outside_query"],
+    [{ outside_query: null }, "validation_error", "outside_query"],
   ])(
     "refuses %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {
@@ -430,6 +432,7 @@ describe("PATCH /folders/{id}", () => {
         removal_threshold: { files: 12 },
         full_pass_interval_seconds: 3600,
         addition_threshold: { files: 80, fraction: 0.5 },
+        outside_query: "hold",
       };
       const folder = await createFolder(settings);
       const stored = {

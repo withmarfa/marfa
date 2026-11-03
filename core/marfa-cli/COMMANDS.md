@@ -3125,6 +3125,7 @@ marfa device folders create [OPTIONS]
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
+| `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -3155,6 +3156,7 @@ marfa device folders change [OPTIONS] --version <VERSION> <ID>
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
+| `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -3999,7 +4001,7 @@ marfa folders push [OPTIONS] <DIR>
 
 ### marfa folders unmatched
 
-List the files the folder keeps whose items its query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+List the files the folder keeps whose items its query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Also lists, with why, the new files a folder whose `outside_query` is `hold` holds because its query would not hold them; they have no item and are never taken away. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
 
 ```text
 marfa folders unmatched [OPTIONS] <DIR>
@@ -4035,6 +4037,7 @@ marfa folders create [OPTIONS]
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
+| `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders change
@@ -4063,6 +4066,7 @@ marfa folders change [OPTIONS] --version <VERSION> <ID>
 | `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
+| `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa folders revoke

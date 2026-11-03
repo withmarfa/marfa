@@ -100,6 +100,9 @@ pub struct FolderPaused {
     /// New files held back for being more than the folder's addition
     /// threshold lets in at once. `confirm` sends them.
     pub additions: u64,
+    /// New files held because the query would not hold them and the folder's
+    /// `outside_query` is `hold`.
+    pub outside_query: u64,
 }
 
 /// What a folder's first sync will do, read from the folder as it stands.
@@ -191,6 +194,8 @@ pub struct FolderScan {
     pub paused: u64,
     /// New files a large drop holds back, so they are not sent.
     pub paused_additions: u64,
+    /// New files held on the disk because the query would not hold them.
+    pub held_outside: u64,
     /// Files found in no folder on this machine, whose items were trashed.
     pub trashed: Vec<String>,
     /// Files not taken because their names are ones secrets go by.
@@ -471,6 +476,7 @@ impl Folders {
                 disk: report.paused.disk as u64,
                 pull: report.paused.pull as u64,
                 additions: report.paused.additions as u64,
+                outside_query: report.paused.outside_query as u64,
             },
             first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                 plan: waiting.plan.map(Into::into),
@@ -821,6 +827,7 @@ fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
         moved_away: scan.moved_away as u64,
         paused: scan.paused as u64,
         paused_additions: scan.paused_additions as u64,
+        held_outside: scan.held_outside as u64,
         trashed: scan.trashed,
         secrets: scan.secrets,
         warnings: scan.warnings.into_iter().map(flagged_file).collect(),

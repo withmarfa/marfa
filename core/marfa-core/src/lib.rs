@@ -4388,7 +4388,7 @@ fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String,
 /// The length goes only on a file, the one family that declares it. The
 /// server sets it from the bytes it holds, so this is what the copy shows
 /// until the server answers.
-fn name_bytes(
+pub(crate) fn name_bytes(
     properties: &mut serde_json::Map<String, Value>,
     catalog: &catalog::Catalog,
     r#type: &str,

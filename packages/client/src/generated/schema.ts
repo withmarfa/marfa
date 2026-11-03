@@ -20202,6 +20202,11 @@ export interface operations {
                     /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
                     full_pass_interval_seconds?: number;
                     addition_threshold?: components["schemas"]["FolderAdditionThreshold"];
+                    /**
+                     * @description What a machine does with a new file whose item the query would not hold. `send` makes it an item and keeps it in the folder, flagged unmatched. `hold` leaves it on the disk, not sent and with no item, until it matches the query or the setting is `send`. A file that already has an item is never affected. Absent means `send`.
+                     * @enum {string}
+                     */
+                    outside_query?: "send" | "hold";
                 };
             };
         };
@@ -20422,6 +20427,11 @@ export interface operations {
                     /** @description Seconds between the passes of a watch that read every file in the folder, in case the system missed a file event: 60 to 86400. Absent means 600. */
                     full_pass_interval_seconds?: number;
                     addition_threshold?: components["schemas"]["FolderAdditionThreshold"];
+                    /**
+                     * @description What a machine does with a new file whose item the query would not hold. `send` makes it an item and keeps it in the folder, flagged unmatched. `hold` leaves it on the disk, not sent and with no item, until it matches the query or the setting is `send`. A file that already has an item is never affected. Absent means `send`.
+                     * @enum {string}
+                     */
+                    outside_query?: "send" | "hold";
                 };
             };
         };

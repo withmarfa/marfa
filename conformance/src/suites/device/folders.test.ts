@@ -5512,6 +5512,7 @@ describe("large removals, status and size", () => {
       disk: 0,
       pull: 3,
       additions: 0,
+      outside_query: 0,
     });
   });
 
@@ -5704,7 +5705,12 @@ describe("large removals, status and size", () => {
         of(path)?.reason,
       ]),
     );
-    expect(status.value.paused).toEqual({ disk: 0, pull: 0, additions: 0 });
+    expect(status.value.paused).toEqual({
+      disk: 0,
+      pull: 0,
+      additions: 0,
+      outside_query: 0,
+    });
   });
 });
 

@@ -121,3 +121,37 @@ describe("a drop of new files judged by its rate", () => {
     expect((await harness.bound.testClose()).ok).toBe(true);
   }, 120_000);
 });
+
+describe("a new file outside the query", () => {
+  it("is held, shown in status and not counted towards the addition threshold", async () => {
+    const harness = await bindingFolderHarness("binding-outside-query", {
+      settings: {
+        query: { types: ["core.note"], state: ["active"] },
+        defaults: { type: "core.note" },
+        outside_query: "hold",
+        addition_threshold: { files: 2, fraction: 0.25 },
+      },
+    });
+    made.push(harness);
+    scriptFolderWrites(harness);
+    expect((await harness.bound.sync()).ok).toBe(true);
+    expect((await harness.bound.testOpen()).ok).toBe(true);
+    for (let n = 0; n < 3; n += 1)
+      writeFileSync(
+        join(harness.dir, `out-${String(n)}.md`),
+        `---\ntitle: Out ${String(n)}\nstate: archived\n---\nbody\n`,
+      );
+    const scan = await scanned(harness);
+    expect(
+      [scan.created, scan.heldOutside, scan.pausedAdditions],
+      "files outside the query were sent or counted as a drop",
+    ).toEqual([0, 3, 0]);
+    const status = await harness.bound.status();
+    expect(status.ok).toBe(true);
+    if (!status.ok) return;
+    expect(status.value.paused.outsideQuery).toBe(3);
+    const flags = status.value.files.map((file) => file.flag);
+    expect(flags).toEqual(["outside_query", "outside_query", "outside_query"]);
+    expect((await harness.bound.testClose()).ok).toBe(true);
+  }, 120_000);
+});

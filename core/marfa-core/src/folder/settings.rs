@@ -36,6 +36,27 @@ pub struct Settings {
     pub full_pass_interval_seconds: Option<u64>,
     #[serde(default)]
     pub addition_threshold: AdditionThreshold,
+    #[serde(default, skip_serializing_if = "OutsideQuery::is_send")]
+    pub outside_query: OutsideQuery,
+}
+
+/// What the folder does with a new file that the query would not hold once
+/// it was an item. A file that already has an item is never a new file, so
+/// this does not touch one that leaves the query.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutsideQuery {
+    /// Sent and made an item, and kept in the folder flagged unmatched.
+    #[default]
+    Send,
+    /// Left on disk, not sent, with no item, until it matches or this changes.
+    Hold,
+}
+
+impl OutsideQuery {
+    fn is_send(&self) -> bool {
+        *self == OutsideQuery::Send
+    }
 }
 
 /// The fewest and most seconds between a watch's full passes.
@@ -782,6 +803,29 @@ mod tests {
             .addition_threshold;
         assert!(fraction_only.exceeded(1, 0));
         assert!(!fraction_only.exceeded(0, 0));
+    }
+
+    #[test]
+    fn a_new_file_outside_the_query_is_sent_unless_the_folder_holds_it() {
+        assert_eq!(read(json!({})).unwrap().outside_query, OutsideQuery::Send);
+        let hold = read(json!({ "outside_query": "hold" })).unwrap();
+        assert_eq!(hold.outside_query, OutsideQuery::Hold);
+        assert_eq!(
+            serde_json::to_value(&hold).unwrap()["outside_query"],
+            "hold"
+        );
+        let sent = serde_json::to_value(read(json!({ "outside_query": "send" })).unwrap()).unwrap();
+        assert!(sent.get("outside_query").is_none(), "{sent}");
+        for refused in [
+            json!("keep"),
+            json!("Hold"),
+            json!(true),
+            json!(null),
+            json!(1),
+        ] {
+            let error = read(json!({ "outside_query": refused }));
+            assert!(error.is_err(), "{refused}");
+        }
     }
 
     #[test]
