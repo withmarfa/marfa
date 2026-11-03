@@ -2999,35 +2999,84 @@ mod tests {
 
     #[test]
     fn a_page_that_ends_the_pass_leaves_the_later_pages_unread() {
-        for refusal in [
-            scripted::refusal(503, "unavailable"),
-            scripted::refusal(429, "rate_limited"),
-        ] {
-            let server = Scripted::start();
-            let core = hydrated_copy(&server);
-            let wanted = ids(0..250);
-            server.on(
-                "/items/bulk-get",
-                vec![bulk_of(&wanted[..100]), refusal, bulk_of(&wanted[200..])],
-            );
+        let server = Scripted::start();
+        let core = hydrated_copy(&server);
+        let wanted = ids(0..250);
+        server.on(
+            "/items/bulk-get",
+            vec![
+                bulk_of(&wanted[..100]),
+                scripted::refusal(429, "rate_limited"),
+                bulk_of(&wanted[200..]),
+            ],
+        );
 
-            let answered = core.pin_many(&wanted);
+        let answered = core.pin_many(&wanted);
 
-            assert_eq!(
-                server.seen("/items/bulk-get").len(),
-                2,
-                "a page was read after it"
-            );
-            assert_eq!(answered.len(), 250);
-            assert!(
-                answered[..100]
-                    .iter()
-                    .all(|(_, held)| matches!(held, Ok(true)))
-            );
-            assert!(answered[100..].iter().all(|(_, held)| held.is_err()));
-            let conn = core.conn().unwrap();
-            assert_eq!(store::pins(&conn).unwrap(), wanted[..100].to_vec());
-        }
+        assert_eq!(
+            server.seen("/items/bulk-get").len(),
+            2,
+            "a page was read after it"
+        );
+        assert_eq!(answered.len(), 250);
+        assert!(
+            answered[..100]
+                .iter()
+                .all(|(_, held)| matches!(held, Ok(true)))
+        );
+        assert!(answered[100..].iter().all(|(_, held)| held.is_err()));
+        let conn = core.conn().unwrap();
+        assert_eq!(store::pins(&conn).unwrap(), wanted[..100].to_vec());
+    }
+
+    #[test]
+    fn a_page_the_server_fails_with_a_5xx_fails_only_its_own_rows() {
+        let server = Scripted::start();
+        let core = hydrated_copy(&server);
+        let wanted = ids(0..250);
+        server.on(
+            "/items/bulk-get",
+            vec![
+                bulk_of(&wanted[..100]),
+                scripted::refusal(503, "unavailable"),
+                bulk_of(&wanted[200..]),
+            ],
+        );
+
+        let answered = core.pin_many(&wanted);
+
+        assert_eq!(server.seen("/items/bulk-get").len(), 3);
+        assert!(
+            answered[..100]
+                .iter()
+                .all(|(_, held)| matches!(held, Ok(true)))
+        );
+        assert!(answered[100..200].iter().all(|(_, held)| held.is_err()));
+        assert!(
+            answered[200..]
+                .iter()
+                .all(|(_, held)| matches!(held, Ok(true)))
+        );
+    }
+
+    #[test]
+    fn only_a_failure_that_reaches_every_page_ends_the_pass() {
+        let ends = |error: CoreError| crate::pin_pass_ends(&error);
+        assert!(ends(CoreError::Canceled));
+        assert!(ends(CoreError::NoServer));
+        assert!(ends(CoreError::Network("offline".into())));
+        assert!(ends(CoreError::RateLimited {
+            code: "rate_limited".into(),
+            message: String::new(),
+            retry_after_seconds: None,
+        }));
+        assert!(!ends(CoreError::Server {
+            status: 503,
+            code: "unavailable".into(),
+            message: String::new(),
+            details: None,
+        }));
+        assert!(!ends(CoreError::Invalid("bad".into())));
     }
 
     #[test]
@@ -3048,6 +3097,34 @@ mod tests {
 
         assert!(answered.iter().all(|(_, held)| held.is_err()));
         assert!(store::pins(&core.conn().unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_unpin_leaves_no_later_pin_and_the_reads_own_error_wins() {
+        let server = Scripted::start();
+        let core = hydrated_copy(&server);
+        {
+            let conn = core.conn().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER keep_first BEFORE DELETE ON pins WHEN OLD.item_id = 'end-000'
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            )
+            .unwrap();
+        }
+        server.on(
+            "/items/bulk-get",
+            vec![scripted::refusal(400, "invalid_request")],
+        );
+        let wanted = ids(0..3);
+
+        let answered = core.pin_many(&wanted);
+
+        assert!(
+            answered
+                .iter()
+                .all(|(_, held)| matches!(held, Err(CoreError::Validation { .. })))
+        );
+        assert_eq!(store::pins(&core.conn().unwrap()).unwrap(), ["end-000"]);
     }
 
     #[test]

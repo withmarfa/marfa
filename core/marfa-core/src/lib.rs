@@ -923,9 +923,9 @@ impl Core {
     /// the copy does not hold has nothing to let go or keep.
     ///
     /// A failure of one page is its ids' own and a later page is still read,
-    /// unless it would end a pass (`Canceled`, an environmental failure such
-    /// as offline or rate limited, or what ends a drain, an expired copy
-    /// among it): the rest are answered with that error, unread. A row the
+    /// a 5xx among them, unless it would end a pass (`Canceled`, offline, rate
+    /// limited, or what ends a drain, an expired copy among it): the rest are
+    /// answered with that error, unread. A row the
     /// copy holds is the caller's to filter out, since a read by id answers a
     /// row in the bin as gone and this does not ask the bin.
     pub(crate) fn pin_many(&self, ids: &[String]) -> Vec<(String, Result<bool>)> {
@@ -946,11 +946,7 @@ impl Core {
             match read {
                 Ok(held) => answered.extend(page.iter().cloned().zip(held.into_iter().map(Ok))),
                 Err(error) => {
-                    if ended.is_none()
-                        && (drain::ends_the_drain(&error)
-                            || matches!(error, CoreError::Canceled | CoreError::NoServer)
-                            || error.is_environmental())
-                    {
+                    if ended.is_none() && pin_pass_ends(&error) {
                         ended = Some(error.clone());
                     }
                     answered.extend(page.iter().map(|id| (id.clone(), Err(error.clone()))));
@@ -1010,17 +1006,27 @@ impl Core {
             tx.commit()?;
             Ok(held)
         })();
+        let mut unpin_failed: Option<CoreError> = None;
         {
             let conn = self.conn()?;
             if context.check(&conn).is_ok() {
                 for (at, id) in ids.iter().enumerate() {
-                    if added[at] && !matches!(&read, Ok(held) if held[at]) {
-                        store::unpin(&conn, id)?;
+                    if added[at]
+                        && !matches!(&read, Ok(held) if held[at])
+                        && let Err(error) = store::unpin(&conn, id)
+                    {
+                        unpin_failed.get_or_insert(error);
                     }
                 }
             }
         }
-        read.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))
+        match read {
+            Ok(held) => match unpin_failed {
+                Some(error) => Err(error),
+                None => Ok(held),
+            },
+            Err(error) => Err(context.failed(self, error).unwrap_or_else(|error| error)),
+        }
     }
 
     /// A row the slice does not take leaves the copy, unless writes to it
@@ -9300,5 +9306,19 @@ mod forgetting_named_tests {
         assert_eq!(core.forget_answered_ids(&["leftover".into()]).unwrap(), 1);
         let left: Vec<_> = core.queue().unwrap().into_iter().map(|w| w.id).collect();
         assert_eq!(left, vec!["other".to_string()]);
+    }
+}
+
+/// Whether a failed page of `pin_many` would fail every page after it. A
+/// server's 5xx fails only its own page, so later pages are still read.
+fn pin_pass_ends(error: &CoreError) -> bool {
+    match error {
+        CoreError::RenewalFailed(cause) => pin_pass_ends(cause),
+        CoreError::Server { status, .. } if (500..=599).contains(status) => false,
+        _ => {
+            drain::ends_the_drain(error)
+                || matches!(error, CoreError::Canceled | CoreError::NoServer)
+                || error.is_environmental()
+        }
     }
 }
