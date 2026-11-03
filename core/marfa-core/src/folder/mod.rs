@@ -1039,6 +1039,51 @@ impl Folder {
         landing::land_at(&directory, Path::new(&name), fill, still)
     }
 
+    /// `land`, for a pull's bulk of files: each only ordered before what is
+    /// written after it, and made durable by [`Folder::flush_landed`], which
+    /// the pull ends with. Ordering is enough only where the file and the
+    /// store that records it share a volume; elsewhere it lands in full.
+    fn land_ordered(
+        &self,
+        path: &Path,
+        fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
+        still: impl FnOnce(Option<&[u8]>) -> bool,
+    ) -> std::result::Result<std::fs::Metadata, landing::Unlanded> {
+        if let Some(gone) = self.root_gone() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
+        }
+        let (directory, name) = self.location(path, true)?;
+        swap_root(&self.root, "replace-root-before-publication");
+        if self.on_the_stores_volume(&directory) {
+            landing::land_ordered_at(&directory, Path::new(&name), fill, still)
+        } else {
+            landing::land_at(&directory, Path::new(&name), fill, still)
+        }
+    }
+
+    /// Whether `directory` is on the volume of the folder's store, which
+    /// lives in the folder's own `.marfa` and so is the folder's volume
+    /// unless a mount sits in between. Answers no where either cannot be read.
+    #[cfg(unix)]
+    fn on_the_stores_volume(&self, directory: &Directory) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        match (directory.metadata(), self.state_dir.metadata()) {
+            (Ok(there), Ok(store)) => there.dev() == store.dev(),
+            _ => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn on_the_stores_volume(&self, _: &Directory) -> bool {
+        false
+    }
+
+    /// Makes the files `land_ordered` wrote durable, before a run reports
+    /// them written.
+    pub(super) fn flush_landed(&self) -> std::io::Result<()> {
+        landing::flush_landed(&self.root_dir)
+    }
+
     fn location(
         &self,
         path: &Path,
@@ -6246,6 +6291,42 @@ mod tests {
                 assert!(body_of(&folder, to).starts_with(edit));
             }
         }
+    }
+
+    #[test]
+    fn a_pull_ends_with_one_full_flush_however_many_files_it_lands() {
+        let (dir, folder) = settled_notes(&["a.md", "b.md", "c.md"]);
+        let mut counted = Vec::new();
+        for (round, names) in [&["a.md"][..], &["a.md", "b.md", "c.md"]]
+            .into_iter()
+            .enumerate()
+        {
+            let body = format!("from elsewhere {round}");
+            for name in names {
+                changed_elsewhere(&folder, &landed(&folder, name), &body);
+            }
+            landing::COUNTS.with(|counts| counts.set((0, 0)));
+            let pulled = folder.pull().unwrap();
+            assert_eq!(pulled.rewritten, names.len(), "{pulled:?}");
+            for name in names {
+                assert!(read(dir.path(), name).unwrap().contains(&body));
+            }
+            counted.push(landing::COUNTS.with(std::cell::Cell::get));
+        }
+        // The first pull also writes the settings file, in full; the second
+        // lands three files and ends with the one flush for them all.
+        assert_eq!(counted[1].1, 1, "{counted:?}: a full flush a file");
+        if cfg!(any(target_os = "macos", target_os = "ios")) {
+            assert_eq!(
+                counted[1].0,
+                counted[0].0 + 4,
+                "{counted:?}: two ordering flushes a file"
+            );
+        }
+        // The witness: a pull that lands nothing flushes nothing.
+        landing::COUNTS.with(|counts| counts.set((0, 0)));
+        folder.pull().unwrap();
+        assert_eq!(landing::COUNTS.with(std::cell::Cell::get), (0, 0));
     }
 
     #[test]
