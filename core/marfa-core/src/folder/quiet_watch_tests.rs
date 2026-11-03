@@ -695,3 +695,56 @@ fn a_save_made_just_after_the_pull_landed_a_file_is_read_by_the_next_pass() {
         "the next quick pass skipped the person's save as unchanged"
     );
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_quiet_watch_over_a_refused_placement_wakes_once_the_key_can_be_read_again() {
+    let key = |grant: &str| {
+        crate::scripted::json(
+            200,
+            &format!(r#"{{"id":"key","edge_permissions":{{"{grant}":"write"}}}}"#),
+        )
+    };
+    let (_dir, folder, server, mut passes) = watched_notes(&["a.md", "b.md"]);
+    server.on("/keys/current", vec![key("references")]);
+    let id = super::tests::id_at(&folder, "a.md");
+    // The server refused the placement under a key that may not place, and
+    // the copy took it back.
+    folder.withhold(&id, "a.md").unwrap();
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "DELETE FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+            [&id, PLACEMENT_EDGE],
+        )
+        .unwrap();
+    passes.run(&folder, false).unwrap();
+    assert!(
+        folder.placement(&id).unwrap().is_none(),
+        "a placement was sent under the refusal that withholds it"
+    );
+
+    // The witness for the rest: the watch is not run for the refusal at
+    // every tick.
+    for _ in 0..30 {
+        assert!(
+            !passes.tick(&folder).unwrap(),
+            "a standing refusal ran a pass at a tick before the key could be read again"
+        );
+    }
+
+    // The grant is back, which no event tells, and the minute the key's
+    // answer stands for is over.
+    server.on("/keys/current", vec![key("*")]);
+    passes.elapse_key(&folder, Duration::from_secs(61));
+    assert!(
+        passes.tick(&folder).unwrap(),
+        "a watch at rest slept past the minute the key is read again in"
+    );
+    assert!(
+        folder.placement(&id).unwrap().is_some(),
+        "the restored grant did not release the refused placement"
+    );
+}

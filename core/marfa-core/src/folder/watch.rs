@@ -606,6 +606,11 @@ impl Folder {
                 .lock()
                 .expect("give-way lock")
                 .is_empty();
+        telling.key_due = if telling.at_rest {
+            self.key_read_due()?
+        } else {
+            None
+        };
         if let Some(event) = event {
             tell(event).map_err(WatchError::Told)?;
         }
@@ -672,6 +677,14 @@ impl Passes {
             return Ok(false);
         }
         self.run(folder, false).map(|()| true)
+    }
+
+    /// Lets `by` pass on the key's clock: the key read a refusal stands under
+    /// grows older, and the watch's wake for it with it.
+    #[cfg(debug_assertions)]
+    pub(super) fn elapse_key(&mut self, folder: &Folder, by: Duration) {
+        folder.age_key_read(by);
+        self.telling.key_due = self.telling.key_due.and_then(|due| due.checked_sub(by));
     }
 
     /// The pulls the passes ran rather than reused since the last call.
@@ -1115,6 +1128,9 @@ struct Telling {
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
     at_rest: bool,
+    /// When the key a refused placement is held under can be asked again,
+    /// which ends the rest: only a pass meets a grant that came back.
+    key_due: Option<Instant>,
     /// When the last pass began its scan.
     scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.
@@ -1134,7 +1150,10 @@ impl Telling {
     /// folder the last pass left at rest: a pass walks the whole folder, so
     /// it is not run to find out.
     fn rests(&self, full: bool, changed: bool) -> bool {
-        !full && !changed && self.at_rest
+        !full
+            && !changed
+            && self.at_rest
+            && self.key_due.is_none_or(|due| crate::clock::now() < due)
     }
 
     /// Whether a change the copy took at `applied` is one the last pull did not

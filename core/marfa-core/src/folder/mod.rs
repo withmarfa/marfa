@@ -4545,7 +4545,7 @@ mod tests {
         passes.run(&folder, false).unwrap();
     }
 
-    fn id_at(folder: &Folder, path: &str) -> String {
+    pub(super) fn id_at(folder: &Folder, path: &str) -> String {
         state::bound_at(&folder.core.conn().unwrap(), path)
             .unwrap()
             .unwrap()

@@ -330,6 +330,32 @@ impl Folder {
         asked
     }
 
+    /// Makes the key read the refusal stands under `by` older, as a test
+    /// does to meet the minute that must pass before it is asked again.
+    #[cfg(all(test, debug_assertions))]
+    pub(super) fn age_key_read(&self, by: Duration) {
+        if let Some(read) = self.key.lock().unwrap().as_mut() {
+            read.at = read.at.checked_sub(by).expect("an instant that far back");
+        }
+    }
+
+    /// When the key a standing refusal is held under is next asked, which is
+    /// when a restored grant can first be met, or `None` where no refusal
+    /// stands. No change to the copy or the folder tells that the grant came
+    /// back, so a watch at rest wakes then.
+    pub(super) fn key_read_due(&self) -> Result<Option<Instant>> {
+        if store::meta_get(&*self.core.conn()?, META_REFUSED)?.is_none() {
+            return Ok(None);
+        }
+        let last = self
+            .key
+            .lock()
+            .map_err(|_| CoreError::Store("the key's record was poisoned".into()))?;
+        Ok(Some(last.as_ref().map_or_else(crate::clock::now, |read| {
+            read.at + KEY_REREAD
+        })))
+    }
+
     /// Gives way where another machine placed or moved the item first,
     /// whichever drain the server said so in, and remembers any other refusal
     /// this drain reports. Reads nothing where the drain already found the
@@ -555,7 +581,7 @@ impl Folder {
     }
 
     /// Remembers a refusal of the item's placement at `path`, as a drain does.
-    #[cfg(test)]
+    #[cfg(all(test, debug_assertions))]
     pub(super) fn withhold(&self, item_id: &str, path: &str) -> Result<()> {
         self.remember_refused(vec![(
             item_id.to_string(),
