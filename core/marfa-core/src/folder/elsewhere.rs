@@ -554,27 +554,19 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// Whether another folder holds the item as a document: its copy holds
-    /// it, or its record names it. A copy narrowed by its query lets go of
-    /// an item that leaves the query before its folder lets go of the file,
-    /// so only the record still says the file came from there
-    /// (`folders/cross-folder-unheld-read`).
+    /// Whether another folder's copy holds the item as a document. A copy
+    /// narrowed by its query still holds every item its folder's files name,
+    /// since each binding pins its item until the file is let go.
     pub(super) fn held_elsewhere(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
-            let Some(folder) = &peer.folder else {
-                return false;
-            };
-            let held = folder.core.get(item_id).ok().flatten();
-            if let Some(item) = held {
-                return !item.r#type.starts_with("system.");
-            }
-            peer.bound().values().any(|(bound, _)| bound == item_id)
-                || folder.core.conn().ok().is_some_and(|conn| {
-                    state::journaled(&conn)
-                        .unwrap_or_default()
-                        .iter()
-                        .any(|journaled| journaled.item_id == item_id)
-                })
+            peer.folder.as_ref().is_some_and(|folder| {
+                folder
+                    .core
+                    .get(item_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|item| !item.r#type.starts_with("system."))
+            })
         })
     }
 

@@ -5902,13 +5902,13 @@ When a signal stops `folders watch` after it moved the log aside while it ran (`
 
 ## Taking in another folder’s file
 
-### `folders/cross-folder-unheld-read`
+### `folders/copy-holds-bound`
 
-When a device judges a file that moved between two folders on one machine, and the copy of the folder it reaches does not hold the file's item while the other folder's record names it, a device MUST read the item by id before it decides whether the folder holds it.
+Where a folder's copy has a query, a device MUST hold every item that a file of the folder is bound to, whether or not the query takes the item.
 
-**Reason:** a narrowed copy does not hold every row of its types, so a row it does not hold may still be one its folder shows.
+**Reason:** a scan of another folder on the same machine tells a file moved from this folder by whether this folder's copy holds the file's item.
 
-**Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
+**Tests:** `device/folders-copy-shrink.test.ts › keeps an item a file is bound to when an event takes it out of the query`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folders/take-in-file`
 

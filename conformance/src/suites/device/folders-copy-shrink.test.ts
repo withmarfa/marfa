@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -345,7 +351,7 @@ async function unsentWork(
   value(await device.catchUp());
   const waiting = await waits(harness);
   expect(waiting["deleted.md"]).toEqual(["delete"]);
-  expect(waiting.paused).toEqual({ disk: 0, pull: 2 });
+  expect(waiting.paused).toEqual({ disk: 0, pull: 2, additions: 0 });
   return {
     copyId,
     waits: waiting,
@@ -539,6 +545,43 @@ describe("a narrowed copy kept by catch-up", () => {
       ),
       "a row entering the query was held without a read of its edges",
     ).toBe(true);
+  });
+
+  it("keeps an item a file is bound to when an event takes it out of the query", async () => {
+    const log = await narrowed("copy-query-bound", [
+      note(1, "bound", ["a"]),
+      note(3, "unbound", ["b"]),
+    ]);
+    value(await harness!.folder.pull());
+    expect(existsSync(join(harness!.dir, "bound.md"))).toBe(true);
+    // The witness: a row with no file, held by the query alone.
+    const entering = note(3, "unbound", ["a"]);
+    harness!.rows["core.note"] = [note(1, "bound", ["a"]), entering];
+    log.push(
+      copyItemEvent("2", "metadata.changed", wireItem(entering.item), {
+        tags: ["a"],
+      }),
+    );
+    value(await harness!.folder.device().catchUp());
+    expect(await heldIds(harness!)).toEqual([id(1), id(3)]);
+
+    const leaving = [note(1, "bound", ["b"]), note(3, "unbound", ["b"])];
+    harness!.rows["core.note"] = leaving;
+    for (const [index, row] of leaving.entries()) {
+      log.push(
+        copyItemEvent(
+          String(index + 3),
+          "metadata.changed",
+          wireItem(row.item),
+          { tags: ["b"] },
+        ),
+      );
+    }
+    value(await harness!.folder.device().catchUp());
+    expect(
+      await heldIds(harness!),
+      "the copy let go of an item its folder still has a file for",
+    ).toEqual([id(1)]);
   });
 
   it("keeps a row a waiting write names when an event takes it out of the query", async () => {
