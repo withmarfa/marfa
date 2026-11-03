@@ -2,6 +2,10 @@
 
 The server (`packages/`), the Rust core every native client embeds (`core/`), and the contract both are held to (`conformance/`). The Swift SDK lives in `withmarfa/marfa-swift`.
 
+## The server may move to Rust
+
+Rewriting the server in Rust is being considered, and nothing about it is decided yet. Weigh it when reasoning about server work: effort that a rewrite would throw away, such as reshaping or optimizing server code, may not be worth spending now. Such a move would carry no legacy: no compatibility with how the TypeScript server works today, only with what the contract states. It would aim to be done well rather than quickly. Do not treat today's server design, or earlier advice against Rust, as settled.
+
 ## Working here
 
 - American English in code, comments and commits. Scoped Conventional Commits (`fix(server):`, `refactor(core):`).
