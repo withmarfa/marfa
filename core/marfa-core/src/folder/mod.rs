@@ -5862,6 +5862,31 @@ mod tests {
         assert!(folder.core.get(&id).unwrap().is_some(), "the item went");
     }
 
+    #[test]
+    fn removing_unmatched_keeps_a_new_file_the_person_edited_since_the_scan() {
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        set_item_state(&folder, &id, "archived");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        let conn = folder.core.conn().unwrap();
+        let mut row = state::bound_at(&conn, "new.md").unwrap().unwrap();
+        row.writes.queued.clear();
+        state::bind(&conn, &row).unwrap();
+        drop(conn);
+        std::fs::write(
+            dir.path().join("new.md"),
+            "---\nstate: archived\n---\nedited\n",
+        )
+        .unwrap();
+        let done = folder.remove_unmatched(&["new.md".to_string()]).unwrap();
+        assert!(done.removed.is_empty(), "{done:?}");
+        assert_eq!(done.kept.len(), 1, "{done:?}");
+        assert!(dir.path().join("new.md").exists());
+        assert_eq!(
+            state::new_outside_state(&folder.core.conn().unwrap()).unwrap(),
+            vec![id]
+        );
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
