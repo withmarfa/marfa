@@ -1504,8 +1504,9 @@ pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>
 
 /// Whether the copy keeps the row it holds under `id`, judged on the row as
 /// held: pinned, named by a write still waiting (`waiting_write_names`), or
-/// listed and taken by the slice's types, tier and query. One rule for every path that takes a
-/// server row, so the copy holds the same rows whichever brought them.
+/// listed and taken by the slice's types, tier and query. One rule for every
+/// path that takes a server row, so the copy holds the same rows whichever
+/// brought them.
 pub fn keeps_held(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
