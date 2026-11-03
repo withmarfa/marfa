@@ -99,6 +99,7 @@ export class SqliteRateLimitStore implements RateLimitStore {
     keys: string[],
     windowMs: number,
     nowIso: string,
+    by?: ReadonlyMap<string, { count: number; expires_at: string }>,
   ): Promise<Map<string, { count: number; expires_at: string }>> {
     const result = new Map<string, { count: number; expires_at: string }>();
     // Deduplicated, because the upsert applies a repeated conflict target
@@ -113,18 +114,28 @@ export class SqliteRateLimitStore implements RateLimitStore {
     const rows = await this.db
       .insert(rateLimitWindows)
       .values(
-        unique.map((key) => ({
-          family,
-          window_key: key,
-          count: 1,
-          expires_at: nextExpiresAt,
-        })),
+        unique.map((key) => {
+          const increment = by?.get(key);
+          if (
+            increment &&
+            !(Number.isSafeInteger(increment.count) && increment.count > 0)
+          )
+            throw new Error(
+              `rateLimits.incrementWindows: ${String(increment.count)} is not a count to add`,
+            );
+          return {
+            family,
+            window_key: key,
+            count: increment?.count ?? 1,
+            expires_at: increment?.expires_at ?? nextExpiresAt,
+          };
+        }),
       )
       .onConflictDoUpdate({
         target: [rateLimitWindows.family, rateLimitWindows.window_key],
         set: {
-          count: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN 1 ELSE ${rateLimitWindows.count} + 1 END`,
-          expires_at: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN ${nextExpiresAt} ELSE ${rateLimitWindows.expires_at} END`,
+          count: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN excluded.count ELSE ${rateLimitWindows.count} + excluded.count END`,
+          expires_at: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN excluded.expires_at ELSE ${rateLimitWindows.expires_at} END`,
         },
       })
       .returning({
