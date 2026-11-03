@@ -6826,19 +6826,19 @@ While a folder watch runs, a device MUST perform a full scan at its first pass a
 
 **Reason:** A full scan reads every file, to find a change the system did not report.
 
-**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past ten minutes where the folder names none`, `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past the folder's own interval`.
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`.
 
 ### `folders/watch-full-pass-interval-default`
 
 Where a folder's settings name no `full_pass_interval_seconds`, a device MUST use 600 seconds as the folder's full-pass interval.
 
-**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past ten minutes where the folder names none`.
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`.
 
 ### `folders/watch-full-pass-interval-own`
 
 Where a folder's settings name `full_pass_interval_seconds`, a device MUST use that many seconds as that folder's full-pass interval, so that watches of several folders each keep their own.
 
-**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past the folder's own interval`.
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past $named`.
 
 ### `folders/watch-full-pass-interval-followed`
 
