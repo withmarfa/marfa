@@ -44,8 +44,9 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  *
  * Hot path: one upsert per gated request, in a write transaction that never
  * waits for the lock (`WindowLedger` below says what happens when it is
- * held, and what that costs). The shared `rate_limit_windows` rows have their own retention sweep
- * (`RateLimitWindowCleaner` in storage/retention.ts).
+ * held, and what that costs). The shared `rate_limit_windows` rows have
+ * their own retention sweep (`RateLimitWindowCleaner` in
+ * storage/retention.ts).
  *
  * Configuration is required — there is no fallback that reads
  * `process.env`. `app.ts` constructs the config from `AppConfig`.
