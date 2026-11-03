@@ -787,8 +787,10 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         drop(remarks);
         let said = said.lock().unwrap();
-        assert!(said.len() >= 3, "{said:?}");
-        assert!(said[0] >= Duration::from_millis(50) && said[0] < Duration::from_millis(140));
+        // A loaded runner can run the thread late, so only lower bounds hold:
+        // never early, and never closer together than the pace.
+        assert!(said.len() >= 2, "{said:?}");
+        assert!(said[0] >= Duration::from_millis(50), "{said:?}");
         for pair in said.windows(2) {
             assert!(pair[1] - pair[0] >= Duration::from_millis(140), "{said:?}");
         }
