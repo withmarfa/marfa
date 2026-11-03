@@ -167,8 +167,9 @@ enum Wake {
     /// What the watcher delivered, with when it delivered it: a pass can run
     /// for seconds before the loop reads it.
     File(notify::Result<notify::Event>, Instant),
-    /// The copy changed, as of when the follow had applied the change.
-    Server(Instant),
+    /// The copy changed, as of when the follow had applied the change, with
+    /// the item the change names where it names one.
+    Server(Instant, Option<String>),
     Retrying(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
@@ -335,9 +336,9 @@ impl Folder {
                     gate.changed(delivered);
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Server(applied)) => {
+                Ok(Wake::Server(applied, item)) => {
                     stale = true;
-                    if self.unseen_by_pass(&telling, applied) {
+                    if self.unseen_by_pass(&telling, applied, item.as_deref()) {
                         changed = true;
                         telling.health_changed = true;
                     }
@@ -720,7 +721,7 @@ fn follow(
             retry = RETRY_FIRST;
             said = false;
             if hydrated.is_some() {
-                let _ = wakes.send(Wake::Server(crate::clock::now()));
+                let _ = wakes.send(Wake::Server(crate::clock::now(), None));
             }
             folder.core().follow_observed(
                 ended,
@@ -735,7 +736,7 @@ fn follow(
                             unreachable = false;
                             Wake::Reach(None)
                         }
-                        _ => Wake::Server(crate::clock::now()),
+                        _ => Wake::Server(crate::clock::now(), change.item_id.clone()),
                     });
                 },
                 |live| {
@@ -827,19 +828,24 @@ impl Folder {
         }))
     }
 
-    /// Whether a server change the copy took at `applied` is one the last
-    /// pass did not act on. The pull read every change applied before it
-    /// began, but it leaves a held file be, so a change applied after the scan
-    /// began is no news to the pass only where no file is held or refused:
-    /// only the scan judges such a file's links again. A change the scan began
-    /// after is in what both read.
-    fn unseen_by_pass(&self, telling: &Telling, applied: Instant) -> bool {
+    /// Whether a server change the copy took at `applied`, to `item` where it
+    /// names one, is one the last pass did not act on. The pull read every
+    /// change applied before it began, but it leaves a held file be, and only
+    /// the scan judges such a file's links again. So a change applied after
+    /// the scan began is news to the pass where a file is held or refused and
+    /// the change is to an item no file is bound to, which may be what a held
+    /// link names. A change to an item a file is bound to, such as the echo of
+    /// an edit the pass sent, names no new link target.
+    fn unseen_by_pass(&self, telling: &Telling, applied: Instant, item: Option<&str>) -> bool {
         telling.unseen_by_pull(applied)
             || (telling.scan_began.is_none_or(|began| applied >= began)
-                && self
-                    .core
-                    .conn()
-                    .is_ok_and(|conn| super::state::any_held_or_refused(&conn).unwrap_or(true)))
+                && self.core.conn().is_ok_and(|conn| {
+                    super::state::any_held_or_refused(&conn).unwrap_or(true)
+                        && item.is_none_or(|item| {
+                            super::state::bound_to_item(&conn, item)
+                                .map_or(true, |bound| bound.is_none())
+                        })
+                }))
     }
 
     /// Read in one transaction, so a change committed between two of the
@@ -1581,7 +1587,8 @@ mod tests {
 
     #[test]
     fn a_server_change_applied_between_the_scan_and_the_pull_starts_a_pass_where_a_file_is_held() {
-        let (_dir, folder, _server, _passes, _id) = super::super::quiet_watch_tests::held_note();
+        let (_dir, folder, _server, _passes, bound_item) =
+            super::super::quiet_watch_tests::held_note();
         let scan_began = Instant::now();
         let telling = Telling {
             scan_began: Some(scan_began),
@@ -1592,16 +1599,25 @@ mod tests {
         // applied, and the pull leaves a held file be.
         let between = scan_began + SECOND;
         assert!(
-            folder.unseen_by_pass(&telling, between),
-            "a change the scan did not see, with a file held, started no pass"
+            folder.unseen_by_pass(&telling, between, Some("an-item-no-file-is-bound-to")),
+            "a new item the scan did not see, with a file held, started no pass"
         );
-        // The witnesses: one the scan had, one the pull had and no file is
-        // held for, and one after the pull's start.
-        assert!(!folder.unseen_by_pass(&telling, scan_began - Duration::from_millis(1)));
-        assert!(folder.unseen_by_pass(&telling, scan_began + 2 * SECOND));
+        assert!(
+            folder.unseen_by_pass(&telling, between, None),
+            "a change naming no item, with a file held, started no pass"
+        );
+        // The witnesses: the echo of an edit to a bound item, one the scan
+        // had, one after the pull's start, and one where no file is held.
+        assert!(!folder.unseen_by_pass(&telling, between, Some(&bound_item)));
+        assert!(!folder.unseen_by_pass(
+            &telling,
+            scan_began - Duration::from_millis(1),
+            Some("an-item-no-file-is-bound-to")
+        ));
+        assert!(folder.unseen_by_pass(&telling, scan_began + 2 * SECOND, Some(&bound_item)));
         let (_dir, quiet, _server, _passes) = crate::folder::tests::watched_notes(&["a.md"]);
         assert!(
-            !quiet.unseen_by_pass(&telling, between),
+            !quiet.unseen_by_pass(&telling, between, Some("an-item-no-file-is-bound-to")),
             "the pull read it and nothing is held, yet a pass would run"
         );
     }
