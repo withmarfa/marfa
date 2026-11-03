@@ -1814,7 +1814,7 @@ impl Folder {
             if by_item.contains_key(theirs.item_id.as_str()) || taken.contains(&theirs.item_id) {
                 continue;
             }
-            match self.read_moved(&theirs.item_id)? {
+            match self.read_unheld(&theirs.item_id)? {
                 Some(reason) => {
                     waiting.insert(at, reason);
                 }
@@ -1946,8 +1946,14 @@ impl Folder {
                 Arrival::Copy
             });
         }
-        if self.core.get(id)?.is_none() && peers.held_elsewhere(id) {
-            return Ok(match self.read_moved(id)? {
+        // A narrowed copy leaves out items the folder does not show, so an id
+        // it does not hold may still name an item on the server: read it
+        // before the file makes a new one (`folders/narrowed-arrival-read`).
+        if self.core.get(id)?.is_none()
+            && (peers.held_elsewhere(id)
+                || crate::store::slice_query(&*self.core.conn()?)?.is_some())
+        {
+            return Ok(match self.read_unheld(id)? {
                 Some(reason) => Arrival::Waits(reason),
                 None => Arrival::Here,
             });
@@ -1963,14 +1969,14 @@ impl Folder {
 
     /// `Some` with why where the item cannot be asked now. An item the server
     /// will not show leaves a new item.
-    fn read_moved(&self, id: &str) -> Result<Option<String>> {
+    fn read_unheld(&self, id: &str) -> Result<Option<String>> {
         if self.core.get(id)?.is_some() {
             return Ok(None);
         }
         match self.core.pin(id) {
             Ok(_) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => Ok(None),
             Err(error) => Ok(Some(format!(
-                "it carries the id of an item moved from another folder on this machine, which cannot be read yet ({error}); it is taken at the next push"
+                "it carries the id of an item this copy does not hold, which cannot be read yet ({error}); it is taken at the next push"
             ))),
         }
     }

@@ -5910,6 +5910,14 @@ Where a folder's copy has a query, a device MUST hold every item that a file of 
 
 **Tests:** `device/folders-copy-shrink.test.ts › keeps an item a file is bound to when an event takes it out of the query`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
+### `folders/narrowed-arrival-read`
+
+Where a folder's copy has a query, when a scan finds a file whose `marfa_id` names an item the copy does not hold and the server holds that item for the folder's key, a device MUST send the file as an edit of that item, not as a new item.
+
+**Reason:** a narrowed copy leaves out items the folder does not show, so a file restored from a backup, copied from another Mac or moved from a folder that is not registered can name an item the server holds. A new item would duplicate it under another id.
+
+**Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`.
+
 ### `folders/take-in-file`
 
 When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
