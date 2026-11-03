@@ -292,6 +292,7 @@ impl Folder {
         // change on disk or from the server.
         let mut stale = false;
         let mut rate = PassRate::default();
+        let mut unread: Option<Wake> = None;
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -301,7 +302,13 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-watch-turn");
-            match crate::clock::recv_timeout(events, stop, gate.listen_for(crate::clock::now())) {
+            let heard = match unread.take() {
+                Some(wake) => Ok(wake),
+                None => {
+                    crate::clock::recv_timeout(events, stop, gate.listen_for(crate::clock::now()))
+                }
+            };
+            match heard {
                 Ok(Wake::File(Ok(event), delivered)) => {
                     if stale {
                         lists = self.settings().and_then(|settings| settings.lists()).ok();
@@ -351,6 +358,12 @@ impl Folder {
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            // What arrived while a pass ran is read, in order, before the gate
+            // is asked: a change heard first is older than one still waiting.
+            unread = events.try_recv().ok();
+            if unread.is_some() && gate.reads_first(crate::clock::now()) {
+                continue;
             }
             // No pass runs while the server's rate limit lasts, since a write
             // sent before it ends is refused again: changes on disk wait
@@ -905,6 +918,12 @@ impl Gate {
             || now.duration_since(self.last_pass) >= HELD_MOST
     }
 
+    /// Whether events already waiting are read before a pass is considered:
+    /// until the longest a steady change holds a pass off is over.
+    fn reads_first(&self, now: Instant) -> bool {
+        now.duration_since(self.last_pass) < HELD_MOST
+    }
+
     /// How long to wait for an event before looking again: the settle time
     /// a change still has to run, or a tick where no pass waits on it.
     fn listen_for(&self, now: Instant) -> Duration {
@@ -1446,6 +1465,19 @@ mod tests {
         gate.passed(start + 3 * SECOND);
         assert!(!gate.due(start + 3 * SECOND));
         assert!(gate.due(start + 3 * SECOND + SETTLE));
+    }
+
+    #[test]
+    fn events_waiting_are_read_before_a_pass_unless_the_ceiling_is_reached() {
+        let now = Instant::now() + 10 * SECOND;
+        let gate = |since_pass: Duration| Gate {
+            last_change: now - 10 * SECOND,
+            last_pass: now - since_pass,
+        };
+        assert!(gate(SECOND).reads_first(now));
+        assert!(gate(HELD_MOST - Duration::from_millis(1)).reads_first(now));
+        // Witness: past the ceiling the gate is asked whatever waits.
+        assert!(!gate(HELD_MOST).reads_first(now));
     }
 
     #[test]
