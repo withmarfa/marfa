@@ -156,6 +156,15 @@ impl Settings {
         Settings::refuse_unless_folder(id, r#type)?;
         let mut properties = properties.clone();
         properties.remove("revoked_at");
+        // Said by name, since the parse of a number names only its type.
+        if let Some(value) = properties.get("full_pass_interval_seconds")
+            && !value.is_null()
+            && !value.is_u64()
+        {
+            return Err(CoreError::Invalid(format!(
+                "a folder's full_pass_interval_seconds is {value}, and a full pass runs every {FULL_PASS_INTERVAL_LEAST} to {FULL_PASS_INTERVAL_MOST} whole seconds"
+            )));
+        }
         let settings: Settings =
             serde_json::from_value(Value::Object(properties)).map_err(|error| {
                 CoreError::Invalid(format!(
@@ -670,7 +679,10 @@ mod tests {
             json!("600"),
         ] {
             let error = read(json!({ "full_pass_interval_seconds": refused }));
-            assert!(error.is_err(), "{refused}");
+            assert!(
+                error.is_err_and(|error| error.to_string().contains("full_pass_interval_seconds")),
+                "{refused}"
+            );
         }
         let low = read(json!({ "full_pass_interval_seconds": 59 })).unwrap_err();
         assert!(

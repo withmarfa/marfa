@@ -1581,6 +1581,16 @@ describe("what a folder's query holds", () => {
         named: "full_pass_interval_seconds",
       },
       {
+        condition: "a fraction of a second as the full-pass interval",
+        settings: { full_pass_interval_seconds: 600.5 },
+        named: "full_pass_interval_seconds",
+      },
+      {
+        condition: "a negative full-pass interval",
+        settings: { full_pass_interval_seconds: -60 },
+        named: "full_pass_interval_seconds",
+      },
+      {
         condition: "a setting it does not know",
         settings: { ignores: ["drafts/"] },
         named: "ignores",
