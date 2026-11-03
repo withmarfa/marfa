@@ -398,9 +398,14 @@ fn take(
         Context::capture_build(&conn)?
     };
     let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
+    let branch = entering_branch(core, &operation, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     operation.check(&tx)?;
+    let root = moves_beneath(slice, kind, payload);
+    let before = root
+        .map(|root| crate::slice::beneath_ids(&tx, root))
+        .transpose()?;
     reach::cursor(id).ok_or_else(reach::invalid)?;
     // Judged outside the transaction: a row held or pinned since is taken
     // as any held row is, and judged again once taken.
@@ -426,6 +431,11 @@ fn take(
             store::take_server_edge(&tx, edge)?;
         }
     }
+    let moved = match (root, &before) {
+        (Some(root), Some(before)) => settle_beneath(&tx, catalog, root, before, branch.as_ref())?,
+        _ => false,
+    };
+    let applied = applied || moved;
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
@@ -1530,6 +1540,112 @@ fn query_takes(
         },
     )?;
     Ok(takes == Some(true))
+}
+
+/// The root of the slice's `beneath`, for an event that changes the
+/// `parent-of` edges it walks: an edge drawn, moved or deleted, or a purge,
+/// which takes the edges its row is an end of. An item event moves nothing
+/// under it.
+fn moves_beneath<'a>(slice: &'a Slice, kind: &str, payload: &EventPayload) -> Option<&'a str> {
+    let root = slice.query.as_ref()?.beneath.as_deref()?;
+    match kind {
+        "item.purged" => Some(root),
+        "edge.created" | "edge.updated" | "edge.deleted" => payload
+            .edge
+            .as_ref()
+            .filter(|edge| edge.edge_type == crate::filter::PARENT_OF)
+            .map(|_| root),
+        _ => None,
+    }
+}
+
+/// The rows a branch brings under the slice's root, with the edges they draw.
+struct Branch {
+    rows: Vec<crate::wire::WireItemWithMetadata>,
+    edges: Vec<WireEdge>,
+}
+
+/// Read outside the transaction, under the reach: the branch a `parent-of`
+/// edge joins under the root, where the root reaches the edge's source and
+/// not yet its target. Listed as a hydration lists the slice, so the server
+/// judges the branch's types, states and filter, and a big branch comes a
+/// page at a time.
+fn entering_branch(
+    core: &Core,
+    context: &Context,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+) -> Result<Option<Branch>> {
+    let (Some(root), Some(query), Some(edge)) = (
+        moves_beneath(slice, kind, payload),
+        slice.query.as_ref(),
+        payload.edge.as_ref(),
+    ) else {
+        return Ok(None);
+    };
+    if !matches!(kind, "edge.created" | "edge.updated") {
+        return Ok(None);
+    }
+    let under = crate::slice::beneath_ids(&*core.conn()?, root)?;
+    if !under.contains(&edge.source_id) || under.contains(&edge.target_id) {
+        return Ok(None);
+    }
+    let http = context.http(core.http()?);
+    let (rows, edges) =
+        crate::hydrate::listed_beneath(&http, &slice.types, slice.tier, query, &edge.target_id)?;
+    Ok(Some(Branch { rows, edges }))
+}
+
+/// Judges again every id whose place under `root` the event moved
+/// (`device/catch-up-beneath-enters`, `device/catch-up-beneath-leaves`),
+/// on the edges as the event left them: a row of `branch` the root now
+/// reaches is taken, and a row it no longer reaches is let go unless it is
+/// kept, so a bound, pinned or waiting row stays. Whether the copy changed.
+fn settle_beneath(
+    tx: &rusqlite::Connection,
+    catalog: &Catalog,
+    root: &str,
+    before: &HashSet<String>,
+    branch: Option<&Branch>,
+) -> Result<bool> {
+    let after = crate::slice::beneath_ids(tx, root)?;
+    let mut changed = false;
+    if let Some(branch) = branch {
+        // Only rows the copy does not hold: a held row is as new as the
+        // stream has brought it, and the listing may be older.
+        let mut entered = HashSet::new();
+        for row in &branch.rows {
+            let id = &row.item.id;
+            if !after.contains(id)
+                || entered.contains(id)
+                || store::item_held(tx, id)?
+                || store::removed(tx, Subject::Item, id)?
+            {
+                continue;
+            }
+            crate::hydrate::hold_row(tx, catalog, row, &[])?;
+            entered.insert(id.clone());
+        }
+        for edge in &branch.edges {
+            if entered.contains(&edge.source_id)
+                && !store::removed(tx, Subject::Edge, &edge.id)?
+                && !store::removed(tx, Subject::Item, &edge.target_id)?
+            {
+                store::take_server_edge(tx, edge)?;
+            }
+        }
+        for id in &entered {
+            store::let_go_unless_kept(tx, catalog, id)?;
+        }
+        changed |= !entered.is_empty();
+    }
+    for id in before.difference(&after) {
+        if store::item_held(tx, id)? {
+            changed |= store::let_go_unless_kept(tx, catalog, id)?;
+        }
+    }
+    Ok(changed)
 }
 
 /// `read_tags` stands in for the tags of a frame that carries none.

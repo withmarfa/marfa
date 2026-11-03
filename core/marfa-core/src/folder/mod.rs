@@ -2983,11 +2983,11 @@ mod tests {
                 with(serde_json::json!({ "state": ["archived", "active"] })),
                 false,
             ),
-            // A copy cannot be narrowed by `beneath`, and holds `parent-of`
-            // whole already, so it holds the same rows under it.
+            // The copy holds only the subtree, so a store narrowed before
+            // the copy took `beneath` hydrates again.
             (
                 with(serde_json::json!({ "beneath": "01a00000-0000-7000-8000-0000000000aa" })),
-                false,
+                true,
             ),
         ] {
             settled_under(&folder, base.clone());

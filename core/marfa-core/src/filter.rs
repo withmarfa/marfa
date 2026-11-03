@@ -70,19 +70,25 @@ pub(crate) fn narrow(
         clauses.push(expression.clause(values, whole, &statuses)?);
     }
     if let Some(root) = beneath {
-        // `UNION`, not `UNION ALL`: a copy can hold a cycle the server would
-        // refuse, from edges queued locally, and only a set ends the walk.
-        clauses.push(format!(
-            "items.id IN (WITH RECURSIVE beneath(id) AS (
-               SELECT ?
-               UNION
-               SELECT edges.target_id FROM edges JOIN beneath ON edges.source_id = beneath.id
-               WHERE edges.edge_type = '{PARENT_OF}'
-             ) SELECT id FROM beneath)"
-        ));
+        clauses.push(format!("items.id IN ({})", beneath_walk()));
         values.push(Value::String(root.to_string()));
     }
     Ok(())
+}
+
+/// The ids under the item bound to its one `?`, and that id, by the
+/// `parent-of` edges held, whether or not the copy holds the rows they
+/// join. `UNION`, not `UNION ALL`: a copy can hold a cycle the server would
+/// refuse, from edges queued locally, and only a set ends the walk.
+pub(crate) fn beneath_walk() -> String {
+    format!(
+        "WITH RECURSIVE beneath(id) AS (
+           SELECT ?
+           UNION
+           SELECT edges.target_id FROM edges JOIN beneath ON edges.source_id = beneath.id
+           WHERE edges.edge_type = '{PARENT_OF}'
+         ) SELECT id FROM beneath"
+    )
 }
 
 /// What an expression reads beyond the row's own columns, properties and tags.

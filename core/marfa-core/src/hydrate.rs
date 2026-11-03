@@ -59,7 +59,7 @@ fn hydrate_inner(
     let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
     if let Some(query) = query {
-        declared_query(query)?;
+        declared_query(query, &edge_types)?;
     }
     let mut restart = None;
     let mut pages = 0;
@@ -844,14 +844,26 @@ fn listing_of(key: &str) -> (&str, bool) {
     }
 }
 
-/// A query a copy can be narrowed by: one whose every term the row and its
-/// tags answer, so an event can be judged by the row it carries.
-fn declared_query(query: &SliceQuery) -> Result<()> {
+/// A query a copy can be narrowed by: one whose every filter term the row
+/// and its tags answer, so an event can be judged by the row it carries, and
+/// whose `beneath` the `parent-of` edges the copy holds whole answer, so an
+/// edge event can be judged by the edges held.
+fn declared_query(query: &SliceQuery, edge_types: &[String]) -> Result<()> {
     query.check()?;
     if query.relational()? {
         return Err(CoreError::Invalid(
             "a slice's query narrows by edges or another row, which a working copy cannot yet be narrowed by; hydrate with its states alone".into(),
         ));
+    }
+    if query.beneath.is_some()
+        && !edge_types
+            .iter()
+            .any(|edge_type| edge_type == crate::filter::PARENT_OF)
+    {
+        return Err(CoreError::Invalid(format!(
+            "a slice's query searches beneath an item, which needs the {} edges held whole",
+            crate::filter::PARENT_OF
+        )));
     }
     Ok(())
 }
@@ -1522,6 +1534,51 @@ pub(crate) fn read_with_edges(
         )?);
     }
     Ok(Some((read, edges)))
+}
+
+/// The rows the slice's listings bring under `root`, with every edge they
+/// draw: the slice's query with `root` in place of its own `beneath`, so a
+/// branch moved under the copy's root comes in by the listing a hydration
+/// would have read it by, a page at a time (`device/catch-up-beneath-enters`).
+pub(crate) fn listed_beneath(
+    http: &Http,
+    types: &[String],
+    tier: SliceTier,
+    query: &SliceQuery,
+    root: &str,
+) -> Result<(Vec<WireItemWithMetadata>, Vec<WireEdge>)> {
+    let mut narrowing = query.listing(false);
+    narrowing.beneath = Some(root.to_string());
+    let mut rows = Vec::new();
+    let mut edges = Vec::new();
+    for declared in types {
+        let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = http.items_page(&ItemsQuery {
+                r#type: listing,
+                tier: listed_tier(listing, tier),
+                narrowing: Some(&narrowing),
+                cursor: cursor.as_deref(),
+            })?;
+            let (page, overflow) = with_overflow(http, &crate::NEVER_STOPPED, page)?;
+            for row in &page.data {
+                for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                    edges.extend(block.data.iter().cloned());
+                }
+            }
+            edges.extend(overflow);
+            rows.extend(page.data);
+            match page.next_cursor {
+                // A server handing back a cursor it gave before would loop.
+                Some(next) if !seen.insert(next.clone()) => return Err(crate::reach::invalid()),
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+    }
+    Ok((rows, edges))
 }
 
 /// A row held at a later stamp came from an event since the read, and
