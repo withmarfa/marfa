@@ -700,6 +700,13 @@ describe("the instance", () => {
       webhooks: { total: number };
       uptime_seconds: number;
       cached_at: string;
+      process: Record<string, unknown>;
+      storage: {
+        database_bytes: number | null;
+        wal_bytes: number | null;
+        rows: Record<string, number | null>;
+        counted_at: string | null;
+      };
     }>("/metrics");
     expect(r.status).toBe(200);
     expect(Object.keys(r.data).sort()).toEqual(
@@ -708,6 +715,8 @@ describe("the instance", () => {
         "cached_at",
         "items",
         "keys",
+        "process",
+        "storage",
         "types",
         "uptime_seconds",
         "webhooks",
@@ -720,12 +729,72 @@ describe("the instance", () => {
     expect(typeof r.data.uptime_seconds).toBe("number");
     expect(typeof r.data.cached_at).toBe("string");
 
+    expect(Object.keys(r.data.process).sort()).toEqual([
+      "cpu_system_seconds",
+      "cpu_user_seconds",
+      "heap_total_bytes",
+      "heap_used_bytes",
+      "memory_rss_bytes",
+      "memory_rss_peak_bytes",
+      "release",
+    ]);
+    expect(typeof r.data.process.release).toBe("string");
+    expect(r.data.process.memory_rss_bytes as number).toBeGreaterThan(0);
+    expect(Object.keys(r.data.storage).sort()).toEqual([
+      "counted_at",
+      "database_bytes",
+      "rows",
+      "wal_bytes",
+    ]);
+    expect(Object.keys(r.data.storage.rows).sort()).toEqual([
+      "audit_log",
+      "event_log",
+      "items",
+      "versions",
+    ]);
+    // The row counts come from a background count that this request may
+    // have started, so each is a number or `null`, and the time agrees.
+    for (const [table, rows] of Object.entries(r.data.storage.rows)) {
+      expect(
+        rows === null || typeof rows === "number",
+        `storage.rows.${table}`,
+      ).toBe(true);
+    }
+    expect(
+      r.data.storage.counted_at === null ||
+        typeof r.data.storage.counted_at === "string",
+    ).toBe(true);
+
     await expectMatchesSchema("GET", "/metrics", 200, r.data);
 
     // The ordinary content fixture lacks instance.read.
     const refused = await client.rawRequest("/metrics");
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("forbidden");
+  });
+
+  it("reports the row counts once the background count has finished", async () => {
+    // The first request starts a count in the background and answers with
+    // none; a later one reads it. A server that always answers null fails.
+    const operator = getManagementClient();
+    type Metrics = {
+      items: { total: number };
+      storage: {
+        rows: Record<string, number | null>;
+        counted_at: string | null;
+      };
+    };
+    let last: Metrics | undefined;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const r = await operator.rawRequest<Metrics>("/metrics");
+      expect(r.status).toBe(200);
+      last = r.data;
+      if (typeof last.storage.counted_at === "string") break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(typeof last?.storage.counted_at).toBe("string");
+    expect(last?.storage.rows.items).toBe(last?.items.total);
   });
 
   it("publishes exactly the operations the coverage table knows", async () => {

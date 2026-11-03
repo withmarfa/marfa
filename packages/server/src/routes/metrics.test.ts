@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import {
   createTestContext,
   mintWorkingKey,
@@ -70,6 +70,46 @@ describe("GET /metrics", () => {
     expect(typeof body.cached_at).toBe("string");
   });
 
+  it("reports what the process and the database cost", async () => {
+    const res = await request(ctx.app, "GET", "/metrics", {
+      key: ctx.managementKey,
+    });
+    const body = (await res.json()) as {
+      items: { total: number };
+      process: Record<string, unknown>;
+      storage: {
+        database_bytes: number;
+        wal_bytes: number;
+        rows: Record<string, number | null>;
+        counted_at: string | null;
+      };
+    };
+    const { process: own } = body;
+    expect(Object.keys(own).sort()).toEqual([
+      "cpu_system_seconds",
+      "cpu_user_seconds",
+      "heap_total_bytes",
+      "heap_used_bytes",
+      "memory_rss_bytes",
+      "memory_rss_peak_bytes",
+      "release",
+    ]);
+    expect(own.release).toBe("dev");
+    expect(own.memory_rss_bytes as number).toBeGreaterThan(0);
+    expect(own.memory_rss_peak_bytes as number).toBeGreaterThan(0);
+    expect(body.storage.database_bytes).toBeGreaterThan(0);
+    expect(body.storage.wal_bytes).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(body.storage.rows).sort()).toEqual([
+      "audit_log",
+      "event_log",
+      "items",
+      "versions",
+    ]);
+    // The row counts come from the background count, which the first
+    // request only started; the live item counter is already there.
+    expect(body.items.total).toBeGreaterThan(0);
+  });
+
   it("blobs.total_bytes sums the bytes rather than counting the rows", async () => {
     // `typeof === "number"` above passes against a count, a zero, or the
     // uptime. Two blobs of different lengths separate all three: the sum is
@@ -126,5 +166,70 @@ describe("GET /metrics", () => {
     const raw = await mintWorkingKey(ctx, { permissions: [] });
     const res = await request(ctx.app, "GET", "/metrics", { key: raw });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("GET /metrics row counts", () => {
+  let own: TestContext;
+  beforeAll(async () => {
+    own = await createTestContext();
+  });
+  afterAll(async () => {
+    await cleanupTestContext(own);
+  });
+
+  interface Storage {
+    database_bytes: number;
+    rows: Record<string, number | null>;
+    counted_at: string | null;
+  }
+  const storageBlock = async () => {
+    const res = await request(own.app, "GET", "/metrics", {
+      key: own.managementKey,
+    });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { storage: Storage }).storage;
+  };
+
+  it("answers with no counts on a fresh start, without waiting for a count, then shows them", async () => {
+    let release!: () => void;
+    const held = new Promise<number>((resolve) => {
+      release = () => {
+        resolve(5);
+      };
+    });
+    const spy = vi.spyOn(own.storage.versions, "count").mockReturnValue(held);
+
+    // The count is held, so a request that counted inside itself would hang.
+    const first = await storageBlock();
+    expect(first.counted_at).toBeNull();
+    expect(first.rows).toEqual({
+      items: null,
+      versions: null,
+      event_log: null,
+      audit_log: null,
+    });
+    expect(first.database_bytes).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    // Asking again while one runs starts no second count.
+    await storageBlock();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.waitFor(async () => {
+      expect((await storageBlock()).counted_at).not.toBeNull();
+    });
+    const counted = await storageBlock();
+    expect(counted.rows.versions).toBe(5);
+    expect(typeof counted.rows.items).toBe("number");
+    expect(typeof counted.rows.event_log).toBe("number");
+    expect(typeof counted.rows.audit_log).toBe("number");
+    expect(Number.isNaN(Date.parse(counted.counted_at ?? ""))).toBe(false);
+    // The count is fresh, so these requests started none.
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

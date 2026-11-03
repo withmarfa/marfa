@@ -280,6 +280,18 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 
 **Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
 
+### `instance-claim/management-metrics-resources`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `process` block holding its `release` and the memory and CPU its process uses, each figure but the release a number, or `null` where the server cannot read it.
+
+**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
+
+### `instance-claim/management-metrics-storage`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `storage` block holding the size of its database, the row counts of its largest tables and `counted_at`, the UTC time of the count (`null` before the first count), each size and row count a number, or `null` where the server cannot read it or has not counted it yet.
+
+**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`, `› reports the row counts once the background count has finished`.
+
 ### `instance-claim/control-only-recovery`
 
 Where control-only mode is enabled, when another process holds the configured public HTTP port, the server MUST allow local password recovery through its private control connection.

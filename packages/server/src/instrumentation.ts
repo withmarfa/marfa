@@ -45,6 +45,9 @@ import { errorReportingEnabled } from "./error-reporting.js";
  * no way for OTLP logs or traces to become them, so the two OTLP pipelines
  * leave error tracking empty. `posthog-node` builds those events from a
  * thrown value, stack frames included.
+ *
+ * The daily server report (`marfa server report`) rides the same client, the
+ * same gate and the same instance identity, as a numeric event without a person.
  */
 import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
@@ -70,6 +73,21 @@ declare global {
    */
   var __marfaReportException:
     | ((err: unknown, properties: Record<string, string | undefined>) => void)
+    | undefined;
+  /**
+   * Send one named event of numbers to the same PostHog project exception
+   * reports go to, with a fixed identity (the environment and the random
+   * instance id) and no operator-chosen attribute. Set here only when
+   * exception reporting is configured; undefined otherwise. It resolves once
+   * the client has been handed the event, or at once when sending is off,
+   * even when PostHog never takes the event; it rejects only if the client
+   * throws.
+   */
+  var __marfaSendReport:
+    | ((
+        event: string,
+        properties: Record<string, string | number>,
+      ) => Promise<void>)
     | undefined;
   /**
    * Tell telemetry which instance this server is, once its database has
@@ -295,6 +313,27 @@ async function start(): Promise<void> {
         });
       pendingReports.add(pending);
       void pending.finally(() => pendingReports.delete(pending));
+    };
+    globalThis.__marfaSendReport = async (event, properties) => {
+      if (stopping || !(await errorReportingEnabled())) return;
+      // The report carries its own figures and a fixed identity: the
+      // environment exception reports name and the instance's random id.
+      // Nothing an operator put in `OTEL_RESOURCE_ATTRIBUTES` goes with it.
+      const environment = staticAttributes["deployment.environment"];
+      await clock.withRealTime(() =>
+        client.captureImmediate({
+          event,
+          properties: {
+            ...(environment === undefined
+              ? {}
+              : { "deployment.environment": environment }),
+            ...(instanceId === undefined
+              ? {}
+              : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+            ...properties,
+          },
+        }),
+      );
     };
   }
 

@@ -60281,7 +60281,7 @@
           "Health and maintenance"
         ],
         "summary": "Get instance metrics",
-        "description": "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
+        "description": "Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
         "security": [
           {
             "bearerAuth": []
@@ -60369,9 +60369,143 @@
                       "type": "number",
                       "description": "Seconds since this server process started."
                     },
+                    "process": {
+                      "type": "object",
+                      "properties": {
+                        "release": {
+                          "type": "string",
+                          "description": "The release this server runs."
+                        },
+                        "memory_rss_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the server process holds in RAM, in bytes. `null` if it can't be read."
+                        },
+                        "memory_rss_peak_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "The most memory the process has held in RAM, in bytes. `null` if it can't be read."
+                        },
+                        "heap_used_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the JavaScript engine uses for live objects, in bytes. `null` if it can't be read."
+                        },
+                        "heap_total_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Memory the JavaScript engine has reserved, in bytes. `null` if it can't be read."
+                        },
+                        "cpu_user_seconds": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "CPU seconds the process has spent on its own work since it started. `null` if it can't be read."
+                        },
+                        "cpu_system_seconds": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "CPU seconds the process has spent in the operating system since it started. `null` if it can't be read."
+                        }
+                      },
+                      "required": [
+                        "release",
+                        "memory_rss_bytes",
+                        "memory_rss_peak_bytes",
+                        "heap_used_bytes",
+                        "heap_total_bytes",
+                        "cpu_user_seconds",
+                        "cpu_system_seconds"
+                      ],
+                      "description": "What this server process costs, since it started."
+                    },
+                    "storage": {
+                      "type": "object",
+                      "properties": {
+                        "database_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Size of the database file, in bytes. `null` if it can't be read."
+                        },
+                        "wal_bytes": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read."
+                        },
+                        "rows": {
+                          "type": "object",
+                          "properties": {
+                            "items": {
+                              "type": [
+                                "number",
+                                "null"
+                              ],
+                              "description": "Number of items."
+                            },
+                            "versions": {
+                              "type": [
+                                "number",
+                                "null"
+                              ],
+                              "description": "Number of stored item versions."
+                            },
+                            "event_log": {
+                              "type": [
+                                "number",
+                                "null"
+                              ],
+                              "description": "Number of event log entries."
+                            },
+                            "audit_log": {
+                              "type": [
+                                "number",
+                                "null"
+                              ],
+                              "description": "Number of audit log entries."
+                            }
+                          },
+                          "required": [
+                            "items",
+                            "versions",
+                            "event_log",
+                            "audit_log"
+                          ],
+                          "description": "Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes."
+                        },
+                        "counted_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background."
+                        }
+                      },
+                      "required": [
+                        "database_bytes",
+                        "wal_bytes",
+                        "rows",
+                        "counted_at"
+                      ],
+                      "description": "Database size and row counts."
+                    },
                     "cached_at": {
                       "type": "string",
-                      "description": "When these counters were collected, in UTC."
+                      "description": "When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request."
                     }
                   },
                   "required": [
@@ -60381,6 +60515,8 @@
                     "keys",
                     "webhooks",
                     "uptime_seconds",
+                    "process",
+                    "storage",
                     "cached_at"
                   ]
                 }

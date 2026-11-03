@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import { writeInstanceConfig } from "./storage/instance-config.js";
 import { createTestContext, type TestContext } from "./test-utils.js";
+import { REPORT_KEYS, reportProperties } from "./daily-report.js";
 import type { AppEnv } from "./middleware/auth.js";
 
 interface CapturedEvent {
@@ -134,6 +135,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     clock.resetClockForTests();
     globalThis.__marfaOtelShutdown = undefined;
     globalThis.__marfaReportException = undefined;
+    globalThis.__marfaSendReport = undefined;
     // The first provider registered wins, so the next case's would be ignored.
     trace.disable();
     logs.disable();
@@ -472,6 +474,120 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     });
   });
 
+  describe("the daily server report", () => {
+    const reportsSent = () =>
+      collector.events.filter((e) => e.event === "marfa server report");
+
+    it("posts a named event of numbers to the same project, with no person", async () => {
+      await bootInstrumentation(ctx, {
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      });
+      await globalThis.__marfaSendReport?.("marfa server report", {
+        release: "v1",
+        memory_rss_bytes: 123,
+      });
+      await globalThis.__marfaOtelShutdown?.();
+      expect(reportsSent()).toHaveLength(1);
+      const [sent] = reportsSent();
+      expect(sent?.properties.release).toBe("v1");
+      expect(sent?.properties.memory_rss_bytes).toBe(123);
+      expect(sent?.properties.$process_person_profile).toBe(false);
+      expect(sent?.properties["deployment.environment"]).toBe("production");
+    });
+
+    it("carries only the closed figures and a fixed identity, never an operator attribute", async () => {
+      await bootInstrumentation(ctx, {
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+        OTEL_SERVICE_NAME: "operators-own-name",
+        OTEL_RESOURCE_ATTRIBUTES:
+          "deployment.environment=rehearsal,team=payments,host.name=box-7",
+      });
+      globalThis.__marfaTelemetryInstanceId?.(
+        "11111111-2222-4333-8444-555555555555",
+      );
+      const properties = reportProperties(
+        {
+          process: {
+            release: "v1",
+            rss_bytes: 1,
+            rss_peak_bytes: 2,
+            heap_used_bytes: 3,
+            heap_total_bytes: 4,
+            cpu_user_seconds: 5,
+            cpu_system_seconds: 6,
+            uptime_seconds: 7,
+          },
+          files: { database_bytes: 8, wal_bytes: 9 },
+          counts: {
+            items: 10,
+            versions: 11,
+            event_log: 12,
+            audit_log: 13,
+            counted_at: "2026-11-03T00:00:00.000Z",
+          },
+          blobs: { count: 14, total_bytes: 15 },
+        },
+        { user: 0, system: 0 },
+      );
+      await globalThis.__marfaSendReport?.("marfa server report", properties);
+      await globalThis.__marfaOtelShutdown?.();
+      const [sent] = reportsSent();
+      expect(Object.keys(sent?.properties ?? {}).sort()).toEqual(
+        [
+          ...REPORT_KEYS,
+          "deployment.environment",
+          "service.instance.id",
+          "$process_person_profile",
+          "$lib",
+          "$lib_version",
+          "$geoip_disable",
+          "$is_server",
+        ].sort(),
+      );
+      expect(sent?.properties["deployment.environment"]).toBe("rehearsal");
+      expect(sent?.properties["service.instance.id"]).toBe(
+        "11111111-2222-4333-8444-555555555555",
+      );
+    });
+
+    it("sends nothing when the owner has turned error reporting off", async () => {
+      ctx.config.errorReportingEnabled = false;
+      await bootInstrumentation(ctx, {
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      });
+      await globalThis.__marfaSendReport?.("marfa server report", {
+        release: "v1",
+      });
+      await globalThis.__marfaOtelShutdown?.();
+      expect(reportsSent()).toHaveLength(0);
+    });
+
+    it("settles without throwing when PostHog is unreachable", async () => {
+      const closed = await startStubCollector();
+      await closed.close();
+      await bootInstrumentation(ctx, {
+        MARFA_POSTHOG_HOST: closed.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      });
+      // The client reports a failed send on its own error channel and
+      // resolves; nothing here decides success from it, and the scheduler
+      // bounds a send that never answers.
+      const outcome = await Promise.race([
+        globalThis.__marfaSendReport?.("marfa server report", {
+          release: "v1",
+        }),
+        new Promise((resolve) => setTimeout(resolve, 20_000, "pending")),
+      ]).then(
+        (value) => value ?? "resolved",
+        () => "rejected",
+      );
+      expect(outcome).toBe("resolved");
+    });
+  });
+
   it("loads and sends nothing with neither the endpoint nor the PostHog settings", async () => {
     const boot = await bootInstrumentation(ctx, {});
 
@@ -480,6 +596,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
 
     expect(boot.loadedPostHog()).toBe(false);
     expect(globalThis.__marfaReportException).toBeUndefined();
+    expect(globalThis.__marfaSendReport).toBeUndefined();
     expect(globalThis.__marfaOtelShutdown).toBeUndefined();
     expect(collector.events).toHaveLength(0);
   });

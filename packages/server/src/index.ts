@@ -1,4 +1,7 @@
-import { bindErrorReporting } from "./error-reporting.js";
+import {
+  bindErrorReporting,
+  errorReportingEnabled,
+} from "./error-reporting.js";
 import { reservePublicListener } from "./public-listener.js";
 import { getClaimStatus, issueSetupCode } from "./auth/instance-claim.js";
 import { startControlSocket } from "./control/socket.js";
@@ -33,6 +36,8 @@ import {
   setBulkJobEnqueueListener,
 } from "./bulk-actions/index.js";
 import { shutdownInOrder } from "./shutdown.js";
+import { figuresFor } from "./instance-figures.js";
+import { startDailyReport, type DailyReport } from "./daily-report.js";
 import { stopArchiveExports } from "./routes/export-lifecycle.js";
 import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
@@ -211,6 +216,12 @@ async function main() {
       };
     }
 
+    const figures = figuresFor(
+      storage,
+      config.sqlitePath,
+      config.versionSha ?? "dev",
+    );
+    let dailyReport: DailyReport | undefined;
     let shuttingDown = false;
     const shutdown = (failureCode: 0 | 1 = 0): void => {
       // A second signal must not restart the sequence. The platform sends
@@ -218,6 +229,7 @@ async function main() {
       // twice. Re-entering would re-run every `stop()` and race two exits.
       if (shuttingDown) return;
       shuttingDown = true;
+      dailyReport?.stop();
       // A held run would otherwise keep the stop waiting for it.
       clearFaults();
       void shutdownInOrder({
@@ -242,6 +254,17 @@ async function main() {
         createApp(storage, blobs, housekeeping, config, instanceId).fetch,
       );
       log("info", `Marfa server listening on port ${String(config.port)}`);
+      const send = globalThis.__marfaSendReport;
+      if (send) {
+        dailyReport = startDailyReport({
+          keeper: figures,
+          enabled: errorReportingEnabled,
+          send,
+          warn: (message, data) => {
+            log("warn", message, data);
+          },
+        });
+      }
     }
     startupCleanup.length = 0;
 

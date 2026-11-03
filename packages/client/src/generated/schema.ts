@@ -2089,7 +2089,7 @@ export interface paths {
         };
         /**
          * Get instance metrics
-         * @description Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.
+         * @description Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. Requires `instance.read`; the counters include records outside your content permissions.
          */
         get: operations["getInstanceMetrics"];
         put?: never;
@@ -30794,7 +30794,44 @@ export interface operations {
                         webhooks: components["schemas"]["MetricCount"] & unknown;
                         /** @description Seconds since this server process started. */
                         uptime_seconds: number;
-                        /** @description When these counters were collected, in UTC. */
+                        /** @description What this server process costs, since it started. */
+                        process: {
+                            /** @description The release this server runs. */
+                            release: string;
+                            /** @description Memory the server process holds in RAM, in bytes. `null` if it can't be read. */
+                            memory_rss_bytes: number | null;
+                            /** @description The most memory the process has held in RAM, in bytes. `null` if it can't be read. */
+                            memory_rss_peak_bytes: number | null;
+                            /** @description Memory the JavaScript engine uses for live objects, in bytes. `null` if it can't be read. */
+                            heap_used_bytes: number | null;
+                            /** @description Memory the JavaScript engine has reserved, in bytes. `null` if it can't be read. */
+                            heap_total_bytes: number | null;
+                            /** @description CPU seconds the process has spent on its own work since it started. `null` if it can't be read. */
+                            cpu_user_seconds: number | null;
+                            /** @description CPU seconds the process has spent in the operating system since it started. `null` if it can't be read. */
+                            cpu_system_seconds: number | null;
+                        };
+                        /** @description Database size and row counts. */
+                        storage: {
+                            /** @description Size of the database file, in bytes. `null` if it can't be read. */
+                            database_bytes: number | null;
+                            /** @description Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read. */
+                            wal_bytes: number | null;
+                            /** @description Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes. */
+                            rows: {
+                                /** @description Number of items. */
+                                items: number | null;
+                                /** @description Number of stored item versions. */
+                                versions: number | null;
+                                /** @description Number of event log entries. */
+                                event_log: number | null;
+                                /** @description Number of audit log entries. */
+                                audit_log: number | null;
+                            };
+                            /** @description When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background. */
+                            counted_at: string | null;
+                        };
+                        /** @description When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request. */
                         cached_at: string;
                     };
                 };

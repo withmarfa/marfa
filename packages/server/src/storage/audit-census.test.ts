@@ -15,7 +15,8 @@ const READS: Record<string, string> = {
   ItemStore:
     "get writersAt getMany getIncludingTrashed list listInView listSummaries listTrashSummaries trashDetailsOf findBySourceId findByLinks findBySourceIds titled tombstones cascadeMarks partsInBinWithHosts wentWithHosts namingHosts countByType stats listInactiveAppGrants listTrashedOlderThan listExpiredFeed restoredAtOf listRevokedAppGrantsOlderThan",
   MetadataStore: "get getMany listTags getExtensions getExtensionsForItems",
-  VersionStore: "list all getByVersion scanProperties listThinningCandidates",
+  VersionStore:
+    "list all getByVersion scanProperties listThinningCandidates count",
   TypeStore:
     "list get provenance listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld icons",
   EdgeTypeStore: "list get",
@@ -28,8 +29,8 @@ const READS: Record<string, string> = {
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
     "getClient listLiveGrantClients getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey findDeviceCodeRequest findTokenGrantScopes",
-  AuditStore: "has list",
-  EventLogStore: "getAfter getNonFanoutEnd getMinRetainedId getMaxId",
+  AuditStore: "has list count",
+  EventLogStore: "getAfter getNonFanoutEnd getMinRetainedId getMaxId count",
   SettingsStore: "get",
   EdgeStore:
     "get listFromSource listToTarget list countsBySourceBatch countsByTargetBatch existsExactBatch findByTriple listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",

@@ -7,6 +7,13 @@ import * as clock from "../../clock.js";
 export class SqliteEventLogStore implements EventLogStore {
   constructor(private db: DrizzleDb) {}
 
+  async count(): Promise<number> {
+    const row = await this.db.get<{ n: number }>(
+      sql`SELECT count(*) AS n FROM event_log`,
+    );
+    return row.n;
+  }
+
   async append(entry: {
     event_type: string;
     item_id?: string | null;

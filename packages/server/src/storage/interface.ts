@@ -1240,6 +1240,8 @@ export interface VersionPageInput {
 }
 
 export interface VersionStore {
+  /** Rows in the table, every version of every item. */
+  count(): Promise<number>;
   /** Replays validated snapshots exactly within the caller's restore transaction. */
   restore(snapshots: readonly Version[]): Promise<void>;
   create(
@@ -2382,6 +2384,8 @@ export interface AuditLogEntry {
 }
 
 export interface AuditStore {
+  /** Rows in the audit log. */
+  count(): Promise<number>;
   /** Strict awaited insertion. Failures propagate. Domain callers use
    * runAuditedTransaction so the represented write and audit commit together;
    * standalone observations await this directly. The optional internal ID
@@ -2438,6 +2442,8 @@ export interface PersistedEvent {
 }
 
 export interface EventLogStore {
+  /** Rows in the event log. */
+  count(): Promise<number>;
   /** Append an event and return its assigned sequential ID (i64 bigint). */
   append(entry: {
     event_type: string;
