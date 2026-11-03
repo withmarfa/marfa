@@ -2612,6 +2612,7 @@ impl Folder {
     ) -> Result<HashMap<String, bool>> {
         let recorded: HashMap<String, bool> =
             state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
+        let mut unheld: Vec<String> = Vec::new();
         for id in wanted {
             if recorded.contains_key(id) {
                 continue;
@@ -2624,25 +2625,24 @@ impl Folder {
                 )
             };
             // Another holder's pin is held, never taken as the folder's own.
-            let made = if pinned {
-                false
+            if pinned {
+                state::hold_edge_end(&*self.core.conn()?, id, false)?;
             } else if held {
-                crate::store::pin(&*self.core.conn()?, id)?
+                let made = crate::store::pin(&*self.core.conn()?, id)?;
+                state::hold_edge_end(&*self.core.conn()?, id, made)?;
             } else {
-                // Unreadable now, offline or gone: the line names it by id.
-                // A pin the server refuses lets go of the pin it took, which
-                // moves the copy revision, so a watch's next pass pulls and
-                // asks again.
-                match self.core.pin(id) {
-                    Ok(_) => true,
-                    Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => continue,
-                    Err(error) => {
-                        unread(id, error)?;
-                        continue;
-                    }
-                }
-            };
-            state::hold_edge_end(&*self.core.conn()?, id, made)?;
+                unheld.push(id.clone());
+            }
+        }
+        // Unreadable now, offline or gone: the line names it by id. A pin the
+        // server refuses lets go of the pin it took, which moves the copy
+        // revision, so a watch's next pass pulls and asks again.
+        for (id, answer) in self.core.pin_many(&unheld) {
+            match answer {
+                Ok(true) => state::hold_edge_end(&*self.core.conn()?, &id, true)?,
+                Ok(false) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {}
+                Err(error) => unread(&id, error)?,
+            }
         }
         Ok(recorded)
     }
