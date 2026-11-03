@@ -899,6 +899,10 @@ impl Gate {
         now.duration_since(self.last_change) >= SETTLE
             || now.duration_since(self.last_pass) >= HELD_MOST
     }
+
+    fn listen_for(&self, _now: Instant) -> Duration {
+        TICK
+    }
 }
 
 /// Where the copy and the folder's record stood as a pull began.
@@ -1383,6 +1387,53 @@ mod tests {
         let quiet = at + SETTLE;
         assert!(gate.due(quiet));
         assert!(!Gate::new(at).due(at + SETTLE / 2));
+    }
+
+    #[test]
+    fn the_watch_listens_only_for_the_settle_time_that_is_left() {
+        let now = Instant::now() + 10 * SECOND;
+        let gate = |since_change: Duration, since_pass: Duration| Gate {
+            last_change: now - since_change,
+            last_pass: now - since_pass,
+        };
+        let ms = Duration::from_millis;
+        assert_eq!(gate(ms(0), SECOND).listen_for(now), SETTLE);
+        assert_eq!(gate(ms(100), SECOND).listen_for(now), ms(150));
+        // The longest a steady change holds a pass off bounds the wait too.
+        assert_eq!(gate(ms(10), HELD_MOST - ms(40)).listen_for(now), ms(40));
+        // Witness: with nothing to settle it waits out a tick, as it did.
+        assert!(gate(SETTLE, SECOND).due(now));
+        assert_eq!(gate(SETTLE, SECOND).listen_for(now), TICK);
+        assert_eq!(gate(5 * SECOND, SECOND).listen_for(now), TICK);
+    }
+
+    #[test]
+    fn a_change_that_arrived_during_a_pass_settles_from_when_it_arrived() {
+        let start = Instant::now();
+        let mut gate = Gate::new(start);
+        let delivered = start + SECOND;
+        let ended = start + 3 * SECOND;
+        gate.changed(delivered);
+        gate.passed(ended);
+        assert!(
+            gate.due(ended),
+            "a file written two seconds before the pass ended is read at once"
+        );
+        // Witness: a change that arrives as the pass ends still settles first.
+        gate.changed(ended);
+        assert!(!gate.due(ended));
+        assert!(gate.due(ended + SETTLE));
+    }
+
+    #[test]
+    fn a_change_heard_late_does_not_move_the_last_change_back() {
+        let start = Instant::now();
+        let mut gate = Gate::new(start);
+        gate.changed(start + 3 * SECOND);
+        gate.changed(start + SECOND);
+        gate.passed(start + 3 * SECOND);
+        assert!(!gate.due(start + 3 * SECOND));
+        assert!(gate.due(start + 3 * SECOND + SETTLE));
     }
 
     #[test]
