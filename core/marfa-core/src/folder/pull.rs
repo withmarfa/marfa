@@ -1949,7 +1949,9 @@ impl Folder {
     /// The items of files this folder's people made outside the query's states
     /// that stay so, each still bound. The first pull to find one in a state
     /// the query holds, with nothing left to send for it, ends it: from then
-    /// on it is a member, and leaves as one does.
+    /// on it is a member, and leaves as one does. An item this copy does not
+    /// hold, as while a replaced store fills again, stays recorded unless it
+    /// was purged.
     fn new_outside_state(&self) -> Result<Vec<String>> {
         let settings = self.settings()?;
         let conn = self.core.conn()?;
@@ -1957,17 +1959,19 @@ impl Folder {
         if recorded.is_empty() {
             return Ok(recorded);
         }
+        let held = crate::store::items_by_ids(&conn, &recorded)?;
         let mut kept = Vec::new();
-        for item in crate::store::items_by_ids(&conn, &recorded)? {
-            let waiting =
-                crate::store::last_write_to(&conn, crate::model::Subject::Item, &item.id)?
-                    .is_some();
-            let outside = !settings.holds_state(item.state) || waiting;
-            if matches!(item.state, ItemState::Active | ItemState::Archived)
-                && outside
-                && state::bound_to_item(&conn, &item.id)?.is_some()
-            {
-                kept.push(item.id);
+        for id in &recorded {
+            let stays = match held.iter().find(|item| item.id == *id) {
+                Some(item) => {
+                    matches!(item.state, ItemState::Active | ItemState::Archived)
+                        && (!settings.holds_state(item.state)
+                            || crate::store::item_waits(&conn, id)?)
+                }
+                None => !crate::store::purged(&conn, id)?,
+            };
+            if stays && state::bound_to_item(&conn, id)?.is_some() {
+                kept.push(id.clone());
             }
         }
         if kept.len() != recorded.len() {
@@ -1982,7 +1986,7 @@ impl Folder {
         Ok(state::new_outside_state(&conn)?
             .iter()
             .any(|id| id == item_id)
-            && crate::store::last_write_to(&conn, crate::model::Subject::Item, item_id)?.is_some())
+            && crate::store::item_waits(&conn, item_id)?)
     }
 
     pub(super) fn departing(

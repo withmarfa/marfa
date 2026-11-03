@@ -5760,6 +5760,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_new_file_item_stays_where_the_query_holds_only_archived() {
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "query": { "state": ["archived"] } }),
+            None,
+        );
+        std::fs::write(dir.path().join("pic.png"), [7, 7, 5]).unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        folder.scan().unwrap();
+        let id = landed(&folder, "pic.png");
+        let item = folder.core.get(&id).unwrap().unwrap();
+        assert!(
+            item.r#type.starts_with("core.file"),
+            "{}: not a file item",
+            item.r#type
+        );
+        for _ in 0..2 {
+            let pulled = folder.pull().unwrap();
+            assert_eq!((pulled.removed, pulled.unmatched), (0, 1), "{pulled:?}");
+            assert!(dir.path().join("pic.png").exists());
+        }
+    }
+
+    #[test]
+    fn a_new_file_record_outlasts_its_item_being_absent_from_the_copy() {
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        let conn = folder.core.conn().unwrap();
+        conn.execute("DELETE FROM items WHERE id = ?1", [&id])
+            .unwrap();
+        drop(conn);
+        folder.pull().unwrap();
+        assert_eq!(
+            state::new_outside_state(&folder.core.conn().unwrap()).unwrap(),
+            vec![id.clone()],
+            "an absent item's entry was pruned"
+        );
+        assert!(dir.path().join("new.md").exists());
+        crate::store::meta_set(
+            &folder.core.conn().unwrap(),
+            &format!("{}{id}", crate::store::PURGED_PIN),
+            "1",
+        )
+        .unwrap();
+        folder.pull().unwrap();
+        assert!(
+            state::new_outside_state(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty(),
+            "a purged item's entry stayed"
+        );
+    }
+
+    #[test]
+    fn a_refused_write_is_not_a_write_that_waits_for_a_new_file() {
+        let (_dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        set_item_state(&folder, &id, "active");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict)
+                 VALUES ('t1', 'transition_item', ?1, 'k1', '{}', '2026-01-01T00:00:00Z', 'refused')",
+                [&id],
+            )
+            .unwrap();
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.unmatched, 0, "{pulled:?}");
+        assert!(
+            state::new_outside_state(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn removing_unmatched_takes_a_new_file_outside_the_query_and_ends_its_record() {
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        set_item_state(&folder, &id, "archived");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        // The answered create and state change have settled.
+        let conn = folder.core.conn().unwrap();
+        let mut row = state::bound_at(&conn, "new.md").unwrap().unwrap();
+        row.writes.queued.clear();
+        state::bind(&conn, &row).unwrap();
+        drop(conn);
+        let listed = folder.unmatched_files().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].kept, None, "{listed:?}");
+        let done = folder.remove_unmatched(&["new.md".to_string()]).unwrap();
+        assert_eq!(done.removed.len(), 1, "{done:?}");
+        assert!(done.kept.is_empty(), "{done:?}");
+        assert!(!dir.path().join("new.md").exists());
+        assert!(
+            state::new_outside_state(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(folder.core.get(&id).unwrap().is_some(), "the item went");
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {
