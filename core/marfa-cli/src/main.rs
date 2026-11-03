@@ -337,6 +337,7 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     style::set_json(json);
+    telemetry::load_carried(&command);
     let telemetry = telemetry::start(&command, json);
     // A panic is what error tracking is for. It is reported, the trace is
     // ended, and the panic then goes on unwinding, so that the message on

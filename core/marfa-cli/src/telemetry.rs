@@ -18,6 +18,7 @@
 //! This module and its children are the only files in the binary that name
 //! `tracing`.
 
+mod carried;
 mod describe;
 mod export;
 mod layer;
@@ -36,6 +37,8 @@ use crate::interrupt::INTERRUPTED;
 use export::{Exporter, Sink};
 use posthog::Fault;
 use settings::{Identity, Reading, Settings};
+
+pub use carried::{FILE_ENV, FILE_NAME, carry, load as load_carried};
 
 /// One run of one command.
 pub struct Run {

@@ -5414,6 +5414,62 @@ When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REG
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 
+### `folders/autostart-telemetry`
+
+When `folders autostart on` writes the agent, the CLI MUST write each telemetry setting that is set and not empty in its own environment (`MARFA_POSTHOG_HOST`, `MARFA_POSTHOG_PROJECT_TOKEN`, `OTEL_SDK_DISABLED` and the `OTEL_*` settings the CLI reads to report) to a file named `folder-watch.env` beside the folder registry, readable and writable by its owner alone from the moment it exists.
+
+**Reason:** A launchd agent and a systemd user unit do not inherit the shell’s environment, so a watch started at login would otherwise never send an exception report or a trace. A setting such as `OTEL_EXPORTER_OTLP_HEADERS` holds a credential, and the agent’s file is readable by others, so every setting goes in the one file that only the person can read.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-named`
+
+When `folders autostart on` writes the file `folders/autostart-telemetry` names, the CLI MUST name that file in `MARFA_TELEMETRY_FILE` in the agent’s environment.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-no-value`
+
+When `folders autostart on` writes the agent, the CLI MUST NOT write the value of a telemetry setting into the agent.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-read`
+
+When `folders watch` starts and `MARFA_TELEMETRY_FILE` names a file, the CLI MUST read that file before it reads the telemetry settings, leaving a setting that is already set as it is.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-follows`
+
+When `folders autostart on` runs again, the CLI MUST make the file `folders/autostart-telemetry` names hold the settings set in its environment then.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-unset`
+
+When `folders autostart on` runs again with no telemetry setting set in its environment, the CLI MUST leave the agent with no telemetry file, removing the file and the agent’s name for it.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-restart`
+
+When `folders autostart on` runs again and the file `folders/autostart-telemetry` names changed, the CLI MUST start the watch again.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-off`
+
+When `folders autostart off` runs, the CLI MUST remove the file `folders/autostart-telemetry` names.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
+### `folders/autostart-telemetry-said`
+
+When `folders autostart on` finishes, the CLI MUST say which telemetry settings it carried, by name and never by value, or that it carried none.
+
+**Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
+
 ### `folders/autostart-no-credential`
 
 The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or a variable that names a keychain file, such as `MARFA_KEYCHAIN`.

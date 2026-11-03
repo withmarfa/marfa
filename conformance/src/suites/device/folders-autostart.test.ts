@@ -3,6 +3,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -289,6 +290,11 @@ function autostart(
   };
   delete env.MARFA_API_URL;
   delete env.MARFA_API_KEY;
+  // The shell that runs the tests is silenced, and `on` carries what it
+  // finds: a run carries only the settings its own `env` names.
+  for (const name of Object.keys(env)) {
+    if (/^(OTEL_|MARFA_OTEL_|MARFA_POSTHOG_)/.test(name)) delete env[name];
+  }
   Object.assign(env, options.env ?? {});
   const ran = spawnSync(
     options.binary ?? requireBinary(),
@@ -321,6 +327,8 @@ interface Switched {
   launchd_log?: string;
   registry?: string;
   key_file?: string;
+  telemetry?: string[];
+  telemetry_file?: string;
   running?: boolean | null;
 }
 
@@ -374,6 +382,118 @@ function registryOf(root: string): string {
 }
 
 describe("folder syncing from login", () => {
+  it("carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run", () => {
+    const root = standIn("telemetry");
+    const registry = registryOf(root);
+    const file = join(dirname(registry), "folder-watch.env");
+    const secret = `device-fixture-header-${randomUUID()}`;
+    // Dummy values that reach no host: an address that cannot resolve, and
+    // an SDK that is turned off, so that nothing of this test is sent.
+    const settings = {
+      MARFA_POSTHOG_HOST: "https://posthog.invalid",
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_fixture",
+      OTEL_SDK_DISABLED: "true",
+      OTEL_EXPORTER_OTLP_HEADERS: `authorization=Bearer ${secret}`,
+    };
+    const first = autostart(root, "on", { registry, env: settings });
+    const report = parsed<Switched>(first);
+    expect(report.telemetry).toEqual([
+      "MARFA_POSTHOG_HOST",
+      "MARFA_POSTHOG_PROJECT_TOKEN",
+      "OTEL_SDK_DISABLED",
+      "OTEL_EXPORTER_OTLP_HEADERS",
+    ]);
+    expect(report.telemetry_file).toBe(file);
+    // Names only, in the report and in what it printed.
+    expect(first.stdout + first.stderr).not.toContain(secret);
+    expect(first.stdout + first.stderr).not.toContain("phc_fixture");
+    // The values are in the file, which is the person's alone, and the
+    // world-readable agent holds the file's path and none of them.
+    expect(statSync(file).mode & 0o077).toBe(0);
+    const held = readFileSync(file, "utf8");
+    expect(held).toContain(
+      `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer ${secret}\n`,
+    );
+    expect(held).toContain("MARFA_POSTHOG_HOST=https://posthog.invalid\n");
+    const written = readFileSync(agentFile(root), "utf8");
+    expect(written).not.toContain(secret);
+    expect(written).not.toContain("phc_fixture");
+    expect(written).not.toContain("posthog.invalid");
+    expect(agentRuns(root).env).toEqual({
+      MARFA_FOLDER_REGISTRY: registry,
+      MARFA_TELEMETRY_FILE: file,
+    });
+
+    // Run again with another setting set: the file follows, and the watch is
+    // started again to read it.
+    const pid = managerState(root).pid;
+    const second = parsed<Switched>(
+      autostart(root, "on", {
+        registry,
+        env: { OTEL_SDK_DISABLED: "true", OTEL_SERVICE_NAME: "fixture" },
+      }),
+    );
+    expect(second.changed).toBe(true);
+    expect(second.telemetry).toEqual([
+      "OTEL_SDK_DISABLED",
+      "OTEL_SERVICE_NAME",
+    ]);
+    const changed = readFileSync(file, "utf8");
+    expect(changed).toContain("OTEL_SERVICE_NAME=fixture\n");
+    expect(changed).not.toContain(secret);
+    expect(statSync(file).mode & 0o077).toBe(0);
+    expect(managerState(root).pid).not.toBe(pid);
+
+    // Run again unchanged: nothing is done.
+    const same = parsed<Switched>(
+      autostart(root, "on", {
+        registry,
+        env: { OTEL_SDK_DISABLED: "true", OTEL_SERVICE_NAME: "fixture" },
+      }),
+    );
+    expect(same.changed).toBe(false);
+
+    // A file with the right text but a loose mode is made private again, and
+    // the watch is started again; so is one that became a link.
+    const sameEnv = { OTEL_SDK_DISABLED: "true", OTEL_SERVICE_NAME: "fixture" };
+    chmodSync(file, 0o644);
+    const loosePid = managerState(root).pid;
+    expect(
+      parsed<Switched>(autostart(root, "on", { registry, env: sameEnv }))
+        .changed,
+    ).toBe(true);
+    expect(statSync(file).mode & 0o077).toBe(0);
+    expect(managerState(root).pid).not.toBe(loosePid);
+    const target = `${file}.target`;
+    writeFileSync(target, readFileSync(file));
+    chmodSync(target, 0o600);
+    rmSync(file);
+    symlinkSync(target, file);
+    expect(
+      parsed<Switched>(autostart(root, "on", { registry, env: sameEnv }))
+        .changed,
+    ).toBe(true);
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    rmSync(target);
+
+    // Run again with none set: the file goes, the agent names none, and the
+    // command says it carried none.
+    const none = autostart(root, "on", { registry });
+    const bare = parsed<Switched>(none);
+    expect(bare.telemetry).toEqual([]);
+    expect(bare.telemetry_file).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+    expect(agentRuns(root).env).toEqual({ MARFA_FOLDER_REGISTRY: registry });
+    const text = autostart(root, "on", { registry, json: false });
+    expect(text.stdout).toContain("it carries no telemetry settings");
+
+    // Off removes a file that holds settings.
+    parsed<Switched>(autostart(root, "on", { registry, env: settings }));
+    expect(existsSync(file)).toBe(true);
+    parsed<Switched>(autostart(root, "off", { registry }));
+    expect(existsSync(file)).toBe(false);
+  });
+
   it("writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it", async () => {
     const root = standIn("on");
     const registry = registryOf(root);
