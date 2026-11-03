@@ -763,7 +763,9 @@ export function bulkRoutes(storage: Storage) {
       }
 
       const out: ProcessedBulkItem[] = [];
+      let anyMayHaveCommitted = false;
       for (const [i, raw] of items.entries()) {
+        if (i > 0) await yieldBulkWork({ writing: true });
         const work = () =>
           processBulkItem(storage, raw, i, {
             key: requireAuth(c),
@@ -801,7 +803,7 @@ export function bulkRoutes(storage: Storage) {
                 "items.bulk",
               );
         let processed: ProcessedBulkItem;
-        const committed = out.some((p) => mayHaveCommitted(p.result));
+        const committed = anyMayHaveCommitted;
         if (atomic) {
           processed = await entry();
         } else {
@@ -824,6 +826,7 @@ export function bulkRoutes(storage: Storage) {
           });
         }
         out.push(processed);
+        anyMayHaveCommitted ||= mayHaveCommitted(processed.result);
       }
       return out;
     };

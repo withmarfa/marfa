@@ -16,7 +16,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection, setBusyBudgetMs, type RawDb } from "./connection.js";
+import {
+  createConnection,
+  markWriteProgress,
+  setBusyBudgetMs,
+  type RawDb,
+} from "./connection.js";
+import {
+  TransactionControl,
+  transactionControl,
+} from "./transaction-control.js";
 import { createSqliteStorage } from "./index.js";
 import type { Storage } from "../interface.js";
 
@@ -191,6 +200,48 @@ describe("a raw transaction", () => {
       await third.execute("INSERT INTO probe (n) VALUES (3)");
       await third.commit();
       expect(await values()).toEqual([1, 3]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("keeps waiting behind a writer that marks progress, for longer than the budget", async () => {
+    setBusyBudgetMs(50);
+    try {
+      let first!: Awaited<ReturnType<RawDb["transaction"]>>;
+      const holding = transactionControl.run(
+        new TransactionControl(),
+        async () => {
+          first = await raw.transaction("write");
+          await first.execute("INSERT INTO probe (n) VALUES (1)");
+          for (let step = 0; step < 10; step++) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            markWriteProgress();
+          }
+          await first.commit();
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      const second = await raw.transaction("write");
+      await second.execute("INSERT INTO probe (n) VALUES (2)");
+      await second.commit();
+      await holding;
+      expect(await values()).toEqual([1, 2]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("does not mark progress for a writer outside a transaction", async () => {
+    setBusyBudgetMs(50);
+    try {
+      const first = await raw.transaction("write");
+      await first.execute("INSERT INTO probe (n) VALUES (1)");
+      const waiting = raw.transaction("write");
+      const marking = setInterval(markWriteProgress, 10);
+      await expect(waiting).rejects.toMatchObject({ code: "write_contention" });
+      clearInterval(marking);
+      await first.commit();
     } finally {
       setBusyBudgetMs(5_000);
     }

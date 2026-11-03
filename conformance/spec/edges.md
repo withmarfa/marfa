@@ -822,6 +822,14 @@ When the server answers `bulk_atomic_rollback` to a `POST /edges/bulk` page, the
 
 **Tests:** `compliance/edges-bulk.test.ts › atomic=true rolls back a batch naming an item that does not exist`, `› refuses a reused edge id here as the single door does, and says what differs`, `› gates bulk edges per type and edge permission, and on nothing else`, `› atomic=true rolls back the whole batch on validation error`.
 
+### `edges/bulk-answers-reads`
+
+While a `POST /edges/bulk` page is being written, the server MUST answer a read that arrives without waiting for the page to end.
+
+**Reason:** the same as `items/bulk-answers-reads`: a long page does not take the instance away from its other callers.
+
+**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read while an atomic edges page is written`.
+
 ### `edges/bulk-best-effort`
 
 If an entry of a `POST /edges/bulk` page under `atomic: false` is refused, then the server MUST report it `errored` with its `error.code` and `error.details`.

@@ -196,6 +196,15 @@ export function withoutWriteWait<T>(work: () => T): T {
   return writeWaitBudget.run(0, work);
 }
 
+/**
+ * Tells writes queued behind the open write transaction that it is still
+ * working, so their wait for the lock restarts. Call between the units of a
+ * long transaction, such as the entries of a bulk page.
+ */
+export function markWriteProgress(): void {
+  transactionControl.getStore()?.markProgress?.();
+}
+
 export function setBusyBudgetMs(ms: number | undefined): void {
   // `undefined` leaves the default standing rather than overwriting it
   // with a second copy of the same number, so `BUSY_BUDGET_MS` above is
@@ -421,7 +430,8 @@ const BEGIN: Record<TransactionMode, string> = {
  * to end, rather than meeting its lock in `BEGIN IMMEDIATE`: every refusal
  * the retry absorbed cost a connection, up to a hundred of them for one
  * wait. The wait is held to the same budget as the retry and ends in the
- * same refusal. A lock another process holds still meets the retry, and
+ * same refusal, except that a holder marking progress with
+ * `markWriteProgress` restarts it. A lock another process holds still meets the retry, and
  * still costs a connection per refusal, because no client call resets the
  * refused statement.
  */
@@ -439,26 +449,40 @@ function transactionConnections(
   captureRead: CaptureRead;
   closeReads: () => Promise<void>;
 } {
-  const idle: Client[] = [];
+  // Kept apart by mode because `PRAGMA query_only` expires every statement
+  // the connection has prepared, and the driver never finalizes its own, so
+  // switching per transaction made each one cost more than the last.
+  const idle = { read: [] as Client[], write: [] as Client[] };
+  const pool = (mode: TransactionMode) =>
+    mode === "read" ? idle.read : idle.write;
   let shut = false;
+  let writerProgressAt = Number.NEGATIVE_INFINITY;
+  // The budget runs from the later of joining the queue and the open
+  // writer's last unit of work, so a short write waits out a long bulk
+  // page that keeps writing, and is still refused behind one that stalls.
   const awaitTurn = async (turn: Promise<void>): Promise<void> => {
     const budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs;
+    const joined = clock.monotonicMs();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         turn,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            reject(contention(budgetMs));
-          }, budgetMs);
+          const check = () => {
+            const idleFor =
+              clock.monotonicMs() - Math.max(joined, writerProgressAt);
+            if (idleFor >= budgetMs) reject(contention(budgetMs));
+            else timer = setTimeout(check, budgetMs - idleFor);
+          };
+          timer = setTimeout(check, budgetMs);
         }),
       ]);
     } finally {
       clearTimeout(timer);
     }
   };
-  const handBack = (conn: Client, sound: boolean) => {
-    if (sound && !shut && !conn.closed) idle.push(conn);
+  const handBack = (conn: Client, mode: TransactionMode, sound: boolean) => {
+    if (sound && !shut && !conn.closed) pool(mode).push(conn);
     else conn.close();
   };
 
@@ -512,15 +536,15 @@ function transactionConnections(
         throw error;
       }
     }
-    const conn = idle.pop() ?? createClient({ url });
+    const pooled = pool(mode).pop();
+    const conn = pooled ?? createClient({ url });
     try {
       // The native READONLY begin accepts writes; query_only supplies the backstop.
-      await conn.execute(
-        mode === "read" ? "PRAGMA query_only = ON" : "PRAGMA query_only = OFF",
-      );
+      if (!pooled && mode === "read")
+        await conn.execute("PRAGMA query_only = ON");
       await conn.execute(BEGIN[mode]);
     } catch (err) {
-      handBack(conn, false);
+      handBack(conn, mode, false);
       leave();
       throw err;
     }
@@ -529,13 +553,17 @@ function transactionConnections(
       new TransactionControl();
     control.begun = true;
     let open = true;
+    if (mode === "write")
+      control.markProgress = () => {
+        if (open) writerProgressAt = clock.monotonicMs();
+      };
     const closedError = () =>
       control.error() ??
       new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
     const finish = (sound: boolean) => {
       open = false;
       if (control.outcome === "rolled_back") control.participant?.rolledBack();
-      handBack(conn, sound);
+      handBack(conn, mode, sound);
       leave();
     };
     const discard = async (holdWriter = false) => {
@@ -550,7 +578,7 @@ function transactionConnections(
       }
       if (holdWriter) {
         open = false;
-        handBack(conn, false);
+        handBack(conn, mode, false);
       } else finish(false);
     };
     const loadRegistry = async (): Promise<{
@@ -648,7 +676,6 @@ function transactionConnections(
         }
         await conn.execute(statement);
         if (injected === "ack-lost") throw commitFailure(injected);
-        if (mode === "read") await conn.execute("PRAGMA query_only = OFF");
         control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
         if (statement === "COMMIT") control.participant?.committed();
       } catch (error) {
@@ -901,7 +928,8 @@ function transactionConnections(
     },
     close: () => {
       shut = true;
-      for (const conn of idle.splice(0)) conn.close();
+      for (const conn of [...idle.read.splice(0), ...idle.write.splice(0)])
+        conn.close();
     },
   };
 }
