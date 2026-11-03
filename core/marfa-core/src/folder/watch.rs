@@ -834,8 +834,9 @@ impl Folder {
     /// the scan judges such a file's links again. So a change applied after
     /// the scan began is news to the pass where a file is held or refused and
     /// the change is to an item no file is bound to, which may be what a held
-    /// link names. A change to an item a file is bound to, such as the echo of
-    /// an edit the pass sent, names no new link target.
+    /// link names. Bound items are excluded to avoid another pass for the
+    /// echo of an edit this pass sent. A bound item's rename can also change
+    /// a held link's target; the next full pass judges that link again.
     fn unseen_by_pass(&self, telling: &Telling, applied: Instant, item: Option<&str>) -> bool {
         telling.unseen_by_pull(applied)
             || (telling.scan_began.is_none_or(|began| applied >= began)

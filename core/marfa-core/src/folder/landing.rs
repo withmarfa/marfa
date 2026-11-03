@@ -104,8 +104,9 @@ pub(crate) fn land_at(
             )));
         }
         file.sync_all()?;
-        // Of the file this call wrote: the rename keeps its identity, size and
-        // time, which a look at the path afterwards cannot promise.
+        // The rename keeps the identity, size, modification time and
+        // executable bits the scan compares. A later path lookup might
+        // describe a person's save instead.
         let written = file.metadata()?;
         drop(file);
         save_meanwhile(dir, target);
