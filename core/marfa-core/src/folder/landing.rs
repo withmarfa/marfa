@@ -160,6 +160,7 @@ fn order_dir(dir: &Directory) -> io::Result<()> {
     count(Counted::Full);
     dir.sync()
 }
+
 /// Flushes `file` so that what it holds reaches the media before anything
 /// written after this call. Where the file system has no such flush, a full
 /// one.
