@@ -4266,20 +4266,20 @@ mod tests {
         );
         // A task the copy does not hold, which a pin reads from the server.
         server.on(
-            &format!("/items/{X}"),
+            "/items/bulk-get",
             vec![crate::scripted::certified(crate::scripted::json(
                 200,
                 &serde_json::json!({
-                    "listed": true,
-                    "item": {
+                    "listed": [true],
+                    "items": [{
                         "id": X, "type": "core.task", "state": "active",
                         "properties": { "title": "xylophone" },
                         "version": 1, "schema_version": 1, "source": "test",
                         "occurred_at": "2026-01-01T00:00:00Z",
                         "created_at": "2026-01-01T00:00:00Z",
                         "updated_at": "2026-01-01T00:00:00Z"
-                    },
-                    "metadata": { "tags": [] }
+                    }],
+                    "metadata": [{ "item_id": X, "tags": [] }]
                 })
                 .to_string(),
             ))],
@@ -4317,20 +4317,20 @@ mod tests {
         // A task titled as a note's file is, which a pin reads from the
         // server.
         server.on(
-            &format!("/items/{X}"),
+            "/items/bulk-get",
             vec![crate::scripted::certified(crate::scripted::json(
                 200,
                 &serde_json::json!({
-                    "listed": true,
-                    "item": {
+                    "listed": [true],
+                    "items": [{
                         "id": X, "type": "core.task", "state": "active",
                         "properties": { "title": "b.md" },
                         "version": 1, "schema_version": 1, "source": "test",
                         "occurred_at": "2026-01-01T00:00:00Z",
                         "created_at": "2026-01-01T00:00:00Z",
                         "updated_at": "2026-01-01T00:00:00Z"
-                    },
-                    "metadata": { "tags": [] }
+                    }],
+                    "metadata": [{ "item_id": X, "tags": [] }]
                 })
                 .to_string(),
             ))],
@@ -4957,18 +4957,10 @@ mod tests {
         let (dir, folder, server, mut passes) = watched_notes(&["a.md"]);
         let gone = "01a00000-0000-7000-8000-0000000000e9";
         server.on(
-            &format!("/items/{gone}"),
-            vec![crate::scripted::certified(crate::scripted::refusal(
-                404,
-                "item_not_found",
-            ))],
-        );
-        // The bin, where a pin looks for an end the server does not hold.
-        server.on(
-            "/items",
+            "/items/bulk-get",
             vec![crate::scripted::certified(crate::scripted::json(
                 200,
-                r#"{"data":[],"next_cursor":null}"#,
+                r#"{"items":[],"metadata":[],"listed":[]}"#,
             ))],
         );
         {
@@ -4988,11 +4980,11 @@ mod tests {
                 .contains(gone)
         );
         // The server holds no such item, so each pull asks for it again.
-        let end = format!("/items/{gone}");
+        let end = "/items/bulk-get";
         for full in [false, true, false] {
-            let asked = server.seen(&end).len();
+            let asked = server.seen(end).len();
             passes.run(&folder, full).unwrap();
-            assert_eq!(server.seen(&end).len(), asked + 1, "full: {full}");
+            assert_eq!(server.seen(end).len(), asked + 1, "full: {full}");
         }
 
         // The witness: once no line names the end, the passes settle and stop
@@ -5004,10 +4996,10 @@ mod tests {
             .execute("DELETE FROM edges WHERE id = 'about-gone'", [])
             .unwrap();
         settle(&folder, &mut passes);
-        let asked = server.seen(&end).len();
+        let asked = server.seen(end).len();
         passes.run(&folder, true).unwrap();
         assert_eq!(rendered(), 0);
-        assert_eq!(server.seen(&end).len(), asked);
+        assert_eq!(server.seen(end).len(), asked);
     }
 
     /// Moves the journaled delete at `path` past the grace.
@@ -8086,12 +8078,12 @@ mod tests {
         ScannedDir,
         Option<crate::scripted::Scripted>,
     ) {
-        let (folder, dir, server, id) = over_an_unread_attachment(n, answers, renew, |dir| {
+        let (folder, dir, server, _) = over_an_unread_attachment(n, answers, renew, |dir| {
             std::fs::write(dir.join("New.md"), "A new note.\n").unwrap();
         });
         let scanned = folder.scan();
         if let Some(server) = &server {
-            assert!(!server.seen(&format!("/items/{id}")).is_empty());
+            assert!(!server.seen("/items/bulk-get").is_empty());
         }
         (scanned, folder, dir, server)
     }
@@ -8142,10 +8134,18 @@ mod tests {
         prepare(dir.path());
         let server = answers.map(|answers| {
             let server = crate::scripted::Scripted::start();
+            // The bulk door leaves out an id it holds nothing of, where a read
+            // by id answers 404.
             server.on(
-                &format!("/items/{id}"),
+                "/items/bulk-get",
                 answers
                     .into_iter()
+                    .map(|answer| match answer {
+                        crate::scripted::Answer::Json { status: 404, .. } => {
+                            crate::scripted::json(200, r#"{"items":[],"metadata":[],"listed":[]}"#)
+                        }
+                        other => other,
+                    })
                     .map(crate::scripted::certified)
                     .collect(),
             );
@@ -8373,13 +8373,13 @@ mod tests {
                 failed.push(format!("{case}: the attachment was recorded as held"));
             }
             let again = folder.pull().unwrap();
-            if server.seen(&format!("/items/{id}")).len() != 2
+            if server.seen("/items/bulk-get").len() != 2
                 || unread_attachments(&again).len() != 1
                 || again.written != 0
             {
                 failed.push(format!(
                     "{case}: the second pull {again:?}, asked {} times",
-                    server.seen(&format!("/items/{id}")).len()
+                    server.seen("/items/bulk-get").len()
                 ));
             }
         }

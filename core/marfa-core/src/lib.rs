@@ -915,6 +915,120 @@ impl Core {
         }
     }
 
+    /// `pin` for many rows the copy does not hold, reading each hundred with
+    /// one request. Answers each id in the order given with whether the pin
+    /// took, or why it failed. A row the server holds none of, or leaves out
+    /// as the key may not read it, is `Ok(false)` and stays unpinned: the
+    /// callers here treat `pin`'s `NotFound` and `Forbidden` alike, and a row
+    /// the copy does not hold has nothing to let go or keep.
+    ///
+    /// A failure of one page is its ids' own and a later page is still read,
+    /// a 5xx among them, unless it would end a pass (`Canceled`, offline, rate
+    /// limited, or what ends a drain, an expired copy among it): the rest are
+    /// answered with that error, unread. A row the
+    /// copy holds is the caller's to filter out, since a read by id answers a
+    /// row in the bin as gone and this does not ask the bin.
+    pub(crate) fn pin_many(&self, ids: &[String]) -> Vec<(String, Result<bool>)> {
+        debug_assert!(
+            self.conn().is_ok_and(|conn| {
+                ids.iter()
+                    .all(|id| !store::item_held(&conn, id).unwrap_or(false))
+            }),
+            "pin_many is for rows the copy does not hold"
+        );
+        let mut answered = Vec::with_capacity(ids.len());
+        let mut ended: Option<CoreError> = None;
+        for page in ids.chunks(http::BULK_GET_LIMIT) {
+            let read = match &ended {
+                Some(error) => Err(error.clone()),
+                None => self.pin_page(page),
+            };
+            match read {
+                Ok(held) => answered.extend(page.iter().cloned().zip(held.into_iter().map(Ok))),
+                Err(error) => {
+                    if ended.is_none() && pin_pass_ends(&error) {
+                        ended = Some(error.clone());
+                    }
+                    answered.extend(page.iter().map(|id| (id.clone(), Err(error.clone()))));
+                }
+            }
+        }
+        answered
+    }
+
+    fn pin_page(&self, ids: &[String]) -> Result<Vec<bool>> {
+        self.lock.refuse_unless_writer()?;
+        let http = self.http()?;
+        let (added, context) = {
+            let mut conn = self.conn()?;
+            store::refuse_unless_hydrated(&conn)?;
+            let tx = conn.transaction()?;
+            let mut added = Vec::with_capacity(ids.len());
+            for id in ids {
+                added.push(store::pin(&tx, id)?);
+            }
+            let context = reach::Context::capture(&tx)?;
+            tx.commit()?;
+            (added, context)
+        };
+        let read = (|| -> Result<Vec<bool>> {
+            let http = context.http(http);
+            let rows = http.items_by_id(ids)?;
+            let mut whole = std::collections::HashMap::new();
+            for row in rows {
+                let mut edges = Vec::new();
+                for (edge_type, block) in row.item.edges.iter().flatten() {
+                    edges.extend(block.data.iter().cloned());
+                    edges.extend(hydrate::fetch_overflow(
+                        &http,
+                        &NEVER_STOPPED,
+                        &row.item.id,
+                        edge_type,
+                        block,
+                    )?);
+                }
+                whole.insert(row.item.id.clone(), (row, edges));
+            }
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            context.check(&tx)?;
+            let catalog = catalog::Catalog::load(&tx)?;
+            let mut held = Vec::with_capacity(ids.len());
+            for id in ids {
+                held.push(match whole.get(id) {
+                    Some((row, edges)) => {
+                        hydrate::hold_row(&tx, &catalog, row, edges)?;
+                        true
+                    }
+                    None => false,
+                });
+            }
+            tx.commit()?;
+            Ok(held)
+        })();
+        let mut unpin_failed: Option<CoreError> = None;
+        {
+            let conn = self.conn()?;
+            if context.check(&conn).is_ok() {
+                for (at, id) in ids.iter().enumerate() {
+                    if added[at]
+                        && !matches!(&read, Ok(held) if held[at])
+                        && let Err(error) = store::unpin(&conn, id)
+                    {
+                        unpin_failed.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        match read {
+            Ok(held) => match unpin_failed {
+                Some(error) => Err(error),
+                None => Ok(held),
+            },
+            Err(error) => Err(context.failed(self, error).unwrap_or_else(|error| error)),
+        }
+    }
+
     /// A row the slice does not take leaves the copy, unless writes to it
     /// still wait. Answers whether it was pinned.
     pub fn unpin(&self, id: &str) -> Result<bool> {
@@ -8164,6 +8278,7 @@ mod tests {
             ),
             ("delete_view", reader.delete_view("x", None).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
+            ("pin_page", reader.pin_page(&["x".to_owned()]).unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
                 "follow",
@@ -8187,7 +8302,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            54,
+            55,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -9192,5 +9307,19 @@ mod forgetting_named_tests {
         assert_eq!(core.forget_answered_ids(&["leftover".into()]).unwrap(), 1);
         let left: Vec<_> = core.queue().unwrap().into_iter().map(|w| w.id).collect();
         assert_eq!(left, vec!["other".to_string()]);
+    }
+}
+
+/// Whether a failed page of `pin_many` would fail every page after it. A
+/// server's 5xx fails only its own page, so later pages are still read.
+fn pin_pass_ends(error: &CoreError) -> bool {
+    match error {
+        CoreError::RenewalFailed(cause) => pin_pass_ends(cause),
+        CoreError::Server { status, .. } if (500..=599).contains(status) => false,
+        _ => {
+            drain::ends_the_drain(error)
+                || matches!(error, CoreError::Canceled | CoreError::NoServer)
+                || error.is_environmental()
+        }
     }
 }
