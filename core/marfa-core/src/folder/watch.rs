@@ -337,9 +337,7 @@ impl Folder {
                 }
                 Ok(Wake::Server(applied)) => {
                     stale = true;
-                    // A change the copy had before the last pull began is in
-                    // what that pull read: the pass does not run again for it.
-                    if telling.unseen_by_pull(applied) {
+                    if self.unseen_by_pass(&telling, applied) {
                         changed = true;
                         telling.health_changed = true;
                     }
@@ -444,6 +442,7 @@ impl Folder {
                 "folder-quick-scan"
             }
         });
+        telling.scan_began = Some(crate::clock::now());
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
@@ -786,9 +785,11 @@ pub(super) const SEND_AGAIN_AT: &str = "folder_send_again_at";
 
 impl Folder {
     /// Whether the file at `path` is as the last scan or pull left it: the
-    /// size and time it was read at, and the bytes the folder bound it with.
-    /// A pass has nothing to find in it, so an event naming it, such as the
-    /// pull's own write, starts none.
+    /// identity, size and time it was read at, and the bytes the folder bound
+    /// it with. A pass has nothing to find in it, so an event naming it, such
+    /// as the pull's own write, starts none. A different file with the same
+    /// size, time and bytes is not that file: a later rename of it would move
+    /// no item if the binding still named the old identity.
     pub(super) fn stands_as_read(&self, path: &Path) -> bool {
         self.file_stands_as_read(path).unwrap_or(false)
     }
@@ -805,6 +806,9 @@ impl Folder {
         else {
             return Ok(false);
         };
+        let Some(identity) = super::identity::of(&metadata).map(|found| found.key()) else {
+            return Ok(false);
+        };
         let bound = {
             let conn = self.core.conn()?;
             if super::state::stat_of(&conn, &key)?.as_deref() != Some(stat.as_str()) {
@@ -813,13 +817,29 @@ impl Folder {
             super::state::bound_at(&conn, &key)?
         };
         Ok(bound.is_some_and(|bound| {
-            bound.held.is_none()
+            bound.identity.as_deref() == Some(identity.as_str())
+                && bound.held.is_none()
                 && !bound.holds_refusal()
                 && super::state::untaken_read_version(&bound.content_hash).is_none()
                 && self
                     .read(path)
                     .is_ok_and(|bytes| super::state::hash(&bytes) == bound.content_hash)
         }))
+    }
+
+    /// Whether a server change the copy took at `applied` is one the last
+    /// pass did not act on. The pull read every change applied before it
+    /// began, but it leaves a held file be, so a change applied after the scan
+    /// began is no news to the pass only where no file is held or refused:
+    /// only the scan judges such a file's links again. A change the scan began
+    /// after is in what both read.
+    fn unseen_by_pass(&self, telling: &Telling, applied: Instant) -> bool {
+        telling.unseen_by_pull(applied)
+            || (telling.scan_began.is_none_or(|began| applied >= began)
+                && self
+                    .core
+                    .conn()
+                    .is_ok_and(|conn| super::state::any_held_or_refused(&conn).unwrap_or(true)))
     }
 
     /// Read in one transaction, so a change committed between two of the
@@ -1066,6 +1086,8 @@ struct Telling {
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
     at_rest: bool,
+    /// When the last pass began its scan.
+    scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.
     pull_began: Option<Instant>,
     /// The last pull, where a pass that finds the copy and the record as it
@@ -1555,6 +1577,33 @@ mod tests {
         assert!(!telling.unseen_by_pull(began - Duration::from_millis(1)));
         // Before any pull, every change waits for one.
         assert!(Telling::default().unseen_by_pull(began));
+    }
+
+    #[test]
+    fn a_server_change_applied_between_the_scan_and_the_pull_starts_a_pass_where_a_file_is_held() {
+        let (_dir, folder, _server, _passes, _id) = super::super::quiet_watch_tests::held_note();
+        let scan_began = Instant::now();
+        let telling = Telling {
+            scan_began: Some(scan_began),
+            pull_began: Some(scan_began + 2 * SECOND),
+            ..Telling::default()
+        };
+        // The scan judged the held file's links before this change was
+        // applied, and the pull leaves a held file be.
+        let between = scan_began + SECOND;
+        assert!(
+            folder.unseen_by_pass(&telling, between),
+            "a change the scan did not see, with a file held, started no pass"
+        );
+        // The witnesses: one the scan had, one the pull had and no file is
+        // held for, and one after the pull's start.
+        assert!(!folder.unseen_by_pass(&telling, scan_began - Duration::from_millis(1)));
+        assert!(folder.unseen_by_pass(&telling, scan_began + 2 * SECOND));
+        let (_dir, quiet, _server, _passes) = crate::folder::tests::watched_notes(&["a.md"]);
+        assert!(
+            !quiet.unseen_by_pass(&telling, between),
+            "the pull read it and nothing is held, yet a pass would run"
+        );
     }
 
     #[test]

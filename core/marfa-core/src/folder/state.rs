@@ -454,6 +454,17 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
         .optional()?)
 }
 
+/// Whether a file is held, or holds a refused change: the scan judges such a
+/// file again, though its bytes are as they were, which a pull does not.
+pub fn any_held_or_refused(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM folder_files WHERE held IS NOT NULL
+           OR (json_valid(writes) AND json_array_length(writes, '$.refused') > 0))",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(

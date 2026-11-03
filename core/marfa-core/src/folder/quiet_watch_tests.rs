@@ -84,7 +84,7 @@ fn with_line(path: &Path, line: &str) {
 /// item has every line the folder recorded except that one. Answers the
 /// folder's directory, the folder, its server, the watch's passes and the
 /// note's item.
-fn held_note() -> (ScannedDir, Folder, Scripted, watch::Passes, String) {
+pub(super) fn held_note() -> (ScannedDir, Folder, Scripted, watch::Passes, String) {
     let (dir, folder, server) = online_folder(nothing_found());
     std::fs::write(dir.path().join("A.md"), "A\n").unwrap();
     assert_eq!(folder.scan().unwrap().created, 1);
@@ -634,4 +634,64 @@ fn a_pass_that_wrote_a_file_leaves_the_folder_at_rest() {
     assert!(!folder.stands_as_read(&note));
     std::fs::remove_file(&note).unwrap();
     assert!(!folder.stands_as_read(&note));
+}
+
+#[test]
+fn a_file_replaced_by_one_with_the_same_bytes_and_time_is_not_one_as_read() {
+    let (dir, folder, _server, _passes) = watched_notes(&["a.md"]);
+    let note = dir.path().join("a.md");
+    assert!(
+        folder.stands_as_read(&note),
+        "the witness: the untouched file stands as read"
+    );
+    let before = std::fs::metadata(&note).unwrap();
+    let aside = dir.path().join("a.md.replacement");
+    std::fs::write(&aside, std::fs::read(&note).unwrap()).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&aside)
+        .unwrap()
+        .set_modified(before.modified().unwrap())
+        .unwrap();
+    std::fs::rename(&aside, &note).unwrap();
+    let after = std::fs::metadata(&note).unwrap();
+    assert_eq!(
+        (before.len(), before.modified().unwrap()),
+        (after.len(), after.modified().unwrap()),
+        "the witness: size and time are as read"
+    );
+    assert!(
+        !folder.stands_as_read(&note),
+        "a different file with the same size, time and bytes was taken for the one read, \
+         so a rename of it before the next full pass moves no item"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_save_made_just_after_the_pull_landed_a_file_is_read_by_the_next_pass() {
+    let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+    let note = dir.path().join("a.md");
+    let id = bound(&folder, "a.md").unwrap().item_id;
+    changed_elsewhere(&folder, &id, "words from another device\n");
+    {
+        let _saving = crate::fault::fail_on_this_thread("folder-pull-saved-after-landing");
+        passes.run(&folder, false).unwrap();
+    }
+    let text = std::fs::read_to_string(&note).unwrap();
+    assert!(
+        text.contains("words from another device") && text.contains("saved after landing"),
+        "the witness: the pull wrote the file and a person saved over it, {text}"
+    );
+    assert_ne!(
+        bound(&folder, "a.md").unwrap().content_hash,
+        state::hash(text.as_bytes()),
+        "the witness: the binding describes the bytes the pull wrote"
+    );
+    folder.scan_watching(false, Duration::ZERO).unwrap();
+    assert_eq!(
+        bound(&folder, "a.md").unwrap().content_hash,
+        state::hash(text.as_bytes()),
+        "the next quick pass skipped the person's save as unchanged"
+    );
 }

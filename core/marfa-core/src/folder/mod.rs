@@ -1030,7 +1030,7 @@ impl Folder {
         path: &Path,
         fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
         still: impl FnOnce(Option<&[u8]>) -> bool,
-    ) -> std::result::Result<(), landing::Unlanded> {
+    ) -> std::result::Result<std::fs::Metadata, landing::Unlanded> {
         if let Some(gone) = self.root_gone() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
         }
