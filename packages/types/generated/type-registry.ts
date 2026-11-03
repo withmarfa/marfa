@@ -673,6 +673,7 @@ const systemFolder: TypeSchema = {
     ignore: { type: "array", description: "Paths the folder leaves alone, as gitignore patterns relative to its root. It wins over `include`.", items_type: "string" },
     first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type to a directory under the folder's root." },
     removal_threshold: { type: "object", description: "When removing files pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Defaults to 10 and 0.25." },
+    full_pass_interval_seconds: { type: "integer", description: "Seconds between the watch's passes that read every file in the folder, from 60 to 86400. Defaults to 600." },
     revoked_at: { type: "datetime", description: "When the folder was revoked." },
   },
 };
@@ -2581,6 +2582,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "first_placement": {
         "type": "object"
+      },
+      "full_pass_interval_seconds": {
+        "type": "integer"
       },
       "ignore": {
         "items_type": "string",

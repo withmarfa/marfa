@@ -97,6 +97,10 @@ pub const STATE_DIR: &str = ".marfa";
 /// The window in which the other half of a rename can arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
+/// How long a quick pass leaves a file whose binding a sweep kept before it
+/// looks in the other folders for it again. Looking walks them.
+const KEPT_LOOK: Duration = Duration::from_secs(60);
+
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
 pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
@@ -188,6 +192,9 @@ pub struct Folder {
     /// Placement writes whose give-way read failed in a watch, by queue id,
     /// and when.
     unread_give_ways: std::sync::Mutex<HashMap<String, std::time::Instant>>,
+    /// When a sweep last looked in the other folders for a missing file whose
+    /// binding it keeps, which a quick pass looks again after `KEPT_LOOK`.
+    kept_looked: std::sync::Mutex<Option<std::time::Instant>>,
     /// Items whose refused placement is no longer withheld, which a narrow
     /// pull sends: nothing in the copy says that the key's grant came back.
     released: std::sync::Mutex<std::collections::BTreeSet<String>>,
@@ -429,6 +436,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
@@ -558,6 +566,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
@@ -605,6 +614,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             unread_give_ways: std::sync::Mutex::new(Default::default()),
+            kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
@@ -3885,7 +3895,7 @@ mod tests {
     }
 
     /// `watched_notes` over a folder with these settings.
-    fn watched_notes_in(
+    pub(super) fn watched_notes_in(
         settings: Value,
         names: &[&str],
     ) -> (ScannedDir, Folder, crate::scripted::Scripted, watch::Passes) {
@@ -5026,7 +5036,8 @@ mod tests {
     }
 
     #[test]
-    fn a_file_kept_for_the_folder_it_moved_to_is_looked_for_there_once_a_full_pass() {
+    fn a_file_kept_for_the_folder_it_moved_to_is_looked_for_there_by_a_quick_pass_only_each_minute()
+    {
         let (_, _registry) = registry::tests::own_registry();
         let query = serde_json::json!({ "query": {} });
         let (from, a) = folder_with("01a00000-0000-7000-8000-0000000000b1", query.clone(), None);
@@ -5061,6 +5072,15 @@ mod tests {
         );
         assert_eq!(pulled.elsewhere, 1, "{pulled:?}");
         assert!(!from.path().join("photo.bin").exists());
+
+        a.age_kept_look(KEPT_LOOK);
+        a.scan_watching(false, QUICK).unwrap();
+        assert_eq!(
+            peers_walked(),
+            1,
+            "a quick pass a minute after the last look did not look again"
+        );
+        assert_eq!(kept(&a, "photo.bin"), Some(state::Kept::Arriving));
 
         a.scan().unwrap();
         assert_eq!(peers_walked(), 1, "a full pass did not look again");

@@ -5,39 +5,39 @@
 use super::held_links_tests::{Answer, held, nothing_found, online_folder};
 use super::tests::{
     ScannedDir, changed_elsewhere, deletes_queued, folder_with, kept, landed, past_the_grace,
-    settle, watched_notes,
+    settle, watched_notes, watched_notes_in,
 };
 use super::*;
 use crate::scripted::{Scripted, certified};
 
-/// Two minutes of a watch's ticks.
-const TWO_MINUTES: usize = 120;
+/// Two default full-pass intervals of a watch's ticks.
+const TWO_INTERVALS: usize = 1200;
 
-/// One minute of a watch's ticks.
-const ONE_MINUTE: usize = 60;
+/// One default full-pass interval of a watch's ticks.
+const ONE_INTERVAL: usize = 600;
 
-/// Whether `pulls` is at most the one full pull a minute allows over two
-/// minutes.
-fn once_a_minute(pulls: usize) -> bool {
+/// Whether `pulls` is at most the one full pull an interval allows over two
+/// intervals.
+fn once_an_interval(pulls: usize) -> bool {
     pulls <= 2
 }
 
-/// Ticks two quiet minutes, answering the pulls they ran.
-fn two_quiet_minutes(passes: &mut watch::Passes, folder: &Folder) -> usize {
+/// Ticks two quiet intervals, answering the pulls they ran.
+fn two_quiet_intervals(passes: &mut watch::Passes, folder: &Folder) -> usize {
     passes.pulls();
-    for _ in 0..TWO_MINUTES {
+    for _ in 0..TWO_INTERVALS {
         passes.tick(folder).unwrap();
     }
     passes.pulls()
 }
 
-/// Ticks until `woken` holds, for at most a minute, answering whether it did.
-fn wakes_within_a_minute(
+/// Ticks until `woken` holds, for at most an interval, answering whether it did.
+fn wakes_within_an_interval(
     passes: &mut watch::Passes,
     folder: &Folder,
     woken: impl Fn() -> bool,
 ) -> bool {
-    (0..ONE_MINUTE).any(|_| {
+    (0..ONE_INTERVAL).any(|_| {
         passes.tick(folder).unwrap();
         woken()
     })
@@ -206,16 +206,132 @@ fn comes_back(dir: &ScannedDir, folder: &Folder, id: &str) -> String {
     std::fs::read_to_string(dir.path().join("A.md")).unwrap()
 }
 
+/// The ticks, of `count`, on which a quiet watch ran a pass: with nothing
+/// standing, only a full pass runs.
+fn ticks_of_full_passes(passes: &mut watch::Passes, folder: &Folder, count: usize) -> Vec<usize> {
+    (1..=count)
+        .filter(|_| passes.tick(folder).unwrap())
+        .collect()
+}
+
+/// Sets the interval in the folder's row on the copy; `null` removes it.
+fn set_interval(folder: &Folder, value: serde_json::Value) {
+    let changed = folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE items SET properties = json_set(properties, '$.full_pass_interval_seconds', json(?2)), version = version + 1 WHERE id = ?1",
+            [folder.folder.as_str(), value.to_string().as_str()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1);
+}
+
 #[test]
-fn a_quiet_watch_with_nothing_standing_pulls_at_most_once_a_minute() {
+fn a_quiet_watch_runs_a_full_pass_every_ten_minutes_where_the_folder_names_no_interval() {
+    let (_dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 1300),
+        [600, 1200]
+    );
+}
+
+#[test]
+fn a_quiet_watch_runs_a_full_pass_every_interval_the_folder_names() {
+    let (_dir, folder, _server, mut passes) = watched_notes_in(
+        serde_json::json!({ "query": {}, "full_pass_interval_seconds": 90 }),
+        &["a.md"],
+    );
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 280),
+        [90, 180, 270]
+    );
+}
+
+#[test]
+fn a_changed_interval_takes_effect_in_the_running_watch() {
+    let (_dir, folder, _server, mut passes) = watched_notes_in(
+        serde_json::json!({ "query": {}, "full_pass_interval_seconds": 3600 }),
+        &["a.md"],
+    );
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 200),
+        Vec::<usize>::new()
+    );
+    set_interval(&folder, serde_json::json!(240));
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 100),
+        Vec::<usize>::new(),
+        "the witness: a watch reads the settings again only where they may have changed"
+    );
+    passes.settings_may_have_changed();
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 100),
+        [1],
+        "counted from the last full pass, 300 ticks before"
+    );
+    set_interval(&folder, serde_json::Value::Null);
+    passes.settings_may_have_changed();
+    assert_eq!(
+        ticks_of_full_passes(&mut passes, &folder, 600),
+        [501],
+        "a removed interval is the default, counted from the full pass 99 ticks before"
+    );
+}
+
+#[test]
+fn a_watch_keeps_its_pace_while_the_folders_interval_is_one_it_refuses() {
+    let (_dir, folder, _server, _passes) = watched_notes_in(
+        serde_json::json!({ "query": {}, "full_pass_interval_seconds": 120 }),
+        &["a.md"],
+    );
+    set_interval(&folder, serde_json::json!(5));
+    assert!(folder.settings().is_err(), "the witness: it is refused");
+    assert_eq!(
+        folder.watch_settings(Duration::from_secs(120)).1,
+        Duration::from_secs(120)
+    );
+    set_interval(&folder, serde_json::json!(300));
+    assert_eq!(
+        folder.watch_settings(Duration::from_secs(120)).1,
+        Duration::from_secs(300)
+    );
+}
+
+#[test]
+fn each_folder_of_a_machine_keeps_its_own_interval() {
+    let (_a_dir, a, _a_server, mut a_passes) = watched_notes_in(
+        serde_json::json!({ "query": {}, "full_pass_interval_seconds": 100 }),
+        &["a.md"],
+    );
+    let (_b_dir, b, _b_server, mut b_passes) = watched_notes(&["b.md"]);
+    let mut seen = (Vec::new(), Vec::new());
+    for tick in 1..=700 {
+        if a_passes.tick(&a).unwrap() {
+            seen.0.push(tick);
+        }
+        if b_passes.tick(&b).unwrap() {
+            seen.1.push(tick);
+        }
+    }
+    assert_eq!(seen.0, [100, 200, 300, 400, 500, 600, 700]);
+    assert_eq!(seen.1, [600]);
+}
+
+#[test]
+fn a_quiet_watch_with_nothing_standing_pulls_at_most_once_an_interval() {
     let (_dir, folder, _server, mut passes) = watched_notes(&["a.md", "b.md"]);
-    let pulls = two_quiet_minutes(&mut passes, &folder);
-    assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
+    let pulls = two_quiet_intervals(&mut passes, &folder);
+    assert!(
+        once_an_interval(pulls),
+        "{pulls} pulls in two quiet intervals"
+    );
 }
 
 #[cfg(unix)]
 #[test]
-fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_a_minute() {
+fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_an_interval() {
     use std::os::unix::fs::PermissionsExt;
     let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
     let shut = dir.path().join("shut");
@@ -231,18 +347,21 @@ fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_a_minute() {
         return;
     }
     passes.run(&folder, false).unwrap();
-    let pulls = two_quiet_minutes(&mut passes, &folder);
+    let pulls = two_quiet_intervals(&mut passes, &folder);
     let flagged = folder
         .scan_watching(false, Duration::ZERO)
         .unwrap()
         .directories;
     open(&shut);
     assert!(!flagged.is_empty(), "the witness: the directory stands");
-    assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
+    assert!(
+        once_an_interval(pulls),
+        "{pulls} pulls in two quiet intervals"
+    );
 }
 
 #[test]
-fn a_quiet_watch_over_a_delete_it_cannot_tell_from_a_move_rests_until_the_full_pass_can() {
+fn a_quiet_watch_looks_again_each_minute_for_a_delete_it_cannot_tell_from_a_move() {
     let (registry, _registry) = super::registry::tests::own_registry();
     let (dir, folder) = folder_with(
         "01a00000-0000-7000-8000-0000000026e1",
@@ -268,26 +387,172 @@ fn a_quiet_watch_over_a_delete_it_cannot_tell_from_a_move_rests_until_the_full_p
     let unsure = || matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_)));
     assert!(unsure(), "{:?}", kept(&folder, "a.md"));
 
-    let pulls = two_quiet_minutes(&mut passes, &folder);
-    assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
+    // The pass runs once a minute, not each tick, and the full pass is ten
+    // minutes off.
+    assert_eq!(ticks_of_full_passes(&mut passes, &folder, 130), [60, 120]);
     assert!(unsure(), "the witness: the delete stands undecided");
 
     // The registry can be read again, which no event here tells. The server
-    // is busy, so the delete the full pass decides waits in the queue.
+    // is busy, so the delete the quick pass decides waits in the queue.
     std::fs::write(registry.path(), listed).unwrap();
     server.on(
         &format!("/items/{id}"),
         vec![crate::scripted::refusal(503, "unavailable")],
     );
-    assert!(
-        wakes_within_a_minute(&mut passes, &folder, || {
-            state::journaled(&folder.core.conn().unwrap())
-                .unwrap()
-                .is_empty()
-        }),
-        "the full pass did not decide the delete"
+    let decided_after = (1..=60).find(|_| {
+        passes.tick(&folder).unwrap();
+        state::journaled(&folder.core.conn().unwrap())
+            .unwrap()
+            .is_empty()
+    });
+    assert_eq!(
+        decided_after,
+        Some(50),
+        "the quick pass did not decide the delete a minute after the look at tick 120"
     );
     assert_eq!(deletes_queued(&folder).len(), 1);
+}
+
+/// A watch whose registry cannot be read, over notes named `names` that are
+/// each landed and settled, with `a.md` deleted past the grace and kept as
+/// `Unsure` by one quick pass.
+fn watch_keeping_one(
+    id: &str,
+    names: &[&str],
+    properties: serde_json::Value,
+) -> (
+    tempfile::TempDir,
+    Folder,
+    Scripted,
+    watch::Passes,
+    impl Sized,
+) {
+    let (registry, guard) = super::registry::tests::own_registry();
+    let (dir, folder) = folder_with(id, properties, None);
+    for name in names {
+        std::fs::write(dir.path().join(name), "words\n").unwrap();
+    }
+    assert_eq!(folder.scan().unwrap().created, names.len());
+    for name in names {
+        landed(&folder, name);
+    }
+    answered(&folder);
+    let (folder, server) = served(dir.path(), folder);
+    let mut passes = watch::Passes::default();
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+    std::fs::remove_file(dir.path().join("a.md")).unwrap();
+    assert_eq!(folder.scan().unwrap().missing, 1);
+    past_the_grace(&folder, "a.md");
+    std::fs::write(registry.path(), "not a registry").unwrap();
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "{:?}",
+        kept(&folder, "a.md")
+    );
+    (dir, folder, server, passes, guard)
+}
+
+#[test]
+fn a_quiet_watch_over_a_kept_file_and_a_paused_removal_passes_at_most_once_a_minute() {
+    let (_dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e4",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    // The threshold now stops the sweep before it looks.
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute(
+            "UPDATE items SET properties = json_set(properties, '$.removal_threshold', json('{\"files\":0,\"fraction\":0.0}')), version = version + 1 WHERE id = ?1",
+            [folder.folder.as_str()],
+        )
+        .unwrap();
+    passes.run(&folder, false).unwrap();
+    let paused = state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap();
+    assert_eq!(paused, ["a.md"], "the witness: the removal stands paused");
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_quiet_watch_over_a_kept_file_and_an_unreadable_directory_passes_at_most_once_a_minute() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e5",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    let shut = dir.path().join("shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::write(shut.join("inside.md"), "inside\n").unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let open = |shut: &Path| {
+        std::fs::set_permissions(shut, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    // A superuser reads every directory, so there is nothing to stand.
+    if std::fs::read_dir(&shut).is_ok() {
+        open(&shut);
+        return;
+    }
+    passes.run(&folder, false).unwrap();
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    open(&shut);
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the file stays kept"
+    );
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[test]
+fn a_restarted_watch_over_a_persisted_kept_file_passes_at_most_once_a_minute() {
+    let (dir, folder, _server, _passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e6",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    let (folder, _server) = served(dir.path(), folder);
+    let mut passes = watch::Passes::default();
+    // The restarted watch's pass is a quick one: no full pass has run yet.
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "a.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the file stays kept"
+    );
+    let ran = ticks_of_full_passes(&mut passes, &folder, 130);
+    assert!(ran.len() <= 3, "passes at ticks {ran:?}");
+}
+
+#[test]
+fn a_new_missing_file_does_not_postpone_the_look_at_an_older_kept_one() {
+    let (dir, folder, _server, mut passes, _guard) = watch_keeping_one(
+        "01a00000-0000-7000-8000-0000000026e7",
+        &["a.md", "b.md"],
+        serde_json::json!({ "query": {} }),
+    );
+    for _ in 0..30 {
+        passes.tick(&folder).unwrap();
+    }
+    std::fs::remove_file(dir.path().join("b.md")).unwrap();
+    // A quick pass, since a full scan would look at the older file itself.
+    passes.run(&folder, false).unwrap();
+    past_the_grace(&folder, "b.md");
+    passes.run(&folder, false).unwrap();
+    assert!(
+        matches!(kept(&folder, "b.md"), Some(state::Kept::Unsure(_))),
+        "the witness: the new file's own check kept it"
+    );
+    let ran = ticks_of_full_passes(&mut passes, &folder, 40);
+    assert_eq!(
+        ran,
+        [30],
+        "the older file's look is a minute after its last"
+    );
 }
 
 #[test]
@@ -319,14 +584,17 @@ fn a_quiet_watch_over_a_paused_removal_rests_until_the_full_pass_finds_the_file_
     let paused = || state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap();
     assert_eq!(paused(), ["a.md"]);
 
-    let pulls = two_quiet_minutes(&mut passes, &folder);
-    assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
+    let pulls = two_quiet_intervals(&mut passes, &folder);
+    assert!(
+        once_an_interval(pulls),
+        "{pulls} pulls in two quiet intervals"
+    );
     assert_eq!(paused(), ["a.md"], "the witness: the removal stands paused");
 
     // The file comes back, which no event here tells.
     std::fs::write(&path, &before).unwrap();
     assert!(
-        wakes_within_a_minute(&mut passes, &folder, || paused().is_empty()),
+        wakes_within_an_interval(&mut passes, &folder, || paused().is_empty()),
         "the full pass did not find the file back"
     );
     assert!(deletes_queued(&folder).is_empty());
@@ -340,8 +608,11 @@ fn a_quiet_watch_rests_while_the_server_is_out_of_reach_and_wakes_once_it_is_bac
             .reach(&folder, Some("the server could not be reached".into()))
             .unwrap()
     );
-    let pulls = two_quiet_minutes(&mut passes, &folder);
-    assert!(once_a_minute(pulls), "{pulls} pulls in two quiet minutes");
+    let pulls = two_quiet_intervals(&mut passes, &folder);
+    assert!(
+        once_an_interval(pulls),
+        "{pulls} pulls in two quiet intervals"
+    );
     assert!(
         passes.reach(&folder, None).unwrap(),
         "the server's reach coming back ran no pass"

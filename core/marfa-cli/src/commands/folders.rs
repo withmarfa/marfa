@@ -43,6 +43,10 @@ pub struct SettingsArgs {
     /// When a removal pauses, as a JSON object: `files` and `fraction`.
     #[arg(long, value_name = "JSON")]
     pub removal_threshold: Option<String>,
+    /// Seconds between the watch's passes that read every file in the
+    /// folder, from 60 to 86400; unset is 600.
+    #[arg(long, value_name = "SECONDS")]
+    pub full_pass_interval_seconds: Option<u64>,
 }
 
 impl SettingsArgs {
@@ -82,6 +86,9 @@ impl SettingsArgs {
                 "removal_threshold".into(),
                 Value::Object(object(threshold, "--removal-threshold")?),
             );
+        }
+        if let Some(seconds) = self.full_pass_interval_seconds {
+            flags.insert("full_pass_interval_seconds".into(), json!(seconds));
         }
         for (key, value) in flags {
             if settings.contains_key(&key) {

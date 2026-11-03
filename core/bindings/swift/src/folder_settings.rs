@@ -31,6 +31,10 @@ pub struct FolderSettings {
     /// directory.
     pub first_placement: HashMap<String, String>,
     pub removal_threshold: RemovalThreshold,
+    /// Seconds between the passes of a watch that read every file, from 60
+    /// to 86400; `None` is 600.
+    #[uniffi(default = None)]
+    pub full_pass_interval_seconds: Option<u64>,
 }
 
 /// The query that decides which items a folder holds.
@@ -96,6 +100,8 @@ pub struct FolderSettingsChange {
     pub first_placement: Option<HashMap<String, String>>,
     #[uniffi(default = None)]
     pub removal_threshold: Option<RemovalThreshold>,
+    #[uniffi(default = None)]
+    pub full_pass_interval_seconds: Option<u64>,
 }
 
 /// A `system.folder` and the settings it carries.
@@ -216,6 +222,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
         ignore,
         first_placement,
         removal_threshold,
+        full_pass_interval_seconds,
     } = settings;
     Ok(FolderSettings {
         title,
@@ -248,6 +255,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
             files: removal_threshold.files,
             fraction: removal_threshold.fraction,
         },
+        full_pass_interval_seconds,
     })
 }
 
@@ -260,6 +268,7 @@ fn core_settings(settings: FolderSettings) -> Result<Settings, MarfaError> {
         ignore: settings.ignore,
         first_placement: settings.first_placement.into_iter().collect(),
         removal_threshold: core_threshold(settings.removal_threshold),
+        full_pass_interval_seconds: settings.full_pass_interval_seconds,
     })
 }
 
@@ -328,6 +337,9 @@ fn change_body(change: FolderSettingsChange) -> Result<Map<String, Value>, Marfa
         )
         .map_err(encoding)?;
     }
+    if let Some(seconds) = change.full_pass_interval_seconds {
+        put("full_pass_interval_seconds", Ok(Value::from(seconds))).map_err(encoding)?;
+    }
     Ok(body)
 }
 
@@ -359,6 +371,7 @@ mod tests {
             "ignore": ["drafts/"],
             "first_placement": { "core.note": "Notes" },
             "removal_threshold": { "files": 4, "fraction": 0.5 },
+            "full_pass_interval_seconds": 3600,
         });
         let core: Settings = serde_json::from_value(properties).unwrap();
         let crossed = settings(core.clone()).unwrap();

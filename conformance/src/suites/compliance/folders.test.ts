@@ -88,6 +88,7 @@ describe("the folder door", () => {
       ignore: ["drafts/"],
       first_placement: { "core.note": "Notes" },
       removal_threshold: { files: 20, fraction: 0.5 },
+      full_pass_interval_seconds: 3600,
     };
     const r = await client.createFolder(settings);
     expect(r.status).toBe(201);
@@ -412,6 +413,21 @@ describe("the folder door", () => {
       { removal_threshold: { files: -1 } },
       "validation_error",
       "removal_threshold.files",
+    ],
+    [
+      { full_pass_interval_seconds: 59 },
+      "validation_error",
+      "full_pass_interval_seconds",
+    ],
+    [
+      { full_pass_interval_seconds: 86_401 },
+      "validation_error",
+      "full_pass_interval_seconds",
+    ],
+    [
+      { full_pass_interval_seconds: 600.5 },
+      "validation_error",
+      "full_pass_interval_seconds",
     ],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
