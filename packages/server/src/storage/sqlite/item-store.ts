@@ -672,6 +672,20 @@ function itemFilterConditions(
   });
   if (readable) conditions.push(readable);
 
+  if (filters.beneath !== undefined) {
+    conditions.push(
+      beneathSql(filters.beneath, (type, source) =>
+        and(
+          typeFilterSql(type, {
+            allowed: filters.allowed_types,
+            excluded: filters.excluded_types ?? [],
+          }),
+          sourceFilterToSql(filters.source_filter, type, source),
+        ),
+      ),
+    );
+  }
+
   const sourceLever = sourceFilterToSql(
     filters.source_filter,
     items.type,

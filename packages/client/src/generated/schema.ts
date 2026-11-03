@@ -6640,6 +6640,8 @@ export interface operations {
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
+                /** @description An item ID. Only return that item and the items under it by `parent-of` edges, at any depth, walking only through items you can read. Needs read on `parent-of` edges. */
+                beneath?: string;
                 /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value: an enum sorts alphabetically. Defaults to `created_at`, or for `state=trashed` alone the trash time, which you can't name here. */
                 sort?: string;
                 /** @description Sort direction. Defaults to `desc`. */
@@ -9817,6 +9819,8 @@ export interface operations {
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
+                /** @description An item ID. Only return that item and the items under it by `parent-of` edges, at any depth, walking only through items you can read. Needs read on `parent-of` edges. */
+                beneath?: string;
                 /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;
                 /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this time. */

@@ -53,7 +53,9 @@ import {
   requireTypeAccess,
   standingPermission,
   readsSomeType,
+  requireEdgePermission,
 } from "../middleware/auth.js";
+import { PARENT_OF } from "../storage/view-listing.js";
 import type {
   Storage,
   ItemFilters,
@@ -459,6 +461,12 @@ export const listingNarrowingKeys = {
     .optional()
     .describe(
       "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry.",
+    ),
+  beneath: z
+    .string()
+    .optional()
+    .describe(
+      "An item ID. Only return that item and the items under it by `parent-of` edges, at any depth, walking only through items you can read. Needs read on `parent-of` edges.",
     ),
 };
 
@@ -1689,6 +1697,18 @@ export function itemRoutes(storage: Storage) {
       filter,
       reader?.owner ? () => true : undefined,
     );
+    // The same refusal a view's `beneath` makes: the walk reads `parent-of`
+    // edges, so a key that cannot read them cannot learn the tree by it.
+    if (query.beneath !== undefined) {
+      if (!isValidId(query.beneath)) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `The "beneath" parameter is not an item ID: ${query.beneath}`,
+          { invalid_parameters: ["beneath"] },
+        );
+      }
+      if (!reader?.owner) requireEdgePermission(c, PARENT_OF, "read");
+    }
     // The validated query holds only `library`, `feed` or `all`, and `all`
     // narrows nothing.
     const tier =
@@ -1721,6 +1741,7 @@ export function itemRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags,
       filter,
+      beneath: query.beneath,
       readable_sources: typeFilterForList,
       allowed_types: typeFilterForList.allowed,
       excluded_types: typeFilterForList.excluded,
