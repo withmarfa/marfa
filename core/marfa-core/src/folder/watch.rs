@@ -164,8 +164,12 @@ impl FollowHealth {
 }
 
 enum Wake {
-    File(notify::Result<notify::Event>),
-    Server,
+    /// What the watcher delivered, with when it delivered it: a pass can run
+    /// for seconds before the loop reads it.
+    File(notify::Result<notify::Event>, Instant),
+    /// The copy changed, as of when the follow had applied the change, with
+    /// the item the change names where it names one.
+    Server(Instant, Option<String>),
     Retrying(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
@@ -263,7 +267,7 @@ impl Folder {
             .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
         let dir = &absolute;
         let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = sender.send(Wake::File(event));
+            let _ = sender.send(Wake::File(event, crate::clock::now()));
         })
         .map_err(|error| WatchError::Unwatchable(format!("cannot watch: {error}")))?;
         // Before the first pass, so a file arriving during it is not missed.
@@ -290,6 +294,7 @@ impl Folder {
         // change on disk or from the server.
         let mut stale = false;
         let mut rate = PassRate::default();
+        let mut unread: Option<Wake> = None;
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -299,16 +304,35 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-watch-turn");
-            match crate::clock::recv_timeout(events, stop, TICK) {
-                Ok(Wake::File(Ok(event))) => {
+            let heard = match unread.take() {
+                Some(wake) => Ok(wake),
+                None => {
+                    let now = crate::clock::now();
+                    // Where a pass is due, only the events already queued are
+                    // read first. One write arrives as several events, and
+                    // after the last one, passed over, nothing else would wake
+                    // the loop for a tick.
+                    let due = changed && send_again_at.is_none_or(|at| now >= at) && gate.due(now);
+                    let wait = if due {
+                        Duration::ZERO
+                    } else {
+                        gate.listen_for(now)
+                    };
+                    crate::clock::recv_timeout(events, stop, wait)
+                }
+            };
+            match heard {
+                Ok(Wake::File(Ok(event), delivered)) => {
                     if stale {
                         lists = self.settings().and_then(|settings| settings.lists()).ok();
                         stale = false;
                     }
                     stale |= event.paths.iter().any(|path| settings_file(dir, path));
-                    if !event_passed_over(&event, dir, lists.as_ref()) {
+                    if !event_passed_over_unless(&event, dir, lists.as_ref(), |path| {
+                        self.stands_as_read(path)
+                    }) {
                         changed = true;
-                        gate.changed(crate::clock::now());
+                        gate.changed(delivered);
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
@@ -316,17 +340,19 @@ impl Folder {
                         continue;
                     }
                 }
-                Ok(Wake::File(Err(error))) => {
+                Ok(Wake::File(Err(error), delivered)) => {
                     // The watcher may have lost events, so nothing says the
                     // folder is unchanged.
                     changed = true;
-                    gate.changed(crate::clock::now());
+                    gate.changed(delivered);
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Server) => {
-                    changed = true;
+                Ok(Wake::Server(applied, item)) => {
                     stale = true;
-                    telling.health_changed = true;
+                    if self.unseen_by_pass(&telling, applied, item.as_deref()) {
+                        changed = true;
+                        telling.health_changed = true;
+                    }
                 }
                 Ok(Wake::Retrying(error, wait)) => {
                     tell(WatchEvent::Retrying { error, wait }).map_err(WatchError::Told)?;
@@ -349,6 +375,12 @@ impl Folder {
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            // What arrived while a pass ran is read, in order, before the gate
+            // is asked: a change heard first is older than one still waiting.
+            unread = events.try_recv().ok();
+            if unread.is_some() && gate.reads_first(crate::clock::now()) {
+                continue;
             }
             // No pass runs while the server's rate limit lasts, since a write
             // sent before it ends is refused again: changes on disk wait
@@ -422,6 +454,7 @@ impl Folder {
                 "folder-quick-scan"
             }
         });
+        telling.scan_began = Some(crate::clock::now());
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
@@ -450,6 +483,7 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
+        telling.pull_began = Some(crate::clock::now());
         let mark = self.mark()?;
         let pull = match telling.pulled.take().filter(|last| {
             last.from == mark
@@ -698,7 +732,7 @@ fn follow(
             retry = RETRY_FIRST;
             said = false;
             if hydrated.is_some() {
-                let _ = wakes.send(Wake::Server);
+                let _ = wakes.send(Wake::Server(crate::clock::now(), None));
             }
             folder.core().follow_observed(
                 ended,
@@ -713,7 +747,7 @@ fn follow(
                             unreachable = false;
                             Wake::Reach(None)
                         }
-                        _ => Wake::Server,
+                        _ => Wake::Server(crate::clock::now(), change.item_id.clone()),
                     });
                 },
                 |live| {
@@ -762,6 +796,70 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
 pub(super) const SEND_AGAIN_AT: &str = "folder_send_again_at";
 
 impl Folder {
+    /// Whether the file at `path` is as the last scan or pull left it: the
+    /// identity, size and time it was read at, and the bytes the folder bound
+    /// it with. A pass has nothing to find in it, so an event naming it, such
+    /// as the pull's own write, starts none. A different file with the same
+    /// size, time and bytes is not that file: a later rename of it would move
+    /// no item if the binding still named the old identity.
+    pub(super) fn stands_as_read(&self, path: &Path) -> bool {
+        self.file_stands_as_read(path).unwrap_or(false)
+    }
+
+    fn file_stands_as_read(&self, path: &Path) -> Result<bool, CoreError> {
+        let key = super::identity::relative(&self.root, path)?;
+        let Ok(metadata) = self.metadata(path) else {
+            return Ok(false);
+        };
+        let Some(stat) = metadata
+            .is_file()
+            .then(|| super::stat_metadata(&metadata))
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        let Some(identity) = super::identity::of(&metadata).map(|found| found.key()) else {
+            return Ok(false);
+        };
+        let bound = {
+            let conn = self.core.conn()?;
+            if super::state::stat_of(&conn, &key)?.as_deref() != Some(stat.as_str()) {
+                return Ok(false);
+            }
+            super::state::bound_at(&conn, &key)?
+        };
+        Ok(bound.is_some_and(|bound| {
+            bound.identity.as_deref() == Some(identity.as_str())
+                && bound.held.is_none()
+                && !bound.holds_refusal()
+                && super::state::untaken_read_version(&bound.content_hash).is_none()
+                && self
+                    .read(path)
+                    .is_ok_and(|bytes| super::state::hash(&bytes) == bound.content_hash)
+        }))
+    }
+
+    /// Whether a server change the copy took at `applied`, to `item` where it
+    /// names one, is one the last pass did not act on. The pull read every
+    /// change applied before it began, but it leaves a held file be, and only
+    /// the scan judges such a file's links again. So a change applied after
+    /// the scan began is news to the pass where a file is held or refused and
+    /// the change is to an item no file is bound to, which may be what a held
+    /// link names. Bound items are excluded to avoid another pass for the
+    /// echo of an edit this pass sent. A bound item's rename can also change
+    /// a held link's target; the next full pass judges that link again.
+    fn unseen_by_pass(&self, telling: &Telling, applied: Instant, item: Option<&str>) -> bool {
+        telling.unseen_by_pull(applied)
+            || (telling.scan_began.is_none_or(|began| applied >= began)
+                && self.core.conn().is_ok_and(|conn| {
+                    super::state::any_held_or_refused(&conn).unwrap_or(true)
+                        && item.is_none_or(|item| {
+                            super::state::bound_to_item(&conn, item)
+                                .map_or(true, |bound| bound.is_none())
+                        })
+                }))
+    }
+
     /// Read in one transaction, so a change committed between two of the
     /// reads is not half seen.
     fn mark(&self) -> Result<Mark, CoreError> {
@@ -879,8 +977,11 @@ impl Gate {
         }
     }
 
-    fn changed(&mut self, now: Instant) {
-        self.last_change = now;
+    /// A change that was delivered at `at`. Never moves the last change back:
+    /// the loop reads what arrived during a pass in the order it came, after
+    /// the pass, and a later change stands.
+    fn changed(&mut self, at: Instant) {
+        self.last_change = self.last_change.max(at);
     }
 
     /// Call at a pass's end: its own reads are events passed over, and from
@@ -898,6 +999,23 @@ impl Gate {
     fn due(&self, now: Instant) -> bool {
         now.duration_since(self.last_change) >= SETTLE
             || now.duration_since(self.last_pass) >= HELD_MOST
+    }
+
+    /// Whether events already waiting are read before a pass is considered:
+    /// until the longest a steady change holds a pass off is over.
+    fn reads_first(&self, now: Instant) -> bool {
+        now.duration_since(self.last_pass) < HELD_MOST
+    }
+
+    /// How long to wait for an event before looking again: the settle time
+    /// a change still has to run, or a tick where no pass waits on it.
+    fn listen_for(&self, now: Instant) -> Duration {
+        let settles = (self.last_change + SETTLE).saturating_duration_since(now);
+        let held = (self.last_pass + HELD_MOST).saturating_duration_since(now);
+        match settles.min(held) {
+            left if left.is_zero() => TICK,
+            left => left.min(TICK),
+        }
     }
 }
 
@@ -952,8 +1070,19 @@ fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> b
         && drain.report.unclaimed_sources.is_empty()
 }
 
-/// Whether a pass did anything: it changed a file, sent a write or took an
-/// answer in.
+/// Whether the pass did anything a person would want told: its edits and the
+/// server's answers to them too, which leave a later pass no work.
+fn happened(
+    settings: &SettingsFileReport,
+    scan: &ScanReport,
+    drain: &Drained,
+    pull: &PullReport,
+) -> bool {
+    stirred(settings, scan, drain, pull) || scan.updated + drain.report.answered > 0
+}
+
+/// Whether the pass changed something a later pass still needs to observe.
+/// A completed edit or writeback alone leaves no work for that pass.
 fn stirred(
     settings: &SettingsFileReport,
     scan: &ScanReport,
@@ -961,15 +1090,11 @@ fn stirred(
     pull: &PullReport,
 ) -> bool {
     scan.created
-        + scan.updated
         + scan.renamed
         + scan.deleted
         + scan.moved_away
         + scan.requeued
-        + drain.report.answered
         + drain.gave_way
-        + pull.written
-        + pull.rewritten
         + pull.moved
         + pull.removed
         + pull.taken
@@ -990,6 +1115,10 @@ struct Telling {
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
     at_rest: bool,
+    /// When the last pass began its scan.
+    scan_began: Option<Instant>,
+    /// When the last pass began to read the copy for its pull.
+    pull_began: Option<Instant>,
     /// The last pull, where a pass that finds the copy and the record as it
     /// began, and the disk still in the way where it was, would render every
     /// file as it was, so pulls nothing.
@@ -1006,6 +1135,13 @@ impl Telling {
     /// it is not run to find out.
     fn rests(&self, full: bool, changed: bool) -> bool {
         !full && !changed && self.at_rest
+    }
+
+    /// Whether a change the copy took at `applied` is one the last pull did not
+    /// read. The follow applies a change before it tells it, so a change told
+    /// before the pull began was in the copy the pull read.
+    fn unseen_by_pull(&self, applied: Instant) -> bool {
+        self.pull_began.is_none_or(|began| applied >= began)
     }
 }
 
@@ -1120,7 +1256,7 @@ impl Telling {
         {
             scan.lookup_refused = before.lookup_refused.clone();
         }
-        let happened = stirred(&settings, &scan, &drain, &pull);
+        let happened = happened(&settings, &scan, &drain, &pull);
         let flagged = super::merged_flagged(&scan.flagged, &pull.flagged);
         let mut embeds: Vec<Flagged> = Vec::new();
         for embed in scan.embeds.iter().chain(&pull.embeds) {
@@ -1241,17 +1377,29 @@ fn unreached(lists: &Lists, root: &Path, path: &Path) -> bool {
 /// Whether an event starts no pass: it names only paths no pass can find,
 /// or is an access. An event that says events were lost, or names no path,
 /// is never passed over.
+#[cfg(test)]
 fn event_passed_over(event: &notify::Event, root: &Path, lists: Option<&Lists>) -> bool {
+    event_passed_over_unless(event, root, lists, |_| false)
+}
+
+/// `event_passed_over`, where a path `stands` as a scan read it counts as
+/// one no pass can find anything at.
+fn event_passed_over_unless(
+    event: &notify::Event,
+    root: &Path,
+    lists: Option<&Lists>,
+    stands: impl Fn(&Path) -> bool,
+) -> bool {
     if event.need_rescan() || event.paths.is_empty() {
         return false;
     }
     matches!(event.kind, EventKind::Access(_))
         || event.paths.iter().all(|path| {
             !settings_file(root, path)
-                && match lists {
+                && (match lists {
                     Some(lists) => unreached(lists, root, path),
                     None => dot_led(root, path),
-                }
+                } || stands(path))
         })
 }
 
@@ -1383,6 +1531,141 @@ mod tests {
         let quiet = at + SETTLE;
         assert!(gate.due(quiet));
         assert!(!Gate::new(at).due(at + SETTLE / 2));
+    }
+
+    #[test]
+    fn the_watch_listens_only_for_the_settle_time_that_is_left() {
+        let now = Instant::now() + 10 * SECOND;
+        let gate = |since_change: Duration, since_pass: Duration| Gate {
+            last_change: now - since_change,
+            last_pass: now - since_pass,
+        };
+        let ms = Duration::from_millis;
+        assert_eq!(gate(ms(0), SECOND).listen_for(now), SETTLE);
+        assert_eq!(gate(ms(100), SECOND).listen_for(now), ms(150));
+        // The longest a steady change holds a pass off bounds the wait too.
+        assert_eq!(gate(ms(10), HELD_MOST - ms(40)).listen_for(now), ms(40));
+        // Witness: with nothing to settle it waits out a tick, as it did.
+        assert!(gate(SETTLE, SECOND).due(now));
+        assert_eq!(gate(SETTLE, SECOND).listen_for(now), TICK);
+        assert_eq!(gate(5 * SECOND, SECOND).listen_for(now), TICK);
+    }
+
+    #[test]
+    fn a_change_that_arrived_during_a_pass_settles_from_when_it_arrived() {
+        let start = Instant::now();
+        let mut gate = Gate::new(start);
+        let delivered = start + SECOND;
+        let ended = start + 3 * SECOND;
+        gate.changed(delivered);
+        gate.passed(ended);
+        assert!(
+            gate.due(ended),
+            "a file written two seconds before the pass ended is read at once"
+        );
+        // Witness: a change that arrives as the pass ends still settles first.
+        gate.changed(ended);
+        assert!(!gate.due(ended));
+        assert!(gate.due(ended + SETTLE));
+    }
+
+    #[test]
+    fn a_change_heard_late_does_not_move_the_last_change_back() {
+        let start = Instant::now();
+        let mut gate = Gate::new(start);
+        gate.changed(start + 3 * SECOND);
+        gate.changed(start + SECOND);
+        gate.passed(start + 3 * SECOND);
+        assert!(!gate.due(start + 3 * SECOND));
+        assert!(gate.due(start + 3 * SECOND + SETTLE));
+    }
+
+    #[test]
+    fn events_waiting_are_read_before_a_pass_unless_the_ceiling_is_reached() {
+        let now = Instant::now() + 10 * SECOND;
+        let gate = |since_pass: Duration| Gate {
+            last_change: now - 10 * SECOND,
+            last_pass: now - since_pass,
+        };
+        assert!(gate(SECOND).reads_first(now));
+        assert!(gate(HELD_MOST - Duration::from_millis(1)).reads_first(now));
+        // Witness: past the ceiling the gate is asked whatever waits.
+        assert!(!gate(HELD_MOST).reads_first(now));
+    }
+
+    #[test]
+    fn a_server_change_told_before_the_last_pull_began_starts_no_pass() {
+        let began = Instant::now() + SECOND;
+        let telling = Telling {
+            pull_began: Some(began),
+            ..Telling::default()
+        };
+        // The witness: one applied as the pull began, or later, is not in it.
+        assert!(telling.unseen_by_pull(began));
+        assert!(telling.unseen_by_pull(began + SECOND));
+        assert!(!telling.unseen_by_pull(began - Duration::from_millis(1)));
+        // Before any pull, every change waits for one.
+        assert!(Telling::default().unseen_by_pull(began));
+    }
+
+    #[test]
+    fn a_server_change_applied_between_the_scan_and_the_pull_starts_a_pass_where_a_file_is_held() {
+        let (_dir, folder, _server, _passes, bound_item) =
+            super::super::quiet_watch_tests::held_note();
+        let scan_began = Instant::now();
+        let telling = Telling {
+            scan_began: Some(scan_began),
+            pull_began: Some(scan_began + 2 * SECOND),
+            ..Telling::default()
+        };
+        // The scan judged the held file's links before this change was
+        // applied, and the pull leaves a held file be.
+        let between = scan_began + SECOND;
+        assert!(
+            folder.unseen_by_pass(&telling, between, Some("an-item-no-file-is-bound-to")),
+            "a new item the scan did not see, with a file held, started no pass"
+        );
+        assert!(
+            folder.unseen_by_pass(&telling, between, None),
+            "a change naming no item, with a file held, started no pass"
+        );
+        // The witnesses: the echo of an edit to a bound item, one the scan
+        // had, one after the pull's start, and one where no file is held.
+        assert!(!folder.unseen_by_pass(&telling, between, Some(&bound_item)));
+        assert!(!folder.unseen_by_pass(
+            &telling,
+            scan_began - Duration::from_millis(1),
+            Some("an-item-no-file-is-bound-to")
+        ));
+        assert!(folder.unseen_by_pass(&telling, scan_began + 2 * SECOND, Some(&bound_item)));
+        let (_dir, quiet, _server, _passes) = crate::folder::tests::watched_notes(&["a.md"]);
+        assert!(
+            !quiet.unseen_by_pass(&telling, between, Some("an-item-no-file-is-bound-to")),
+            "the pull read it and nothing is held, yet a pass would run"
+        );
+    }
+
+    #[test]
+    fn an_edit_a_pass_sent_and_wrote_back_leaves_no_work_for_a_tick() {
+        let settings = SettingsFileReport::default();
+        let mut scan = heard_nothing();
+        scan.updated = 1;
+        let mut drain = drained();
+        drain.report.answered = 1;
+        let mut pull = PullReport {
+            rewritten: 1,
+            written: 1,
+            ..PullReport::default()
+        };
+        assert!(!stirred(&settings, &scan, &drain, &pull));
+        // It is still told, as an eventful pass.
+        assert!(happened(&settings, &scan, &drain, &pull));
+        // The witness: a file the pass has yet to see made, or moved, is work.
+        scan.created = 1;
+        assert!(stirred(&settings, &scan, &drain, &pull));
+        scan.created = 0;
+        pull.moved = 1;
+        assert!(stirred(&settings, &scan, &drain, &pull));
     }
 
     #[test]

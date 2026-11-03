@@ -313,6 +313,7 @@ impl Registry {
     fn write(&self, directory: &Directory, name: &Path, listing: &Listing) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(listing)?;
         super::landing::land_at(directory, name, |file, _| file.write_all(&bytes), |_| true)
+            .map(drop)
             .map_err(|unlanded| self.failed("write", &unlanded.into()))
     }
 

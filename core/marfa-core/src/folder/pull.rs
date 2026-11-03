@@ -1324,20 +1324,32 @@ impl Folder {
             },
             |found| found.map(state::hash) == over,
         );
-        if let Err(error) = written {
-            // The path keeps the binding it had, or a scan that can reach the
-            // file again would make it a new item.
-            match &before {
-                Some(before) => rendering.bind(&conn, before)?,
-                None => rendering.unbind(&conn, &want)?,
+        let written = match written {
+            Ok(written) => written,
+            Err(error) => {
+                // The path keeps the binding it had, or a scan that can reach the
+                // file again would make it a new item.
+                match &before {
+                    Some(before) => rendering.bind(&conn, before)?,
+                    None => rendering.unbind(&conn, &want)?,
+                }
+                report.not_written(
+                    NotWritten::Unwritten,
+                    &item.id,
+                    &want,
+                    format!("the file system refused it: {error}"),
+                );
+                return Ok(PlacementWrite::Refused);
             }
-            report.not_written(
-                NotWritten::Unwritten,
-                &item.id,
-                &want,
-                format!("the file system refused it: {error}"),
-            );
-            return Ok(PlacementWrite::Refused);
+        };
+        // A person's save between the landing and the look at the file.
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "folder-pull-saved-after-landing") {
+            use std::io::Write as _;
+            let _ = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .and_then(|mut file| file.write_all(b"saved after landing\n"));
         }
         // Landed: the old bytes are no longer the folder's own.
         rendering.bind(&conn, &binding(None))?;
@@ -1382,11 +1394,17 @@ impl Folder {
             report.moved += 1;
         }
         report.placed += usize::from(self.place(&item.id, &want, withheld)?);
-        // Read after the write, because the file did not exist until now.
-        if let Ok(metadata) = self.metadata(&path)
-            && let Some(found) = identity::of(&metadata)
-        {
-            rendering.bind(&*self.core.conn()?, &binding(Some(found.key())))?;
+        // Of the file this pull wrote, not of what is at the path now: a
+        // person's save since then has another size, time or identity, and
+        // the next scan must read it, not take it for these bytes.
+        if let Some(found) = identity::of(&written) {
+            let conn = self.core.conn()?;
+            rendering.bind(&conn, &binding(Some(found.key())))?;
+            // The write is a read of the file, so the next quick scan has no
+            // reason to read it again.
+            if let Some(stat) = stat_metadata(&written) {
+                state::set_stats(&conn, &[(want.to_string(), stat)], false)?;
+            }
         }
         if bound.is_none() {
             report.written += 1;
@@ -1623,7 +1641,7 @@ impl Folder {
                     |found| found.is_none() && source.check().is_ok(),
                 )
                 .map_err(std::io::Error::from)
-                .map(|()| {
+                .map(|_| {
                     landing::crash_if_named(&path, "crash-after-copy-publish");
                     if source.check().is_ok() {
                         let _ = landing::remove_at(&from.directory, &from.name, |found| {

@@ -35,6 +35,18 @@ afterEach(async () => {
   harness = undefined;
 });
 
+/**
+ * Whether the watch is waiting in its receive. It waits a tick, or the settle
+ * time a change still has to run, which is never longer than a tick; the
+ * follow's own poll waits 250 ms, so a 250 ms wait counts only beside another.
+ */
+function receiveArmed(waits: { askedMs: number }[]): boolean {
+  return (
+    waits.some((wait) => wait.askedMs !== 250) ||
+    waits.filter((wait) => wait.askedMs === 250).length >= 2
+  );
+}
+
 /** The folder's receive is armed after its preceding pass has left the hold. */
 async function advanceWatch(
   own: BindingFolderHarness,
@@ -43,7 +55,7 @@ async function advanceWatch(
   await vi.waitFor(
     async () => {
       expect(
-        (await own.device.clock.waits()).some((wait) => wait.askedMs === 1_000),
+        receiveArmed(await own.device.clock.waits()),
         "the folder has not armed its next receive",
       ).toBe(true);
     },
@@ -85,9 +97,7 @@ async function restedTurn(
   await own.device.hooks.hold("folder-watch-turn");
   await vi.waitFor(
     async () => {
-      const armed = (await own.device.clock.waits()).some(
-        (wait) => wait.askedMs === 1_000,
-      );
+      const armed = receiveArmed(await own.device.clock.waits());
       if (!armed && (await own.device.hooks.waiting("folder-watch-turn")) > 0) {
         await own.device.hooks.release("folder-watch-turn");
         await own.device.hooks.hold("folder-watch-turn");

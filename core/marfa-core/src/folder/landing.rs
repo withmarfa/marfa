@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +57,7 @@ pub(crate) fn write(
         |file, _| file.write_all(bytes),
         still,
     )
+    .map(drop)
 }
 
 /// Fills a new file beside `target`, in a directory that must exist, syncs it
@@ -68,13 +69,14 @@ pub(crate) fn write(
 /// `None` where there is none, are still what the caller decided to write
 /// over; where they are not, nothing lands. An absent target must stay absent
 /// through the atomic rename. Replacing an existing file still cannot be
-/// conditional on its bytes after that last check.
+/// conditional on its bytes after that last check. Answers the metadata of
+/// the file written, taken before the rename.
 pub(crate) fn land_at(
     dir: &Directory,
     target: &Path,
     fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
     still: impl FnOnce(Option<&[u8]>) -> bool,
-) -> Result<(), Unlanded> {
+) -> Result<Metadata, Unlanded> {
     let (mut file, beside) = beside(dir)?;
     let landed = (|| {
         // A file written anew keeps the permission the one it replaces had,
@@ -102,6 +104,10 @@ pub(crate) fn land_at(
             )));
         }
         file.sync_all()?;
+        // The rename keeps the identity, size, modification time and
+        // executable bits the scan compares. A later path lookup might
+        // describe a person's save instead.
+        let written = file.metadata()?;
         drop(file);
         save_meanwhile(dir, target);
         let found = match dir.read(target) {
@@ -126,7 +132,7 @@ pub(crate) fn land_at(
         } else {
             dir.rename(&beside, dir, target, false)?;
         }
-        Ok(())
+        Ok(written)
     })();
     if landed.is_err() {
         let _ = dir.unlink(&beside);
@@ -135,7 +141,7 @@ pub(crate) fn land_at(
     // The rename is only durable once its directory is; a failure here
     // leaves the new file in place all the same.
     let _ = dir.sync();
-    Ok(())
+    landed
 }
 
 /// Move only into an absent directory entry, including refusing a dangling
@@ -353,7 +359,7 @@ pub(crate) fn land(
     still: impl FnOnce(Option<&[u8]>) -> bool,
 ) -> Result<(), Unlanded> {
     let dir = Directory::open(&target.parent().unwrap().canonicalize()?)?;
-    land_at(&dir, Path::new(target.file_name().unwrap()), fill, still)
+    land_at(&dir, Path::new(target.file_name().unwrap()), fill, still).map(drop)
 }
 
 #[cfg(test)]
