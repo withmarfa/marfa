@@ -1032,8 +1032,8 @@ fn quiet(settings: &SettingsFileReport, scan: &ScanReport, drain: &Drained) -> b
         && drain.report.unclaimed_sources.is_empty()
 }
 
-/// Whether a pass did anything: it changed a file, sent a write or took an
-/// answer in.
+/// Whether the pass changed something a later pass still needs to observe.
+/// A completed edit or writeback alone leaves no work for that pass.
 fn stirred(
     settings: &SettingsFileReport,
     scan: &ScanReport,

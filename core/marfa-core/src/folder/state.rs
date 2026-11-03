@@ -734,7 +734,7 @@ fn list(conn: &Connection, key: &str) -> Result<Vec<String>, CoreError> {
         .unwrap_or_default())
 }
 
-/// The size and time a file had when the scan last read it.
+/// The file metadata last recorded by a scan or pull.
 pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreError> {
     Ok(conn
         .query_row(
