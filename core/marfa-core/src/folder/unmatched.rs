@@ -6,7 +6,7 @@ use serde::Serialize;
 use super::{Folder, copy_changed, lists::Lists, plainly_inside, state};
 use crate::Result;
 
-/// A file the folder keeps whose item the folder's query no longer matches.
+/// A file the folder keeps whose item the folder's query does not match.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Unmatched {
     pub path: String,
@@ -59,8 +59,10 @@ impl Folder {
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let members = self.members(&settings)?;
+        let recorded = state::new_outside_state(&*self.core.conn()?)?;
         rows.into_iter()
             .map(|row| {
+                let row = as_removable(row, &recorded);
                 let kept = self.kept_because(&row, &members, &settings, &lists)?;
                 Ok(entry(&row, kept))
             })
@@ -84,6 +86,7 @@ impl Folder {
         let members = self.members(&settings)?;
         let mut context = crate::reach::Context::capture(&*self.core.conn()?)?;
         let mut unmatched: Vec<String> = state::unmatched(&*self.core.conn()?)?;
+        let recorded = state::new_outside_state(&*self.core.conn()?)?;
         for path in paths {
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
                 done.kept.push(Unmatched {
@@ -93,6 +96,7 @@ impl Folder {
                 });
                 continue;
             };
+            let row = as_removable(row, &recorded);
             let kept = if unmatched.contains(&row.item_id) {
                 self.kept_because(&row, &members, &settings, &lists)?
             } else {
@@ -108,6 +112,12 @@ impl Folder {
                     done.removed.push(entry(&row, None));
                     if state::bound_to_item(&*self.core.conn()?, &row.item_id)?.is_none() {
                         unmatched.retain(|id| *id != row.item_id);
+                        let conn = self.core.conn()?;
+                        let mut outside = state::new_outside_state(&conn)?;
+                        if outside.contains(&row.item_id) {
+                            outside.retain(|id| *id != row.item_id);
+                            state::set_new_outside_state(&conn, &outside)?;
+                        }
                     }
                 }
                 Ok(None) => done.kept.push(entry(
@@ -146,7 +156,10 @@ impl Folder {
             Some(_) if members.contains(&row.item_id) => {
                 return Ok(Some("its item matches the query again".into()));
             }
-            Some(item) if !settings.holds_state(item.state) => {
+            Some(item)
+                if !settings.holds_state(item.state)
+                    && !state::new_outside_state(&*self.core.conn()?)?.contains(&item.id) =>
+            {
                 return Ok(Some(
                     "its item left the query's states, which the next pull settles".into(),
                 ));
@@ -172,6 +185,16 @@ impl Folder {
             Err(error) => Some(format!("it cannot be read: {error}")),
         })
     }
+}
+
+/// A file made from a new file outside the query's states holds the bytes
+/// the person made, which the folder never wrote; the scan's read of them
+/// stands for what it wrote, so they go while unchanged.
+fn as_removable(mut row: state::Bound, recorded: &[String]) -> state::Bound {
+    if row.written_hash.is_none() && recorded.contains(&row.item_id) {
+        row.written_hash = Some(row.content_hash.clone());
+    }
+    row
 }
 
 fn entry(row: &state::Bound, kept: Option<String>) -> Unmatched {

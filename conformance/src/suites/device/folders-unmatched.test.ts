@@ -1,5 +1,10 @@
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -434,6 +439,43 @@ describe("a folder's unmatched files", () => {
       placedPaths(edges),
       "a file kept with the person's save in it lost its item's placement",
     ).toEqual(["Note 1.md", "Note 2.md"]);
+  });
+
+  it("takes away a new file whose item the query's states do not hold, as it takes any, and ends its record", async () => {
+    const made = await folderHarness("unmatched-new-outside-state", {
+      settings: { query: { types: ["core.note"], state: ["active"] } },
+    });
+    started.push(made);
+    const edges = new EdgeDoor();
+    scriptFolderWrites(made, { edges });
+    writeFileSync(
+      join(made.dir, "shelved.md"),
+      "---\ntitle: Shelved\nstate: archived\n---\nwritten as archived\n",
+    );
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(pushed.ok && pushed.value.pull?.unmatched).toBe(1);
+    const listed = await made.folder.unmatched();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value.unmatched.map((file) => file.path)).toEqual([
+      "shelved.md",
+    ]);
+    expect(
+      listed.value.unmatched[0]?.kept,
+      "a new file outside the query's states was reported as one removal would keep",
+    ).toBeUndefined();
+    const removed = await made.folder.removeUnmatched({ yes: true });
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.value.removed.map((file) => file.path)).toEqual([
+      "shelved.md",
+    ]);
+    expect(removed.value.kept).toEqual([]);
+    expect(existsSync(join(made.dir, "shelved.md"))).toBe(false);
+    // Its record is over: the item is neither counted nor listed again.
+    const later = await made.folder.pull();
+    expect(later.ok && later.value.unmatched, JSON.stringify(later)).toBe(0);
   });
 
   it("takes files away from a folder a watch holds, and is refused while the first sync waits", async () => {

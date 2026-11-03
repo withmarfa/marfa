@@ -217,7 +217,7 @@ pub struct FolderPull {
     pub absent: u64,
     /// Placements the server refused.
     pub unplaced: u64,
-    /// Files left in place whose items the query no longer matches.
+    /// Files left in place whose items the query does not match.
     pub unmatched: u64,
     /// Files a large removal holds back.
     pub paused: u64,

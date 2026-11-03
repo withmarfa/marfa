@@ -745,7 +745,7 @@ fn passed(
                 [
                     (pulled.unmatched > 0).then(|| {
                         format!(
-                        ", {} whose item the query no longer matches",
+                        ", {} whose item the query does not match",
                             pulled.unmatched
                         )
                     }),

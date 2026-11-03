@@ -4136,7 +4136,7 @@ When an item starts matching a folder’s query through a tag, property, state, 
 
 ### `folders/departed-file-removed`
 
-When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, or those it found before it first wrote the file that are exactly what it would write for the item at the version line and state the file shows and whose frontmatter holds no comment, no second YAML document and no empty property the item does not hold, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal.
+When an item is trashed or leaves the states held by a folder's query, its file is not held by a document that embeds it or that it is attached to (`folders/embed-held`), its path remains admitted, its bytes remain those the device wrote, or those it found before it first wrote the file that are exactly what it would write for the item at the version line and state the file shows and whose frontmatter holds no comment, no second YAML document and no empty property the item does not hold, and no large-removal pause applies (`folders/pull-removal-paused`), a device MUST remove that file at the next pull where the filesystem permits removal, except a file kept under `folders/new-file-outside-state-kept`.
 
 **Reason:** A folder added over files an earlier copy wrote binds them without writing them, at the version line and state they were written at, which differ from the item's once the item changes in something no file shows or leaves the folder by its state. A render over a file keeps the file's comments, any YAML document after the first, empty properties and formatting, so a found file can match a render and still hold something the person added. A comment, a second document or an empty property is something the item does not hold, so a file with one is kept. Formatting alone, such as quoting, key order or spacing, is not told apart from the earlier copy's own: it can be lost when such a file is removed, while its values go to the bin with the item. A change to a file the device wrote is the person's, even a reformatting that a render would keep.
 
@@ -4207,6 +4207,36 @@ When a folder pull cannot read a departed item’s file to verify its bytes, a d
 When an item leaves a folder’s query for a reason other than its state or purge and no other folder takes its file, a device MUST retain the bound file.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
+
+### `folders/new-file-outside-state-kept`
+
+When a device creates an item from a new file of a folder, whether a document or a file's bytes, the state of the item at creation (the file's `state` line, or active where it has none) is not one of the states held by the folder's query, and no pull has since found the item in a state the query holds with no write to the item waiting to be sent (a queued write the server has not answered, or one that is blocked or dead, but not a refused one), a device MUST retain the file at every pull, whether its bytes are those the device wrote or not, unless the item is trashed or purged.
+
+**Reason:** The item never entered the folder, so it did not leave it. After the create, the server can answer the create before the state change that follows it, which shows the item active for a moment. An item that leaves the query's states after being found in them is an existing member and still leaves with its file. The record ends at the first pull that finds the item in a held state with nothing waiting to be sent, whether the person edited the `state` line, another device changed the state, or the query changed to hold it, and when the item is unbound, trashed or purged. A copy that does not hold the item, as while a replaced store fills again, ends nothing, since it cannot say where the item stands. A rename of the file, or another device following the folder, changes nothing: the record belongs to the item, and a device that never wrote the file has nothing to remove.
+
+**Tests:** `device/folders-identity.test.ts › keeps a new file whose state the query does not hold, and counts it unmatched`, `device/folders-identity.test.ts › keeps the file made for a file item outside the query's states`.
+
+### `folders/new-file-outside-state-unmatched`
+
+When a device retains a file under `folders/new-file-outside-state-kept`, a device MUST count the file as `unmatched` at each pull.
+
+**Tests:** `device/folders-identity.test.ts › keeps a new file whose state the query does not hold, and counts it unmatched`, `device/folders-identity.test.ts › keeps the file made for a file item outside the query's states`.
+
+### `folders/new-file-outside-state-not-rewritten`
+
+When a device retains a file under `folders/new-file-outside-state-kept`, a device MUST NOT rewrite the file's bytes while the item is outside the query's states or has a write waiting to be sent.
+
+**Reason:** The server answers a create before the state change that follows it, so the copy can show the item active for a moment. Rewriting then would drop the file's `state` line, and a later edit of the file would read as a move back to active.
+
+**Tests:** `device/folders-identity.test.ts › keeps a new file whose state the query does not hold, and counts it unmatched`, `device/folders-identity.test.ts › keeps a new file whose item waits to be told its state, as the person wrote it, and does not rewrite it`.
+
+### `folders/new-file-outside-state-removable`
+
+When removal of unmatched files names a file retained under `folders/new-file-outside-state-kept`, a device MUST remove it as it removes any unmatched file, while its bytes are those the device last read or wrote and no write to its item waits, and end the record of the item.
+
+**Reason:** The bytes of such a file are the person's, which the device never wrote, so the bytes it last read stand for what it wrote. The item keeps them.
+
+**Tests:** `device/folders-unmatched.test.ts › takes away a new file whose item the query's states do not hold, as it takes any, and ends its record`.
 
 ### `folders/unmatched-file-kept-unmatched-count`
 
@@ -6368,7 +6398,7 @@ If the server cannot be reached, then the CLI MUST report the writes it could no
 
 ## Removing unmatched files
 
-An unmatched file is one a folder keeps because its item left the query for a reason other than its state or purge (`folders/unmatched-file-kept`).
+An unmatched file is one a folder keeps because its item left the query for a reason other than its state or purge (`folders/unmatched-file-kept`), or because the item was made from it outside the query's states (`folders/new-file-outside-state-kept`).
 
 ### `folders/unmatched-list`
 

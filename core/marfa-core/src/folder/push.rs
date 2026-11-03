@@ -329,6 +329,12 @@ impl Folder {
             save: 1,
             ..state::Writes::default()
         };
+        // The item starts active, and a file's own line can say otherwise.
+        self.record_made_outside(
+            &item_id,
+            read.lines.state.unwrap_or(ItemState::Active),
+            settings,
+        )?;
         if read.lines.state == Some(ItemState::Archived) {
             let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
             writes.queued.push(state::Queued {
@@ -361,6 +367,23 @@ impl Folder {
         )?;
         work.push(self.edge_work(file, &item_id, None));
         Ok(true)
+    }
+
+    /// Records the item of a new file made in a state the query does not hold,
+    /// so its file stays (`folders/new-file-outside-state-kept`).
+    fn record_made_outside(
+        &self,
+        item_id: &str,
+        made: ItemState,
+        settings: &Settings,
+    ) -> Result<()> {
+        if settings.holds_state(made) {
+            return Ok(());
+        }
+        let conn = self.core.conn()?;
+        let mut outside = state::new_outside_state(&conn)?;
+        outside.push(item_id.to_string());
+        state::set_new_outside_state(&conn, &outside)
     }
 
     /// Its type is its bytes', so of the defaults it takes only the tier, the
@@ -404,6 +427,7 @@ impl Folder {
             blob: file.source.as_deref().map(crate::blob::name_of),
             ..Kept::default()
         };
+        self.record_made_outside(&item_id, ItemState::Active, settings)?;
         self.queue_default_edges(&file.key, &item_id, settings, None, flagged)?
             .add_to(&mut kept.writes);
         self.place(&item_id, &file.key, withheld)?;
