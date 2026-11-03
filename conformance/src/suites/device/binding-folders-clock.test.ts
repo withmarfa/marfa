@@ -448,7 +448,7 @@ describe("folder clock and scan boundaries", () => {
     const initial = await device.hooks.reached("folder-pass-start");
     await nextTurn(harness);
     await device.hooks.hold("folder-pass-start");
-    for (let tick = 1; tick <= 25; tick += 1) {
+    for (let tick = 1; tick <= 24; tick += 1) {
       // Any duplicated notification is received only after this clock move,
       // so it cannot masquerade as a change observed at the previous instant.
       await device.hooks.hold("folder-file-changed");
@@ -458,21 +458,29 @@ describe("folder clock and scan boundaries", () => {
       await untilHeld(device, "folder-file-changed");
       await device.hooks.hold("folder-watch-turn");
       await device.hooks.release("folder-file-changed");
-      if (tick < 25) {
-        await vi.waitFor(
-          async () => {
-            const turn = await device.hooks.waiting("folder-watch-turn");
-            const pass = await device.hooks.waiting("folder-pass-start");
-            expect(turn + pass).toBeGreaterThan(0);
-          },
-          { timeout: 10_000, interval: 10 },
-        );
-        expect(await device.hooks.reached("folder-pass-start")).toBe(initial);
-        await untilHeld(device, "folder-watch-turn");
-      }
+      await vi.waitFor(
+        async () => {
+          const turn = await device.hooks.waiting("folder-watch-turn");
+          const pass = await device.hooks.waiting("folder-pass-start");
+          expect(turn + pass).toBeGreaterThan(0);
+        },
+        { timeout: 10_000, interval: 10 },
+      );
+      expect(await device.hooks.reached("folder-pass-start")).toBe(initial);
+      await untilHeld(device, "folder-watch-turn");
     }
+    // The ceiling is reached. A write is received as several notifications,
+    // and one an earlier write left, that no pass can find anything at, may
+    // start the pass before this write's own is received.
+    await device.hooks.hold("folder-file-changed");
+    await device.clock.advance(200);
+    writeFileSync(join(harness.dir, "busy.md"), "change 25\n");
+    await device.hooks.release("folder-watch-turn");
     await vi.waitFor(
       async () => {
+        if ((await device.hooks.waiting("folder-file-changed")) > 0) {
+          await device.hooks.release("folder-file-changed");
+        }
         expect(
           await device.hooks.waiting("folder-pass-start"),
           "the five-second ceiling did not start the next pass while changes remained unsettled",
