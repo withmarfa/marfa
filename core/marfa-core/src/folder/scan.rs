@@ -2129,7 +2129,7 @@ impl Folder {
     }
 
     /// Lets `by` pass on the clock a kept file's look is counted by.
-    #[cfg(all(test, debug_assertions))]
+    #[cfg(test)]
     pub(super) fn age_kept_look(&self, by: Duration) {
         if let Some(at) = self.kept_looked.lock().unwrap().as_mut() {
             *at = at.checked_sub(by).expect("an instant that far back");
