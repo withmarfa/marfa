@@ -289,9 +289,21 @@ mod tests {
         let conn = store::open_in_memory().unwrap();
         held(&conn, "work", "active", &["work"], json!({}));
         held(&conn, "home", "active", &["home"], json!({}));
-        held(&conn, "copy", "active", &[crate::CONFLICTED_COPY_TAG], json!({}));
+        held(
+            &conn,
+            "copy",
+            "active",
+            &[crate::CONFLICTED_COPY_TAG],
+            json!({}),
+        );
         held(&conn, "binned", "trashed", &["work"], json!({}));
-        held(&conn, "gone", "revoked", &[crate::CONFLICTED_COPY_TAG], json!({}));
+        held(
+            &conn,
+            "gone",
+            "revoked",
+            &[crate::CONFLICTED_COPY_TAG],
+            json!({}),
+        );
         let work = query(None, Some("tags contains \"work\""));
         assert!(takes(&conn, &work, "work"));
         assert!(!takes(&conn, &work, "home"));
@@ -362,7 +374,11 @@ mod tests {
         assert!(!active.covers(&wide).unwrap());
         let held = work.for_copy().unwrap().unwrap();
         assert!(held.covers(&work).unwrap());
-        assert!(!held.covers(&query(None, Some("tags contains \"home\""))).unwrap());
+        assert!(
+            !held
+                .covers(&query(None, Some("tags contains \"home\"")))
+                .unwrap()
+        );
         assert!(!held.covers(&wide).unwrap());
         let edge = query(None, Some("edge[cites] exists"));
         assert!(wide.covers(&edge).unwrap());
@@ -373,6 +389,8 @@ mod tests {
         assert!(query(Some(&["trashed"]), None).check().is_err());
         assert!(query(Some(&[]), None).check().is_err());
         assert!(query(None, Some("tags contains")).check().is_err());
-        query(Some(&["active"]), Some("tags contains \"x\"")).check().unwrap();
+        query(Some(&["active"]), Some("tags contains \"x\""))
+            .check()
+            .unwrap();
     }
 }

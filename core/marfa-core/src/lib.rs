@@ -64,6 +64,8 @@ mod scaffold;
 mod scripted;
 mod search;
 mod slice;
+#[cfg(test)]
+mod slice_query_tests;
 mod sse;
 #[cfg(test)]
 mod stop_tests;
@@ -134,8 +136,8 @@ pub use model::{
     UnregisteredType, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
-pub use slice::SliceQuery;
 pub use scaffold::{ScaffoldField, scaffold_type};
+pub use slice::SliceQuery;
 pub use store::CEILING;
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
 pub use watch::{Listening, WatchListener};
@@ -3806,7 +3808,9 @@ fn queue_create(
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
     let declared = match store::slice(tx)? {
-        Some((types, tier)) if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) => {
+        Some((types, tier))
+            if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) =>
+        {
             match store::slice_query(tx)? {
                 Some(query) => crate::slice::takes_held(
                     tx,

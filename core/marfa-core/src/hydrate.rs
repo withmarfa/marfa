@@ -811,7 +811,8 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
 /// edge types held whole and query.
 fn holds_built_slice(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<bool> {
     Ok(
-        store::meta_get(conn, store::META_SLICE_TYPES)? == Some(serde_json::to_string(built.types)?)
+        store::meta_get(conn, store::META_SLICE_TYPES)?
+            == Some(serde_json::to_string(built.types)?)
             && store::meta_get(conn, store::META_SLICE_TIER)?.as_deref()
                 == Some(built.tier.as_str())
             && store::whole_edge_types(conn)? == built.edge_types

@@ -837,7 +837,8 @@ impl Http {
         tier: SliceTier,
         narrowing: &crate::slice::Listing,
     ) -> Result<(), CoreError> {
-        let mut params: Vec<(&str, &str)> = declared.map(|named| ("type", named)).into_iter().collect();
+        let mut params: Vec<(&str, &str)> =
+            declared.map(|named| ("type", named)).into_iter().collect();
         params.push(("tier", tier.as_str()));
         narrowed(&mut params, narrowing);
         params.extend([("include", "metadata"), ("limit", "1")]);

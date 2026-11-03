@@ -1527,7 +1527,9 @@ pub fn keeps_held(
         return Ok(false);
     }
     match slice_query(conn)? {
-        Some(query) => crate::slice::takes_held(conn, catalog, &query, &whole_edge_types(conn)?, id),
+        Some(query) => {
+            crate::slice::takes_held(conn, catalog, &query, &whole_edge_types(conn)?, id)
+        }
         None => Ok(true),
     }
 }

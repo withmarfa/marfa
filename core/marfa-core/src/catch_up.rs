@@ -411,9 +411,7 @@ fn take(
     // as any held row is, and judged again once taken.
     let outside = entering.outside
         && match &payload.item {
-            Some(item) => {
-                !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?
-            }
+            Some(item) => !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?,
             None => false,
         };
     let applied = !outside && apply(&tx, catalog, slice, kind, payload, entering.tags.as_deref())?;
@@ -3169,9 +3167,25 @@ mod tests {
                 query: None,
             };
             let tx = conn.unchecked_transaction().unwrap();
-            apply(&tx, &catalog, &slice, "item.created", &event(1, "feed"), None).unwrap();
+            apply(
+                &tx,
+                &catalog,
+                &slice,
+                "item.created",
+                &event(1, "feed"),
+                None,
+            )
+            .unwrap();
             assert_eq!(held(&tx), at_feed, "a slice at {tier} before the move");
-            apply(&tx, &catalog, &slice, "item.updated", &event(2, "library"), None).unwrap();
+            apply(
+                &tx,
+                &catalog,
+                &slice,
+                "item.updated",
+                &event(2, "library"),
+                None,
+            )
+            .unwrap();
             assert_eq!(held(&tx), after_move, "a slice at {tier} after the move");
             tx.rollback().unwrap();
         }

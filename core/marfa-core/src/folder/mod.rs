@@ -2887,6 +2887,128 @@ mod tests {
         Folder::open(dir, None).unwrap()
     }
 
+    /// Holds `settings` in the copy's folder row, and the slice they ask in
+    /// its meta, as a hydration under them leaves it.
+    fn settled_under(folder: &Folder, settings: Value) {
+        let conn = folder.core.conn().unwrap();
+        crate::store::upsert_item(
+            &conn,
+            &crate::store::testing::wire_item(
+                &folder.folder,
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                settings,
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        crate::store::pin(&conn, &folder.folder).unwrap();
+        drop(conn);
+        let asked = folder.settings().unwrap();
+        let conn = folder.core.conn().unwrap();
+        let edge_types = EdgeTypes::load(&conn).unwrap();
+        let whole = whole_edge_types(&asked, &edge_types, &Catalog::load(&conn).unwrap());
+        for (key, value) in [
+            (
+                crate::store::META_SLICE_TYPES,
+                serde_json::to_string(&asked.slice_types()).unwrap(),
+            ),
+            (crate::store::META_SLICE_TIER, asked.tier().to_string()),
+            (
+                crate::store::META_SLICE_EDGE_TYPES,
+                serde_json::to_string(&whole).unwrap(),
+            ),
+            (crate::store::META_EVENT_CURSOR, "10".into()),
+            (crate::reach::FENCE, "a".repeat(64)),
+            (crate::store::META_INSTANCE_ID, "instance".into()),
+        ] {
+            crate::store::meta_set(&conn, key, &value).unwrap();
+        }
+        match asked.copy_query().unwrap() {
+            Some(query) => crate::store::meta_set(
+                &conn,
+                crate::store::META_SLICE_QUERY,
+                &serde_json::to_string(&query).unwrap(),
+            )
+            .unwrap(),
+            None => {
+                crate::store::meta_delete(&conn, crate::store::META_SLICE_QUERY).unwrap();
+            }
+        }
+    }
+
+    fn settings_now(folder: &Folder, settings: Value) {
+        let conn = folder.core.conn().unwrap();
+        crate::store::upsert_item(
+            &conn,
+            &crate::store::testing::wire_item(
+                &folder.folder,
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                settings,
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+    }
+
+    /// `folders/copy-query-change-hydrates`: what the copy holds follows the
+    /// query's states and filter, and not a `beneath` the copy cannot narrow
+    /// by or the same states named in another order.
+    #[test]
+    fn the_copy_moves_with_the_query_it_holds() {
+        let (_dir, folder) = scanned_folder();
+        let base = serde_json::json!({ "query": { "types": ["core.note"] } });
+        let with = |query: Value| {
+            let mut settings = base.clone();
+            for (key, value) in query.as_object().unwrap() {
+                settings["query"][key] = value.clone();
+            }
+            settings
+        };
+        // The witness: settings the copy was built under have not moved it.
+        settled_under(&folder, base.clone());
+        assert!(!folder.slice_moved().unwrap());
+        for (asked, moves) in [
+            (with(serde_json::json!({ "state": ["active"] })), true),
+            (
+                with(serde_json::json!({ "filter": "tags contains \"work\"" })),
+                true,
+            ),
+            (
+                with(serde_json::json!({ "state": ["archived", "active"] })),
+                false,
+            ),
+            // A copy cannot be narrowed by `beneath`, and holds `parent-of`
+            // whole already, so it holds the same rows under it.
+            (
+                with(serde_json::json!({ "beneath": "01a00000-0000-7000-8000-0000000000aa" })),
+                false,
+            ),
+        ] {
+            settled_under(&folder, base.clone());
+            settings_now(&folder, asked.clone());
+            assert_eq!(folder.slice_moved().unwrap(), moves, "{asked}");
+        }
+        let work = with(serde_json::json!({ "filter": "tags contains \"work\"" }));
+        settled_under(&folder, work.clone());
+        assert!(!folder.slice_moved().unwrap());
+        settings_now(
+            &folder,
+            with(serde_json::json!({ "filter": "tags contains \"home\"" })),
+        );
+        assert!(folder.slice_moved().unwrap());
+        settings_now(&folder, base);
+        assert!(
+            folder.slice_moved().unwrap(),
+            "widening the query did not move it"
+        );
+    }
+
     #[test]
     fn a_scanned_file_item_is_bound_with_no_text_copy_of_its_bytes() {
         let (dir, folder) = scanned_folder();

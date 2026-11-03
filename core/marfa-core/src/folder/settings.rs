@@ -408,7 +408,8 @@ impl Settings {
             clauses.push("items.tier = ?".into());
             values.push(Value::String(self.tier().as_str().into()));
         }
-        self.slice_query().narrow(catalog, whole_edges, clauses, values)
+        self.slice_query()
+            .narrow(catalog, whole_edges, clauses, values)
     }
 
     /// The query past its types and tier.
