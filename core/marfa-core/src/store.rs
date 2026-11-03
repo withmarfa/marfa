@@ -669,12 +669,13 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
 /// Every write to an indexed table inside a transaction keeps a statement
 /// journal. SQLite moves one past 64 KiB to a temporary file, where every
 /// later statement in the transaction writes its pages again, which is nearly
-/// a third of the time a hydration spends writing a page. In memory, a
-/// statement journal is let go when its statement ends. It holds every page
-/// its statement changes, which for one row is small, and for a statement
-/// that clears a large copy could be most of it, so the connection takes up
-/// the default again once the transaction ends. SQLite reads the setting
-/// when the transaction starts to write, and cannot change it inside one.
+/// a third of the time a hydration spends writing a page. The in-memory
+/// journal releases pages when the statement or enclosing savepoint ends.
+/// It holds the pages changed within that scope, which for one row is small,
+/// and for a statement that clears a large copy could be most of it, so the
+/// connection takes up the default again once the transaction ends. SQLite
+/// reads the setting when the transaction starts to write, and cannot change
+/// it inside one.
 pub(crate) fn with_journals_in_memory<T>(
     conn: &mut Connection,
     write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
@@ -8282,6 +8283,61 @@ mod tests {
         );
     }
 
+    /// The progress-handler ticks (one for every 100 steps of SQLite's virtual
+    /// machine) it takes to mark one write sent, with `queued` writes in the
+    /// queue, `sent` of them already sent.
+    fn ticks_to_mark_sent(queued: usize, sent: usize) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TICKS: AtomicU64 = AtomicU64::new(0);
+        let conn = conn();
+        let mut last = String::new();
+        let tx = conn.unchecked_transaction().unwrap();
+        for number in 0..queued {
+            let write = enqueue(
+                &tx,
+                &NewWrite {
+                    kind: WriteKind::UploadBlob,
+                    item_id: None,
+                    target_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag: None,
+                    blob: Some(&format!("blob-{number}")),
+                    base_version: None,
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap();
+            if number < sent {
+                mark_sent(&tx, &write.id).unwrap();
+            }
+            last = write.id;
+        }
+        tx.commit().unwrap();
+        TICKS.store(0, Ordering::SeqCst);
+        let _ = conn.progress_handler(
+            100,
+            Some(|| {
+                TICKS.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+        );
+        mark_sent(&conn, &last).unwrap();
+        let _ = conn.progress_handler(100, None::<fn() -> bool>);
+        TICKS.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn marking_a_write_sent_costs_the_same_whatever_the_queue_holds() {
+        let small = ticks_to_mark_sent(50, 49);
+        let large = ticks_to_mark_sent(3_000, 2_999);
+        assert!(
+            large <= small + 2,
+            "marking a write sent took {large} ticks with 3,000 writes queued and {small} with 50"
+        );
+    }
+
     #[test]
     fn a_streak_of_environmental_failures_ends_with_any_other_outcome() {
         let conn = conn();
@@ -8953,6 +9009,31 @@ mod tests {
         conn.execute("UPDATE items SET version = 2 WHERE id = 'row'", [])
             .unwrap();
         assert_eq!(copy_revision(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_store_made_before_the_send_index_gets_it_when_its_writer_opens_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("core.sqlite");
+        let held = |conn: &Connection| -> bool {
+            conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'queue_sent_seq'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+                == 1
+        };
+        {
+            let conn = open(&path).unwrap();
+            assert!(held(&conn), "a new store lacks the index");
+            conn.execute_batch("DROP INDEX queue_sent_seq;").unwrap();
+        }
+        let reading = open_to_read(&path).unwrap();
+        assert!(!held(&reading), "a reader made the index");
+        drop(reading);
+        let conn = open(&path).unwrap();
+        assert!(held(&conn), "the writer did not make the index");
     }
 
     #[test]

@@ -1102,8 +1102,8 @@ impl Folder {
             .collect();
         let _ = resolver.prefetch(names.iter().map(String::as_str));
         for pending in work {
-            // A failure is this file's alone: it waits, and the scan goes on,
-            // and what was queued before it stays the file's.
+            // A failed edge batch leaves the file waiting with its previous
+            // link record, while the scan continues with the other files.
             let mut queued = Vec::new();
             let judged = self.queue_edges(
                 &pending,

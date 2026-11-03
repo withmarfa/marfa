@@ -328,3 +328,56 @@ fn a_hold_from_a_store_that_never_recorded_when_to_judge_it_again_is_judged_agai
     assert_eq!(held(&folder, "A.md"), None);
     assert_eq!(edges_of(&folder, &a, LINK_EDGE), [item_at(&folder, "B.md")]);
 }
+
+/// The write transactions `work` commits on the folder's store.
+fn commits_during(folder: &Folder, work: impl FnOnce()) -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COMMITS: AtomicUsize = AtomicUsize::new(0);
+    COMMITS.store(0, Ordering::SeqCst);
+    let _ = folder.core.conn().unwrap().commit_hook(Some(|| {
+        COMMITS.fetch_add(1, Ordering::SeqCst);
+        false
+    }));
+    work();
+    let _ = folder
+        .core
+        .conn()
+        .unwrap()
+        .commit_hook(None::<fn() -> bool>);
+    COMMITS.load(Ordering::SeqCst)
+}
+
+#[test]
+fn a_scan_queues_all_the_edges_of_a_file_in_one_transaction() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    let targets = ["B", "C", "D", "E", "F", "G"];
+    for name in ["A", "H"].into_iter().chain(targets) {
+        std::fs::write(dir.path().join(format!("{name}.md")), format!("{name}\n")).unwrap();
+    }
+    assert_eq!(folder.scan().unwrap().created, 8);
+
+    let linking = |note: &str, names: &[&str]| {
+        let links: Vec<String> = names.iter().map(|name| format!("[[{name}]]")).collect();
+        std::fs::write(dir.path().join(note), format!("{}\n", links.join(" "))).unwrap();
+    };
+    linking("H.md", &["B"]);
+    let one = commits_during(&folder, || {
+        let report = folder.scan().unwrap();
+        assert!(report.flagged.is_empty(), "{report:?}");
+    });
+    linking("A.md", &targets);
+    let six = commits_during(&folder, || {
+        let report = folder.scan().unwrap();
+        assert!(report.flagged.is_empty(), "{report:?}");
+    });
+    let a = item_at(&folder, "A.md");
+    assert_eq!(
+        edges_of(&folder, &a, LINK_EDGE).len(),
+        targets.len(),
+        "the witness: the six links were queued"
+    );
+    assert_eq!(
+        six, one,
+        "a file with six new links committed {six} transactions and one with a single link {one}"
+    );
+}
