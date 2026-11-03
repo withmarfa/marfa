@@ -118,6 +118,7 @@ impl Peer {
                 root_dir: root_dir.clone(),
                 store_mark: state_dir.entry_identity(Path::new("core.sqlite")).ok()?,
                 state_dir,
+                unflushed: Default::default(),
                 folder,
                 core,
                 key: std::sync::Mutex::new(None),

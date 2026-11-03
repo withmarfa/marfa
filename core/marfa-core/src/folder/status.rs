@@ -624,6 +624,7 @@ mod tests {
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
             replaced: None,
+            unflushed: Default::default(),
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),
             store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
