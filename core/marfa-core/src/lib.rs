@@ -800,7 +800,22 @@ impl Core {
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
-        self.hydrate_filling(types, tier, edge_types, Fill::Any, stop)
+        self.hydrate_filling(types, tier, edge_types, Fill::Any, &[], stop)
+    }
+
+    /// `hydrate_until`, reading the pinned rows named in `first` with the
+    /// pinned `system.*` rows the copy holds, before the first page of any
+    /// listing: the caller knows a pinned row is a `system.*` row where the
+    /// copy, holding nothing yet, cannot say.
+    pub(crate) fn hydrate_until_first(
+        &self,
+        types: &[String],
+        tier: SliceTier,
+        edge_types: &[String],
+        first: &[String],
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
+        self.hydrate_filling(types, tier, edge_types, Fill::Any, first, stop)
     }
 
     /// `hydrate_until` for a copy that must only ever be filled again in
@@ -820,7 +835,7 @@ impl Core {
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
-        self.hydrate_filling(types, tier, edge_types, Fill::InPlaceOnly, stop)
+        self.hydrate_filling(types, tier, edge_types, Fill::InPlaceOnly, &[], stop)
     }
 
     fn hydrate_filling(
@@ -829,12 +844,22 @@ impl Core {
         tier: SliceTier,
         edge_types: &[String],
         fill: Fill,
+        first: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
-        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, fill, stop)?;
+        let report = hydrate::hydrate(
+            self,
+            self.http()?,
+            types,
+            tier,
+            edge_types,
+            fill,
+            first,
+            stop,
+        )?;
         taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)

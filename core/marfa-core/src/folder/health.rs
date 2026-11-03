@@ -496,10 +496,16 @@ impl Folder {
             error,
             settings_problem,
         } = observing;
+        // A copy still filling answers neither status nor pass: nothing is
+        // known yet, which is no problem and no success (`folders/health-hydrating`).
+        let hydrating = matches!(error, Some(CoreError::HydrationIncomplete));
+        let error = error.filter(|_| !hydrating);
+        let complete = complete && !hydrating;
         let id = elsewhere::store_id(&self.core)?;
         let previous = State::load(&*self.core.conn()?)?.observed;
         let (status, conflicts) = self.health_status(reuse);
         let known = status.is_ok();
+        let status_hydrating = matches!(status, Err(CoreError::HydrationIncomplete));
         let inventory_complete = status
             .as_ref()
             .is_ok_and(|status| status.inventory_complete);
@@ -511,14 +517,18 @@ impl Folder {
                     .awaiting_confirmation()
                     .unwrap_or(snapshot.first_sync_waiting);
                 let code = if self.root_gone().is_some() {
-                    Code::RootGone
+                    Some(Code::RootGone)
+                } else if status_hydrating {
+                    None
                 } else {
-                    Code::SettingsInvalid
+                    Some(Code::SettingsInvalid)
                 };
-                snapshot.problems.retain(|problem| {
-                    !matches!(problem.code, Code::RootGone | Code::SettingsInvalid)
-                });
-                snapshot.problems.push(Problem { code, count: 1 });
+                if let Some(code) = code {
+                    snapshot.problems.retain(|problem| {
+                        !matches!(problem.code, Code::RootGone | Code::SettingsInvalid)
+                    });
+                    snapshot.problems.push(Problem { code, count: 1 });
+                }
                 snapshot
             }
         };
@@ -1601,6 +1611,119 @@ mod tests {
                 .iter()
                 .any(|p| p.code == Code::Unavailable)
         );
+    }
+
+    fn codes(folder: &Folder) -> Vec<Code> {
+        folder
+            .observed_health()
+            .unwrap()
+            .problems
+            .iter()
+            .map(|p| p.code)
+            .collect()
+    }
+
+    fn hydrating(folder: &Folder, row_arrived: bool) {
+        let conn = folder.core.conn().unwrap();
+        store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS).unwrap();
+        if !row_arrived {
+            conn.execute("DELETE FROM items WHERE id = 'folder'", [])
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_copy_still_filling_is_no_problem_and_no_success() {
+        // The witnesses: the same folder, the same pass, with each error that
+        // is real, reports the problem.
+        let (_dir, folder) = fixture(None);
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let succeeded = State::load(&folder.core.conn().unwrap())
+            .unwrap()
+            .last_success_at;
+        assert!(succeeded.is_some());
+        folder.health_observe(
+            false,
+            true,
+            None,
+            Some(&CoreError::Network("down".into())),
+            false,
+        );
+        assert_eq!(codes(&folder), [Code::Unavailable]);
+        folder.health_observe(false, true, None, None, true);
+        assert!(codes(&folder).contains(&Code::SettingsInvalid));
+
+        let (_dir, folder) = fixture(None);
+        folder.health_observe(true, true, Some(&PullReport::default()), None, false);
+        let succeeded = State::load(&folder.core.conn().unwrap())
+            .unwrap()
+            .last_success_at;
+        // A pass that answers `hydration_incomplete` adds nothing.
+        folder.health_observe(
+            false,
+            true,
+            None,
+            Some(&CoreError::HydrationIncomplete),
+            false,
+        );
+        assert_eq!(codes(&folder), []);
+        // Nor does a status that does, before the folder's row has arrived.
+        hydrating(&folder, false);
+        assert!(matches!(
+            folder.status(),
+            Err(CoreError::HydrationIncomplete)
+        ));
+        folder.health_observe(false, true, None, None, false);
+        folder.health_observe(
+            true,
+            true,
+            Some(&PullReport::default()),
+            Some(&CoreError::HydrationIncomplete),
+            false,
+        );
+        assert_eq!(codes(&folder), []);
+        let after = State::load(&folder.core.conn().unwrap()).unwrap();
+        assert_eq!(after.last_success_at, succeeded);
+        assert_eq!(after.observed.unwrap().last_success_at, succeeded);
+    }
+
+    #[test]
+    fn a_copy_still_filling_keeps_the_real_problems_it_already_reported() {
+        let (_dir, folder) = fixture(None);
+        folder.health_observe(
+            false,
+            true,
+            None,
+            Some(&CoreError::Network("down".into())),
+            false,
+        );
+        hydrating(&folder, false);
+        folder.health_observe(
+            false,
+            true,
+            None,
+            Some(&CoreError::HydrationIncomplete),
+            false,
+        );
+        assert_eq!(codes(&folder), [Code::Unavailable]);
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_still_report_where_the_copy_is_whole() {
+        let (_dir, folder) = fixture(None);
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM items WHERE id = 'folder'", [])
+            .unwrap();
+        // Whole and without the row, the status fails for a reason that is real.
+        assert!(!matches!(
+            folder.status(),
+            Err(CoreError::HydrationIncomplete)
+        ));
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(codes(&folder), [Code::SettingsInvalid]);
     }
 
     #[test]

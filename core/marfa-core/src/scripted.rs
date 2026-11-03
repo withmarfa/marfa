@@ -169,6 +169,17 @@ impl Scripted {
             .collect()
     }
 
+    /// The path of each request, in the order they were made.
+    pub fn paths(&self) -> Vec<String> {
+        self.script
+            .lock()
+            .unwrap()
+            .seen
+            .iter()
+            .map(|seen| seen.path.clone())
+            .collect()
+    }
+
     pub fn asked(&self) -> usize {
         self.script.lock().unwrap().seen.len()
     }

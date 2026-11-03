@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -29,6 +29,7 @@ pub(crate) enum Fill {
     InPlaceOnly,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn hydrate(
     core: &Core,
     http: &Http,
@@ -36,12 +37,14 @@ pub(crate) fn hydrate(
     tier: SliceTier,
     edge_types: &[String],
     fill: Fill,
+    first: &[String],
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
-    let result = hydrate_inner(core, http, types, tier, edge_types, fill, stop);
+    let result = hydrate_inner(core, http, types, tier, edge_types, fill, first, stop);
     crate::catch_up::unless_stopped(result, stop)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hydrate_inner(
     core: &Core,
     http: &Http,
@@ -49,6 +52,7 @@ fn hydrate_inner(
     tier: SliceTier,
     edge_types: &[String],
     fill: Fill,
+    first: &[String],
     stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let types = declared_types(types)?;
@@ -64,6 +68,7 @@ fn hydrate_inner(
             tier,
             &edge_types,
             fill,
+            first,
             restart,
             &mut pages,
             stop,
@@ -101,6 +106,67 @@ enum Phase {
     Edges,
     Pins,
     Replay,
+}
+
+/// The pinned `system.*` rows, each with the edges it was read with, as the
+/// server holds them now: those the copy holds, and those a caller names
+/// because the copy cannot yet say what type they are
+/// (`device/hydrate-system-pins-first`). They are read before the copy is
+/// replaced, so a row such as a folder's own is never missing from it while
+/// the listings fill it. Rows of other types are left to the walk of pins.
+fn read_system_pins(
+    core: &Core,
+    http: &Http,
+    first: &[String],
+    stop: &AtomicBool,
+) -> Result<Vec<(WireItemWithMetadata, Vec<WireEdge>)>> {
+    let mut ids: Vec<String> = {
+        let conn = core.conn()?;
+        let pinned: HashSet<String> = store::pins(&conn)?.into_iter().collect();
+        let mut held: Vec<String> =
+            store::items_by_ids(&conn, &pinned.iter().cloned().collect::<Vec<_>>())?
+                .into_iter()
+                .filter(|item| item.r#type.starts_with("system."))
+                .map(|item| item.id)
+                .collect();
+        held.extend(first.iter().filter(|id| pinned.contains(*id)).cloned());
+        held
+    };
+    ids.sort();
+    ids.dedup();
+    let mut read = Vec::new();
+    for chunk in ids.chunks(crate::http::BULK_GET_LIMIT) {
+        crate::catch_up::refuse_if_stopped(stop)?;
+        for row in http.items_by_id(chunk)? {
+            if !row.item.r#type.starts_with("system.") {
+                continue;
+            }
+            let mut edges = Vec::new();
+            for (edge_type, block) in row.item.edges.iter().flatten() {
+                edges.extend(block.data.iter().cloned());
+                edges.extend(fetch_overflow(http, stop, &row.item.id, edge_type, block)?);
+            }
+            read.push((row, edges));
+        }
+    }
+    Ok(read)
+}
+
+/// Lays the rows `read_system_pins` read over the cleared copy. Their listing
+/// mark is left to the walk of pins, which reads them again, so the listings
+/// count a row they bring as theirs.
+fn take_system_pins(
+    tx: &rusqlite::Connection,
+    rows: &[(WireItemWithMetadata, Vec<WireEdge>)],
+) -> Result<()> {
+    let catalog = Catalog::load(tx)?;
+    for (row, edges) in rows {
+        store::take_server_item(tx, &row.item, Some(&row.metadata.tags), &catalog)?;
+        for edge in edges {
+            store::put_server_edge(tx, edge)?;
+        }
+    }
+    Ok(())
 }
 
 /// Where a hydration has reached, kept in `store::META_HYDRATE_RESUME` in the
@@ -203,6 +269,7 @@ fn attempt(
     tier: SliceTier,
     edge_types: &[String],
     fill: Fill,
+    first: &[String],
     restart: Option<HydrateRestart>,
     pages: &mut u64,
     stop: &AtomicBool,
@@ -295,6 +362,7 @@ fn attempt(
         Some(reached) => reached,
         None => {
             let counts = counted(plain, types, tier);
+            let system = read_system_pins(core, http, first, stop)?;
             crate::catch_up::refuse_if_stopped(stop)?;
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
@@ -355,6 +423,7 @@ fn attempt(
                 store::meta_delete(&tx, store::META_SYNCED_AT)?;
             }
             store::replace_catalog(&tx, &catalog_rows)?;
+            take_system_pins(&tx, &system)?;
             // A copy filling up answers reads, so it shows what is waiting
             // from the start, as each row that arrives does.
             lay_queue_over(
@@ -1692,6 +1761,88 @@ mod tests {
             assert_eq!(repaired.1.unreadable_properties, None);
             assert!(!server.seen("/items").is_empty());
         }
+    }
+
+    fn system_bulk(id: &str) -> Answer {
+        let mut body = bulk_body(&[(id, true)]);
+        body["items"][0]["type"] = json!("system.folder");
+        scripted::certified(scripted::json(200, &body.to_string()))
+    }
+
+    /// Where the first page of a listing is refused, the copy is left as the
+    /// hydration had made it, so what a read can reach part way through is
+    /// what the hydration laid down before the first page.
+    #[test]
+    fn a_hydration_reads_the_pinned_system_rows_before_the_first_page_of_a_listing() {
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 0);
+        for id in ["sys", "other"] {
+            store::pin(&core.conn().unwrap(), id).unwrap();
+        }
+        server.on("/items/bulk-get", vec![system_bulk("sys")]);
+        server.on("/items", vec![scripted::json(500, "{}")]);
+
+        let stop = AtomicBool::new(false);
+        let named = ["sys".to_string()];
+        let failed = core.hydrate_until_first(
+            &["core.note".into()],
+            SliceTier::Library,
+            &[],
+            &named,
+            &stop,
+        );
+
+        assert!(failed.is_err());
+        let paths = server.paths();
+        let bulk_at = paths.iter().position(|path| path == "/items/bulk-get");
+        let page_at = paths.iter().position(|path| path == "/items");
+        assert!(
+            bulk_at.zip(page_at).is_some_and(|(bulk, page)| bulk < page),
+            "{paths:?}"
+        );
+        let body: Value = serde_json::from_slice(&server.seen("/items/bulk-get")[0].body).unwrap();
+        assert_eq!(
+            body["ids"],
+            json!(["sys"]),
+            "only the pinned row known to be a system row is read first"
+        );
+        assert_eq!(core.get("sys").unwrap().unwrap().r#type, "system.folder");
+        // The witness: a pin that is not a system row waits for the walk of
+        // pins, so the copy refuses it part way through.
+        assert!(matches!(
+            core.get("other"),
+            Err(CoreError::HydrationIncomplete)
+        ));
+    }
+
+    #[test]
+    fn a_pinned_system_row_the_copy_already_holds_is_read_before_the_copy_is_replaced() {
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 0);
+        {
+            let conn = core.conn().unwrap();
+            store::pin(&conn, "sys").unwrap();
+            store::upsert_item(
+                &conn,
+                &store::testing::wire_item(
+                    "sys",
+                    "system.folder",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    json!({}),
+                ),
+                None,
+                &crate::catalog::Indexing::default(),
+            )
+            .unwrap();
+        }
+        server.on("/items/bulk-get", vec![system_bulk("sys")]);
+        server.on("/items", vec![scripted::json(500, "{}")]);
+
+        assert!(hydrate(&core).is_err());
+
+        assert_eq!(core.get("sys").unwrap().unwrap().r#type, "system.folder");
+        assert_eq!(server.seen("/items/bulk-get").len(), 1);
     }
 
     #[test]

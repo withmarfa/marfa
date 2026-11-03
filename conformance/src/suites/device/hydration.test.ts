@@ -367,6 +367,48 @@ describe("the order a hydration reads in", () => {
   });
 });
 
+describe("the pinned system rows a hydration reads first", () => {
+  it("reads a pinned system row before the first page of an item listing", async () => {
+    harness = await startHarness("system-pins-first");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    server.copyAnswer(
+      "GET",
+      "/items/settings",
+      answers.updated(
+        wireItem({
+          id: "settings",
+          type: "system.folder",
+          properties: { title: "pinned" },
+        }),
+      ),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+
+    const before = server.requests.length;
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const doors = server.requests
+      .slice(before)
+      .map((request) => `${request.method} ${request.pathname}`);
+    const system = doors.indexOf("POST /items/bulk-get");
+    const page = doors.indexOf("GET /items");
+    // The positive control: the hydration read the listing and the pin.
+    expect(page, doors.join(", ")).toBeGreaterThanOrEqual(0);
+    expect(system, doors.join(", ")).toBeGreaterThanOrEqual(0);
+    expect(
+      system,
+      "a pinned system row was read after the first page, so a folder's own row is missing from the copy while the listing fills it",
+    ).toBeLessThan(page);
+    const held = await device.get("settings");
+    expect(held.ok ? held.value.properties.title : "not held").toBe("pinned");
+  });
+});
+
 describe("what a hydration leaves behind", () => {
   it("replaces what the store held", async () => {
     harness = await startHarness("replace");

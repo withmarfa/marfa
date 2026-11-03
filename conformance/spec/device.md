@@ -766,6 +766,14 @@ When a device hydrates, a device MUST read the pinned rows its slice does not br
 
 **Tests:** `device/pins-live.test.ts › reads the pinned rows outside its slice 100 to a request under its reach, not one request each`.
 
+### `device/hydrate-system-pins-first`
+
+When a device hydrates, a device MUST read its pinned `system.*` rows before the first page of the item listing.
+
+**Reason:** a folder's own row is a pinned `system.folder` row, and a copy that clears before it reads that row cannot answer the folder's settings until the listings are done, so a folder reads its settings as not yet held for the whole hydration.
+
+**Tests:** `device/hydration.test.ts › reads a pinned system row before the first page of an item listing`.
+
 ### `device/hydrate-repeated-cursor`
 
 If a listing a hydration walks answers a `next_cursor` the hydration has already read, then a device MUST expire the copy `copy_expired` with the reason `reach_invalid`.
