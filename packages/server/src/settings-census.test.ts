@@ -92,6 +92,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
     "the file keychain the CLI uses on macOS for unattended runs, read by the CLI",
   MARFA_AUTOSTART_ROOT:
     "the directory that stands in for the home directory when the CLI writes a login agent, read by the CLI",
+  MARFA_TELEMETRY_FILE:
+    "the file of telemetry settings a login agent hands the folder watch, read by the CLI",
   XDG_CONFIG_HOME:
     "the directory the CLI writes a systemd user unit under, and reads profiles.toml from, on Linux, read by the CLI",
   NO_COLOR:

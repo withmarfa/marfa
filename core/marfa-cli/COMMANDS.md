@@ -4105,6 +4105,8 @@ Sync every folder from login, and start now: writes a launchd agent on macOS or 
 
 The watch writes to its log, `folder-watch.log` beside the folder registry. An error it makes before it opens the log goes, on macOS, to `folder-watch.launchd.log` beside it, which the agent names for the watch's output, and on Linux to the user journal (`journalctl --user -u marfa-folder-watch.service`).
 
+The watch reports as a command run from this shell does: the telemetry settings set here (`MARFA_POSTHOG_HOST`, `MARFA_POSTHOG_PROJECT_TOKEN`, `OTEL_SDK_DISABLED` and the `OTEL_*` settings that `marfa` reads) are written to `folder-watch.env` beside the folder registry, a file only you can read, and the agent names that file and holds none of them. Run again, it makes the file match the settings set then, and removes it where none is. It says which settings it carried, by name.
+
 With `--key-file` the agent runs the watch with that file in place of the keychain, for a machine where nobody signs in to unlock it. The agent holds the file's path and never what is in it.
 
 ```text
