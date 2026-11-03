@@ -123,14 +123,16 @@ describe("a supervised server nobody will stop", () => {
   });
 
   it("keeps running past the idle limit while requests arrive", async () => {
-    const booted = await boot({ CONFORMANCE_SERVER_IDLE_MS: "1500" });
+    // A loaded runner can delay the 200 ms writes by a second or more, so the
+    // limit leaves room for that and the window still spans two limits.
+    const booted = await boot({ CONFORMANCE_SERVER_IDLE_MS: "3000" });
     const log = join(booted.state, "server.log");
     const timer = setInterval(
       () => appendFileSync(log, '{"request_id":"r","status":200}\n'),
       200,
     );
     try {
-      expect(await stillThere(booted, 4_000)).toBe(true);
+      expect(await stillThere(booted, 7_000)).toBe(true);
     } finally {
       clearInterval(timer);
     }
