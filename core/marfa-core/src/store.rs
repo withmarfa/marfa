@@ -4015,33 +4015,98 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-const BENEATH_OWED: &str = "beneath_owed/";
+pub(crate) const BENEATH_OWED: &str = "beneath_owed/";
 
-/// Records that an event of `kind` moved the branch under `top` into or out
-/// of the slice's `beneath`, for the next settle to judge.
-pub(crate) fn owe_beneath(conn: &Connection, top: &str, kind: &str) -> Result<(), CoreError> {
-    meta_set(conn, &format!("{BENEATH_OWED}{top}"), kind)
+/// A branch top owed a settle: the copy holds the branch as the last settle
+/// left it until the next judges it on the edges held then.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct OwedBeneath {
+    /// The kind of the last event that moved the branch.
+    pub kind: String,
+    /// Whether the root reached the top at the last settle.
+    pub reached: bool,
+    /// A settle has begun to read the branch in: its rows are judged as
+    /// reached, and the next settle judges the top on the edges alone.
+    pub reading: bool,
 }
 
-/// Each branch top owed a settle, in id order, with the kind of the last
-/// event that moved it.
-pub(crate) fn owed_beneath(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+/// Records that a change of `kind` moved the branch under `top` into or out
+/// of the slice's `beneath`, for the next settle to judge. `reached` is
+/// whether the root reached `top` before the change, kept from the first
+/// change since the last settle.
+pub(crate) fn owe_beneath(
+    conn: &Connection,
+    top: &str,
+    kind: &str,
+    reached: bool,
+) -> Result<(), CoreError> {
+    let key = format!("{BENEATH_OWED}{top}");
+    let owed = match meta_get(conn, &key)? {
+        Some(held) => OwedBeneath {
+            kind: kind.to_string(),
+            ..serde_json::from_str(&held)?
+        },
+        None => OwedBeneath {
+            kind: kind.to_string(),
+            reached,
+            reading: false,
+        },
+    };
+    meta_set(conn, &key, &serde_json::to_string(&owed)?)
+}
+
+/// Each branch top owed a settle, in id order.
+pub(crate) fn owed_beneath(conn: &Connection) -> Result<Vec<(String, OwedBeneath)>, CoreError> {
     // A range, not `LIKE`, so the key's index is used.
     let mut statement = conn.prepare_cached(
         "SELECT substr(key, length(?1) + 1), value FROM meta
          WHERE key >= ?1 AND key < ?2 ORDER BY key",
     )?;
     let end = format!("{}0", BENEATH_OWED.trim_end_matches('/'));
-    let owed = statement
+    let owed: Vec<(String, String)> = statement
         .query_map([BENEATH_OWED, end.as_str()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    Ok(owed)
+    owed.into_iter()
+        .map(|(top, held)| Ok((top, serde_json::from_str(&held)?)))
+        .collect()
+}
+
+/// Marks `top`, owed, as being read in (`OwedBeneath::reading`).
+pub(crate) fn reading_beneath(
+    conn: &Connection,
+    top: &str,
+    owed: &OwedBeneath,
+) -> Result<(), CoreError> {
+    let reading = OwedBeneath {
+        reading: true,
+        ..owed.clone()
+    };
+    meta_set(
+        conn,
+        &format!("{BENEATH_OWED}{top}"),
+        &serde_json::to_string(&reading)?,
+    )
 }
 
 pub(crate) fn settled_beneath(conn: &Connection, top: &str) -> Result<(), CoreError> {
     meta_delete(conn, &format!("{BENEATH_OWED}{top}"))
+}
+
+/// A condition on `edges` that the `parent-of` edges a walk of `beneath`
+/// follows meet. While a refill runs, an edge it has not brought may be gone
+/// from the server and leaves at its sweep, so only those it brought and
+/// those a waiting write of this device's names are followed.
+pub(crate) fn beneath_edges(conn: &Connection) -> Result<&'static str, CoreError> {
+    Ok(if refilling(conn)? {
+        "(EXISTS (SELECT 1 FROM meta WHERE meta.key = 'edge_brought/' || edges.id)
+          OR edges.id IN (SELECT edge_id FROM queue
+                           WHERE edge_id IS NOT NULL
+                             AND (verdict IS NULL OR verdict IN ('blocked', 'dead'))))"
+    } else {
+        "1"
+    })
 }
 
 fn edge_brought(id: &str) -> String {
@@ -6440,25 +6505,52 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             let Some(id) = row.edge_id.as_deref() else {
                 return Ok(());
             };
+            let moving = moving_back(conn, id)?;
             if row.kind == WriteKind::CreateEdge {
                 delete_edge(conn, id)?;
-                return drop_beneath(conn, Subject::Edge, id);
-            }
-            if let Some(held) = beneath_edge(conn, id)? {
-                upsert_edge(conn, &held.as_wire())?;
-            }
-            lay_waiting_edge_writes_over(conn, id)?;
-            if !edge_write_waits(conn, id)? {
                 drop_beneath(conn, Subject::Edge, id)?;
-                removal_unsent(conn, Subject::Edge, id)?;
+            } else {
+                if let Some(held) = beneath_edge(conn, id)? {
+                    upsert_edge(conn, &held.as_wire())?;
+                }
+                lay_waiting_edge_writes_over(conn, id)?;
+                if !edge_write_waits(conn, id)? {
+                    drop_beneath(conn, Subject::Edge, id)?;
+                    removal_unsent(conn, Subject::Edge, id)?;
+                }
+                // Where the server moved it to a source the copy does not
+                // hold while the refused write waited.
+                let_go_of_untaken_edge(conn, id)?;
             }
-            // Where the server moved it to a source the copy does not hold
-            // while the refused write waited.
-            let_go_of_untaken_edge(conn, id)?;
+            if let Some(moving) = moving {
+                let kind = match row.kind {
+                    WriteKind::CreateEdge => "edge.deleted",
+                    WriteKind::DeleteEdge => "edge.created",
+                    _ => "edge.updated",
+                };
+                moving.owe(conn, kind)?;
+            }
         }
         None => {}
     }
     Ok(())
+}
+
+/// The branch tops putting edge `id` back may move: its target as the copy
+/// holds it now and as the server last sent it.
+fn moving_back(conn: &Connection, id: &str) -> Result<Option<crate::slice::Moving>, CoreError> {
+    let ends: Vec<Edge> = [edge_ends(conn, id)?, beneath_edge(conn, id)?]
+        .into_iter()
+        .flatten()
+        .collect();
+    let Some(edge_type) = ends.first().map(|edge| edge.edge_type.clone()) else {
+        return Ok(None);
+    };
+    crate::slice::Moving::before_own(
+        conn,
+        &edge_type,
+        ends.into_iter().map(|edge| edge.target_id),
+    )
 }
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {

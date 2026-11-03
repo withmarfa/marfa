@@ -427,12 +427,8 @@ fn take(
             store::take_server_edge(&tx, edge)?;
         }
     }
-    if let Some((root, tops)) = moving {
-        for (top, reached) in tops {
-            if reached || crate::slice::reaches(&tx, root, &top)? {
-                store::owe_beneath(&tx, &top, kind)?;
-            }
-        }
+    if let Some(moving) = moving {
+        moving.owe(&tx, kind)?;
     }
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
@@ -1634,49 +1630,41 @@ fn moves_beneath<'a>(slice: &'a Slice, kind: &str, payload: &EventPayload) -> Op
 /// Read in the event's transaction before it is applied: each branch top
 /// whose place under the root the event may move, and whether the root
 /// reached it before. An edge's target heads its branch, and so does the
-/// target a move takes the edge from, unless it is the root, whose own
-/// parent moves nothing under it; a purge takes the edges from its row, so
-/// each child of a row the root reached heads one.
-#[allow(clippy::type_complexity)]
-fn moving_beneath<'a>(
+/// target a move takes the edge from; a purge takes the edges from its row,
+/// so each child of a row the root reached heads one. An edge this device
+/// deleted or moved itself is already as the event leaves it, and its own
+/// change owed the branch (`Moving::before_own`).
+fn moving_beneath(
     tx: &rusqlite::Connection,
-    slice: &'a Slice,
+    slice: &Slice,
     kind: &str,
     payload: &EventPayload,
-) -> Result<Option<(&'a str, Vec<(String, bool)>)>> {
+) -> Result<Option<crate::slice::Moving>> {
     let Some(root) = moves_beneath(slice, kind, payload) else {
         return Ok(None);
     };
-    let tops = match (kind, &payload.item, &payload.edge) {
+    let moving = match (kind, &payload.item, &payload.edge) {
         ("item.purged", Some(item), _) => {
-            if crate::slice::reaches(tx, root, &item.id)? {
+            let tops = if crate::slice::reaches(tx, root, &item.id)? {
                 crate::slice::children(tx, &item.id)?
                     .into_iter()
                     .map(|child| (child, true))
                     .collect()
             } else {
                 Vec::new()
-            }
+            };
+            crate::slice::Moving::judged(root, tops)
         }
         (_, _, Some(edge)) => {
             let mut targets = vec![edge.target_id.clone()];
-            if let Some(held) = store::edge_ends(tx, &edge.id)?
-                && held.target_id != edge.target_id
-            {
+            if let Some(held) = store::edge_ends(tx, &edge.id)? {
                 targets.push(held.target_id);
             }
-            let mut tops = Vec::new();
-            for target in targets {
-                if target != root {
-                    let reached = crate::slice::reaches(tx, root, &target)?;
-                    tops.push((target, reached));
-                }
-            }
-            tops
+            crate::slice::Moving::before(tx, root, targets)?
         }
-        _ => Vec::new(),
+        _ => crate::slice::Moving::judged(root, Vec::new()),
     };
-    Ok(Some((root, tops)))
+    Ok(Some(moving))
 }
 
 /// Whether an event of `kind` may owe a branch a settle.
@@ -1689,15 +1677,16 @@ fn may_owe(kind: &str) -> bool {
 /// the branches.
 const SETTLE_EVERY: usize = 500;
 
-/// Settles each branch top the events since the last settle owe
+/// Settles each branch top the changes since the last settle owe
 /// (`device/catch-up-beneath-enters`, `device/catch-up-beneath-leaves`),
-/// judged on the edges as those events left them, so a branch moved out
+/// judged on the edges as those changes left them, so a branch moved out
 /// and back between two settles lets nothing go and is read for nothing.
 ///
-/// A top the root no longer reaches lets go of each row of its branch that
-/// is not kept. A top the root reaches whose branch the copy holds whole
-/// needs nothing; one with no children held is read by id, a hundred to a
-/// request, and one with children is listed beneath it, a page at a time.
+/// A top the root reaches as it did at the last settle needs nothing. One
+/// it no longer reaches lets go of each row of its branch that is not kept.
+/// One it now reaches whose branch the copy holds whole needs nothing; one
+/// with no children held is read by id, a hundred to a request, and one with
+/// children is listed beneath it, a page at a time.
 /// Each read is written in a transaction of its own, so a settle stopped or
 /// failed part way keeps what it wrote and the next settle reads the rest:
 /// a top stays owed until its read is whole. `stop` is looked at before each
@@ -1728,9 +1717,13 @@ fn settle_beneath(
         let under = crate::slice::beneath_ids(&tx, root)?;
         let mut by_id = Vec::new();
         let mut listed = Vec::new();
-        for (top, kind) in owed {
-            let branch = crate::slice::beneath_ids(&tx, &top)?;
-            if under.contains(&top) {
+        let mut leaving = Vec::new();
+        for (top, owed) in owed {
+            let reached = under.contains(&top);
+            if !owed.reading && reached == owed.reached {
+                store::settled_beneath(&tx, &top)?;
+            } else if reached {
+                let branch = crate::slice::beneath_ids(&tx, &top)?;
                 let mut missing = false;
                 for id in &branch {
                     if !holds_answered(&tx, id)? && !store::removed(&tx, Subject::Item, id)? {
@@ -1740,20 +1733,31 @@ fn settle_beneath(
                 }
                 match (missing, branch.len()) {
                     (false, _) => store::settled_beneath(&tx, &top)?,
-                    (true, 1) => by_id.push((top, kind)),
-                    (true, _) => listed.push((top, kind)),
-                }
-            } else {
-                let mut left = false;
-                for id in &branch {
-                    if store::item_held(&tx, id)? {
-                        left |= store::let_go_unless_kept(&tx, catalog, id)?;
+                    (true, size) => {
+                        store::reading_beneath(&tx, &top, &owed)?;
+                        if size == 1 {
+                            by_id.push((top, owed.kind));
+                        } else {
+                            listed.push((top, owed.kind));
+                        }
                     }
                 }
-                if left {
-                    changed.push(kind);
-                }
+            } else {
+                // Settled before its rows are judged, which would otherwise
+                // be judged as the branch was held.
                 store::settled_beneath(&tx, &top)?;
+                leaving.push((top, owed.kind));
+            }
+        }
+        for (top, kind) in leaving {
+            let mut left = false;
+            for id in crate::slice::beneath_ids(&tx, &top)? {
+                if store::item_held(&tx, &id)? {
+                    left |= store::let_go_unless_kept(&tx, catalog, &id)?;
+                }
+            }
+            if left {
+                changed.push(kind);
             }
         }
         tx.commit()?;

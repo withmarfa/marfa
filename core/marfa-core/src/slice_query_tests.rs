@@ -1241,7 +1241,17 @@ fn a_branch_the_devices_own_edge_draws_under_the_root_arrives() {
     hold(&core, "top", "active", &[], json!({"title": "top"}));
     hold_edge(&core, "e-child", "top", "child", 1);
     catalog_answers(&server, &[]);
-    hold_edge(&core, "e-own", "root", "top", 1);
+    let own = core
+        .create_edge(&crate::EdgeDraft {
+            source_id: "root".into(),
+            target_id: "top".into(),
+            edge_type: PARENT_OF.into(),
+            properties: serde_json::Map::new(),
+            id: None,
+        })
+        .unwrap()
+        .edge_id
+        .unwrap();
     assert!(
         crate::slice::beneath_ids(&core.conn().unwrap(), "root")
             .unwrap()
@@ -1260,7 +1270,7 @@ fn a_branch_the_devices_own_edge_draws_under_the_root_arrives() {
         vec![replay(&[(
             "11",
             "edge.created",
-            edge_event("edge.created", "e-own", "root", "top", 1),
+            edge_event("edge.created", &own, "root", "top", 1),
         )])],
     );
 
@@ -1474,4 +1484,310 @@ fn a_branch_moved_out_and_back_within_one_catch_up_lets_nothing_go() {
         "a branch held whole was read again"
     );
     assert_eq!(kept_beside_rows(&core), before);
+}
+
+fn listings(server: &Scripted) -> Vec<String> {
+    server
+        .seen("/items")
+        .into_iter()
+        .map(|seen| seen.query)
+        .chain(
+            server
+                .seen("/items/bulk-get")
+                .into_iter()
+                .map(|seen| seen.path),
+        )
+        .collect()
+}
+
+/// `branch_held`, with `branch` also over `kid`, which the copy does not
+/// hold, and `other` under the root beside it.
+fn mixed_branch_held(server: &Scripted, dir: &Path) -> Arc<Core> {
+    let core = branch_held(server, dir);
+    hold(&core, "other", "active", &[], json!({"title": "other"}));
+    hold_edge(&core, "e-other", "root", "other", 1);
+    hold_edge(&core, "e-kid", "branch", "kid", 1);
+    core
+}
+
+#[test]
+fn the_devices_own_delete_of_a_branch_edge_lets_the_branch_go_at_its_echo() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    core.delete_edge("e-branch").unwrap();
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.deleted",
+            edge_event("edge.deleted", "e-branch", "root", "branch", 1),
+        )])],
+    );
+
+    core.catch_up().unwrap();
+
+    // `branch` stays for the write that names it, still waiting.
+    assert_eq!(held_of(&core), ["root", "branch", "bound", "waiting"]);
+    assert!(listings(&server).is_empty(), "{:?}", listings(&server));
+}
+
+#[test]
+fn the_devices_own_move_of_a_branch_edge_out_lets_the_branch_go_at_its_echo() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    hold(
+        &core,
+        "elsewhere",
+        "active",
+        &[],
+        json!({"title": "elsewhere"}),
+    );
+    core.update_edge(
+        "e-branch",
+        &crate::EdgeEdit {
+            source_id: Some("elsewhere".into()),
+            base_version: Some(1),
+            ..crate::EdgeEdit::default()
+        },
+    )
+    .unwrap()
+    .unwrap();
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.updated",
+            edge_event("edge.updated", "e-branch", "elsewhere", "branch", 2),
+        )])],
+    );
+
+    core.catch_up().unwrap();
+
+    // `branch` stays for the write that names it, still waiting.
+    assert_eq!(held_of(&core), ["root", "branch", "bound", "waiting"]);
+    assert!(listings(&server).is_empty(), "{:?}", listings(&server));
+}
+
+/// The device deletes the branch's edge, a catch-up lets the branch go, and
+/// the server then refuses the delete: the edge comes back, and the branch
+/// with it.
+#[test]
+fn a_refused_delete_of_a_branch_edge_brings_the_branch_back() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    let delete = core.delete_edge("e-branch").unwrap();
+    server.on("/events", vec![at_head("10"), at_head("10")]);
+    core.catch_up().unwrap();
+    assert_eq!(held_of(&core), ["root", "branch", "bound", "waiting"]);
+    server.on(
+        "/items",
+        vec![listed_page(&[
+            (
+                "branch",
+                &[
+                    ("e-plain", "plain"),
+                    ("e-bound", "bound"),
+                    ("e-waiting", "waiting"),
+                ],
+            ),
+            ("plain", &[]),
+            ("bound", &[]),
+            ("waiting", &[]),
+        ])],
+    );
+
+    store::record_refusal(&core.conn().unwrap(), &delete, "forbidden", None, false).unwrap();
+    core.catch_up().unwrap();
+
+    assert!(held_edge(&core, "e-branch"));
+    assert_eq!(
+        held_of(&core),
+        ["root", "branch", "plain", "bound", "waiting"]
+    );
+}
+
+/// `branch` moves from `root` to `other`, both under the root: the copy
+/// holds the branch as it should already, though not its child `kid`.
+#[test]
+fn a_move_within_the_root_reads_nothing() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = mixed_branch_held(&server, dir.path());
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "edge.updated",
+            edge_event("edge.updated", "e-branch", "other", "branch", 2),
+        )])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(listings(&server).is_empty(), "{:?}", listings(&server));
+    assert_eq!(
+        held_of(&core),
+        ["root", "branch", "plain", "bound", "waiting"]
+    );
+}
+
+#[test]
+fn a_mixed_branch_moved_out_and_back_reads_nothing() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = mixed_branch_held(&server, dir.path());
+    server.on(
+        "/events",
+        vec![replay(&[
+            (
+                "11",
+                "edge.deleted",
+                edge_event("edge.deleted", "e-branch", "root", "branch", 1),
+            ),
+            (
+                "12",
+                "edge.created",
+                edge_event("edge.created", "e-again", "root", "branch", 1),
+            ),
+        ])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(listings(&server).is_empty(), "{:?}", listings(&server));
+    assert_eq!(
+        held_of(&core),
+        ["root", "branch", "plain", "bound", "waiting"]
+    );
+}
+
+/// A row of a branch that is out from under the root between two settles is
+/// judged as the last settle held the branch.
+#[test]
+fn a_row_of_a_branch_moved_out_and_back_survives_a_change_between() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = branch_held(&server, dir.path());
+    server.on(
+        "/events",
+        vec![replay(&[
+            (
+                "11",
+                "edge.deleted",
+                edge_event("edge.deleted", "e-branch", "root", "branch", 1),
+            ),
+            ("12", "item.updated", changed("plain", &[])),
+            (
+                "13",
+                "edge.created",
+                edge_event("edge.created", "e-again", "root", "branch", 1),
+            ),
+        ])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(listings(&server).is_empty(), "{:?}", listings(&server));
+    assert_eq!(
+        held_of(&core),
+        ["root", "branch", "plain", "bound", "waiting"]
+    );
+}
+
+/// The copy held `root` → `a`, then went stale while the server let that
+/// edge go; the refill's replay then draws `t` under `a`. The edge to `a`
+/// is the copy's past, not the server's tree, so `t` is not under the root.
+#[test]
+fn a_refill_follows_no_edge_it_has_not_brought_again() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following_beneath(&server, dir.path());
+    hold(&core, "root", "active", &[], json!({"title": "root"}));
+    hold(&core, "a", "active", &[], json!({"title": "a"}));
+    hold_edge(&core, "e-stale", "root", "a", 1);
+    catalog_answers(&server, &[]);
+    server.on(
+        "/events",
+        vec![scripted::stream(
+            vec![
+                scripted::connected(),
+                scripted::copy_marker("stream_cursor", "60"),
+                "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\",\"requested\":\"10\"}\n\n".into(),
+            ],
+            Then::End,
+        )],
+    );
+    assert!(matches!(
+        core.catch_up(),
+        Err(CoreError::CopyExpired { .. })
+    ));
+
+    catalog_answers(&server, &[]);
+    server.on(
+        "/edge-types",
+        vec![certified(scripted::edge_types(&[(PARENT_OF, None)]))],
+    );
+    server.on(
+        "/keys/current",
+        vec![certified(scripted::json(
+            200,
+            r#"{"type_permissions":{"core.note":"read"}}"#,
+        ))],
+    );
+    server.on(
+        "/items",
+        vec![
+            listed_page(&[("root", &[])]),
+            listed_page(&[("root", &[])]),
+            listed_page(&[]),
+            listed_page(&[("t", &[])]),
+        ],
+    );
+    server.on("/items/bulk-get", vec![read_by_id(&ids(&["t"]))]);
+    server.on(
+        "/edges",
+        vec![certified(scripted::json(
+            200,
+            &json!({"data": [], "next_cursor": null}).to_string(),
+        ))],
+    );
+    let head = scripted::stream(
+        vec![scripted::copy_marker("stream_cursor", "60")],
+        Then::End,
+    );
+    let events = scripted::stream(
+        vec![
+            scripted::copy_marker("stream_cursor", "60"),
+            scripted::event(
+                "61",
+                "edge.created",
+                &edge_event("edge.created", "e-t", "a", "t", 1),
+            ),
+            scripted::copy_marker("stream_live", "61"),
+        ],
+        Then::End,
+    );
+    server.on("/events", vec![head, events]);
+
+    let report = core
+        .hydrate_sliced(
+            &[NOTE.into()],
+            SliceTier::Library,
+            &[PARENT_OF.into()],
+            Some(&under_root()),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+    assert!(report.in_place, "{:?}", report.restarted);
+    assert!(
+        server.seen("/items/bulk-get").is_empty(),
+        "a branch the stale edge reached was read"
+    );
+    assert!(!held(&core, "t"), "a row the stale edge reached was taken");
+    assert!(!held(&core, "a") && !held_edge(&core, "e-stale"));
+    assert!(held(&core, "root"));
 }

@@ -190,10 +190,14 @@ impl SliceQuery {
     /// What a copy narrowed by this query takes of the rows its types and
     /// tier take, as clauses on `items`: a member, in the bin or not, and a
     /// conflicted copy in one of those states.
+    ///
+    /// `beneath` answers the query's `beneath` for the row, as the copy holds
+    /// it (`held_beneath`), and is read only where the query has one.
     pub(crate) fn takes(
         &self,
         catalog: &Catalog,
         whole: &[String],
+        beneath: bool,
         clauses: &mut Vec<String>,
         values: &mut Vec<Value>,
     ) -> Result<()> {
@@ -201,12 +205,15 @@ impl SliceQuery {
         let mut narrowing = Vec::new();
         crate::filter::narrow(
             self.filter.as_deref(),
-            self.beneath.as_deref(),
+            None,
             whole,
             catalog,
             &mut narrowing,
             values,
         )?;
+        if self.beneath.is_some() {
+            narrowing.push(if beneath { "1" } else { "0" }.into());
+        }
         if !narrowing.is_empty() {
             values.push(Value::String(crate::CONFLICTED_COPY_TAG.into()));
             clauses.push(format!(
@@ -287,7 +294,13 @@ pub(crate) fn judge_held(
     let whole = crate::store::whole_edge_types(conn)?;
     match reading {
         Reading::Shows => query.narrow(catalog, &whole, &mut clauses, &mut values)?,
-        Reading::Holds => query.takes(catalog, &whole, &mut clauses, &mut values)?,
+        Reading::Holds => {
+            let beneath = match &query.beneath {
+                Some(root) => held_beneath(conn, root, id)?,
+                None => true,
+            };
+            query.takes(catalog, &whole, beneath, &mut clauses, &mut values)?
+        }
     }
     let sql = format!(
         "SELECT EXISTS (SELECT 1 FROM items WHERE {})",
@@ -318,45 +331,151 @@ pub(crate) fn judge_staged(
     Ok(Some(judged))
 }
 
-/// The ids `beneath` takes under `root` by the edges held now: `root` and
-/// every id under it, held as a row or not.
+/// The ids `beneath` takes under `root` by the edges held now
+/// (`store::beneath_edges`): `root` and every id under it, held as a row or
+/// not. `UNION` ends the walk on a cycle, as `filter::beneath_walk` does.
 pub(crate) fn beneath_ids(
     conn: &rusqlite::Connection,
     root: &str,
 ) -> Result<std::collections::HashSet<String>> {
-    let mut statement = conn.prepare(&crate::filter::beneath_walk())?;
+    let mut statement = conn.prepare_cached(&format!(
+        "WITH RECURSIVE down(id) AS (
+           SELECT ?1
+           UNION
+           SELECT edges.target_id FROM edges JOIN down ON edges.source_id = down.id
+           WHERE edges.edge_type = '{}' AND {}
+         ) SELECT id FROM down",
+        crate::filter::PARENT_OF,
+        crate::store::beneath_edges(conn)?,
+    ))?;
     let ids = statement
         .query_map([root], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids)
 }
 
-/// Whether `root` reaches `id` by the `parent-of` edges held, `id` being
+/// Whether `root` reaches `id` by the edges `beneath` follows, `id` being
 /// `root` itself included: a walk up from `id`, which a parent-of tree keeps
-/// to the row's depth. `UNION` ends it on a cycle, as `beneath_walk` does.
+/// to the row's depth.
 pub(crate) fn reaches(conn: &rusqlite::Connection, root: &str, id: &str) -> Result<bool> {
     let mut statement = conn.prepare_cached(&format!(
         "WITH RECURSIVE up(id) AS (
            SELECT ?2
            UNION
            SELECT edges.source_id FROM edges JOIN up ON edges.target_id = up.id
-           WHERE edges.edge_type = '{}'
+           WHERE edges.edge_type = '{}' AND {}
          ) SELECT EXISTS (SELECT 1 FROM up WHERE id = ?1)",
-        crate::filter::PARENT_OF
+        crate::filter::PARENT_OF,
+        crate::store::beneath_edges(conn)?,
     ))?;
     Ok(statement.query_row([root, id], |row| row.get(0))?)
 }
 
-/// The targets of the `parent-of` edges held from `id`.
+/// Whether the copy holds `id` as beneath `root`, as the last settle of the
+/// branches left it: the walk up from `id` stops at each top owed a settle,
+/// which answers what the root reached of it then
+/// (`store::OwedBeneath`), and reaches `root` otherwise. So a row of a branch
+/// moved out and back, or not yet read in, is judged as its branch is held
+/// until the settle judges the whole branch at once.
+pub(crate) fn held_beneath(conn: &rusqlite::Connection, root: &str, id: &str) -> Result<bool> {
+    let mut statement = conn.prepare_cached(&format!(
+        "WITH RECURSIVE up(id) AS (
+           SELECT ?2
+           UNION
+           SELECT edges.source_id FROM up
+             JOIN edges ON edges.target_id = up.id
+             LEFT JOIN meta AS owed ON owed.key = '{owed}' || up.id
+           WHERE edges.edge_type = '{parent_of}' AND {edges} AND owed.key IS NULL
+         )
+         SELECT EXISTS (SELECT 1 FROM up WHERE id = ?1)
+             OR EXISTS (SELECT 1 FROM up JOIN meta AS owed ON owed.key = '{owed}' || up.id
+                         WHERE json_extract(owed.value, '$.reached')
+                            OR json_extract(owed.value, '$.reading'))",
+        owed = crate::store::BENEATH_OWED,
+        parent_of = crate::filter::PARENT_OF,
+        edges = crate::store::beneath_edges(conn)?,
+    ))?;
+    Ok(statement.query_row([root, id], |row| row.get(0))?)
+}
+
+/// The targets of the edges `beneath` follows from `id`.
 pub(crate) fn children(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
     let mut statement = conn.prepare_cached(&format!(
-        "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}'",
-        crate::filter::PARENT_OF
+        "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}' AND {}",
+        crate::filter::PARENT_OF,
+        crate::store::beneath_edges(conn)?,
     ))?;
     let children = statement
         .query_map([id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(children)
+}
+
+/// The branch tops a change to the `parent-of` edges may move under the
+/// slice's `beneath`, each with whether the root reached it before the
+/// change: read before it, then `owe` after it.
+pub(crate) struct Moving {
+    root: String,
+    tops: Vec<(String, bool)>,
+}
+
+impl Moving {
+    /// `targets` head the branches: the root itself heads none, since its
+    /// own parent moves nothing under it.
+    pub(crate) fn before(
+        conn: &rusqlite::Connection,
+        root: &str,
+        targets: impl IntoIterator<Item = String>,
+    ) -> Result<Moving> {
+        let mut tops: Vec<(String, bool)> = Vec::new();
+        for target in targets {
+            if target != root && !tops.iter().any(|(top, _)| *top == target) {
+                let reached = reaches(conn, root, &target)?;
+                tops.push((target, reached));
+            }
+        }
+        Ok(Moving {
+            root: root.to_string(),
+            tops,
+        })
+    }
+
+    /// `before` for this device's own change to an edge of `edge_type`, or
+    /// `None` where it moves nothing a slice holds beneath.
+    pub(crate) fn before_own(
+        conn: &rusqlite::Connection,
+        edge_type: &str,
+        targets: impl IntoIterator<Item = String>,
+    ) -> Result<Option<Moving>> {
+        if edge_type != crate::filter::PARENT_OF {
+            return Ok(None);
+        }
+        let Some(root) = crate::store::slice_query(conn)?.and_then(|query| query.beneath) else {
+            return Ok(None);
+        };
+        Moving::before(conn, &root, targets).map(Some)
+    }
+
+    /// For tops already judged before the change.
+    pub(crate) fn judged(root: &str, tops: Vec<(String, bool)>) -> Moving {
+        Moving {
+            root: root.to_string(),
+            tops,
+        }
+    }
+
+    /// Owes a settle to each top whose answer the change turned
+    /// (`device/catch-up-beneath-enters`, `device/catch-up-beneath-leaves`);
+    /// a move that keeps a top where it was, beneath the root or not, owes
+    /// nothing, since the copy holds the branch as it should already.
+    pub(crate) fn owe(self, conn: &rusqlite::Connection, kind: &str) -> Result<()> {
+        for (top, reached) in self.tops {
+            if reaches(conn, &self.root, &top)? != reached {
+                crate::store::owe_beneath(conn, &top, kind, reached)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
