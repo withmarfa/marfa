@@ -77,9 +77,7 @@ async function seedNotes(count: number, source: string): Promise<string[]> {
 }
 
 /** Counts the entries a page has looked up, and resolves once it has begun. */
-function countLookups(
-  after: (calls: number) => Promise<void> = async () => {},
-) {
+function countLookups(after?: (calls: number) => Promise<void> | void) {
   let calls = 0;
   let begun!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -91,7 +89,7 @@ function countLookups(
       calls++;
       begun();
       const found = await find(...args);
-      await after(calls);
+      await after?.(calls);
       return found;
     },
   );
@@ -247,7 +245,7 @@ describe("a bulk page leaves the server answering other requests", () => {
     const reachedEnd = new Promise<void>((resolve) => {
       lastEntry = resolve;
     });
-    const lookups = countLookups(async (calls) => {
+    const lookups = countLookups((calls) => {
       if (calls === 20) abort.abort();
       if (calls === pageSize) lastEntry();
     });
