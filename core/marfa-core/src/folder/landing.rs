@@ -221,6 +221,7 @@ fn forced_barrier_error() -> Option<i32> {
 }
 
 enum Counted {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     Barrier,
     Full,
 }
@@ -230,6 +231,7 @@ fn count(kind: Counted) {
     COUNTS.with(|counts| {
         let (barrier, full) = counts.get();
         counts.set(match kind {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             Counted::Barrier => (barrier + 1, full),
             Counted::Full => (barrier, full + 1),
         });
