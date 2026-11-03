@@ -168,7 +168,7 @@ When a current settings file omits a setting that the last write named, a device
 
 When changed folder settings require another type or tier slice, or name other member states or another filter, a device MUST hydrate that slice at the next push.
 
-**Tests:** `device/folders.test.ts › hydrates again where its changed settings ask for another slice`, `› takes settings changed on another device`, `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`.
+**Tests:** `device/folders.test.ts › hydrates again where its changed settings ask for another slice`, `› takes settings changed on another device`, `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`.
 
 ### `folders/settings-read-permission`
 
@@ -560,17 +560,17 @@ When a watch of every folder refuses a folder's store `wrong_schema` without rep
 
 ### `folders/copy-holds-query`
 
-Where a folder's query names a filter that names no edge, backreference or part, or member states other than `active` and `archived`, a device MUST hydrate the folder's copy with a slice whose query is the folder's member states and filter, without its `beneath`.
+Where a folder's query names a filter that names no edge, backreference or part, an item to narrow beneath, or member states other than `active` and `archived`, a device MUST hydrate the folder's copy with a slice whose query is the folder's member states, filter and item to narrow beneath.
 
-**Reason:** the copy then holds about the rows the folder shows, so a folder of six files does not hold every note on the server. The item listing cannot yet be narrowed by `beneath`, so a folder that names it holds every row its filter shows.
+**Reason:** the copy then holds about the rows the folder shows, so a folder of six files does not hold every note on the server.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
 
 ### `folders/copy-query-relational`
 
-Where a folder's query filters by an edge, a backreference or a part, a device MUST hydrate the folder's copy without the query's filter, with the query's member states where they are other than `active` and `archived`.
+Where a folder's query filters by an edge, a backreference or a part, a device MUST hydrate the folder's copy without the query's filter, with the query's item to narrow beneath, and with its member states where they are other than `active` and `archived`.
 
-**Reason:** the item listing cannot yet be narrowed by edges, so such a folder's copy holds every row of its types, as it did before copies were narrowed.
+**Reason:** the item listing cannot yet be narrowed by edges, so such a folder's copy holds every row of its types beneath the item it names, or every row of its types where it names none.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates with the query's states alone a query that filters by an edge`.
 
@@ -580,7 +580,7 @@ When a folder's copy holds a slice whose query differs from the one the folder's
 
 **Reason:** a store an earlier build filled holds every row of its types and records no query, so its next pass shrinks it to what the folder shows.
 
-**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`.
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`.
 
 ### `folders/copy-shrink-keeps-unsent`
 
@@ -588,13 +588,13 @@ When a device hydrates a folder's copy again, a device MUST keep every queued wr
 
 **Reason:** a hydration removes rows of the copy and nothing the person has not yet sent, so a push after it sends every unsent write.
 
-**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
 
 ### `folders/copy-shrink-files-unchanged`
 
 When a device hydrates a folder's copy again, a device MUST NOT change, add or remove a file of the folder during the hydration.
 
-**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
+**Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
 
 ### `folders/search-match`
 
