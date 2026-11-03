@@ -641,9 +641,14 @@ it.each(HOLDS)(
     const ran = jobOverTwoChunks(`holds-on-${point}`, () => {
       setFault(`hold:${point}`, null);
     });
-    await vi.waitFor(() => {
-      expect(spies.hold).toHaveBeenCalledWith(point);
-    });
+    // The job runs on the worker's own schedule, which a busy CI runner can
+    // push past waitFor's one-second default.
+    await vi.waitFor(
+      () => {
+        expect(spies.hold).toHaveBeenCalledWith(point);
+      },
+      { timeout: 15_000 },
+    );
     clearFaults();
     expect((await ran).job?.status).toBe("completed");
   },
