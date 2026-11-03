@@ -9,10 +9,19 @@ on:
   schedule:
     - cron: "43 4 * * *"
   workflow_dispatch:
+    inputs:
+      send_report:
+        description: Send the figures to PostHog, as the schedule does.
+        type: boolean
+        default: false
 
+# A run is never cancelled for a newer one: a dispatch on `main` while the
+# night is running would otherwise end it halfway, and the night's figures,
+# which the next night is compared with, would be lost. A newer run waits for
+# the running one (GitHub keeps only the latest waiting).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -105,9 +114,129 @@ jobs:
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
 
+  # What a person feels on a large instance, and the figures kept so a trend
+  # can be read. Size and shape of the instance:
+  #   - 250,000 items, the size the budgets were set at in the 2 November 2026
+  #     scale test. MARFA_SCALE_ITEMS overrides it (1,000 or more).
+  #   - 60% notes, 25% tasks and 15% bookmarks; about 40% carry one to three
+  #     tags; 10% sit in the feed tier; at least 100,000 parent-of edges and
+  #     about edges besides. A seeded generator makes every night the same.
+  #   - Seeded in pages of 1,000 through /items/bulk and /edges/bulk.
+  # Each step writes a fragment under conformance/reports/scale/, so a step
+  # that crashes or times out keeps the figures of the others. The `finish`
+  # step merges them, compares them with the previous night's artifact and
+  # writes the table to the job summary. A figure over its ceiling fails the
+  # night unless it is listed in KNOWN_OVER (conformance/src/utils/scale/
+  # figures.ts) against an open issue.
+  scale:
+    name: Scale
+    timeout-minutes: 150
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      MARFA_SCALE_STATE: ${{ github.workspace }}/../marfa-scale
+      # The memory and restart figures are of the built server a person runs,
+      # not the sources through tsx. The build is the step above. The built
+      # server has no test hooks (clock shim, fault routes), which nothing
+      # here uses.
+      MARFA_SERVER_BUILT: "true"
+      MARFA_DEVICE_BIN: ${{ github.workspace }}/core/target/release/marfa
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@withmarfa/server..." build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the device
+        working-directory: core
+        run: cargo build --locked --release -p marfa-cli
+
+      - name: Boot the server from this checkout
+        working-directory: conformance
+        run: pnpm marfa:up --state "$MARFA_SCALE_STATE"
+
+      - name: Seed
+        working-directory: conformance
+        run: pnpm scale seed
+      - name: Restart
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale restart
+      - name: Reads
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale reads
+      - name: Reads during bulk writes
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale bulk
+      - name: Parent-of writes
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale edges
+      - name: Archive export
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale export
+      - name: Storage
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale storage
+
+      - name: Merge, compare and report
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MARFA_POSTHOG_HOST: ${{ secrets.MARFA_POSTHOG_HOST }}
+          MARFA_POSTHOG_PROJECT_TOKEN: ${{ secrets.MARFA_POSTHOG_PROJECT_TOKEN }}
+          MARFA_SCALE_SEND_REPORT: ${{ inputs.send_report }}
+        run: pnpm scale finish
+
+      # Kept whatever the verdict: the next night reads it to show a change.
+      - name: Keep the scale figures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-figures
+          path: conformance/reports/scale/figures.json
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Keep the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-scale-server-log
+          path: |
+            ${{ env.MARFA_SCALE_STATE }}/server.log
+            ${{ env.MARFA_SCALE_STATE }}/server.stderr
+          if-no-files-found: ignore
+
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$MARFA_SCALE_STATE"
+
+      - name: Judge the night
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale judge
+
   report-failure:
     name: Report a failed scheduled run
-    needs: [benchmarks]
+    needs: [benchmarks, scale]
     if: ${{ failure() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

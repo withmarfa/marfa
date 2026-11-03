@@ -416,6 +416,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/device\//,
     ["workspace", "conformance-offline", "conformance-device", "cli-scenarios"],
   ],
+  // The nightly scale benchmark's figures, comparison and driver. Only
+  // `benchmarks.yml` runs the driver; the offline lane tests the figures.
+  [
+    /^conformance\/(src\/utils|scripts)\/scale\//,
+    ["workspace", "conformance-offline"],
+  ],
   // A test beside the helpers runs in the offline lane alone: the `generators`
   // project's `src/utils/**/*.test.ts`. No server fixture imports a test.
   [

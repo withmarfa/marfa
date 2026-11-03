@@ -43,6 +43,8 @@ const jobsOf = (file: string): [string, Job][] =>
 const KEPT_ON_SUCCESS = new Set([
   "ci.yml:conformance-shards:Keep the server log",
   "benchmarks.yml:benchmarks:Keep the load reports",
+  // The next night reads it to show a change, so a passing night keeps it too.
+  "benchmarks.yml:scale:Keep the scale figures",
 ]);
 
 describe("job limits", () => {
@@ -54,10 +56,12 @@ describe("job limits", () => {
       const numbers =
         typeof limit === "number" ? [limit] : String(limit).match(/\d+/g);
       expect(numbers, `${file}: ${id}`).not.toBeNull();
+      // The scale benchmark seeds a 250,000-item instance and measures it.
+      const ceiling = file === "benchmarks.yml" && id === "scale" ? 150 : 100;
       expect(
         Math.max(...(numbers ?? []).map(Number)),
         `${file}: ${id}`,
-      ).toBeLessThanOrEqual(100);
+      ).toBeLessThanOrEqual(ceiling);
     }
   });
 
