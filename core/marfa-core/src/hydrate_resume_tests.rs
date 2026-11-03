@@ -134,6 +134,7 @@ fn interrupted_as(server: &Scripted, signed_in: bool) -> Arc<Core> {
             .collect(),
     );
     server.on("/events", vec![head("10")]);
+    server.on("/items/bulk-get", vec![bulk(&["pinned"])]);
     assert!(matches!(
         hydrate(&core, SliceTier::Library),
         Err(CoreError::Server { .. })
@@ -488,9 +489,9 @@ fn a_hydration_stopped_once_its_last_page_is_in_resumes_with_no_page_to_read() {
     assert!(matches!(running.join().unwrap(), Err(CoreError::Canceled)));
     assert_eq!(
         point(&core).unwrap(),
-        json!({"phase": "pins", "listing": null, "cursor": null, "pages": 3})
+        json!({"phase": "replay", "listing": null, "cursor": null, "pages": 3})
     );
-    assert_eq!(held(&core), ["a", "b", "c"]);
+    assert_eq!(held(&core), ["a", "b", "c", "pinned"]);
     let asked = server.seen("/items").len();
     the_rest(&server, vec![], "10");
 

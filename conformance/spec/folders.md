@@ -7334,6 +7334,14 @@ When a folder-health receipt reports a stored sequence at least as high as the d
 
 **Tests:** `device/folder-health.test.ts › refreshes the newest local observation above a restored backup sequence`.
 
+### `folders/health-hydrating`
+
+While a folder's copy hydrates, a device MUST NOT report `settings_invalid` or `unavailable` for the folder because the copy answers `hydration_incomplete`.
+
+**Reason:** a copy that is still filling has not yet said anything about the folder's settings or the server, and a person or an app reading the report would be told something is wrong when nothing is. Settings that cannot be read still report, and so does a hydration whose latest attempt failed because the server could not be reached or answered a timeout, a rate limit or a `5xx`: the folder reports `unavailable` while that attempt's failure stands, and nothing once a retry is under way and filling. A full disk or a local read or write that fails is not `unavailable`.
+
+**Tests:** `device/folder-watch-record.test.ts › shows no problem for a folder whose first hydration is under way`, `› shows the folder unavailable while its first hydration keeps failing`.
+
 ## Where a folder sits
 
 A storage warning is one line on standard error that begins `marfa: warning: ` and names the cause. A folder is warned of when `folders add` makes it and when a watch starts on it, whether `folders watch` names the folder or watches every folder. The home directory is the one the operating system records for the user, or the one `HOME` names. Refusing such a folder is not a rule.

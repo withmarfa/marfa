@@ -487,6 +487,11 @@ it("reports a bound file as unreached when settings exclude it", async () => {
   });
   expect((await harness.folder.pull()).ok).toBe(true);
   const settingsPath = join(harness.dir, ".marfa", "folder.yaml");
+  // The bound file's row is pinned, and the hydration reads every pin from
+  // the server before it lays its listings down.
+  harness.server.copyAnswer("GET", `/items/${row(0).item.id}`, () =>
+    answers.updated(wireItem(row(0).item)),
+  );
   // The stored server settings are read by a fresh hydration, not inferred
   // from an unsent edit of the local settings file.
   harness.settings.settings = {

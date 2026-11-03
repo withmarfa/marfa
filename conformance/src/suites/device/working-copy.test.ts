@@ -2622,6 +2622,14 @@ describe("the working copy says what it is", () => {
       properties: { title: "zqwaiting", body: "not sent" },
     });
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    // The waiting create is pinned and the server has not taken it, so the
+    // read of every pin ahead of the listings finds nothing by its id.
+    server.copyAnswer(
+      "GET",
+      `/items/${queued.value.item_id ?? ""}`,
+      refusal(404, "item_not_found", "not sent yet"),
+    );
     scriptPartial(server, () => true);
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
     const filling = await device.status();

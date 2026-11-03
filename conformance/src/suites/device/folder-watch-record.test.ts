@@ -1,6 +1,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -236,6 +237,79 @@ describe("the record of folder watches", () => {
       expect(text, `the record holds ${inside}`).not.toContain(inside);
     }
     expect(JSON.parse(text).version).toBe(1);
+  });
+
+  it("shows no problem for a folder whose first hydration is under way", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A confirmed add hydrates nothing, so the watch's follow does, and the
+    // server is slow to answer the first page, after the copy has marked
+    // itself in progress.
+    const a = await folderHarness("record-hydrating", {
+      hydrate: false,
+      pagesHeldUntil: slow,
+      rows: {
+        "core.note": [{ item: { id: "01a00000-0000-7000-8000-0000000000d1" } }],
+      },
+    });
+    made.push(a);
+    scriptFolderWrites(a);
+    const watch = hold(a.folder.watchEvery());
+    const pid = watch.pid();
+    try {
+      await vi.waitFor(() => {
+        const entry = entryOf(a, pid, a.dir);
+        expect(entry, `${watch.stdout}${watch.stderr}`).toBeDefined();
+        expect(entry?.watching).toBe(true);
+      }, WAIT);
+      // The watch's passes run while the page is held.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const entry = entryOf(a, pid, a.dir);
+      expect(
+        entry?.problems ?? [],
+        "a folder whose copy was still filling was reported as having a problem",
+      ).toEqual([]);
+      expect(entry?.last_success_at ?? null).toBeNull();
+    } finally {
+      release();
+    }
+    // The witness: once the page comes, the hydration ends and the watch
+    // writes the folder's file, so it was following the folder all along.
+    await vi.waitFor(
+      () =>
+        expect(
+          readdirSync(a.dir).filter((name) => name.endsWith(".md")),
+          `${watch.stdout}${watch.stderr}`,
+        ).toHaveLength(1),
+      WAIT,
+    );
+  });
+
+  it("shows the folder unavailable while its first hydration keeps failing", async () => {
+    // The witness for the test above: the same watch and the same folder,
+    // where the first page is refused every time, is a problem and not a
+    // copy that is slow to fill.
+    const a = await folderHarness("record-hydration-failing", {
+      hydrate: false,
+      firstPageDropped: true,
+      rows: {
+        "core.note": [{ item: { id: "01a00000-0000-7000-8000-0000000000d2" } }],
+      },
+    });
+    made.push(a);
+    scriptFolderWrites(a);
+    const watch = hold(a.folder.watchEvery());
+    const pid = watch.pid();
+    await vi.waitFor(() => {
+      const entry = entryOf(a, pid, a.dir);
+      expect(entry, `${watch.stdout}${watch.stderr}`).toBeDefined();
+      expect(
+        entry?.problems?.map((problem) => problem.code),
+        `${watch.stdout}${watch.stderr}`,
+      ).toContain("unavailable");
+    }, WAIT);
   });
 
   it("lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it", async () => {

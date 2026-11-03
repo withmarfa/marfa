@@ -21,7 +21,11 @@ import {
   type FolderSettings,
 } from "../../device/cli-adapter.js";
 import type { Outcome, QueuedWrite } from "../../device/protocol.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
+import type {
+  Answer,
+  RecordedRequest,
+  Responder,
+} from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   answers,
@@ -325,6 +329,13 @@ export function scriptHydration(
      *  progress until this settles, as a server slow to answer a first
      *  hydration does. */
     statsHeldUntil?: Promise<void>;
+    /** Holds the first page of each listing until this settles, which a
+     *  hydration has marked itself in progress by, as a server slow to
+     *  answer a page does. */
+    pagesHeldUntil?: Promise<void>;
+    /** Drops the connection on the first page of each listing, as a server
+     *  that cannot be reached does. */
+    firstPageDropped?: boolean;
   },
 ): void {
   server.answer(
@@ -414,6 +425,15 @@ export function scriptHydration(
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
   scriptStats(server, rows, options.statsHeldUntil);
+  const pageHeld = (request: RecordedRequest, page: Answer): Answer => {
+    const first =
+      request.query.get("cursor") === null &&
+      request.query.get("filter") === null;
+    if (first && options.firstPageDropped === true) return { kind: "drop" };
+    return first && options.pagesHeldUntil !== undefined
+      ? { kind: "gated", until: options.pagesHeldUntil, then: page }
+      : page;
+  };
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves `system.*` out.
@@ -450,11 +470,14 @@ export function scriptHydration(
       if (dropped === true) return { kind: "drop" };
       if (dropped !== undefined && dropped !== false) return dropped;
       const next = offset + size;
-      return itemsPage(
-        inState
-          .slice(offset, next)
-          .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
-        next < inState.length ? { nextCursor: String(next) } : {},
+      return pageHeld(
+        request,
+        itemsPage(
+          inState
+            .slice(offset, next)
+            .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+          next < inState.length ? { nextCursor: String(next) } : {},
+        ),
       );
     }
     // A pin that a read by id answers 404 asks the bin for the row this way.
@@ -859,6 +882,10 @@ export async function folderHarness(
      *  `scriptHydration` takes it, for a first hydration the server is slow
      *  to answer. */
     statsHeldUntil?: Promise<void>;
+    /** Holds the first page of each listing, as `scriptHydration` takes it. */
+    pagesHeldUntil?: Promise<void>;
+    /** Drops the first page of each listing, as `scriptHydration` takes it. */
+    firstPageDropped?: boolean;
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
@@ -907,6 +934,8 @@ export async function folderHarness(
       pageSize: options.pageSize,
       drop: options.drop,
       statsHeldUntil: options.statsHeldUntil,
+      pagesHeldUntil: options.pagesHeldUntil,
+      firstPageDropped: options.firstPageDropped,
     });
   }
   for (const [name, text] of Object.entries(options.files ?? {})) {

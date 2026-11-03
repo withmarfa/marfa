@@ -162,6 +162,9 @@ pub(crate) fn aged_out_after(
         Err(CoreError::CopyExpired { .. })
     ));
     assert_eq!(core.status().unwrap().hydration, crate::Hydration::Stale);
+    // The pinned row is read before the copy is replaced, so a refill that
+    // reaches its pages has had it answered.
+    server.on("/items/bulk-get", vec![pinned_row()]);
     core
 }
 
@@ -181,13 +184,17 @@ pub(crate) fn refill_pages() -> Vec<Answer> {
 }
 
 pub(crate) fn pinned_row() -> Answer {
+    pinned_row_under(scripted::FENCE)
+}
+
+fn pinned_row_under(fence: &str) -> Answer {
     let rows = [row("pinned", 1, &[])];
     let body = json!({
         "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
         "metadata": [{"item_id": "pinned", "tags": [], "extensions": {}}],
         "listed": [true],
     });
-    scripted::certified(scripted::json(200, &body.to_string()))
+    scripted::certified_under(scripted::json(200, &body.to_string()), fence)
 }
 
 #[test]
@@ -409,6 +416,7 @@ fn a_refill_under_another_reach_clears_the_copy_first() {
         ],
     );
     server.on("/events", vec![head_under("60", other)]);
+    server.on("/items/bulk-get", vec![pinned_row_under(other)]);
 
     assert!(hydrate(&core).is_err());
 
@@ -416,8 +424,8 @@ fn a_refill_under_another_reach_clears_the_copy_first() {
     assert_eq!(completeness, Completeness::Partial);
     assert_eq!(
         ids(&held),
-        ["kept"],
-        "a row read under the old reach stayed"
+        ["kept", "pinned"],
+        "the page read and the pin read before it stayed"
     );
     assert_eq!(
         store::meta_get(&core.conn().unwrap(), store::META_REFILL).unwrap(),
