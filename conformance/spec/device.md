@@ -26,11 +26,11 @@ Where a row is not pinned and its type is not a `system.*` type, a device MUST N
 
 ### `device/slice-query-outside`
 
-Where a slice has a query, and a row of a type and a tier it takes is not pinned and no write of the device's own to the row waits, a device MUST NOT hold the row while the query does not take it.
+Where a slice has a query, and a row of a type and a tier it takes is not pinned and no waiting write of the device's own names it as the write's item, its target or an end of the edge it writes, a device MUST NOT hold the row while the query does not take it.
 
-**Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays until the server answers the write, as a pinned row stays, so the person's write is shown and sent against the row it changes.
+**Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays until the server answers the write, as a pinned row stays, so the person's write is shown and sent against the row it changes, and an edge the person draws keeps both its ends.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`.
 
 ### `device/slice-query-bin`
 
@@ -1166,19 +1166,27 @@ When an event shows that a row that is not pinned has left the slice by its type
 
 ### `device/catch-up-query-takes`
 
-Where a slice has a query, when an event shows that a row the copy holds, that is not pinned and that no write of the device's own waits on, is one the query does not take, a device MUST let the row go.
+Where a slice has a query, when an event shows that a row the copy holds, that is not pinned and that no waiting write of the device's own names as the write's item, its target or an end of the edge it writes, is one the query does not take, a device MUST let the row go.
 
 **Reason:** the copy stream cannot be narrowed (`reach/copy-query-refused`), so the device judges each item event by the query, as it judges a folder's files.
 
-**Tests:** `device/folders-copy-shrink.test.ts › lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`.
+**Tests:** `device/folders-copy-shrink.test.ts › lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`.
 
 ### `device/catch-up-unknown-tags`
 
-Where a slice's query filters by tags, when an item event that carries no metadata names a row of a type and a tier the slice takes that the copy does not hold, a device MUST read the row by id before it decides whether the query takes it.
+Where a slice's query has a filter, when an item event that carries no metadata names a row of a type and a tier the slice takes that the copy does not hold, and the event can bring the row into the copy, a device MUST read the row by id before it decides whether the query takes it.
 
-**Reason:** `item.deleted` and `item.purged` frames carry no metadata, so the event alone cannot say whether a row put in the bin is one the folder shows.
+**Reason:** `item.deleted` and `item.purged` frames carry no metadata, so the event alone cannot say whether a row put in the bin is one the folder shows: every filter reads tags, its own terms or the conflicted copies it lets in (`device/slice-query-conflicted`). An event can bring the row in unless `device/catch-up-unknown-tags-unread` says it cannot.
 
 **Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`.
+
+### `device/catch-up-unknown-tags-unread`
+
+Where a slice's query has a filter, when an `item.deleted`, `item.restored` or `item.state_changed` event that carries no metadata names a row the copy does not hold, and the event leaves the row in a state the copy does not hold, or the query's member states are `active` and `archived` and its filter reads none of `state`, `updated_at` and `version`, a device MUST NOT read the row.
+
+**Reason:** the copy held every row its query took before the event, and a move between states changes only those three fields of what a filter reads, so a row the copy did not hold in any state it could have moved from cannot enter. A read for each would cost one request per row, thousands when a bin fills elsewhere.
+
+**Tests:** `device/folders-copy-shrink.test.ts › reads nothing for a row an event bins where the copy held every state it could leave`.
 
 ### `device/catch-up-query-catalog`
 
@@ -1306,7 +1314,7 @@ When an event brings a row the copy did not hold into the slice by a retype, a m
 
 When a device reads a row entering the slice under `device/catch-up-entering-edges` or `device/catch-up-unknown-tags` for an event that carries no metadata, a device MUST hold the row with the tags that read answers.
 
-**Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`.
+**Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`, `› holds a row a query of states alone takes from an event without its tags, with the tags its read answers`.
 
 ### `device/catch-up-entering-read-fails`
 
@@ -2070,11 +2078,11 @@ When a caller lists a saved view's items from a copy that holds the view, the vi
 
 ### `device/view-narrowed-copy`
 
-If a caller lists or searches a saved view's items from a copy whose slice has a query, and the view's query does not name the same member states and filter, then a device MUST refuse the call with `invalid`.
+If a caller lists or searches a saved view's items from a copy whose slice has a query, and the copy's query has a filter that the view's query does not name with the same member states, or the copy's query has no filter and the view's query names a member state the copy's query does not, then a device MUST refuse the call with `invalid`.
 
 **Reason:** a copy narrowed by one folder's query does not hold the rows another query shows, so its answer would leave rows out without saying so.
 
-**Tests:** `device/folders-copy-shrink.test.ts › refuses a view the copy's query does not cover, and answers one it does`.
+**Tests:** `device/folders-copy-shrink.test.ts › refuses a view the copy's query does not cover, and answers one it does`, `› answers from a copy narrowed by states alone a view of those states with any filter, and refuses one of another state`.
 
 ### `device/beneath-references`
 

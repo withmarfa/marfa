@@ -1503,15 +1503,15 @@ pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>
 }
 
 /// Whether the copy keeps the row it holds under `id`, judged on the row as
-/// held: pinned, named by a write still waiting, or listed and taken by the
-/// slice's types, tier and query. One rule for every path that takes a
+/// held: pinned, named by a write still waiting (`waiting_write_names`), or
+/// listed and taken by the slice's types, tier and query. One rule for every path that takes a
 /// server row, so the copy holds the same rows whichever brought them.
 pub fn keeps_held(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
     id: &str,
 ) -> Result<bool, CoreError> {
-    if pinned(conn, id)? || item_waits(conn, id)? {
+    if pinned(conn, id)? || waiting_write_names(conn, id)? {
         return Ok(true);
     }
     let Some((types, tier)) = slice(conn)? else {
@@ -1527,9 +1527,14 @@ pub fn keeps_held(
         return Ok(false);
     }
     match slice_query(conn)? {
-        Some(query) => {
-            crate::slice::takes_held(conn, catalog, &query, &whole_edge_types(conn)?, id)
-        }
+        Some(query) => crate::slice::judge_held(
+            conn,
+            catalog,
+            &query,
+            crate::slice::Reading::Holds,
+            crate::slice::Scope::default(),
+            id,
+        ),
         None => Ok(true),
     }
 }
@@ -4023,21 +4028,12 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The end of a hydration that filled the copy again in place, after its walk
-/// and its replay: takes out each row neither brought, but for a pinned row
-/// and one a waiting write names as its item or as an end of an edge, then
-/// each such edge but one a waiting write names. Answers the rows and the
-/// edges it took out.
-pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
-    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
-        let mut statement = conn.prepare(sql)?;
-        let rows = statement.query_map([], |row| row.get(0))?;
-        Ok(rows.collect::<Result<Vec<String>, _>>()?)
-    };
-    let whole = whole_edge_types(conn)?;
-    // An edge write's ends are the columns it was queued with, the ends a
-    // move in its payload names, and the ends the edge the copy shows has.
-    let named: HashSet<String> = unbrought(&format!(
+/// The ids a waiting write names: as its item or its target, or as an end
+/// of the edge it writes, whether the ends it was queued with, those a move
+/// in its payload names or those of the edge the copy shows. The one rule a
+/// copy keeps rows by for its waiting writes, whatever lets rows go.
+fn named_by_waiting() -> String {
+    format!(
         "SELECT id FROM (
          SELECT item_id AS id FROM queue WHERE {WAITING}
          UNION SELECT target_id FROM queue WHERE {WAITING}
@@ -4050,9 +4046,40 @@ pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
          UNION SELECT edges.target_id FROM edges JOIN queue ON queue.edge_id = edges.id
                 WHERE {WAITING}
          ) WHERE id IS NOT NULL"
-    ))?
-    .into_iter()
-    .collect();
+    )
+}
+
+fn named_by_waiting_writes(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(&named_by_waiting())?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<HashSet<String>, _>>()?)
+}
+
+/// Whether a waiting write names the row `id` (`named_by_waiting`).
+pub fn waiting_write_names(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT EXISTS (SELECT 1 FROM ({}) AS named WHERE named.id = ?1)",
+            named_by_waiting()
+        ),
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
+/// The end of a hydration that filled the copy again in place, after its walk
+/// and its replay: takes out each row neither brought, but for a pinned row
+/// and one a waiting write names as its item or as an end of an edge, then
+/// each such edge but one a waiting write names. Answers the rows and the
+/// edges it took out.
+pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
+    let unbrought = |sql: &str| -> Result<Vec<String>, CoreError> {
+        let mut statement = conn.prepare(sql)?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    };
+    let whole = whole_edge_types(conn)?;
+    let named = named_by_waiting_writes(conn)?;
     let mut items = 0;
     for id in unbrought(
         "SELECT id FROM items

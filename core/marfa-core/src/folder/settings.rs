@@ -391,6 +391,18 @@ impl Settings {
         clauses: &mut Vec<String>,
         values: &mut Vec<Value>,
     ) -> Result<()> {
+        self.narrow_types(catalog, clauses, values)?;
+        self.slice_query()
+            .narrow(catalog, whole_edges, clauses, values)
+    }
+
+    /// The folder's types and tier, as clauses on `items`.
+    pub(crate) fn narrow_types(
+        &self,
+        catalog: &Catalog,
+        clauses: &mut Vec<String>,
+        values: &mut Vec<Value>,
+    ) -> Result<()> {
         if !self.names_every_type() {
             let mut alternatives = Vec::new();
             for named in &self.query.types {
@@ -408,8 +420,7 @@ impl Settings {
             clauses.push("items.tier = ?".into());
             values.push(Value::String(self.tier().as_str().into()));
         }
-        self.slice_query()
-            .narrow(catalog, whole_edges, clauses, values)
+        Ok(())
     }
 
     /// The query past its types and tier.

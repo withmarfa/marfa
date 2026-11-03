@@ -92,7 +92,13 @@ pub(crate) struct Reads {
     pub status: bool,
     /// Edges, or the state of another row: a term the row alone cannot answer.
     pub relational: bool,
+    /// A column a move between states changes: `state`, `updated_at` or
+    /// `version`.
+    pub moved: bool,
 }
+
+/// The system fields a move between states writes.
+const MOVED_FIELDS: [&str; 3] = ["state", "updated_at", "version"];
 
 pub(crate) fn reads(filter: &str) -> Result<Reads> {
     let expression = parse(filter)?;
@@ -101,6 +107,7 @@ pub(crate) fn reads(filter: &str) -> Result<Reads> {
         match condition.term {
             Term::StatusGroup(_) => reads.status = true,
             Term::Edge { .. } | Term::Part(_) => reads.relational = true,
+            Term::System { column, .. } if MOVED_FIELDS.contains(&column) => reads.moved = true,
             Term::TagHeld
             | Term::TagsPresent(_)
             | Term::System { .. }

@@ -3813,11 +3813,12 @@ fn queue_create(
             if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) =>
         {
             match store::slice_query(tx)? {
-                Some(query) => crate::slice::takes_held(
+                Some(query) => crate::slice::judge_held(
                     tx,
                     catalog,
                     &query,
-                    &store::whole_edge_types(tx)?,
+                    crate::slice::Reading::Holds,
+                    crate::slice::Scope::default(),
                     &id,
                 )?,
                 None => true,

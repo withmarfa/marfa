@@ -37,6 +37,15 @@ fn work() -> SliceQuery {
     }
 }
 
+/// A query of one member state, so a row the copy did not hold may have
+/// been archived and enter at a delete.
+fn active_work() -> SliceQuery {
+    SliceQuery {
+        states: Some(vec!["active".into()]),
+        ..work()
+    }
+}
+
 fn note_json(status: &[(&str, &str)]) -> Value {
     let mut wire = json!({"id": NOTE, "display_hints": {"title_field": "title"}});
     if !status.is_empty() {
@@ -308,7 +317,7 @@ fn catch_up_lets_go_of_a_row_leaving_the_query_and_takes_one_entering() {
 fn catch_up_reads_the_tags_a_delete_does_not_carry() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
-    let core = following(&server, dir.path(), Some(&work()));
+    let core = following(&server, dir.path(), Some(&active_work()));
     hold(
         &core,
         "member",
@@ -351,7 +360,7 @@ fn catch_up_reads_the_tags_a_delete_does_not_carry() {
 fn catch_up_leaves_out_a_row_whose_tags_it_cannot_read() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
-    let core = following(&server, dir.path(), Some(&work()));
+    let core = following(&server, dir.path(), Some(&active_work()));
     catalog_answers(&server, &[]);
     server.on(
         "/items",
@@ -369,6 +378,28 @@ fn catch_up_leaves_out_a_row_whose_tags_it_cannot_read() {
 
     assert_eq!(server.seen("/items").len(), 1);
     assert!(!held(&core, "unread"));
+    assert_eq!(
+        store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap(),
+        Some("11".into()),
+        "the event was not passed"
+    );
+}
+
+#[test]
+fn catch_up_reads_nothing_for_a_delete_of_a_row_the_copy_could_not_have_left_out() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following(&server, dir.path(), Some(&work()));
+    catalog_answers(&server, &[]);
+    server.on(
+        "/events",
+        vec![replay(&[("11", "item.deleted", binned("bare"))])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(server.seen("/items").is_empty());
+    assert!(!held(&core, "bare"));
     assert_eq!(
         store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap(),
         Some("11".into()),

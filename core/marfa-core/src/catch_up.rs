@@ -402,11 +402,6 @@ fn take(
     let tx = conn.transaction()?;
     operation.check(&tx)?;
     reach::cursor(id).ok_or_else(reach::invalid)?;
-    if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
-        let listed = payload.listed.ok_or_else(reach::invalid)?;
-        let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
-        reach::set_listed(&tx, &item.id, listed)?;
-    }
     // Judged outside the transaction: a row held or pinned since is taken
     // as any held row is, and judged again once taken.
     let outside = entering.outside
@@ -414,6 +409,17 @@ fn take(
             Some(item) => !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?,
             None => false,
         };
+    if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
+        let listed = payload.listed.ok_or_else(reach::invalid)?;
+        let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
+        // A row the copy does not take keeps no mark, so the marks grow with
+        // the rows held, not with the events.
+        if outside {
+            reach::forget_listed(&tx, &item.id)?;
+        } else {
+            reach::set_listed(&tx, &item.id, listed)?;
+        }
+    }
     let applied = !outside && apply(&tx, catalog, slice, kind, payload, entering.tags.as_deref())?;
     if applied {
         for edge in &entering.edges {
@@ -1415,9 +1421,10 @@ impl Entering {
 
 /// Read outside the transaction. A created row's edges need no read: they
 /// follow as frames. Under a query, a row the query does not take is read
-/// for nothing, and a row whose frame carries no tags is read by id for
-/// them first, from the bin for a row the frame binned
-/// (`device/catch-up-unknown-tags`), where the query reads tags.
+/// for nothing. Where the query has a filter, a row whose frame carries no
+/// tags is read by id for them first, from the bin for a row the frame
+/// binned, unless the event cannot bring it in
+/// (`device/catch-up-unknown-tags`, `device/catch-up-unknown-tags-unread`).
 fn entering_row(
     core: &Core,
     context: &Context,
@@ -1432,48 +1439,54 @@ fn entering_row(
     if !ITEM_CHANGES.contains(&kind) {
         return Ok(Entering::default());
     }
-    let pinned = {
+    let (held, pinned) = {
         let conn = core.conn()?;
         if store::removed(&conn, Subject::Item, &item.id)? {
             return Ok(Entering::default());
         }
+        let held = store::item_held(&conn, &item.id)?;
         // A refill keeps the rows it held until its sweep, which takes the
         // edges of a held row neither its walk nor its replay brought: one
         // only the replay brings enters as a row the copy does not hold.
-        let entering = !store::item_held(&conn, &item.id)?
-            || (store::refilling(&conn)? && !reach::answered(&conn, &item.id)?);
+        let entering = !held || (store::refilling(&conn)? && !reach::answered(&conn, &item.id)?);
         let pinned = store::pinned(&conn, &item.id)?;
         if !entering || !(in_slice(catalog, slice, item)? || pinned) {
             return Ok(Entering::default());
         }
-        pinned
+        (held, pinned)
     };
     let http = context.http(core.http()?);
     let mut tags = None;
     if !pinned && let Some(query) = &slice.query {
-        let known = match &payload.metadata {
+        let judged = match &payload.metadata {
             Some(metadata) => Some(metadata.tags.clone()),
-            // Only a filter reads tags: its own terms, and the conflicted
-            // copies it lets in whatever it says.
-            None if query.filter.is_some() => {
+            // A query of states alone reads no tags, so the row is judged
+            // without them and held with those its read below answers.
+            None if query.filter.is_none() => None,
+            // The copy held every row the query took before the event, so a
+            // row it does not hold enters by a move alone only where the
+            // move changes what the query reads.
+            None if !held && !query.move_may_take(kind, &item.state)? => {
+                return Ok(Entering::outside());
+            }
+            None => {
                 let read = if kind == "item.deleted" {
                     http.trashed_item(&item.id)?
                 } else {
                     http.item(&item.id)?
                 };
-                read.map(|row| row.metadata.tags)
+                // Tags the server would not give leave the row out: a copy
+                // cannot take a row it cannot judge.
+                let Some(read) = read else {
+                    return Ok(Entering::outside());
+                };
+                tags = Some(read.metadata.tags.clone());
+                Some(read.metadata.tags)
             }
-            None => Some(Vec::new()),
         };
-        // Tags the server would not give leave the row out: a copy cannot
-        // take a row it cannot judge.
-        let Some(known) = known else {
-            return Ok(Entering::outside());
-        };
-        if !query_takes(core, catalog, slice, query, payload, item, &known)? {
+        if !query_takes(core, catalog, query, payload, item, judged.as_deref())? {
             return Ok(Entering::outside());
         }
-        tags = payload.metadata.is_none().then_some(known);
     }
     if kind == "item.created" {
         return Ok(Entering {
@@ -1492,25 +1505,31 @@ fn entering_row(
     })
 }
 
-/// Whether the query takes the row as the frame would leave it, judged in
-/// a transaction that is rolled back, so the copy is as it was.
+/// Whether the copy would hold the row as the frame leaves it, judged on
+/// the row staged and rolled back. `tags` replaces the row's tags where
+/// given; `None` leaves those the copy holds.
 fn query_takes(
     core: &Core,
     catalog: &Catalog,
-    slice: &Slice,
     query: &SliceQuery,
     payload: &EventPayload,
     item: &WireItem,
-    tags: &[String],
+    tags: Option<&[String]>,
 ) -> Result<bool> {
     let conn = core.conn()?;
-    let trial =
-        rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Deferred)?;
-    reach::set_listed(&trial, &item.id, payload.listed == Some(true))?;
-    store::put_server_item(&trial, item, Some(tags), catalog)?;
-    let takes = crate::slice::takes_held(&trial, catalog, query, &slice.whole, &item.id)?;
-    trial.rollback()?;
-    Ok(takes)
+    let takes = crate::slice::judge_staged(
+        &conn,
+        catalog,
+        query,
+        crate::slice::Reading::Holds,
+        crate::slice::Scope::default(),
+        |trial| {
+            reach::set_listed(trial, &item.id, payload.listed == Some(true))?;
+            store::put_server_item(trial, item, tags, catalog)?;
+            Ok(Some(item.id.clone()))
+        },
+    )?;
+    Ok(takes == Some(true))
 }
 
 /// `read_tags` stands in for the tags of a frame that carries none.

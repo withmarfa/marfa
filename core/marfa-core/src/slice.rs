@@ -16,6 +16,10 @@ use crate::model::ItemState;
 /// to a member stays in reach of the copy that made it.
 pub(crate) const CONFLICTED_COPY_LISTING: &str = "tags=conflicted-copy";
 
+/// The events that move a row between states and change nothing else of
+/// it a query reads but its state, `updated_at` and `version`.
+const MOVES: [&str; 3] = ["item.deleted", "item.restored", "item.state_changed"];
+
 /// The member states of a query that names none.
 const DEFAULT_STATES: [ItemState; 2] = [ItemState::Active, ItemState::Archived];
 
@@ -109,6 +113,31 @@ impl SliceQuery {
             Some(filter) => crate::filter::reads(filter)?.status,
             None => false,
         })
+    }
+
+    /// Whether an event of `kind` that leaves a row in `state` can bring
+    /// into a copy narrowed by this query a row the copy did not hold, where
+    /// the copy held every row it took before the event. A move between
+    /// states leaves the row's properties and tags as they were, so it can
+    /// only where the row is now in a state the copy holds and either the
+    /// copy leaves out a state the row may have moved from or the filter
+    /// reads what a move writes. Any other event can.
+    pub(crate) fn move_may_take(&self, kind: &str, state: &str) -> Result<bool> {
+        if !MOVES.contains(&kind) {
+            return Ok(true);
+        }
+        let listed = self.listed_states();
+        if !listed.contains(&state) {
+            return Ok(false);
+        }
+        let every = STATE_ORDER
+            .iter()
+            .all(|held| listed.contains(&held.as_str()));
+        Ok(!every
+            || match &self.filter {
+                Some(filter) => crate::filter::reads(filter)?.moved,
+                None => false,
+            })
     }
 
     /// The narrowing a copy holds for this query: its states always named,
@@ -220,24 +249,67 @@ fn push_states(states: &[&str], clauses: &mut Vec<String>, values: &mut Vec<Valu
     values.extend(states.iter().map(|state| Value::String((*state).into())));
 }
 
-/// Whether the query takes the row the copy holds under `id`. `false` where
-/// it holds none.
-pub(crate) fn takes_held(
+/// How a query is read of one row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// Whether the folder shows the row (`SliceQuery::narrow`).
+    Shows,
+    /// Whether a copy narrowed by the query holds the row
+    /// (`SliceQuery::takes`).
+    Holds,
+}
+
+/// Clauses on `items` and the values they bind, judged before the query:
+/// a folder's types and tier, or nothing where the slice judges them.
+pub(crate) type Scope = (Vec<String>, Vec<Value>);
+
+/// Whether the row held under `id` meets `scope` and `query`, read as
+/// `reading`. `false` where the copy holds no such row. Edge terms are
+/// answered on the edge types the copy holds whole, as every other read of
+/// the copy answers them.
+pub(crate) fn judge_held(
     conn: &rusqlite::Connection,
     catalog: &Catalog,
     query: &SliceQuery,
-    whole: &[String],
+    reading: Reading,
+    scope: Scope,
     id: &str,
 ) -> Result<bool> {
-    let mut clauses = vec!["items.id = ?".to_string()];
-    let mut values = vec![Value::String(id.into())];
-    query.takes(catalog, whole, &mut clauses, &mut values)?;
+    let (mut clauses, mut values) = scope;
+    clauses.push("items.id = ?".into());
+    values.push(Value::String(id.into()));
+    let whole = crate::store::whole_edge_types(conn)?;
+    match reading {
+        Reading::Shows => query.narrow(catalog, &whole, &mut clauses, &mut values)?,
+        Reading::Holds => query.takes(catalog, &whole, &mut clauses, &mut values)?,
+    }
     let sql = format!(
         "SELECT EXISTS (SELECT 1 FROM items WHERE {})",
         clauses.join(" AND ")
     );
     let bound: Vec<rusqlite::types::Value> = values.iter().map(crate::store::sql_value).collect();
     Ok(conn.query_row(&sql, rusqlite::params_from_iter(bound), |row| row.get(0))?)
+}
+
+/// `judge_held` on the row `stage` writes, in a transaction that is rolled
+/// back whatever happens, so the copy is as it was. `stage` answers the id
+/// of the row it wrote; `None` where it wrote none, and nothing is judged.
+/// `conn` must not be in a transaction.
+pub(crate) fn judge_staged(
+    conn: &rusqlite::Connection,
+    catalog: &Catalog,
+    query: &SliceQuery,
+    reading: Reading,
+    scope: Scope,
+    stage: impl FnOnce(&rusqlite::Connection) -> Result<Option<String>>,
+) -> Result<Option<bool>> {
+    let trial = conn.unchecked_transaction()?;
+    let Some(id) = stage(&trial)? else {
+        return Ok(None);
+    };
+    let judged = judge_held(&trial, catalog, query, reading, scope, &id)?;
+    trial.rollback()?;
+    Ok(Some(judged))
 }
 
 #[cfg(test)]
@@ -263,7 +335,8 @@ mod tests {
     }
 
     fn takes(conn: &rusqlite::Connection, query: &SliceQuery, id: &str) -> bool {
-        takes_held(conn, &Catalog::load(conn).unwrap(), query, &[], id).unwrap()
+        let catalog = Catalog::load(conn).unwrap();
+        judge_held(conn, &catalog, query, Reading::Holds, Scope::default(), id).unwrap()
     }
 
     #[test]
@@ -382,6 +455,75 @@ mod tests {
         assert!(!held.covers(&wide).unwrap());
         let edge = query(None, Some("edge[cites] exists"));
         assert!(wide.covers(&edge).unwrap());
+    }
+
+    #[test]
+    fn a_move_takes_a_row_only_where_the_copy_may_not_have_held_it() {
+        let every = query(None, Some("tags contains \"x\""));
+        assert!(every.move_may_take("item.updated", "active").unwrap());
+        assert!(!every.move_may_take("item.deleted", "trashed").unwrap());
+        assert!(
+            !every
+                .move_may_take("item.state_changed", "archived")
+                .unwrap()
+        );
+        assert!(
+            !every
+                .move_may_take("item.state_changed", "revoked")
+                .unwrap()
+        );
+        let active = query(Some(&["active"]), Some("tags contains \"x\""));
+        assert!(active.move_may_take("item.restored", "active").unwrap());
+        assert!(
+            !active
+                .move_may_take("item.state_changed", "archived")
+                .unwrap()
+        );
+        let by_state = query(None, Some("state eq \"active\""));
+        assert!(
+            by_state
+                .move_may_take("item.state_changed", "active")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_staged_row_is_judged_and_rolled_back() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let stage = |state: &'static str| {
+            move |tx: &rusqlite::Connection| {
+                held(tx, "s", state, &[], json!({}));
+                Ok(Some("s".to_string()))
+            }
+        };
+        let active = query(Some(&["active"]), None);
+        let judge = |reading, state| {
+            judge_staged(
+                &conn,
+                &catalog,
+                &active,
+                reading,
+                Scope::default(),
+                stage(state),
+            )
+            .unwrap()
+        };
+        assert_eq!(judge(Reading::Shows, "active"), Some(true));
+        assert_eq!(judge(Reading::Shows, "trashed"), Some(false));
+        assert_eq!(judge(Reading::Holds, "trashed"), Some(true));
+        assert_eq!(judge(Reading::Holds, "archived"), Some(false));
+        assert!(!store::item_held(&conn, "s").unwrap());
+        let none = judge_staged(
+            &conn,
+            &catalog,
+            &active,
+            Reading::Holds,
+            Scope::default(),
+            |_| Ok(None),
+        )
+        .unwrap();
+        assert_eq!(none, None);
     }
 
     #[test]
