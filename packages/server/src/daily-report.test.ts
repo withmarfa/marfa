@@ -72,7 +72,8 @@ describe("reportProperties", () => {
   it("copies nothing the figures carry beyond the list", () => {
     const loaded = figures();
     (loaded.files as unknown as Record<string, unknown>).path = "/secret";
-    (loaded.process as unknown as Record<string, unknown>).hostname = "h";
+    const { process: own } = loaded;
+    (own as unknown as Record<string, unknown>).hostname = "h";
     const out = reportProperties(loaded, { user: 0, system: 0 });
     expect(Object.keys(out).sort()).toEqual([...REPORT_KEYS].sort());
   });

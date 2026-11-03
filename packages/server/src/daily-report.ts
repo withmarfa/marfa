@@ -1,3 +1,4 @@
+import { errorMessage } from "./error-text.js";
 import type { FiguresKeeper, ReportFigures } from "./instance-figures.js";
 
 /** The event name PostHog shows. */
@@ -128,7 +129,7 @@ export function startDailyReport(options: {
       warn(
         "The daily server report was not handed to PostHog; the next one tries again",
         {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         },
       );
     } finally {

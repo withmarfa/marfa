@@ -105,7 +105,8 @@ describe("storage figures", () => {
       "v1",
     );
     const figures = await keeper.reportFigures();
-    expect(figures.process.release).toBe("v1");
+    const { process: own } = figures;
+    expect(own.release).toBe("v1");
     expect(typeof figures.blobs?.count).toBe("number");
     expect(figures.files.database_bytes).toBeGreaterThan(0);
     expect(figures.counts.counted_at).toBe(keeper.last()?.counted_at);

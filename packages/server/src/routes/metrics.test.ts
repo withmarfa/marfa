@@ -84,7 +84,8 @@ describe("GET /metrics", () => {
         counted_at: string | null;
       };
     };
-    expect(Object.keys(body.process).sort()).toEqual([
+    const { process: own } = body;
+    expect(Object.keys(own).sort()).toEqual([
       "cpu_system_seconds",
       "cpu_user_seconds",
       "heap_total_bytes",
@@ -93,9 +94,9 @@ describe("GET /metrics", () => {
       "memory_rss_peak_bytes",
       "release",
     ]);
-    expect(body.process.release).toBe("dev");
-    expect(body.process.memory_rss_bytes as number).toBeGreaterThan(0);
-    expect(body.process.memory_rss_peak_bytes as number).toBeGreaterThan(0);
+    expect(own.release).toBe("dev");
+    expect(own.memory_rss_bytes as number).toBeGreaterThan(0);
+    expect(own.memory_rss_peak_bytes as number).toBeGreaterThan(0);
     expect(body.storage.database_bytes).toBeGreaterThan(0);
     expect(body.storage.wal_bytes).toBeGreaterThanOrEqual(0);
     expect(Object.keys(body.storage.rows).sort()).toEqual([

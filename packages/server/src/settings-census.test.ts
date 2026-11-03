@@ -139,6 +139,7 @@ const PROCESS_MEMBERS = new Set([
   "hrtime",
   "memoryUsage",
   "cpuUsage",
+  "resourceUsage",
   "uptime",
   "nextTick",
 ]);
