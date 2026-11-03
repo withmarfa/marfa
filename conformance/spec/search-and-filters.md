@@ -330,6 +330,46 @@ If `GET /items`, `GET /items/stats` or `GET /search` names a `tier` that is not 
 
 **Tests:** `compliance/tier-axis.test.ts › refuses a tier that is not library, feed or all, on the listing, the stats and the search`.
 
+## Beneath an item
+
+`beneath` names an item. It takes that item and every item under it by `parent-of` at any depth, as a view's `query.beneath` does (`views/items-beneath`), but in the states the request names rather than only active ones.
+
+### `search-and-filters/beneath-listing`
+
+When `GET /items` names `beneath`, the server MUST list only that item and the items under it by `parent-of` at any depth.
+
+**Reason:** a folder's copy holds one subtree, and without this its hydration reads every row of its types to keep a few.
+
+**Tests:** `compliance/items-beneath.test.ts › lists and counts the item beneath and everything under it by parent-of, at any depth, in the states the listing names`, `› lists and counts nothing beneath an id that is no item`.
+
+### `search-and-filters/beneath-stats`
+
+When `GET /items/stats` names `beneath`, the server MUST count only the rows `GET /items` lists with the same `beneath`.
+
+**Reason:** the device sizes a hydration by these counts, so a count of more rows than the listing gives reads as a hydration that never finishes.
+
+**Tests:** `compliance/items-beneath.test.ts › lists and counts the item beneath and everything under it by parent-of, at any depth, in the states the listing names`, `› lists and counts nothing beneath an id that is no item`.
+
+### `search-and-filters/beneath-readable`
+
+When `GET /items` or `GET /items/stats` names `beneath`, the server MUST NOT reach an item through one the key cannot read.
+
+**Reason:** an item under an unreadable one would show that the unreadable one has children.
+
+**Tests:** `compliance/items-beneath.test.ts › walks beneath only through items the key can read`.
+
+### `search-and-filters/beneath-edge-read`
+
+If `GET /items` or `GET /items/stats` names `beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_permission_denied`.
+
+**Tests:** `compliance/items-beneath.test.ts › refuses beneath to a key that cannot read parent-of edges`.
+
+### `search-and-filters/beneath-invalid`
+
+If `GET /items` or `GET /items/stats` names a `beneath` that is not an item ID, then the server MUST answer `400 validation_error` naming `beneath`.
+
+**Tests:** `compliance/items-beneath.test.ts › refuses a beneath that is not an item ID, naming it`.
+
 ## Time bounds
 
 An item's own time is its `occurred_at`, or its `created_at` where it has none.
