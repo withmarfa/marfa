@@ -8278,6 +8278,7 @@ mod tests {
             ),
             ("delete_view", reader.delete_view("x", None).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
+            ("pin_page", reader.pin_page(&["x".to_owned()]).unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
                 "follow",
@@ -8301,7 +8302,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            54,
+            55,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
