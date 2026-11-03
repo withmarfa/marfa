@@ -1,5 +1,8 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use flate2::write::GzDecoder;
@@ -55,19 +58,58 @@ impl ExportFormat {
     }
 }
 
+/// How long an archive export waits for the server's first byte. The server
+/// checks the whole selection before it sends an archive, so the wait grows
+/// with the instance (about two minutes for 250,000 items).
+const ARCHIVE_WAIT: Duration = Duration::from_secs(30 * 60);
+
+/// How long the wait goes unremarked, and how often it is remarked on after.
+const FIRST_REMARK: Duration = Duration::from_secs(5);
+const REMARK_EVERY: Duration = Duration::from_secs(15);
+
+#[cfg(test)]
 pub fn request(args: &ExportArgs) -> Result<Request, CliError> {
-    Ok(Request::get(&["export"])
+    request_waiting(args, ARCHIVE_WAIT)
+}
+
+fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request, CliError> {
+    let request = Request::get(&["export"])
         .query_opt("format", args.format.map(ExportFormat::as_str))
         .query_opt("type", args.type_.clone())
         .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
-        .streamed())
+        .streamed();
+    Ok(if args.format == Some(ExportFormat::Archive) {
+        request.awaiting(archive_wait)
+    } else {
+        request
+    })
 }
 
 pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let (content_type, reader) = remote.stream(&request(&args)?)?;
+    run_waiting(args, remote, out, ARCHIVE_WAIT)
+}
+
+fn run_waiting(
+    args: ExportArgs,
+    remote: &Remote,
+    out: &Printer,
+    archive_wait: Duration,
+) -> Result<(), CliError> {
+    let request = request_waiting(&args, archive_wait)?;
+    let (content_type, reader) = {
+        let _remarks = (args.format == Some(ExportFormat::Archive)).then(|| {
+            Remarks::every(FIRST_REMARK, REMARK_EVERY, |waited| {
+                eprintln!(
+                    "still preparing the archive ({}s): the server checks every row before it sends the first byte",
+                    waited.as_secs()
+                );
+            })
+        });
+        remote.stream(&request)?
+    };
     let mut reader = ManifestTap::new(reader, args.format == Some(ExportFormat::Archive));
     match &args.output {
         Some(path) => {
@@ -170,6 +212,58 @@ fn removed(partial: &Path) -> String {
     match std::fs::remove_file(partial) {
         Ok(()) => "and the partial file was removed".to_string(),
         Err(_) => format!("and the partial file is left at {}", partial.display()),
+    }
+}
+
+/// Says something on a thread of its own while it is held, first after
+/// `first` and then every `every`, and stops, joined, when dropped.
+struct Remarks {
+    done: Arc<(Mutex<bool>, Condvar)>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Remarks {
+    fn every(
+        first: Duration,
+        every: Duration,
+        mut say: impl FnMut(Duration) + Send + 'static,
+    ) -> Remarks {
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let thread = {
+            let done = Arc::clone(&done);
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let (finished, wake) = &*done;
+                let mut pause = first;
+                loop {
+                    let guard = finished.lock().unwrap_or_else(|e| e.into_inner());
+                    let (guard, _) = wake
+                        .wait_timeout_while(guard, pause, |finished| !*finished)
+                        .unwrap_or_else(|e| e.into_inner());
+                    if *guard {
+                        return;
+                    }
+                    drop(guard);
+                    say(started.elapsed());
+                    pause = every;
+                }
+            })
+        };
+        Remarks {
+            done,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Remarks {
+    fn drop(&mut self) {
+        let (finished, wake) = &*self.done;
+        *finished.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        wake.notify_all();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -542,5 +636,148 @@ mod tests {
             tapped(b"{\"item\":{}}\n".to_vec(), false).unwrap(),
             b"{\"item\":{}}\n"
         );
+    }
+
+    /// A server that answers each connection after `delay`, with `body` under
+    /// a `Content-Length` of `claimed`, then closes. Returns its URL.
+    fn slow_server(delay: Duration, body: Vec<u8>, claimed: usize, accepts: usize) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for _ in 0..accepts {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request);
+                std::thread::sleep(delay);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/gzip\r\n{}: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",
+                    marfa_core::http::CONTRACT_HEADER,
+                    marfa_core::contract::CONTRACT_VERSION,
+                );
+                let _ = socket.write_all(head.as_bytes());
+                let _ = socket.write_all(&body);
+            }
+        });
+        url
+    }
+
+    fn answering_within(url: &str, budget: Duration) -> Remote {
+        Remote::with_http(
+            marfa_core::http::Http::with_timeouts(url, "marfa_k1_x", budget, budget).unwrap(),
+            Some("marfa_k1_x"),
+        )
+    }
+
+    fn archive_to(path: &Path) -> ExportArgs {
+        ExportArgs {
+            format: Some(ExportFormat::Archive),
+            output: Some(path.to_path_buf()),
+            ..ExportArgs::default()
+        }
+    }
+
+    const QUIET: Printer = Printer { json: true };
+
+    #[test]
+    fn waits_for_an_archive_longer_than_the_usual_answer_budget() {
+        let bytes = archive(r#"{"version":0,"blobs":{},"missing_blobs":{}}"#);
+        let url = slow_server(Duration::from_millis(1_500), bytes.clone(), bytes.len(), 2);
+        let dir = scratch();
+        let path = dir.join("big.tar.gz");
+        let budget = Duration::from_millis(400);
+
+        // The witness: the same server and the same budget end an NDJSON
+        // export, which the server begins at once, before the first byte.
+        let ndjson = ExportArgs {
+            output: Some(path.clone()),
+            ..ExportArgs::default()
+        };
+        let error = run_waiting(
+            ndjson,
+            &answering_within(&url, budget),
+            &QUIET,
+            Duration::from_secs(30),
+        )
+        .unwrap_err();
+        assert!(matches!(error, CliError::Core(_)), "{error:?}");
+        assert!(!path.exists());
+
+        run(archive_to(&path), &answering_within(&url, budget), &QUIET).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(names_in(&dir), ["big.tar.gz"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gives_up_on_an_archive_whose_first_byte_never_comes() {
+        let url = slow_server(Duration::from_secs(8), Vec::new(), 0, 1);
+        let dir = scratch();
+        let path = dir.join("never.tar.gz");
+        let started = std::time::Instant::now();
+        let error = run_waiting(
+            archive_to(&path),
+            &answering_within(&url, Duration::from_millis(300)),
+            &QUIET,
+            Duration::from_millis(900),
+        )
+        .unwrap_err();
+        assert!(matches!(error, CliError::Core(_)), "{error:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(names_in(&dir).is_empty(), "{:?}", names_in(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn leaves_no_archive_when_the_server_ends_the_stream_short() {
+        let whole = archive(r#"{"version":0,"blobs":{},"missing_blobs":{}}"#);
+        let url = slow_server(
+            Duration::ZERO,
+            whole[..whole.len() / 2].to_vec(),
+            whole.len(),
+            1,
+        );
+        let dir = scratch();
+        let path = dir.join("cut.tar.gz");
+        std::fs::write(&path, b"an earlier archive").unwrap();
+        let error = run(
+            archive_to(&path),
+            &answering_within(&url, Duration::from_secs(5)),
+            &QUIET,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("nothing was written"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
+        assert_eq!(names_in(&dir), ["cut.tar.gz"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn remarks_on_a_wait_until_it_ends_and_then_stops() {
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let remarks = {
+            let said = Arc::clone(&said);
+            Remarks::every(
+                Duration::from_millis(50),
+                Duration::from_millis(50),
+                move |waited| said.lock().unwrap().push(waited),
+            )
+        };
+        std::thread::sleep(Duration::from_millis(400));
+        drop(remarks);
+        let heard = said.lock().unwrap().len();
+        assert!(heard >= 2, "{heard}");
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(said.lock().unwrap().len(), heard);
+
+        let quick = Arc::new(Mutex::new(0));
+        let counted = Arc::clone(&quick);
+        drop(Remarks::every(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            move |_| *counted.lock().unwrap() += 1,
+        ));
+        assert_eq!(*quick.lock().unwrap(), 0);
     }
 }

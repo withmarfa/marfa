@@ -105,6 +105,9 @@ pub struct Http {
     /// instance at the address refuses it rather than writing it.
     instance: Option<String>,
     call_budget: Option<Duration>,
+    /// How long a streamed call waits for the answer to begin, in place of the
+    /// agent's response budget.
+    stream_wait: Option<Duration>,
     /// Whether a write on this transport is announced: a folder's health
     /// report, which changes no data, is not.
     announces: bool,
@@ -466,8 +469,18 @@ impl Http {
             reach: None,
             instance: None,
             call_budget: None,
+            stream_wait: None,
             announces: true,
         })
+    }
+
+    /// This transport for streamed calls to a door that does its work before
+    /// it answers: they wait up to `wait` for the answer to begin.
+    pub fn awaiting(&self, wait: Duration) -> Self {
+        Self {
+            stream_wait: Some(wait),
+            ..self.clone()
+        }
     }
 
     pub(crate) fn for_reporting(&self) -> Result<Self, CoreError> {
@@ -1620,12 +1633,11 @@ impl Http {
             },
             Budget::Stream(deadline) => {
                 let agent = (self.stream_agent)(deadline);
-                agent.run(
-                    agent
-                        .configure_request(request)
-                        .timeout_recv_body(None)
-                        .build(),
-                )
+                let mut configured = agent.configure_request(request).timeout_recv_body(None);
+                if let Some(wait) = self.stream_wait {
+                    configured = configured.timeout_recv_response(Some(wait));
+                }
+                agent.run(configured.build())
             }
             Budget::Upload => self.agent.run(
                 self.agent
