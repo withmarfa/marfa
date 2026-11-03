@@ -1988,7 +1988,7 @@ When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no par
 
 When `marfa export --format archive` has sent its request, the CLI MUST wait up to 30 minutes for the server to begin its answer.
 
-**Reason:** the server checks the whole selection before it sends an archive (`search-and-filters/archive-restorable`), so its first byte comes after a time that grows with the instance: about two minutes for 250,000 items, longer than the 90 seconds any other command waits for an answer. A bound that is too short ends the export of the instances that most need a backup, and the server then drops the request.
+**Reason:** the server checks the whole selection before it sends an archive (`search-and-filters/archive-restorable`), so its first byte comes after a time that grows with the instance: about two minutes for 250,000 items, longer than the 90 seconds the CLI gives most commands for an answer to begin. A bound that is too short ends the export of the instances that most need a backup, and the server then drops the request.
 
 **Tests:** `cli/archive-wait.test.ts › waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole`.
 
