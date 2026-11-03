@@ -70,6 +70,14 @@ pub enum AutostartCommand {
     /// watch's output, and on Linux to the user journal
     /// (`journalctl --user -u marfa-folder-watch.service`).
     ///
+    /// The watch reports as a command run from this shell does: the telemetry
+    /// settings set here (`MARFA_POSTHOG_HOST`, `MARFA_POSTHOG_PROJECT_TOKEN`,
+    /// `OTEL_SDK_DISABLED` and the `OTEL_*` settings that `marfa` reads) are
+    /// written to `folder-watch.env` beside the folder registry, a file only
+    /// you can read, and the agent names that file and holds none of them.
+    /// Run again, it makes the file match the settings set then, and removes
+    /// it where none is. It says which settings it carried, by name.
+    ///
     /// With `--key-file` the agent runs the watch with that file in place of
     /// the keychain, for a machine where nobody signs in to unlock it. The
     /// agent holds the file's path and never what is in it.
@@ -151,6 +159,10 @@ struct Agent {
     /// The file the watch takes its server and key from, in place of the
     /// keychain. Its path only: the agent never holds what the file does.
     key_file: Option<PathBuf>,
+    /// The file of telemetry settings the watch reads as it starts, which the
+    /// agent names and never holds: it is readable by others, and the file is
+    /// not.
+    telemetry_file: Option<PathBuf>,
 }
 
 impl Agent {
@@ -175,7 +187,13 @@ impl Agent {
             binary,
             registry,
             key_file: None,
+            telemetry_file: None,
         })
+    }
+
+    /// Where the telemetry settings go, beside the registry.
+    fn telemetry_path(&self) -> PathBuf {
+        self.registry.with_file_name(crate::telemetry::FILE_NAME)
     }
 
     /// The file launchd gives the watch for standard output and standard
@@ -247,7 +265,7 @@ impl Agent {
 \t<key>EnvironmentVariables</key>
 \t<dict>
 \t\t<key>{registry_env}</key>
-\t\t<string>{registry}</string>
+\t\t<string>{registry}</string>{telemetry}
 \t</dict>
 \t<key>StandardOutPath</key>
 \t<string>{launchd_log}</string>
@@ -271,6 +289,14 @@ impl Agent {
 ",
             registry_env = marfa_core::folder::REGISTRY_ENV,
             registry = xml(text(&self.registry)?),
+            telemetry = match &self.telemetry_file {
+                Some(file) => format!(
+                    "\n\t\t<key>{}</key>\n\t\t<string>{}</string>",
+                    crate::telemetry::FILE_ENV,
+                    xml(text(file)?)
+                ),
+                None => String::new(),
+            },
             launchd_log = xml(text(&self.launchd_log())?),
         ))
     }
@@ -282,7 +308,7 @@ impl Agent {
             .map(|argument| quoted(argument, true))
             .collect::<Vec<_>>()
             .join(" ");
-        let environment = quoted(
+        let mut environment = quoted(
             &format!(
                 "{}={}",
                 marfa_core::folder::REGISTRY_ENV,
@@ -290,6 +316,13 @@ impl Agent {
             ),
             false,
         );
+        if let Some(file) = &self.telemetry_file {
+            environment.push(' ');
+            environment.push_str(&quoted(
+                &format!("{}={}", crate::telemetry::FILE_ENV, text(file)?),
+                false,
+            ));
+        }
         Ok(format!(
             "[Unit]
 Description=Marfa folder sync: marfa folders watch over every folder
@@ -311,7 +344,7 @@ WantedBy=default.target
     }
 
     fn read(manager: Manager, written: &str) -> Option<Agent> {
-        let (mut arguments, registry) = match manager {
+        let (mut arguments, registry, telemetry_file) = match manager {
             Manager::Launchd => (
                 plist_strings(after(written, "<key>ProgramArguments</key>")?, "</array>")?,
                 // A string never holds a bare `<`, so the key is found only as one.
@@ -324,16 +357,26 @@ WantedBy=default.target
                 )?
                 .into_iter()
                 .next(),
+                after(
+                    written,
+                    &format!("<key>{}</key>", crate::telemetry::FILE_ENV),
+                )
+                .and_then(|rest| plist_strings(rest, "</dict>"))
+                .and_then(|strings| strings.into_iter().next()),
             ),
-            Manager::Systemd => (
-                unquoted(line_value(written, "ExecStart=")?)?,
-                unquoted(line_value(written, "Environment=")?)?
-                    .into_iter()
-                    .find_map(|pair| {
-                        pair.strip_prefix(&format!("{}=", marfa_core::folder::REGISTRY_ENV))
-                            .map(str::to_string)
-                    }),
-            ),
+            Manager::Systemd => {
+                let environment = unquoted(line_value(written, "Environment=")?)?;
+                let of = |name: &str| {
+                    environment
+                        .iter()
+                        .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_string))
+                };
+                (
+                    unquoted(line_value(written, "ExecStart=")?)?,
+                    of(marfa_core::folder::REGISTRY_ENV),
+                    of(crate::telemetry::FILE_ENV),
+                )
+            }
         };
         // An agent whose watch does not end for a new build is still read as
         // the agent it is, so `status` says it is one `on` replaces.
@@ -364,6 +407,7 @@ WantedBy=default.target
             log: log.into(),
             registry: registry?.into(),
             key_file,
+            telemetry_file: telemetry_file.map(PathBuf::from),
         })
     }
 }
@@ -799,6 +843,43 @@ fn write_file(path: &Path, text: &str) -> Result<(), CliError> {
     written.map_err(failed)
 }
 
+/// The telemetry file, written whole in one step and for its owner alone from
+/// the moment it exists: it can hold a credential.
+fn write_private(path: &Path, text: &str) -> Result<(), CliError> {
+    let failed = |error: std::io::Error| {
+        CliError::Io(std::io::Error::new(
+            error.kind(),
+            format!("cannot write {}: {error}", path.display()),
+        ))
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| CliError::Invalid(format!("{} has no directory", path.display())))?;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(parent)
+        .map_err(failed)?;
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let temporary = PathBuf::from(name);
+    let written = (|| {
+        let _ = std::fs::remove_file(&temporary);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written.map_err(failed)
+}
+
 #[derive(Serialize)]
 struct Switched {
     autostart: &'static str,
@@ -819,6 +900,13 @@ struct Switched {
     registry: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     key_file: Option<PathBuf>,
+    /// The telemetry settings the watch carries, by name and never by value:
+    /// none for an empty list. Absent from `off`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    telemetry: Option<Vec<&'static str>>,
+    /// The file that holds their values, where any are carried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    telemetry_file: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     running: Option<bool>,
 }
@@ -832,8 +920,24 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
         crate::keyfile::read(&path)?;
         agent.key_file = Some(path);
     }
+    let carried = crate::telemetry::carry(&|name| std::env::var(name).ok()).map_err(|name| {
+        CliError::Invalid(format!(
+            "{name} holds a control character, which the watch's telemetry file cannot carry, so nothing was written"
+        ))
+    })?;
+    let telemetry_path = agent.telemetry_path();
+    if carried.content.is_some() {
+        agent.telemetry_file = Some(telemetry_path.clone());
+    }
+    // The settings are written before the agent names them, and only once the
+    // watch has been let go of, so a failure leaves the next `on` to try again.
+    let settle = || match &carried.content {
+        Some(content) => write_private(&telemetry_path, content),
+        None => remove(&telemetry_path),
+    };
     let wanted = agent.render(place.manager)?;
-    let changed = read_file(&place.file)?.as_deref() != Some(wanted.as_str());
+    let changed = read_file(&place.file)?.as_deref() != Some(wanted.as_str())
+        || read_file(&telemetry_path)? != carried.content;
     let state = place
         .state()
         .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?;
@@ -847,6 +951,7 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
                 if loaded {
                     place.bootout()?;
                 }
+                settle()?;
                 write_file(&place.file, &wanted)?;
             }
             if changed || !loaded {
@@ -860,6 +965,7 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
             // A file written by an `on` that failed before systemd read it.
             let changed = changed || state.reload == Some(true);
             if changed {
+                settle()?;
                 write_file(&place.file, &wanted)?;
                 place.must(&["daemon-reload"])?;
                 place.must(&["enable", UNIT])?;
@@ -882,6 +988,8 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
         launchd_log: (place.manager == Manager::Launchd).then(|| agent.launchd_log()),
         registry: Some(agent.registry.clone()),
         key_file: agent.key_file.clone(),
+        telemetry: Some(carried.names.clone()),
+        telemetry_file: agent.telemetry_file.clone(),
         running,
     };
     output::report(&report, json, || {
@@ -916,6 +1024,16 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
                 key_file.display()
             ));
         }
+        match &agent.telemetry_file {
+            Some(file) => lines.push(format!(
+                "it carries these telemetry settings from this shell, in {} which only you can read: {}",
+                file.display(),
+                carried.names.join(", ")
+            )),
+            None => lines.push(
+                "it carries no telemetry settings: none is set in this shell, so the watch sends no error reports or traces".into(),
+            ),
+        }
         if running == Some(false) {
             lines.push(
                 "the watch is not running yet: `marfa folders autostart status` says why".into(),
@@ -936,6 +1054,16 @@ fn on(place: &Place, key_file: Option<&Path>, json: bool) -> Result<(), CliError
 
 fn off(place: &Place, json: bool) -> Result<(), CliError> {
     let existed = place.file.exists();
+    // The file of telemetry settings can hold a credential, so it goes with
+    // the agent: the one the agent names, or where `on` would put it.
+    let telemetry_path = read_file(&place.file)?
+        .and_then(|written| Agent::read(place.manager, &written))
+        .and_then(|agent| agent.telemetry_file)
+        .or_else(|| {
+            Agent::for_this_binary()
+                .ok()
+                .map(|agent| agent.telemetry_path())
+        });
     // The file goes whatever came of stopping the watch, so that the watch
     // never starts at login again, even where the manager cannot be asked.
     let stopping = match (place.state(), place.manager) {
@@ -949,6 +1077,9 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
         }
         (Ok(_), _) => Ok(false),
     };
+    if let Some(path) = &telemetry_path {
+        remove(path)?;
+    }
     if existed {
         remove(&place.file)?;
         if place.manager == Manager::Systemd {
@@ -985,6 +1116,8 @@ fn off(place: &Place, json: bool) -> Result<(), CliError> {
         launchd_log: None,
         registry: None,
         key_file: None,
+        telemetry: None,
+        telemetry_file: None,
         running: None,
     };
     output::report(&report, json, || {
@@ -1341,6 +1474,24 @@ mod tests {
             log: "/data/marfa/folder-watch.log".into(),
             registry: "/data/marfa/folders.json".into(),
             key_file: None,
+            telemetry_file: None,
+        }
+    }
+
+    #[test]
+    fn an_agent_names_the_telemetry_file_and_is_read_back_with_it() {
+        for manager in [Manager::Launchd, Manager::Systemd] {
+            let mut carrying = agent("/bin/marfa");
+            carrying.telemetry_file = Some("/data/marfa/folder-watch.env".into());
+            let written = carrying.render(manager).unwrap();
+            assert!(written.contains("MARFA_TELEMETRY_FILE"));
+            assert!(written.contains("/data/marfa/folder-watch.env"));
+            assert_eq!(Agent::read(manager, &written), Some(carrying));
+            assert!(!outdated(manager, &written));
+            // Witness: with none carried the agent names no file.
+            let bare = agent("/bin/marfa").render(manager).unwrap();
+            assert!(!bare.contains("MARFA_TELEMETRY_FILE"));
+            assert_eq!(Agent::read(manager, &bare), Some(agent("/bin/marfa")));
         }
     }
 
