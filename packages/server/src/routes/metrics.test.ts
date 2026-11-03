@@ -70,6 +70,46 @@ describe("GET /metrics", () => {
     expect(typeof body.cached_at).toBe("string");
   });
 
+  it("reports what the process and the database cost, from the same counts as the item total", async () => {
+    const res = await request(ctx.app, "GET", "/metrics", {
+      key: ctx.managementKey,
+    });
+    const body = (await res.json()) as {
+      items: { total: number };
+      process: Record<string, unknown>;
+      storage: {
+        database_bytes: number;
+        wal_bytes: number;
+        rows: Record<string, number>;
+        counted_at: string;
+      };
+    };
+    expect(Object.keys(body.process).sort()).toEqual([
+      "cpu_system_seconds",
+      "cpu_user_seconds",
+      "heap_total_bytes",
+      "heap_used_bytes",
+      "memory_rss_bytes",
+      "memory_rss_peak_bytes",
+      "release",
+    ]);
+    expect(body.process.release).toBe("dev");
+    expect(body.process.memory_rss_bytes as number).toBeGreaterThan(0);
+    expect(body.process.memory_rss_peak_bytes as number).toBeGreaterThan(0);
+    expect(body.storage.database_bytes).toBeGreaterThan(0);
+    expect(body.storage.wal_bytes).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(body.storage.rows).sort()).toEqual([
+      "audit_log",
+      "event_log",
+      "items",
+      "versions",
+    ]);
+    expect(body.storage.rows.items).toBe(body.items.total);
+    expect(body.storage.rows.items).toBeGreaterThan(0);
+    expect(body.storage.rows.versions).toBeGreaterThanOrEqual(0);
+    expect(Number.isNaN(Date.parse(body.storage.counted_at))).toBe(false);
+  });
+
   it("blobs.total_bytes sums the bytes rather than counting the rows", async () => {
     // `typeof === "number"` above passes against a count, a zero, or the
     // uptime. Two blobs of different lengths separate all three: the sum is

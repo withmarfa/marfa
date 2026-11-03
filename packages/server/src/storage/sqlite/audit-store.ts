@@ -121,6 +121,13 @@ function searchClause(q: string): SQL | undefined {
 export class SqliteAuditStore implements AuditStore {
   constructor(private db: DrizzleDb) {}
 
+  async count(): Promise<number> {
+    const row = await this.db.get<{ n: number }>(
+      sql`SELECT count(*) AS n FROM audit_log`,
+    );
+    return row.n;
+  }
+
   private buildRow(
     entry: AuditLogEntry,
     id = generateId(),

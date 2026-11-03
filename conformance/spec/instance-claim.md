@@ -280,6 +280,12 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 
 **Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
 
+### `instance-claim/management-metrics-resources`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include the memory and CPU its process uses, its release, and the size and row counts of its database, each a number, and `null` for a figure it cannot read.
+
+**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
+
 ### `instance-claim/control-only-recovery`
 
 Where control-only mode is enabled, when another process holds the configured public HTTP port, the server MUST allow local password recovery through its private control connection.

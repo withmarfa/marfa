@@ -25,6 +25,13 @@ type TxOrDb =
 export class SqliteVersionStore implements VersionStore {
   constructor(private db: DrizzleDb) {}
 
+  async count(): Promise<number> {
+    const row = await this.db.get<{ n: number }>(
+      sql`SELECT count(*) AS n FROM versions`,
+    );
+    return row.n;
+  }
+
   /** `db` is the caller's transaction when the snapshot has to land with the
    *  write it records; the store's own handle otherwise. */
   async create(

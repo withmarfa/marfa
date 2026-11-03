@@ -1002,7 +1002,7 @@ export function createApp(
     }),
   );
   app.route("/audit", auditRoutes(storage));
-  app.route("/metrics", metricsRoutes(storage));
+  app.route("/metrics", metricsRoutes(storage, config));
   app.route(
     "/mcp",
     mcpRoutes({

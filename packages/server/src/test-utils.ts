@@ -466,7 +466,7 @@ async function buildUnclaimedApp(
 
   const config: AppConfig = {
     port: 0,
-    sqlitePath: "",
+    sqlitePath: dbPath,
     blobPath,
     maxRequestBytes: 1_048_576,
     s3Bucket: "",

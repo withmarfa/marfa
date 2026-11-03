@@ -700,6 +700,13 @@ describe("the instance", () => {
       webhooks: { total: number };
       uptime_seconds: number;
       cached_at: string;
+      process: Record<string, unknown>;
+      storage: {
+        database_bytes: number | null;
+        wal_bytes: number | null;
+        rows: Record<string, number | null>;
+        counted_at: string;
+      };
     }>("/metrics");
     expect(r.status).toBe(200);
     expect(Object.keys(r.data).sort()).toEqual(
@@ -708,6 +715,8 @@ describe("the instance", () => {
         "cached_at",
         "items",
         "keys",
+        "process",
+        "storage",
         "types",
         "uptime_seconds",
         "webhooks",
@@ -719,6 +728,32 @@ describe("the instance", () => {
     expect(typeof r.data.types.registered).toBe("number");
     expect(typeof r.data.uptime_seconds).toBe("number");
     expect(typeof r.data.cached_at).toBe("string");
+
+    expect(Object.keys(r.data.process).sort()).toEqual([
+      "cpu_system_seconds",
+      "cpu_user_seconds",
+      "heap_total_bytes",
+      "heap_used_bytes",
+      "memory_rss_bytes",
+      "memory_rss_peak_bytes",
+      "release",
+    ]);
+    expect(typeof r.data.process.release).toBe("string");
+    expect(r.data.process.memory_rss_bytes as number).toBeGreaterThan(0);
+    expect(Object.keys(r.data.storage).sort()).toEqual([
+      "counted_at",
+      "database_bytes",
+      "rows",
+      "wal_bytes",
+    ]);
+    expect(Object.keys(r.data.storage.rows).sort()).toEqual([
+      "audit_log",
+      "event_log",
+      "items",
+      "versions",
+    ]);
+    expect(r.data.storage.rows.items).toBe(r.data.items.total);
+    expect(typeof r.data.storage.counted_at).toBe("string");
 
     await expectMatchesSchema("GET", "/metrics", 200, r.data);
 

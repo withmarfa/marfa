@@ -5,9 +5,10 @@ import { standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import * as clock from "../clock.js";
+import type { AppConfig } from "../config.js";
+import { figuresFor } from "../instance-figures.js";
 
 const CACHE_TTL_MS = 60_000;
-const startedAt = clock.monotonicMs();
 
 // Every admitted caller sees the same instance-wide counts.
 interface CacheEntry {
@@ -49,7 +50,74 @@ const MetricsResponseSchema = z.object({
   uptime_seconds: z
     .number()
     .describe("Seconds since this server process started."),
-  cached_at: z.string().describe("When these counters were collected, in UTC."),
+  process: z
+    .object({
+      release: z.string().describe("The release this server runs."),
+      memory_rss_bytes: z
+        .number()
+        .describe("Memory the server process holds in RAM, in bytes."),
+      memory_rss_peak_bytes: z
+        .number()
+        .describe("The most memory the process has held in RAM, in bytes."),
+      heap_used_bytes: z
+        .number()
+        .describe(
+          "Memory the JavaScript engine uses for live objects, in bytes.",
+        ),
+      heap_total_bytes: z
+        .number()
+        .describe("Memory the JavaScript engine has reserved, in bytes."),
+      cpu_user_seconds: z
+        .number()
+        .describe("CPU seconds the process has spent on its own work."),
+      cpu_system_seconds: z
+        .number()
+        .describe("CPU seconds the process has spent in the operating system."),
+    })
+    .describe("What this server process costs, since it started."),
+  storage: z
+    .object({
+      database_bytes: z
+        .number()
+        .nullable()
+        .describe(
+          "Size of the database file, in bytes. `null` if it can't be read.",
+        ),
+      wal_bytes: z
+        .number()
+        .nullable()
+        .describe(
+          "Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read.",
+        ),
+      rows: z
+        .object({
+          items: z.number().nullable().describe("Number of items."),
+          versions: z
+            .number()
+            .nullable()
+            .describe("Number of stored item versions."),
+          event_log: z
+            .number()
+            .nullable()
+            .describe("Number of event log entries."),
+          audit_log: z
+            .number()
+            .nullable()
+            .describe("Number of audit log entries."),
+        })
+        .describe(
+          "Row counts of the largest tables. `null` if one can't be read.",
+        ),
+      counted_at: z
+        .string()
+        .describe(
+          "When the item, blob and row counts were taken, in UTC. Marfa recounts about once an hour.",
+        ),
+    })
+    .describe("Database size and row counts."),
+  cached_at: z
+    .string()
+    .describe("When the other counters were collected, in UTC."),
 });
 
 const getMetricsRoute = createRoute({
@@ -59,7 +127,7 @@ const getMetricsRoute = createRoute({
   tags: ["Health and maintenance"],
   summary: "Get instance metrics",
   description:
-    "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
+    "Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   responses: {
@@ -90,7 +158,12 @@ const getMetricsRoute = createRoute({
   },
 });
 
-export function metricsRoutes(storage: Storage) {
+export function metricsRoutes(storage: Storage, config: AppConfig) {
+  const keeper = figuresFor(
+    storage,
+    config.sqlitePath,
+    config.versionSha ?? "dev",
+  );
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
@@ -102,25 +175,26 @@ export function metricsRoutes(storage: Storage) {
       );
     }
 
-    const [itemStats, blobStats, keyCount, webhookCount, registeredTypeCount] =
+    const [figures, keyCount, webhookCount, registeredTypeCount] =
       await Promise.all([
-        storage.items.stats({ all_states: true }),
-        storage.blobs.count(),
+        keeper.read(),
         storage.keys.count(),
         storage.outboundWebhooks.count(),
         storage.types.countRegistered(),
       ]);
-
-    const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
+    const { process: p, storage: s } = figures;
+    if (s.items_by_state === null || s.items === null || s.blobs === null) {
+      throw new Error("The item and blob counts could not be read");
+    }
 
     const response = {
       items: {
-        total,
-        by_state: itemStats,
+        total: s.items,
+        by_state: s.items_by_state,
       },
       blobs: {
-        count: blobStats.count,
-        total_bytes: blobStats.total_size_bytes,
+        count: s.blobs,
+        total_bytes: s.blob_bytes ?? 0,
       },
       types: {
         core: ALL_TYPES.length,
@@ -132,7 +206,27 @@ export function metricsRoutes(storage: Storage) {
       webhooks: {
         total: webhookCount,
       },
-      uptime_seconds: Math.floor((now - startedAt) / 1000),
+      uptime_seconds: p.uptime_seconds,
+      process: {
+        release: p.release,
+        memory_rss_bytes: p.rss_bytes,
+        memory_rss_peak_bytes: p.rss_peak_bytes,
+        heap_used_bytes: p.heap_used_bytes,
+        heap_total_bytes: p.heap_total_bytes,
+        cpu_user_seconds: p.cpu_user_seconds,
+        cpu_system_seconds: p.cpu_system_seconds,
+      },
+      storage: {
+        database_bytes: s.database_bytes,
+        wal_bytes: s.wal_bytes,
+        rows: {
+          items: s.items,
+          versions: s.versions,
+          event_log: s.event_log,
+          audit_log: s.audit_log,
+        },
+        counted_at: s.counted_at,
+      },
       cached_at: clock.now().toISOString(),
     };
 

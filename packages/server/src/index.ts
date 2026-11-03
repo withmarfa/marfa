@@ -33,6 +33,8 @@ import {
   setBulkJobEnqueueListener,
 } from "./bulk-actions/index.js";
 import { shutdownInOrder } from "./shutdown.js";
+import { figuresFor } from "./instance-figures.js";
+import { startDailyReport, type DailyReport } from "./daily-report.js";
 import { stopArchiveExports } from "./routes/export-lifecycle.js";
 import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
@@ -211,6 +213,12 @@ async function main() {
       };
     }
 
+    const figures = figuresFor(
+      storage,
+      config.sqlitePath,
+      config.versionSha ?? "dev",
+    );
+    let dailyReport: DailyReport | undefined;
     let shuttingDown = false;
     const shutdown = (failureCode: 0 | 1 = 0): void => {
       // A second signal must not restart the sequence. The platform sends
@@ -218,6 +226,8 @@ async function main() {
       // twice. Re-entering would re-run every `stop()` and race two exits.
       if (shuttingDown) return;
       shuttingDown = true;
+      figures.stop();
+      dailyReport?.stop();
       // A held run would otherwise keep the stop waiting for it.
       clearFaults();
       void shutdownInOrder({
@@ -242,6 +252,24 @@ async function main() {
         createApp(storage, blobs, housekeeping, config, instanceId).fetch,
       );
       log("info", `Marfa server listening on port ${String(config.port)}`);
+      figures.start();
+      const send = (
+        globalThis as {
+          __marfaSendReport?: (
+            event: string,
+            properties: Record<string, string | number>,
+          ) => Promise<void>;
+        }
+      ).__marfaSendReport;
+      if (send) {
+        dailyReport = startDailyReport({
+          keeper: figures,
+          send,
+          warn: (message, data) => {
+            log("warn", message, data);
+          },
+        });
+      }
     }
     startupCleanup.length = 0;
 

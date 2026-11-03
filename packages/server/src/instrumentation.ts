@@ -45,6 +45,9 @@ import { errorReportingEnabled } from "./error-reporting.js";
  * no way for OTLP logs or traces to become them, so the two OTLP pipelines
  * leave error tracking empty. `posthog-node` builds those events from a
  * thrown value, stack frames included.
+ *
+ * The daily server report (`marfa server report`) rides the same client, the
+ * same gate and the same instance identity, as a numeric event without a person.
  */
 import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
@@ -70,6 +73,19 @@ declare global {
    */
   var __marfaReportException:
     | ((err: unknown, properties: Record<string, string | undefined>) => void)
+    | undefined;
+  /**
+   * Send one named event of numbers to the same PostHog project exception
+   * reports go to, under the same instance identity. Set here only when
+   * exception reporting is configured; undefined otherwise. It settles once
+   * the event is sent or when sending is off, and rejects when PostHog does
+   * not take it.
+   */
+  var __marfaSendReport:
+    | ((
+        event: string,
+        properties: Record<string, string | number>,
+      ) => Promise<void>)
     | undefined;
   /**
    * Tell telemetry which instance this server is, once its database has
@@ -295,6 +311,32 @@ async function start(): Promise<void> {
         });
       pendingReports.add(pending);
       void pending.finally(() => pendingReports.delete(pending));
+    };
+    globalThis.__marfaSendReport = async (event, properties) => {
+      if (stopping || !(await errorReportingEnabled())) return;
+      // The client reports a send that fails on its error channel and still
+      // resolves, so the failure is read from there.
+      let failure: Error | undefined;
+      const stopListening = client.on("error", (error) => {
+        failure ??= error instanceof Error ? error : new Error(String(error));
+      });
+      try {
+        await clock.withRealTime(() =>
+          client.captureImmediate({
+            event,
+            properties: {
+              ...staticAttributes,
+              ...(instanceId === undefined || instanceChosen
+                ? {}
+                : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+              ...properties,
+            },
+          }),
+        );
+      } finally {
+        stopListening();
+      }
+      if (failure) throw failure;
     };
   }
 
