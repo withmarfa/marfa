@@ -5918,6 +5918,22 @@ Where a folder's copy has a query, when a scan finds a file whose `marfa_id` nam
 
 **Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`.
 
+### `folders/narrowed-arrival-read-batched`
+
+Where a folder's copy has a query, when a scan finds several files whose `marfa_id` names an item the copy does not hold, a device MUST read those items together, at most 100 ids to each bulk read by id.
+
+**Reason:** a folder restored from a backup can hold thousands of such files, and a read for each would make a pass as slow as thousands of requests in a row.
+
+**Tests:** `device/folders-copy-shrink.test.ts › reads the ids a pass names together and asks again only once a file changes`.
+
+### `folders/narrowed-arrival-read-once`
+
+Where a folder's copy has a query, when the server has answered that it shows no item a file's `marfa_id` names, a device MUST NOT read that item again for the file until the file's bytes or its `marfa_id` change.
+
+**Reason:** a file that waits unbound, held by the addition threshold say, is met by every pass, and reading its item again each time would repeat a request whose answer has not changed.
+
+**Tests:** `device/folders-copy-shrink.test.ts › reads the ids a pass names together and asks again only once a file changes`.
+
 ### `folders/take-in-file`
 
 When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.

@@ -1130,4 +1130,63 @@ describe("a file naming an item a narrowed copy leaves out", () => {
       ),
     ).not.toContain("outside");
   });
+
+  it("reads the ids a pass names together and asks again only once a file changes", async () => {
+    harness = await folderHarness("copy-query-arrival-batched", {
+      settings: {
+        query: { types: ["core.note"], filter: TAGGED_A },
+        // Holds the new files back unbound, so every pass meets them again.
+        addition_threshold: { files: 2, fraction: 0.25 },
+      },
+      rows: { "core.note": [note(1, "member", ["a"])] },
+    });
+    scriptFolderWrites(harness);
+    value(await harness.folder.pull());
+    const unknown = (at: number) => id(1000 + at);
+    for (let at = 0; at < 250; at++) {
+      put(
+        harness,
+        `restored-${String(at)}.md`,
+        `---\nmarfa_id: ${unknown(at)}\ntitle: restored ${String(at)}\n---\nfrom a backup\n`,
+      );
+    }
+    const reads = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname === "/items/bulk-get",
+      );
+    const singles = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && /^\/items\/[^/]+$/.test(request.pathname),
+      );
+    const [bulkBefore, singleBefore] = [reads().length, singles().length];
+
+    value(await harness.folder.push());
+    const first = reads().slice(bulkBefore);
+    expect(first).toHaveLength(3);
+    expect(singles().length - singleBefore).toBe(0);
+    const asked = first.flatMap(
+      (request) => (JSON.parse(request.body) as { ids: string[] }).ids,
+    );
+    expect(new Set(asked)).toEqual(
+      new Set(Array.from({ length: 250 }, (_, at) => unknown(at))),
+    );
+
+    value(await harness.folder.push());
+    expect(reads().length - bulkBefore).toBe(3);
+    expect(singles().length - singleBefore).toBe(0);
+
+    put(
+      harness,
+      "restored-7.md",
+      `---\nmarfa_id: ${unknown(7)}\ntitle: restored 7\n---\nedited since\n`,
+    );
+    value(await harness.folder.push());
+    const again = reads().slice(bulkBefore + 3);
+    expect(again).toHaveLength(1);
+    expect((JSON.parse(again[0]!.body) as { ids: string[] }).ids).toEqual([
+      unknown(7),
+    ]);
+  });
 });
