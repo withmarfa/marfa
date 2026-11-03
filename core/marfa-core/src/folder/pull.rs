@@ -348,6 +348,23 @@ impl Folder {
         &self,
         planning: Option<&mut PullPlan>,
         report: &mut PullReport,
+        selection: Option<&mut Selection>,
+    ) -> Result<bool> {
+        let pulled = self.pull_into_ordered(planning, report, selection);
+        // Every return passes here, so files already landed are made durable
+        // before a pull reports them, whether it ends well or part way.
+        let flushed = self.flush_landed();
+        match (pulled, flushed) {
+            (Ok(done), Ok(())) => Ok(done),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(CoreError::Io(error.to_string())),
+        }
+    }
+
+    fn pull_into_ordered(
+        &self,
+        planning: Option<&mut PullPlan>,
+        report: &mut PullReport,
         mut selection: Option<&mut Selection>,
     ) -> Result<bool> {
         if let Some(gone) = self.root_gone() {
@@ -1309,7 +1326,7 @@ impl Folder {
         // the filesystem commit and its binding, not only the preceding check.
         let conn = self.core.conn()?;
         rendering.context.borrow().check(&conn)?;
-        let written = self.land(
+        let written = self.land_ordered(
             &path,
             |file, _| {
                 std::io::Write::write_all(file, &bytes)?;

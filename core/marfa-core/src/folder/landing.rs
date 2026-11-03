@@ -77,6 +77,177 @@ pub(crate) fn land_at(
     fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
     still: impl FnOnce(Option<&[u8]>) -> bool,
 ) -> Result<Metadata, Unlanded> {
+    land_flushed(dir, target, fill, still, Flush::Full)
+}
+
+/// [`land_at`], flushing the file and its directory as an ordering point
+/// only, so a crash cannot keep the rename without the bytes, nor anything
+/// written after it without them. It does not make the file durable: the
+/// caller must end the run with [`Unflushed::flush`] on the same `unflushed`
+/// before it reports the file written, and only where the file shares a
+/// volume with whatever records it. Where the platform has no cheaper
+/// ordering flush than a full one, this is [`land_at`].
+pub(crate) fn land_ordered_at(
+    dir: &Directory,
+    unflushed: &Unflushed,
+    target: &Path,
+    fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
+    still: impl FnOnce(Option<&[u8]>) -> bool,
+) -> Result<Metadata, Unlanded> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        land_flushed(dir, target, fill, still, Flush::Ordered(unflushed))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        let _ = unflushed;
+        land_at(dir, target, fill, still)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Flush<'a> {
+    Full,
+    #[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+    Ordered(&'a Unflushed),
+}
+
+/// The files one folder landed with an ordering flush only, which no full
+/// flush has followed yet. Each folder keeps its own, because a full flush
+/// reaches only the volume of the directory it is given.
+#[derive(Default)]
+pub(crate) struct Unflushed {
+    waiting: AtomicU64,
+    flushing: std::sync::Mutex<()>,
+}
+
+impl Unflushed {
+    #[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+    fn add(&self, count: u64) {
+        self.waiting.fetch_add(count, Ordering::SeqCst);
+    }
+
+    /// Makes every file landed with [`land_ordered_at`] against this count
+    /// durable, with one full flush of `dir`'s volume where any is waiting.
+    /// Takes the lock while it flushes, so a run that finds nothing waiting
+    /// is not ahead of a flush another run has begun for its files.
+    pub(crate) fn flush(&self, dir: &Directory) -> io::Result<()> {
+        let _one = self
+            .flushing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let waiting = self.waiting.swap(0, Ordering::SeqCst);
+        if waiting == 0 {
+            return Ok(());
+        }
+        count(Counted::Full);
+        dir.sync().inspect_err(|_| self.add(waiting))
+    }
+}
+
+#[cfg(unix)]
+fn order_dir(dir: &Directory) -> io::Result<()> {
+    // Any failure of the cheaper flush falls back to a full one, so the
+    // rename is ordered before what the caller records next.
+    order(dir.file()).or_else(|_| {
+        count(Counted::Full);
+        dir.sync()
+    })
+}
+
+#[cfg(not(unix))]
+fn order_dir(dir: &Directory) -> io::Result<()> {
+    count(Counted::Full);
+    dir.sync()
+}
+
+/// Flushes `file` so that what it holds reaches the media before anything
+/// written after this call. Where the file system has no such flush, a full
+/// one.
+fn order(file: &File) -> io::Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::fd::AsRawFd;
+        let result = if let Some(errno) = forced_barrier_error() {
+            Err(io::Error::from_raw_os_error(errno))
+        } else {
+            loop {
+                // SAFETY: the descriptor is open for as long as `file` is.
+                match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
+                    -1 => {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::Interrupted {
+                            break Err(error);
+                        }
+                    }
+                    _ => break Ok(()),
+                }
+            }
+        };
+        match result {
+            Ok(()) => {
+                count(Counted::Barrier);
+                return Ok(());
+            }
+            // Network volumes and ExFAT do not know it.
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENOTSUP | libc::EINVAL | libc::ENOTTY)
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    count(Counted::Full);
+    file.sync_all()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// An error number the ordering flush fails with, where a test asks.
+    #[allow(dead_code)]
+    pub(crate) static FORCE_BARRIER_ERROR: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+    pub(crate) static COUNTS: std::cell::Cell<(u32, u32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "ios")))]
+fn forced_barrier_error() -> Option<i32> {
+    FORCE_BARRIER_ERROR.with(std::cell::Cell::get)
+}
+
+#[cfg(all(not(test), any(target_os = "macos", target_os = "ios")))]
+fn forced_barrier_error() -> Option<i32> {
+    None
+}
+
+enum Counted {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    Barrier,
+    Full,
+}
+
+#[cfg(test)]
+fn count(kind: Counted) {
+    COUNTS.with(|counts| {
+        let (barrier, full) = counts.get();
+        counts.set(match kind {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            Counted::Barrier => (barrier + 1, full),
+            Counted::Full => (barrier, full + 1),
+        });
+    });
+}
+
+#[cfg(not(test))]
+fn count(_: Counted) {}
+
+fn land_flushed(
+    dir: &Directory,
+    target: &Path,
+    fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
+    still: impl FnOnce(Option<&[u8]>) -> bool,
+    flush: Flush<'_>,
+) -> Result<Metadata, Unlanded> {
     let (mut file, beside) = beside(dir)?;
     let landed = (|| {
         // A file written anew keeps the permission the one it replaces had,
@@ -103,7 +274,13 @@ pub(crate) fn land_at(
                 "sync refused by fixture",
             )));
         }
-        file.sync_all()?;
+        match flush {
+            Flush::Full => {
+                count(Counted::Full);
+                file.sync_all()?
+            }
+            Flush::Ordered(_) => order(&file)?,
+        }
         // The rename keeps the identity, size, modification time and
         // executable bits the scan compares. A later path lookup might
         // describe a person's save instead.
@@ -140,7 +317,18 @@ pub(crate) fn land_at(
     }
     // The rename is only durable once its directory is; a failure here
     // leaves the new file in place all the same.
-    let _ = dir.sync();
+    match flush {
+        Flush::Full => {
+            count(Counted::Full);
+            let _ = dir.sync();
+        }
+        Flush::Ordered(unflushed) => {
+            // Counted pending even where the ordering flush fails: the run's
+            // full flush then covers the rename.
+            unflushed.add(1);
+            let _ = order_dir(dir);
+        }
+    }
     landed
 }
 
@@ -391,6 +579,121 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|name| name.ends_with(".tmp"))
             .collect()
+    }
+
+    fn counted(run: impl FnOnce()) -> (u32, u32) {
+        COUNTS.with(|counts| counts.set((0, 0)));
+        run();
+        COUNTS.with(std::cell::Cell::get)
+    }
+
+    fn land_ordered(dir: &Path, unflushed: &Unflushed, name: &str) {
+        let dir = Directory::open(dir).unwrap();
+        land_ordered_at(
+            &dir,
+            unflushed,
+            Path::new(name),
+            |file, _| file.write_all(b"text"),
+            |_| true,
+        )
+        .unwrap();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn files_landed_in_order_are_followed_by_one_full_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let handle = Directory::open(&root).unwrap();
+        let unflushed = Unflushed::default();
+        let (barriers, fulls) = counted(|| {
+            for name in ["a.md", "b.md", "c.md"] {
+                land_ordered(&root, &unflushed, name);
+            }
+        });
+        assert_eq!(
+            (barriers, fulls),
+            (6, 0),
+            "a barrier on each file and directory"
+        );
+        assert_eq!(counted(|| unflushed.flush(&handle).unwrap()), (0, 1));
+        // Nothing is waiting now, so another run's end flushes nothing.
+        assert_eq!(counted(|| unflushed.flush(&handle).unwrap()), (0, 0));
+        assert_eq!(std::fs::read(root.join("b.md")).unwrap(), b"text");
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    #[test]
+    fn without_a_cheaper_flush_a_landing_is_a_full_one_and_nothing_waits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let handle = Directory::open(&root).unwrap();
+        let unflushed = Unflushed::default();
+        let (barriers, fulls) = counted(|| land_ordered(&root, &unflushed, "a.md"));
+        assert_eq!((barriers, fulls), (0, 2));
+        assert_eq!(counted(|| unflushed.flush(&handle).unwrap()), (0, 0));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn one_folders_flush_leaves_the_files_another_folder_landed_waiting() {
+        let (one, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let one_root = one.path().canonicalize().unwrap();
+        let other_root = other.path().canonicalize().unwrap();
+        let (mine, theirs) = (Unflushed::default(), Unflushed::default());
+        land_ordered(&one_root, &mine, "a.md");
+        land_ordered(&other_root, &theirs, "b.md");
+        let (one_dir, other_dir) = (
+            Directory::open(&one_root).unwrap(),
+            Directory::open(&other_root).unwrap(),
+        );
+        // The first folder ends its run: its own file is flushed.
+        assert_eq!(counted(|| mine.flush(&one_dir).unwrap()), (0, 1));
+        // With one count for the process, that flush would have taken the
+        // other folder's as well, and this one would flush nothing.
+        assert_eq!(counted(|| theirs.flush(&other_dir).unwrap()), (0, 1));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn a_file_system_without_the_ordering_flush_gets_the_full_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        FORCE_BARRIER_ERROR.with(|force| force.set(Some(libc::ENOTSUP)));
+        let (barriers, fulls) = counted(|| land_ordered(&root, &Unflushed::default(), "a.md"));
+        FORCE_BARRIER_ERROR.with(|force| force.set(None));
+        assert_eq!((barriers, fulls), (0, 2));
+        assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"text");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn a_directory_whose_barrier_fails_is_synced_in_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = Directory::open(&dir.path().canonicalize().unwrap()).unwrap();
+        // The witness: where the barrier works, no full sync is made.
+        assert_eq!(counted(|| order_dir(&handle).unwrap()), (1, 0));
+        FORCE_BARRIER_ERROR.with(|force| force.set(Some(libc::EIO)));
+        let after_failure = counted(|| order_dir(&handle).unwrap());
+        FORCE_BARRIER_ERROR.with(|force| force.set(None));
+        assert_eq!(after_failure, (0, 1));
+    }
+
+    #[test]
+    fn a_landing_that_fails_waits_for_no_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let handle = Directory::open(&root).unwrap();
+        let unflushed = Unflushed::default();
+        let failed = land_ordered_at(
+            &handle,
+            &unflushed,
+            Path::new("a.md"),
+            |_, _| Err(io::Error::other("the disk is full")),
+            |_| true,
+        );
+        assert!(failed.is_err());
+        assert_eq!(counted(|| unflushed.flush(&handle).unwrap()), (0, 0));
     }
 
     #[test]

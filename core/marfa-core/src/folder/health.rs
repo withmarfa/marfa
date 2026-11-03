@@ -1567,6 +1567,7 @@ mod tests {
             root_dir,
             state_dir,
             store_mark,
+            unflushed: Default::default(),
         };
         (dir, folder)
     }

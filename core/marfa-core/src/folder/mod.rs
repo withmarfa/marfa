@@ -180,6 +180,8 @@ pub struct Folder {
     root_dir: Directory,
     state_dir: Directory,
     store_mark: (u64, u64),
+    /// Files this folder's pulls landed with an ordering flush only.
+    unflushed: landing::Unflushed,
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
@@ -422,6 +424,7 @@ impl Folder {
                 .entry_identity(Path::new("core.sqlite"))
                 .map_err(io_error)?,
             state_dir,
+            unflushed: landing::Unflushed::default(),
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
@@ -550,6 +553,7 @@ impl Folder {
                 .entry_identity(Path::new("core.sqlite"))
                 .map_err(io_error)?,
             state_dir,
+            unflushed: landing::Unflushed::default(),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -596,6 +600,7 @@ impl Folder {
                 .entry_identity(Path::new("core.sqlite"))
                 .map_err(io_error)?,
             state_dir,
+            unflushed: landing::Unflushed::default(),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -1000,6 +1005,29 @@ fn working(core: Core) -> Result<Core> {
     Ok(core)
 }
 
+/// The volume `directory` is on.
+#[cfg(unix)]
+fn device(directory: &Directory) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = directory.metadata().ok()?;
+    #[cfg(test)]
+    if FOREIGN_VOLUME.with(|foreign| foreign.borrow().contains(&metadata.ino())) {
+        return Some(metadata.dev() ^ 1);
+    }
+    Some(metadata.dev())
+}
+
+#[cfg(not(unix))]
+fn device(_: &Directory) -> Option<u64> {
+    None
+}
+
+// Directories, by inode, that a test has the folder see on another volume.
+#[cfg(all(test, unix))]
+thread_local! {
+    static FOREIGN_VOLUME: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn in_nested_folder(root: &Directory, relative: &str) -> bool {
     let mut directory = root.clone();
     let mut names = relative.split('/').peekable();
@@ -1037,6 +1065,49 @@ impl Folder {
         let (directory, name) = self.location(path, true)?;
         swap_root(&self.root, "replace-root-before-publication");
         landing::land_at(&directory, Path::new(&name), fill, still)
+    }
+
+    /// `land`, for a pull's bulk of files: each only ordered before what is
+    /// written after it, and made durable by [`Folder::flush_landed`], which
+    /// the pull ends with. Ordering is enough only where the file and the
+    /// store that records it share a volume; elsewhere it lands in full.
+    fn land_ordered(
+        &self,
+        path: &Path,
+        fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
+        still: impl FnOnce(Option<&[u8]>) -> bool,
+    ) -> std::result::Result<std::fs::Metadata, landing::Unlanded> {
+        if let Some(gone) = self.root_gone() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
+        }
+        let (directory, name) = self.location(path, true)?;
+        swap_root(&self.root, "replace-root-before-publication");
+        if self.on_one_volume(&directory) {
+            landing::land_ordered_at(&directory, &self.unflushed, Path::new(&name), fill, still)
+        } else {
+            landing::land_at(&directory, Path::new(&name), fill, still)
+        }
+    }
+
+    /// Whether `directory`, the folder's root, which the closing flush
+    /// reaches, and the folder's store, which records the landing, are all
+    /// on one volume. A mount can sit anywhere between them. Answers no where
+    /// any cannot be read.
+    fn on_one_volume(&self, directory: &Directory) -> bool {
+        match (
+            device(directory),
+            device(&self.root_dir),
+            device(&self.state_dir),
+        ) {
+            (Some(there), Some(root), Some(store)) => there == root && root == store,
+            _ => false,
+        }
+    }
+
+    /// Makes the files `land_ordered` wrote durable, before a run reports
+    /// them written.
+    pub(super) fn flush_landed(&self) -> std::io::Result<()> {
+        self.unflushed.flush(&self.root_dir)
     }
 
     fn location(
@@ -6246,6 +6317,106 @@ mod tests {
                 assert!(body_of(&folder, to).starts_with(edit));
             }
         }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn a_pull_ends_with_one_full_flush_however_many_files_it_lands() {
+        let (dir, folder) = settled_notes(&["a.md", "b.md", "c.md"]);
+        let mut counted = Vec::new();
+        for (round, names) in [&["a.md"][..], &["a.md", "b.md", "c.md"]]
+            .into_iter()
+            .enumerate()
+        {
+            let body = format!("from elsewhere {round}");
+            for name in names {
+                changed_elsewhere(&folder, &landed(&folder, name), &body);
+            }
+            landing::COUNTS.with(|counts| counts.set((0, 0)));
+            let pulled = folder.pull().unwrap();
+            assert_eq!(pulled.rewritten, names.len(), "{pulled:?}");
+            for name in names {
+                assert!(read(dir.path(), name).unwrap().contains(&body));
+            }
+            counted.push(landing::COUNTS.with(std::cell::Cell::get));
+        }
+        // The first pull also writes the settings file, in full; the second
+        // lands three files and ends with the one flush for them all.
+        assert_eq!(counted[1].1, 1, "{counted:?}: a full flush a file");
+        if cfg!(any(target_os = "macos", target_os = "ios")) {
+            assert_eq!(
+                counted[1].0,
+                counted[0].0 + 4,
+                "{counted:?}: two ordering flushes a file"
+            );
+        }
+        // The witness: a pull that lands nothing flushes nothing.
+        landing::COUNTS.with(|counts| counts.set((0, 0)));
+        folder.pull().unwrap();
+        assert_eq!(landing::COUNTS.with(std::cell::Cell::get), (0, 0));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn a_pull_that_errors_part_way_still_flushes_the_files_it_ordered() {
+        let (_dir, folder) = settled_notes(&["a.md"]);
+        folder
+            .core
+            .conn()
+            .map(|conn| crate::store::meta_set(&conn, crate::store::META_REFILL, "{}"))
+            .unwrap()
+            .unwrap();
+        let fails = |folder: &Folder| {
+            landing::COUNTS.with(|counts| counts.set((0, 0)));
+            let failed = folder.pull_into(None, &mut PullReport::default(), None);
+            assert!(
+                matches!(failed, Err(CoreError::HydrationIncomplete)),
+                "{failed:?}"
+            );
+            landing::COUNTS.with(std::cell::Cell::get)
+        };
+        // The witness: with nothing ordered, the failed pull flushes nothing.
+        assert_eq!(fails(&folder), (0, 0));
+        folder
+            .land_ordered(
+                &folder.root.join("b.md"),
+                |file, _| std::io::Write::write_all(file, b"text"),
+                |_| true,
+            )
+            .unwrap();
+        assert_eq!(fails(&folder).1, 1, "the ordered file was left unflushed");
+        assert_eq!(fails(&folder), (0, 0), "and it is flushed only once");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn a_file_on_another_volume_than_the_store_lands_in_full() {
+        use std::os::unix::fs::MetadataExt;
+        let (dir, folder) = settled_notes(&["a.md"]);
+        for name in ["same", "other"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let other = std::fs::metadata(dir.path().join("other")).unwrap().ino();
+        FOREIGN_VOLUME.with(|foreign| foreign.borrow_mut().push(other));
+        let land = |path: &str| {
+            landing::COUNTS.with(|counts| counts.set((0, 0)));
+            folder
+                .land_ordered(
+                    &folder.root.join(path),
+                    |file, _| std::io::Write::write_all(file, b"text"),
+                    |_| true,
+                )
+                .unwrap();
+            landing::COUNTS.with(std::cell::Cell::get)
+        };
+        let (same, elsewhere) = (land("same/a.md"), land("other/a.md"));
+        FOREIGN_VOLUME.with(|foreign| foreign.borrow_mut().clear());
+        assert_eq!(same, (2, 0), "the witness: one volume is ordered only");
+        assert_eq!(elsewhere, (0, 2), "another volume is made durable in full");
+        // Only the ordered landing waits for the closing flush.
+        landing::COUNTS.with(|counts| counts.set((0, 0)));
+        folder.flush_landed().unwrap();
+        assert_eq!(landing::COUNTS.with(std::cell::Cell::get), (0, 1));
     }
 
     #[test]
