@@ -156,6 +156,8 @@ export const KNOWN_OVER: Readonly<Record<string, number>> = {
   archive_export: 2657,
   folder_edit_to_server: 2611,
   folder_watch_cpu: 2608,
+  bulk_page_ratio: 2658,
+  device_hydrate: 2659,
 };
 
 function entryFor(name: string): CeilingEntry {

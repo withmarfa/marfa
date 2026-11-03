@@ -135,8 +135,8 @@ jobs:
   # Each of these stops only the processes it started, by process ID, and keeps
   # what it measured if one hangs. Every measuring step has a limit of its own,
   # and they add up, with room for the report, the upload and the verdict, to
-  # less than the job's. The job limit is provisional until a full-size run
-  # shows how long the night takes; set it to about twice that.
+  # less than the job's. A full-size run takes 45 to 60 minutes, the seed 20
+  # to 30; the device and folder steps stay above their own 20-minute stops.
   # Each step writes a fragment under conformance/reports/scale/, so a step
   # that crashes or times out keeps the figures of the others. The `finish`
   # step merges them, compares them with the previous night's artifact and
@@ -145,7 +145,7 @@ jobs:
   # figures.ts) against an open issue.
   scale:
     name: Scale
-    timeout-minutes: 240
+    timeout-minutes: 180
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -174,37 +174,37 @@ jobs:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the device
-        timeout-minutes: 15
+        timeout-minutes: 10
         working-directory: core
         run: cargo build --locked --release -p marfa-cli
 
       - name: Boot the server from this checkout
-        timeout-minutes: 5
+        timeout-minutes: 3
         working-directory: conformance
         run: pnpm marfa:up --state "$MARFA_SCALE_STATE"
 
       - name: Seed
-        timeout-minutes: 45
+        timeout-minutes: 40
         working-directory: conformance
         run: pnpm scale seed
       - name: Restart
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 3
         working-directory: conformance
         run: pnpm scale restart
       - name: Reads
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 5
         working-directory: conformance
         run: pnpm scale reads
       - name: Reads during bulk writes
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 6
         working-directory: conformance
         run: pnpm scale bulk
       - name: Parent-of writes
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 3
         working-directory: conformance
         run: pnpm scale edges
       - name: Archive export
@@ -214,7 +214,7 @@ jobs:
         run: pnpm scale export
       - name: Storage
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 3
         working-directory: conformance
         run: pnpm scale storage
       # Each of these has a limit of its own inside the script; the step limit
@@ -226,7 +226,7 @@ jobs:
         run: pnpm scale device
       - name: Folder first sync
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 25
         working-directory: conformance
         run: pnpm scale folder
       - name: Folder watch
