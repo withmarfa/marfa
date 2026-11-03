@@ -1098,7 +1098,7 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         (report.kept, "kept with the person's changes"),
         (
             report.unmatched,
-            "file(s) left in place whose item the query no longer matches",
+            "file(s) left in place whose item the query does not match",
         ),
         (
             report.taken,
