@@ -4068,6 +4068,47 @@ pub fn waiting_write_names(conn: &Connection, id: &str) -> Result<bool, CoreErro
     )?)
 }
 
+/// The ids the edge write `id` names as an end, as `named_by_waiting` reads
+/// them for one row. Empty for an item write.
+fn edge_write_ends(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT queue.item_id, queue.target_id,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.source_id') END,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.target_id') END,
+                edges.source_id, edges.target_id
+           FROM queue LEFT JOIN edges ON edges.id = queue.edge_id
+          WHERE queue.id = ?1 AND queue.edge_id IS NOT NULL",
+    )?;
+    let mut ends = Vec::new();
+    let mut rows = statement.query([id])?;
+    while let Some(row) = rows.next()? {
+        for column in 0..6 {
+            if let Some(end) = row.get::<_, Option<String>>(column)?
+                && !ends.contains(&end)
+            {
+                ends.push(end);
+            }
+        }
+    }
+    Ok(ends)
+}
+
+/// Judges again by the slice's query each held row in `ends` once the edge
+/// write naming it no longer waits, so a row kept only as its end leaves
+/// (`keeps_held`).
+fn let_go_of_ends(conn: &Connection, ends: &[String]) -> Result<(), CoreError> {
+    if ends.is_empty() || slice_query(conn)?.is_none() {
+        return Ok(());
+    }
+    let catalog = crate::catalog::Catalog::load(conn)?;
+    for end in ends {
+        if item_held(conn, end)? {
+            let_go_unless_kept(conn, &catalog, end)?;
+        }
+    }
+    Ok(())
+}
+
 /// The end of a hydration that filled the copy again in place, after its walk
 /// and its replay: takes out each row neither brought, but for a pinned row
 /// and one a waiting write names as its item or as an end of an edge, then
@@ -5264,6 +5305,7 @@ fn record_verdict_inner(
 ) -> Result<(), CoreError> {
     let already_accepted =
         queued_write(conn, id)?.is_some_and(|row| row.verdict == Some(Verdict::Accepted));
+    let ends = edge_write_ends(conn, id)?;
     let changed = conn.execute(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
@@ -5315,6 +5357,10 @@ fn record_verdict_inner(
     }
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
+    }
+    // A blocked or dead write still waits, to be released or sent again.
+    if !matches!(answered.verdict, Verdict::Blocked | Verdict::Dead) {
+        let_go_of_ends(conn, &ends)?;
     }
     Ok(())
 }
@@ -5696,11 +5742,13 @@ fn take_out(
     for dependant in held {
         record_refusal(conn, dependant, &reason, None, false)?;
     }
+    let ends = edge_write_ends(conn, &row.id)?;
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
     meta_delete(conn, &chosen_tier_key(&row.id))?;
     meta_delete(conn, &cleared_time_key(&row.id))?;
-    put_back(conn, row)
+    put_back(conn, row)?;
+    let_go_of_ends(conn, &ends)
 }
 
 /// Never clears a row `release` takes (blocked, dead, or refused unsent), nor
@@ -5961,13 +6009,18 @@ pub fn withdraw_edge_writes(
             through,
         ],
     )?;
+    let mut ends = Vec::new();
     for row in &rows {
+        ends.extend(edge_write_ends(conn, &row.id)?);
         conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
         meta_delete(conn, &effect_key(&row.id))?;
     }
     for row in &rows {
         put_back(conn, row)?;
     }
+    ends.sort();
+    ends.dedup();
+    let_go_of_ends(conn, &ends)?;
     Ok(rows.into_iter().map(|row| row.id).collect())
 }
 

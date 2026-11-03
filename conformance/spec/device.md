@@ -28,9 +28,9 @@ Where a row is not pinned and its type is not a `system.*` type, a device MUST N
 
 Where a slice has a query, and a row of a type and a tier it takes is not pinned and no waiting write of the device's own names it as the write's item, its target or an end of the edge it writes, a device MUST NOT hold the row while the query does not take it.
 
-**Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays until the server answers the write, as a pinned row stays, so the person's write is shown and sent against the row it changes, and an edge the person draws keeps both its ends.
+**Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays, as a pinned row stays, until the write is accepted, refused or withdrawn (a blocked or dead write still waits, to be released), so the person's write is shown and sent against the row it changes, and an edge the person draws keeps both its ends.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`, `› keeps the target of an answered edge write that another waiting write still names`, `› lets go of the target of an edge write withdrawn after an event took it out of the query`.
 
 ### `device/slice-query-bin`
 

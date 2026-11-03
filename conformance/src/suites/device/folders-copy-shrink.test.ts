@@ -27,6 +27,7 @@ import {
   type FolderHarness,
 } from "./harness.js";
 import {
+  EdgeDoor,
   put,
   scriptFolderWrites,
   sentCreates,
@@ -514,6 +515,7 @@ describe("a narrowed copy kept by catch-up", () => {
     label: string,
     rows: ReturnType<typeof note>[],
     query: FolderSettings["query"] = { types: ["core.note"], filter: TAGGED_A },
+    edges?: EdgeDoor,
   ): Promise<SseFrame[]> {
     const log: SseFrame[] = [];
     harness = await folderHarness(label, {
@@ -521,7 +523,7 @@ describe("a narrowed copy kept by catch-up", () => {
       rows: { "core.note": rows },
       events: [copyHeldLog(log)],
     });
-    scriptFolderWrites(harness);
+    scriptFolderWrites(harness, edges === undefined ? {} : { edges });
     return log;
   }
 
@@ -789,6 +791,115 @@ describe("a narrowed copy kept by catch-up", () => {
     // The witness: the same event lets go of a row no write names.
     expect(held).not.toContain(id(3));
     expect(held).toContain(id(2));
+
+    // Answered, the write names the target no more.
+    value(await device.drain());
+    expect(await heldIds(harness!)).toEqual([id(1)]);
+  });
+
+  it("keeps the target of an answered edge write that another waiting write still names", async () => {
+    const edges = new EdgeDoor();
+    // The edge to the second note meets a server failing now, so its write
+    // still waits once the drain is done.
+    edges.placing = (edge) =>
+      edge.target_id === id(2)
+        ? refusal(503, "service_unavailable", "Unavailable")
+        : edge.target_id === id(4)
+          ? refusal(400, "validation_error", "Not an edge this server takes")
+          : undefined;
+    const log = await narrowed(
+      "copy-query-edge-target-named",
+      [
+        note(1, "source", ["a"]),
+        note(2, "still named", ["a"]),
+        note(3, "accepted", ["a"]),
+        note(4, "refused", ["a"]),
+      ],
+      undefined,
+      edges,
+    );
+    const device = harness!.folder.device();
+    // The failing write last, so the pass sends the others before it.
+    for (const n of [3, 4, 2]) {
+      const drawn = value(
+        await device.createEdge({
+          source: id(1),
+          target: id(n),
+          type: "references",
+        }),
+      );
+      expect(drawn.verdict).toBeNull();
+    }
+    for (const [at, n, title] of [
+      ["2", 2, "still named"],
+      ["3", 3, "accepted"],
+      ["4", 4, "refused"],
+    ] as const) {
+      log.push(
+        copyItemEvent(
+          at,
+          "metadata.changed",
+          wireItem(note(n, title, ["b"]).item),
+          { tags: ["b"] },
+        ),
+      );
+    }
+    value(await device.catchUp());
+    expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3), id(4)]);
+
+    await device.drain();
+    const verdicts = Object.fromEntries(
+      value(await device.queue())
+        .filter((write) => write.kind === "create_edge")
+        .map((write) => [String(write.target_id), write.verdict]),
+    );
+    expect(verdicts).toEqual({
+      [id(2)]: null,
+      [id(3)]: "accepted",
+      [id(4)]: "refused",
+    });
+    // The witnesses: the same drain lets go of the targets of the accepted
+    // write and the refused one.
+    expect(await heldIds(harness!)).toEqual([id(1), id(2)]);
+  });
+
+  it("lets go of the target of an edge write withdrawn after an event took it out of the query", async () => {
+    const edges = new EdgeDoor();
+    // A blocked write, which only a withdraw takes out of the queue.
+    edges.placing = () => refusal(409, "version_conflict", "The edge moved on");
+    const log = await narrowed(
+      "copy-query-edge-withdrawn",
+      [note(1, "source", ["a"]), note(2, "target", ["a"])],
+      undefined,
+      edges,
+    );
+    const device = harness!.folder.device();
+    const drawn = value(
+      await device.createEdge({
+        source: id(1),
+        target: id(2),
+        type: "references",
+      }),
+    );
+    log.push(
+      copyItemEvent(
+        "2",
+        "metadata.changed",
+        wireItem(note(2, "target", ["b"]).item),
+        { tags: ["b"] },
+      ),
+    );
+    value(await device.catchUp());
+    await device.drain();
+    expect(
+      value(await device.queue()).find((write) => write.id === drawn.id)
+        ?.verdict,
+    ).toBe("blocked");
+    // The witness: while it waits, blocked, the write keeps the target.
+    expect(await heldIds(harness!)).toEqual([id(1), id(2)]);
+
+    expect(value(await device.withdraw(String(drawn.id)))).toBe(true);
+    expect(await heldIds(harness!)).toEqual([id(1)]);
   });
 
   it("pins a create the query does not show, and holds it past its echo", async () => {
