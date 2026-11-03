@@ -1817,6 +1817,39 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
   });
 
+  it("keeps a new file whose state the query does not hold, and counts it unmatched", async () => {
+    harness = await folderHarness("folder-new-file-outside-state", {
+      settings: { query: { types: ["core.note"], state: ["active"] } },
+    });
+    scriptFolderWrites(harness);
+    put(
+      harness,
+      "shelved.md",
+      "---\ntitle: Shelved\nstate: archived\n---\nwritten as archived\n",
+    );
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect(sentCreates(harness).length, "the file was never created").toBe(1);
+    const written = read(harness, "shelved.md");
+    // The pulls that follow are where the file of an item that left the
+    // query by its state goes.
+    for (let pass = 0; pass < 3; pass += 1) {
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        pulled.value.removed,
+        "the pull removed the file the person made",
+      ).toBe(0);
+      expect(pulled.value.unmatched).toBe(1);
+      expect(
+        read(harness, "shelved.md"),
+        "the pull rewrote the file, so its state line is gone",
+      ).toBe(written);
+    }
+  });
+
   it("sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere", async () => {
     const archived = {
       id: "01a00000-0000-7000-8000-0000000000d2",

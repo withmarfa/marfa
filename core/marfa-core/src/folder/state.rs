@@ -806,3 +806,17 @@ pub fn unmatched(conn: &Connection) -> Result<Vec<String>, CoreError> {
 pub fn set_unmatched(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
     set_list(conn, UNMATCHED, ids)
 }
+
+/// The items made from a file of this folder whose state the query's states
+/// did not hold when they were made, and that no pull has seen in those
+/// states since. Their files are the person's, kept and counted unmatched,
+/// until the item is first in a state the query holds.
+const OUTSIDE_STATE: &str = "folder_new_outside_state";
+
+pub fn new_outside_state(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, OUTSIDE_STATE)
+}
+
+pub fn set_new_outside_state(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    set_list(conn, OUTSIDE_STATE, ids)
+}

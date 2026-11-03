@@ -548,12 +548,20 @@ impl Folder {
         }
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
-        let unmatched_ids: Vec<String> = work
+        let mut unmatched_ids: Vec<String> = work
             .iter()
             .filter(|(_, unmatched)| *unmatched)
             .map(|(item, _)| item.id.clone())
             .chain(retained)
             .collect();
+        let new_outside = self.new_outside_state()?;
+        unmatched_ids.extend(
+            new_outside
+                .iter()
+                .filter(|id| !unmatched_ids.contains(id))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         report.unmatched = unmatched_ids.len();
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
         // Read, not looked for in the other folders: one arriving there is
@@ -571,6 +579,11 @@ impl Folder {
             // This device's own create, not yet landed: the id goes back
             // only once it has.
             if item.version == 0 {
+                continue;
+            }
+            // A new file's item made outside the query's states still has its
+            // state change to send, so the copy's active row is not its state.
+            if self.new_outside_waits(&item.id)? {
                 continue;
             }
             let bound = {
@@ -1933,6 +1946,45 @@ impl Folder {
         Ok(())
     }
 
+    /// The items of files this folder's people made outside the query's states
+    /// that stay so, each still bound. The first pull to find one in a state
+    /// the query holds, with nothing left to send for it, ends it: from then
+    /// on it is a member, and leaves as one does.
+    fn new_outside_state(&self) -> Result<Vec<String>> {
+        let settings = self.settings()?;
+        let conn = self.core.conn()?;
+        let recorded = state::new_outside_state(&conn)?;
+        if recorded.is_empty() {
+            return Ok(recorded);
+        }
+        let mut kept = Vec::new();
+        for item in crate::store::items_by_ids(&conn, &recorded)? {
+            let waiting =
+                crate::store::last_write_to(&conn, crate::model::Subject::Item, &item.id)?
+                    .is_some();
+            let outside = !settings.holds_state(item.state) || waiting;
+            if matches!(item.state, ItemState::Active | ItemState::Archived)
+                && outside
+                && state::bound_to_item(&conn, &item.id)?.is_some()
+            {
+                kept.push(item.id);
+            }
+        }
+        if kept.len() != recorded.len() {
+            state::set_new_outside_state(&conn, &kept)?;
+        }
+        Ok(kept)
+    }
+
+    /// Whether the item is one of those and still has a write to send.
+    fn new_outside_waits(&self, item_id: &str) -> Result<bool> {
+        let conn = self.core.conn()?;
+        Ok(state::new_outside_state(&conn)?
+            .iter()
+            .any(|id| id == item_id)
+            && crate::store::last_write_to(&conn, crate::model::Subject::Item, item_id)?.is_some())
+    }
+
     pub(super) fn departing(
         &self,
         row: &state::Bound,
@@ -1958,6 +2010,14 @@ impl Folder {
                 if settings.holds_state(item.state)
                     && (row.blob.is_none()
                         || !self.left_with_its_documents(&item.id, settings)?) =>
+            {
+                return Ok(Departing::No);
+            }
+            // A file made here for an item outside the query's states is the
+            // person's: the item never entered the folder, so it did not leave.
+            Some(item)
+                if matches!(item.state, ItemState::Active | ItemState::Archived)
+                    && state::new_outside_state(&*self.core.conn()?)?.contains(&item.id) =>
             {
                 return Ok(Departing::No);
             }

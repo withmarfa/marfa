@@ -5629,6 +5629,137 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
+    /// A new file `new.md` made in a folder of active notes, whose line says
+    /// `state`, created and answered, with the pulls that follow.
+    fn new_file_in_active_folder(state_line: &str) -> (ScannedDir, Folder, String) {
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "query": { "state": ["active"] } }),
+            None,
+        );
+        std::fs::write(
+            dir.path().join("new.md"),
+            format!("---\ntitle: new\n{state_line}---\nbody\n"),
+        )
+        .unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        folder.scan().unwrap();
+        let id = landed(&folder, "new.md");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        (dir, folder, id)
+    }
+
+    fn set_item_state(folder: &Folder, id: &str, state: &str) {
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE items SET state = ?1, version = version + 1 WHERE id = ?2",
+                [state, id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_new_file_whose_state_the_query_does_not_hold_stays_unmatched() {
+        for line in ["state: archived\n", ""] {
+            // Without a state line the folder of archived items holds no
+            // new file's item, which starts active.
+            let (dir, folder, id) = if line.is_empty() {
+                let (dir, folder) = scanned_folder_with(
+                    serde_json::json!({ "query": { "state": ["archived"] } }),
+                    None,
+                );
+                std::fs::write(dir.path().join("new.md"), "---\ntitle: new\n---\nbody\n").unwrap();
+                assert_eq!(folder.scan().unwrap().created, 1);
+                folder.scan().unwrap();
+                let id = landed(&folder, "new.md");
+                (dir, folder, id)
+            } else {
+                new_file_in_active_folder(line)
+            };
+            for _ in 0..2 {
+                let pulled = folder.pull().unwrap();
+                assert_eq!(
+                    (pulled.removed, pulled.unmatched),
+                    (0, 1),
+                    "{line:?} {pulled:?}"
+                );
+                assert!(dir.path().join("new.md").exists(), "{line:?}");
+            }
+            let kept = folder.unmatched_files().unwrap();
+            assert_eq!(kept.len(), 1, "{line:?}");
+            assert_eq!(kept[0].item_id.as_deref(), Some(id.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_new_file_stays_through_the_server_echoing_its_create_as_active() {
+        // The server answers the create before the state change that follows
+        // it, so the copy shows the item active while that change waits.
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        set_item_state(&folder, &id, "active");
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at)
+                 VALUES ('t1', 'transition_item', ?1, 'k1', '{}', '2026-01-01T00:00:00Z')",
+                [&id],
+            )
+            .unwrap();
+        let before = std::fs::read(dir.path().join("new.md")).unwrap();
+        let pulled = folder.pull().unwrap();
+        assert_eq!((pulled.rewritten, pulled.removed), (0, 0), "{pulled:?}");
+        assert_eq!(std::fs::read(dir.path().join("new.md")).unwrap(), before);
+        // The change lands.
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        set_item_state(&folder, &id, "archived");
+        let pulled = folder.pull().unwrap();
+        assert_eq!((pulled.removed, pulled.unmatched), (0, 1), "{pulled:?}");
+        assert_eq!(std::fs::read(dir.path().join("new.md")).unwrap(), before);
+    }
+
+    #[test]
+    fn a_new_file_that_the_query_holds_once_is_removed_when_it_leaves() {
+        let (dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        // The server moves it into the query, and a pull sees it there.
+        set_item_state(&folder, &id, "active");
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.unmatched, 0, "{pulled:?}");
+        assert!(dir.path().join("new.md").exists());
+        // Out again, it is an existing member leaving.
+        set_item_state(&folder, &id, "archived");
+        let pulled = folder.pull().unwrap();
+        assert_eq!((pulled.removed, pulled.unmatched), (1, 0), "{pulled:?}");
+        assert!(!dir.path().join("new.md").exists());
+    }
+
+    #[test]
+    fn a_new_file_outside_the_query_by_state_is_no_longer_unmatched_once_trashed() {
+        let (_dir, folder, id) = new_file_in_active_folder("state: archived\n");
+        assert_eq!(folder.pull().unwrap().unmatched, 1);
+        set_item_state(&folder, &id, "trashed");
+        assert_eq!(folder.pull().unwrap().unmatched, 0);
+        assert!(
+            state::new_outside_state(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn a_sweep_queues_no_delete_of_an_item_changed_elsewhere_while_it_decides() {

@@ -329,6 +329,14 @@ impl Folder {
             save: 1,
             ..state::Writes::default()
         };
+        // The item starts active, and a file's own line can say otherwise.
+        let made = read.lines.state.unwrap_or(ItemState::Active);
+        if !settings.holds_state(made) {
+            let conn = self.core.conn()?;
+            let mut outside = state::new_outside_state(&conn)?;
+            outside.push(item_id.clone());
+            state::set_new_outside_state(&conn, &outside)?;
+        }
         if read.lines.state == Some(ItemState::Archived) {
             let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
             writes.queued.push(state::Queued {
