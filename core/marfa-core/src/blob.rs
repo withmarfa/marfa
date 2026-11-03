@@ -103,6 +103,11 @@ pub(crate) struct Taken {
     pub(crate) size: u64,
 }
 
+/// The name `bytes` are held under.
+pub(crate) fn hash_of(bytes: &[u8]) -> String {
+    format!("{PREFIX}{}", hex::encode(Sha256::digest(bytes)))
+}
+
 /// Bytes fetched and kept.
 #[derive(Debug)]
 pub(crate) struct Fetched {

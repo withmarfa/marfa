@@ -6544,6 +6544,91 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_new_file_the_dry_run_cannot_judge_is_neither_sent_nor_reported_held() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b010",
+            serde_json::json!({ "query": { "state": ["active"] }, "outside_query": "hold" }),
+            None,
+        );
+        write_note(dir.path(), "in.md", "");
+        write_note(dir.path(), "out.md", "state: archived\n");
+        {
+            let _failing = crate::fault::fail_on_this_thread("folder-outside-dry-run");
+            let scanned = folder.scan().unwrap();
+            assert_eq!(
+                (scanned.created, scanned.held_outside),
+                (0, 0),
+                "{scanned:?}"
+            );
+            assert_eq!(creates_queued(&folder), 0, "a file was sent unjudged");
+            assert!(
+                state::held_outside(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                state::bound_at(&folder.core.conn().unwrap(), "in.md")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let scanned = folder.scan().unwrap();
+        assert_eq!(
+            (scanned.created, scanned.held_outside),
+            (1, 1),
+            "{scanned:?}"
+        );
+    }
+
+    #[test]
+    fn a_new_file_is_judged_beneath_with_the_folders_default_edges() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": { "beneath": SHELF },
+            "outside_query": "hold",
+            "defaults": { "edges": { "parent-of": [SHELF] } },
+        }));
+        write_note(dir.path(), "in.md", "");
+        let sent = folder.scan().unwrap();
+        assert_eq!((sent.created, sent.held_outside), (1, 0), "{sent:?}");
+
+        let (dir, folder) = folder_beside_shelves(serde_json::json!({
+            "query": { "beneath": SHELF },
+            "outside_query": "hold",
+        }));
+        write_note(dir.path(), "out.md", "");
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.held_outside), (0, 1), "{held:?}");
+    }
+
+    #[test]
+    fn a_new_file_is_judged_by_the_properties_its_bytes_give_it() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000b011",
+            serde_json::json!({
+                "query": { "filter": "properties.mime_type eq \"image/png\"" },
+                "outside_query": "hold",
+            }),
+            None,
+        );
+        std::fs::write(dir.path().join("a.png"), [0x89_u8, 0x50, 0x4e, 0x47]).unwrap();
+        std::fs::write(dir.path().join("b.jpg"), [0xff_u8, 0xd8, 0xff]).unwrap();
+        let scanned = folder.scan().unwrap();
+        assert_eq!(
+            (scanned.created, scanned.held_outside),
+            (1, 1),
+            "{scanned:?}"
+        );
+        assert_eq!(
+            state::held_outside(&folder.core.conn().unwrap()).unwrap(),
+            ["b.jpg"]
+        );
+    }
+
     #[test]
     fn files_held_outside_the_query_do_not_count_toward_the_addition_threshold() {
         let (_, _registry) = registry::tests::own_registry();

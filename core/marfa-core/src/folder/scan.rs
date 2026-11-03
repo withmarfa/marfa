@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 
 use crate::Seen;
 
+use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
 use super::settings::OutsideQuery;
 use super::{
@@ -12,8 +13,8 @@ use super::{
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
     bytes_of, bytes_type, captured_identities, carries_frontmatter, changed_within, copy_refused,
     document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
-    local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
-    stat_metadata, state, suited, swap_root, text_of, typed_title,
+    local_admission_refusal, local_properties_refusal, name_of, named_by_its_file, near_limit,
+    one_per_name, placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
 
 /// The text the scan keeps of a file. A document whose bytes are not UTF-8
@@ -2098,57 +2099,75 @@ impl Folder {
         waiting: &Waiting,
     ) -> Result<HashSet<usize>> {
         let mut held = HashSet::new();
+        let mut kept_back = HashSet::new();
         let mut paths = Vec::new();
         if scan.settings.outside_query == OutsideQuery::Hold {
             for at in self.new_files(scan, claims, waiting) {
-                if self.is_outside(&scan.files[at], scan)? {
-                    paths.push(scan.files[at].key.clone());
-                    held.insert(at);
+                match self.is_outside(&scan.files[at], scan) {
+                    Some(false) => {}
+                    Some(true) => {
+                        paths.push(scan.files[at].key.clone());
+                        held.insert(at);
+                    }
+                    None => {
+                        kept_back.insert(at);
+                    }
                 }
             }
         }
         paths.sort();
         state::set_held_outside(&*self.core.conn()?, &paths)?;
         scan.report.held_outside = held.len();
+        held.extend(kept_back);
         Ok(held)
     }
 
-    /// Whether the query would not hold the item a new file becomes. What
-    /// the copy would refuse to make is not judged here: it is flagged
-    /// where it is made.
-    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Result<bool> {
+    /// Whether the query would not hold the item a new file becomes, or
+    /// `None` where that cannot be told. What the copy would refuse to make
+    /// is not judged here: it is flagged where it is made.
+    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Option<bool> {
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
             let draft = file_item_draft(file, file_type, settings, catalog);
-            return self.judge_outside(settings, &draft, ItemState::Active);
+            let edges = default_edges_of(settings, None);
+            return self.judge_outside(settings, catalog, &draft, ItemState::Active, &edges);
         }
         if scan.embedded.contains(&file.key) && bytes_type(&file.path, catalog).is_some() {
-            return Ok(false);
+            return Some(false);
         }
-        let Ok(made) = new_document(&file.key, &file.document(), (settings, catalog, edge_types))
-        else {
-            return Ok(false);
+        let document = file.document();
+        let Ok(made) = new_document(&file.key, &document, (settings, catalog, edge_types)) else {
+            return Some(false);
         };
         if admission_hold(catalog, &file.key, &made.draft).is_some() {
-            return Ok(false);
+            return Some(false);
         }
         let state = made.read.lines.state.unwrap_or(ItemState::Active);
-        self.judge_outside(settings, &made.draft, state)
+        let edges = default_edges_of(settings, Some((&document.front, edge_types)));
+        self.judge_outside(settings, catalog, &made.draft, state, &edges)
     }
 
-    /// A draft the copy cannot judge is not held: it is made, or refused,
-    /// as it would be without the setting.
+    /// `None` where the dry run failed: a file is never sent on an answer
+    /// that is not known, and is judged again by the next pass.
     fn judge_outside(
         &self,
         settings: &Settings,
+        catalog: &Catalog,
         draft: &crate::model::Draft,
         made: ItemState,
-    ) -> Result<bool> {
-        Ok(self
-            .core
-            .would_be_held_by(settings, draft, made)
+        edges: &[(crate::catalog::End, String, String)],
+    ) -> Option<bool> {
+        self.core
+            .would_be_held_by(
+                settings,
+                catalog,
+                draft,
+                made,
+                edges,
+                local_admission_refusal,
+            )
+            .ok()
             .map(|held| !held)
-            .unwrap_or(false))
     }
 
     /// Whether a new file would be sent as an item: not one the scan holds

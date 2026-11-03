@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
+use crate::catalog::End;
 use crate::folder::{FOLDER_TYPE, Settings};
 use crate::http::{Method, Outgoing};
 use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, Sort, Tier};
@@ -160,30 +161,61 @@ impl Core {
 
     /// Whether the folder's query would hold an item made from `draft` in
     /// `made`, answered by the query itself on a row made in a transaction
-    /// that is rolled back, so a type, tier, tag, state or filter is judged
-    /// as the copy judges every item. `beneath` is left out: it asks about
-    /// edges, which a new item has only once the folder has made them.
+    /// that is rolled back, so a type, tier, tag, state, filter or `beneath`
+    /// is judged as the copy judges every item. The item is given the folder's
+    /// `defaults` edges (`edges`, as end, edge type and the other item), each
+    /// one `tolerated` refusing as the folder tolerates it when it makes the
+    /// item for real: that edge is left out. An error means the answer is not
+    /// known.
     pub(crate) fn would_be_held_by(
         &self,
         settings: &Settings,
+        catalog: &catalog::Catalog,
         draft: &crate::model::Draft,
         made: ItemState,
+        edges: &[(End, String, String)],
+        tolerated: impl Fn(&CoreError) -> bool,
     ) -> Result<bool> {
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "folder-outside-dry-run") {
+            return Err(CoreError::Store("the dry run failed".into()));
+        }
         if !settings.holds_state(made) {
             return Ok(false);
         }
         let mut judged = settings.clone();
-        judged.query.beneath = None;
         judged.query.state = None;
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        let catalog = catalog::Catalog::load(&tx)?;
-        let queued = crate::queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
+        let queued = crate::queue_create(&tx, catalog, draft, &[], self.credential().as_deref())?;
         let Some(id) = queued.item_id else {
             return Ok(true);
         };
+        for (end, edge_type, other) in edges {
+            let (source_id, target_id) = match end {
+                End::Target => (other.clone(), id.clone()),
+                End::Source => (id.clone(), other.clone()),
+            };
+            tx.execute_batch("SAVEPOINT default_edge")?;
+            match crate::queue_edge(
+                &tx,
+                &crate::model::EdgeDraft {
+                    source_id,
+                    target_id,
+                    edge_type: edge_type.clone(),
+                    ..Default::default()
+                },
+                &[],
+            ) {
+                Ok(_) => tx.execute_batch("RELEASE default_edge")?,
+                Err(error) if tolerated(&error) => {
+                    tx.execute_batch("ROLLBACK TO default_edge; RELEASE default_edge")?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
-        judged.narrow(&catalog, &[], &mut clauses, &mut values)?;
+        judged.narrow(catalog, &[], &mut clauses, &mut values)?;
         clauses.push("items.id = ?".into());
         values.push(Value::String(id));
         let held =

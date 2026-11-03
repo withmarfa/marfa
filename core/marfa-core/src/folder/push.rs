@@ -271,7 +271,9 @@ pub(super) fn new_document(
 }
 
 /// The draft of a new file item. Its type is its bytes', so of the defaults
-/// it takes only the tier and the tags.
+/// it takes only the tier and the tags. It carries the properties the copy
+/// gives the item from its bytes, as the create does, so the query is judged
+/// on the item the file becomes.
 pub(super) fn file_item_draft(
     file: &Scanned,
     file_type: String,
@@ -285,6 +287,18 @@ pub(super) fn file_item_draft(
     );
     if file.executable == Some(true) {
         properties.insert(executable::FIELD.into(), Value::Bool(true));
+    }
+    if let Some(bytes) = &file.source {
+        crate::name_bytes(
+            &mut properties,
+            catalog,
+            &file_type,
+            &crate::blob::Taken {
+                hash: crate::blob::hash_of(bytes),
+                size: bytes.len() as u64,
+            },
+            &crate::blob::mime_type_for(&file.path, None),
+        );
     }
     Draft {
         r#type: file_type,
