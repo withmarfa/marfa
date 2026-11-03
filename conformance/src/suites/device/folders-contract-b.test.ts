@@ -153,7 +153,11 @@ it.each(["trashed", "archived"] as const)(
         ),
     ).toHaveLength(3);
     const status = await harness.folder.status();
-    expect(status.ok && status.value.paused).toEqual({ disk: 0, pull: 0 });
+    expect(status.ok && status.value.paused).toEqual({
+      disk: 0,
+      pull: 0,
+      additions: 0,
+    });
     for (const n of [0, 1, 2])
       expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
   },
@@ -216,7 +220,11 @@ it.each([
     const scanned = await harness.folder.scan();
     expect(scanned.ok && scanned.value.paused).toBe(paused);
     const status = await harness.folder.status();
-    expect(status.ok && status.value.paused).toEqual({ disk: paused, pull: 0 });
+    expect(status.ok && status.value.paused).toEqual({
+      disk: paused,
+      pull: 0,
+      additions: 0,
+    });
   },
 );
 

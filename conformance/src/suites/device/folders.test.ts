@@ -5508,7 +5508,11 @@ describe("large removals, status and size", () => {
       readdirSync(harness.dir).filter((name) => name.endsWith(".md")),
     ).toHaveLength(6);
     const status = await harness.folder.status();
-    expect(status.ok && status.value.paused).toEqual({ disk: 0, pull: 3 });
+    expect(status.ok && status.value.paused).toEqual({
+      disk: 0,
+      pull: 3,
+      additions: 0,
+    });
   });
 
   it("lets a paused file whose item left by state go when the removal is put back, rather than journaling it again", async () => {
@@ -5700,7 +5704,7 @@ describe("large removals, status and size", () => {
         of(path)?.reason,
       ]),
     );
-    expect(status.value.paused).toEqual({ disk: 0, pull: 0 });
+    expect(status.value.paused).toEqual({ disk: 0, pull: 0, additions: 0 });
   });
 });
 
