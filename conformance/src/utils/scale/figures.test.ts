@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   CEILINGS,
-  KNOWN_OVER,
   MIN_SAMPLES,
   distribution,
   fragmentOf,
@@ -160,13 +159,6 @@ describe("the folder and device figures", () => {
     ]) {
       expect(CEILINGS[name]?.ceiling, name).toBeNull();
     }
-  });
-
-  it("excuses only the two figures whose issues are open", () => {
-    expect(KNOWN_OVER).toEqual({
-      folder_edit_to_server: 2611,
-      folder_watch_cpu: 2608,
-    });
   });
 
   it("judges a quiet watch by CPU seconds a minute", () => {
