@@ -6950,17 +6950,31 @@ When a push is told to confirm additions, a device MUST send every new file the 
 
 **Tests:** `device/folders-additions.test.ts › is sent by a push told to confirm additions`.
 
+### `folders/addition-pause-stands`
+
+While new files are paused, a device MUST keep them paused until a person confirms them, deletes them, or raises `addition_threshold` so that the paused files, counted with the new files sent in the last ten minutes when the pause began, no longer exceed it.
+
+**Reason:** A pause waits for the person. The window of sent files empties with time, so a pause judged afresh at each scan would release itself once ten minutes passed.
+
+**Tests:** `device/binding-folders-additions.test.ts › keeps a paused burst held after the window empties, and sends it once confirmed`, `device/folders-additions.test.ts › is released when the threshold is raised past it`.
+
+### `folders/addition-pause-joins`
+
+While new files are paused, a device MUST pause the new files that arrive, however few.
+
+**Tests:** `device/binding-folders-additions.test.ts › keeps a paused burst held after the window empties, and sends it once confirmed`.
+
 ### `folders/addition-clears`
 
-When the files of a paused addition are deleted, a device MUST release the pause at the next scan without sending the deleted files.
+When every file of a paused addition is deleted, a device MUST release the pause at the next scan without sending the deleted files.
 
-**Reason:** The pause is derived from the disk and the folder's store, so it survives a crash and needs no record that a person must clear.
+**Reason:** The pause is the list of held files in the folder's store, so it survives a crash and needs no record that a person must clear.
 
 **Tests:** `device/folders-additions.test.ts › is let go of when the files are deleted`.
 
 ### `folders/addition-clears-raised`
 
-When the threshold is raised past the paused files, a device MUST release the pause at the next scan.
+When the threshold is raised so that the paused files, counted with the new files sent in the last ten minutes when the pause began, no longer exceed it, a device MUST release the pause at the next scan.
 
 **Tests:** `device/folders-additions.test.ts › is released when the threshold is raised past it`.
 

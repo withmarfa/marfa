@@ -88,6 +88,28 @@ describe("a drop of new files judged by its rate", () => {
     expect((await harness.bound.testClose()).ok).toBe(true);
   }, 120_000);
 
+  it("keeps a paused burst held after the window empties, and sends it once confirmed", async () => {
+    const harness = await prepared("binding-additions-pause-waits");
+    copy(harness, "first", 30);
+    expect((await scanned(harness)).created).toBe(30);
+    await harness.device.clock.advance(2 * MINUTE);
+    copy(harness, "second", 30);
+    expect((await scanned(harness)).pausedAdditions).toBe(30);
+    await harness.device.clock.advance(20 * MINUTE);
+    const later = await scanned(harness);
+    expect(
+      [later.created, later.pausedAdditions],
+      "a pause let go by itself when the window emptied",
+    ).toEqual([0, 30]);
+    copy(harness, "third", 1);
+    const joined = await scanned(harness);
+    expect(
+      [joined.created, joined.pausedAdditions],
+      "a file that arrived during a pause was judged on its own",
+    ).toEqual([0, 31]);
+    expect((await harness.bound.testClose()).ok).toBe(true);
+  }, 120_000);
+
   it("sends the same two bursts when they are more than ten minutes apart", async () => {
     const harness = await prepared("binding-additions-two-drops");
     copy(harness, "first", 30);

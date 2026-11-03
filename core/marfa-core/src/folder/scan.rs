@@ -2026,15 +2026,25 @@ impl Folder {
         let mut held = HashSet::new();
         let mut paths = Vec::new();
         if !first_scan && !counted.is_empty() {
+            // While a pause stands the files that arrive join it and the set
+            // is judged against the window as it was when the pause began,
+            // so the window emptying never lets it go.
+            let standing = !state::paused_additions(&conn)?.is_empty();
+            let base = if standing {
+                state::paused_base(&conn)?
+            } else {
+                lately
+            };
             let exceeded = scan
                 .settings
                 .addition_threshold
-                .exceeded(lately + counted.len(), state::bound_count(&conn)?);
+                .exceeded(base + counted.len(), state::bound_count(&conn)?);
             if exceeded {
                 for at in &counted {
                     paths.push(scan.files[*at].key.clone());
                     held.insert(*at);
                 }
+                state::set_paused_base(&conn, base)?;
             } else {
                 // Held files are not sent, so they are not recorded as sent.
                 state::record_sent(&mut sent, now_ms, counted.len());

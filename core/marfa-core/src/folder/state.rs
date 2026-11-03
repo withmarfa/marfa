@@ -757,6 +757,22 @@ pub fn set_paused_additions(conn: &Connection, paths: &[String]) -> Result<(), C
     set_list(conn, PAUSED_ADDITIONS, paths)
 }
 
+const PAUSED_BASE: &str = "folder_paused_add_base";
+
+/// How many new files the window held when the standing pause began.
+pub fn paused_base(conn: &Connection) -> Result<usize, CoreError> {
+    Ok(crate::store::meta_get(conn, PAUSED_BASE)?
+        .and_then(|text| text.parse().ok())
+        .unwrap_or_default())
+}
+
+pub fn set_paused_base(conn: &Connection, base: usize) -> Result<(), CoreError> {
+    if crate::store::meta_get(conn, PAUSED_BASE)?.as_deref() == Some(base.to_string().as_str()) {
+        return Ok(());
+    }
+    crate::store::meta_set(conn, PAUSED_BASE, &base.to_string())
+}
+
 const ADDITIONS_SENT: &str = "folder_additions_sent";
 
 /// How long a sent new file counts towards the addition threshold.
