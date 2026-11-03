@@ -1428,15 +1428,6 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                // A drain reads the row back once the server answers its
-                // write, so the event of that write finds the row held. Taking
-                // it again rewrites the row as it is and would wake a watch
-                // for nothing.
-                if let Some(tags) = tags
-                    && store::holds_unchanged(tx, item, tags)?
-                {
-                    return Ok(false);
-                }
                 store::take_server_item(tx, item, tags, catalog)?;
                 Ok(true)
             } else {
@@ -2835,60 +2826,6 @@ mod tests {
             expected,
             "a reopened store lost a conflicted copy's link to its original"
         );
-    }
-
-    /// The copy holds `payload`'s item as the server sent it, with `tags`.
-    fn holding(core: &Core, payload: &str, tags: &[&str]) {
-        let value: serde_json::Value = serde_json::from_str(payload).unwrap();
-        let item: crate::wire::WireItem = serde_json::from_value(value["item"].clone()).unwrap();
-        let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
-        let conn = core.conn().unwrap();
-        store::upsert_item(
-            &conn,
-            &item,
-            Some(&tags),
-            &crate::catalog::Indexing::default(),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn an_event_for_a_row_the_copy_already_holds_exactly_is_not_a_change() {
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        let echo = item_payload("item.updated", "n1", NOTE, 2);
-        // Another device's edit of the same row: a version the copy lacks.
-        let edited = item_payload("item.updated", "n1", NOTE, 3);
-        // The same stamp, but tags the copy does not hold.
-        let tagged =
-            item_payload("item.updated", "n3", NOTE, 2).replace(r#""tags":[]"#, r#""tags":["y"]"#);
-        server.on(
-            "/events",
-            vec![stream(
-                vec![
-                    connected(),
-                    event("11", "item.updated", &echo),
-                    event(
-                        "12",
-                        "item.created",
-                        &item_payload("item.created", "n2", NOTE, 1),
-                    ),
-                    event("13", "item.updated", &edited),
-                    event("14", "item.updated", &tagged),
-                ],
-                held(),
-            )],
-        );
-        let (_dir, core) = hydrated(&server);
-        holding(&core, &echo, &[]);
-        holding(&core, &item_payload("item.updated", "n3", NOTE, 2), &[]);
-        let run = follow_on(&core, QUICK, None);
-        let told: Vec<String> = (0..3).map(|_| run.change().cursor).collect();
-        run.stop();
-        run.ended().unwrap();
-        // The witness: the event for a row the copy lacks, a version it lacks
-        // and tags it lacks each tell a change; only the exact echo does not.
-        assert_eq!(told, ["12", "13", "14"]);
     }
 
     #[test]

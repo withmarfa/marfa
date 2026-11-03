@@ -167,7 +167,8 @@ enum Wake {
     /// What the watcher delivered, with when it delivered it: a pass can run
     /// for seconds before the loop reads it.
     File(notify::Result<notify::Event>, Instant),
-    Server,
+    /// The copy changed, as of when the follow had applied the change.
+    Server(Instant),
     Retrying(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
@@ -315,7 +316,9 @@ impl Folder {
                         stale = false;
                     }
                     stale |= event.paths.iter().any(|path| settings_file(dir, path));
-                    if !event_passed_over(&event, dir, lists.as_ref()) {
+                    if !event_passed_over_unless(&event, dir, lists.as_ref(), |path| {
+                        self.stands_as_read(path)
+                    }) {
                         changed = true;
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
@@ -332,10 +335,14 @@ impl Folder {
                     gate.changed(delivered);
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Server) => {
-                    changed = true;
+                Ok(Wake::Server(applied)) => {
                     stale = true;
-                    telling.health_changed = true;
+                    // A change the copy had before the last pull began is in
+                    // what that pull read: the pass does not run again for it.
+                    if telling.unseen_by_pull(applied) {
+                        changed = true;
+                        telling.health_changed = true;
+                    }
                 }
                 Ok(Wake::Retrying(error, wait)) => {
                     tell(WatchEvent::Retrying { error, wait }).map_err(WatchError::Told)?;
@@ -465,6 +472,7 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
+        telling.pull_began = Some(crate::clock::now());
         let mark = self.mark()?;
         let pull = match telling.pulled.take().filter(|last| {
             last.from == mark
@@ -713,7 +721,7 @@ fn follow(
             retry = RETRY_FIRST;
             said = false;
             if hydrated.is_some() {
-                let _ = wakes.send(Wake::Server);
+                let _ = wakes.send(Wake::Server(crate::clock::now()));
             }
             folder.core().follow_observed(
                 ended,
@@ -728,7 +736,7 @@ fn follow(
                             unreachable = false;
                             Wake::Reach(None)
                         }
-                        _ => Wake::Server,
+                        _ => Wake::Server(crate::clock::now()),
                     });
                 },
                 |live| {
@@ -777,6 +785,43 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
 pub(super) const SEND_AGAIN_AT: &str = "folder_send_again_at";
 
 impl Folder {
+    /// Whether the file at `path` is as the last scan or pull left it: the
+    /// size and time it was read at, and the bytes the folder bound it with.
+    /// A pass has nothing to find in it, so an event naming it, such as the
+    /// pull's own write, starts none.
+    pub(super) fn stands_as_read(&self, path: &Path) -> bool {
+        self.file_stands_as_read(path).unwrap_or(false)
+    }
+
+    fn file_stands_as_read(&self, path: &Path) -> Result<bool, CoreError> {
+        let key = super::identity::relative(&self.root, path)?;
+        let Ok(metadata) = self.metadata(path) else {
+            return Ok(false);
+        };
+        let Some(stat) = metadata
+            .is_file()
+            .then(|| super::stat_metadata(&metadata))
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        let bound = {
+            let conn = self.core.conn()?;
+            if super::state::stat_of(&conn, &key)?.as_deref() != Some(stat.as_str()) {
+                return Ok(false);
+            }
+            super::state::bound_at(&conn, &key)?
+        };
+        Ok(bound.is_some_and(|bound| {
+            bound.held.is_none()
+                && !bound.holds_refusal()
+                && super::state::untaken_read_version(&bound.content_hash).is_none()
+                && self
+                    .read(path)
+                    .is_ok_and(|bytes| super::state::hash(&bytes) == bound.content_hash)
+        }))
+    }
+
     /// Read in one transaction, so a change committed between two of the
     /// reads is not half seen.
     fn mark(&self) -> Result<Mark, CoreError> {
@@ -1003,8 +1048,6 @@ fn stirred(
         + scan.requeued
         + drain.report.answered
         + drain.gave_way
-        + pull.written
-        + pull.rewritten
         + pull.moved
         + pull.removed
         + pull.taken
@@ -1025,6 +1068,8 @@ struct Telling {
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
     at_rest: bool,
+    /// When the last pass began to read the copy for its pull.
+    pull_began: Option<Instant>,
     /// The last pull, where a pass that finds the copy and the record as it
     /// began, and the disk still in the way where it was, would render every
     /// file as it was, so pulls nothing.
@@ -1041,6 +1086,13 @@ impl Telling {
     /// it is not run to find out.
     fn rests(&self, full: bool, changed: bool) -> bool {
         !full && !changed && self.at_rest
+    }
+
+    /// Whether a change the copy took at `applied` is one the last pull did not
+    /// read. The follow applies a change before it tells it, so a change told
+    /// before the pull began was in the copy the pull read.
+    fn unseen_by_pull(&self, applied: Instant) -> bool {
+        self.pull_began.is_none_or(|began| applied >= began)
     }
 }
 
@@ -1276,17 +1328,29 @@ fn unreached(lists: &Lists, root: &Path, path: &Path) -> bool {
 /// Whether an event starts no pass: it names only paths no pass can find,
 /// or is an access. An event that says events were lost, or names no path,
 /// is never passed over.
+#[cfg(test)]
 fn event_passed_over(event: &notify::Event, root: &Path, lists: Option<&Lists>) -> bool {
+    event_passed_over_unless(event, root, lists, |_| false)
+}
+
+/// `event_passed_over`, where a path `stands` as a scan read it counts as
+/// one no pass can find anything at.
+fn event_passed_over_unless(
+    event: &notify::Event,
+    root: &Path,
+    lists: Option<&Lists>,
+    stands: impl Fn(&Path) -> bool,
+) -> bool {
     if event.need_rescan() || event.paths.is_empty() {
         return false;
     }
     matches!(event.kind, EventKind::Access(_))
         || event.paths.iter().all(|path| {
             !settings_file(root, path)
-                && match lists {
+                && (match lists {
                     Some(lists) => unreached(lists, root, path),
                     None => dot_led(root, path),
-                }
+                } || stands(path))
         })
 }
 
@@ -1478,6 +1542,21 @@ mod tests {
         assert!(gate(HELD_MOST - Duration::from_millis(1)).reads_first(now));
         // Witness: past the ceiling the gate is asked whatever waits.
         assert!(!gate(HELD_MOST).reads_first(now));
+    }
+
+    #[test]
+    fn a_server_change_told_before_the_last_pull_began_starts_no_pass() {
+        let began = Instant::now() + SECOND;
+        let telling = Telling {
+            pull_began: Some(began),
+            ..Telling::default()
+        };
+        // The witness: one applied as the pull began, or later, is not in it.
+        assert!(telling.unseen_by_pull(began));
+        assert!(telling.unseen_by_pull(began + SECOND));
+        assert!(!telling.unseen_by_pull(began - Duration::from_millis(1)));
+        // Before any pull, every change waits for one.
+        assert!(Telling::default().unseen_by_pull(began));
     }
 
     #[test]

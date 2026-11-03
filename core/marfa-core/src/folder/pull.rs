@@ -1386,7 +1386,13 @@ impl Folder {
         if let Ok(metadata) = self.metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
-            rendering.bind(&*self.core.conn()?, &binding(Some(found.key())))?;
+            let conn = self.core.conn()?;
+            rendering.bind(&conn, &binding(Some(found.key())))?;
+            // The write is a read of the file, so the next quick scan has no
+            // reason to read it again.
+            if let Some(stat) = stat_metadata(&metadata) {
+                state::set_stats(&conn, &[(want.to_string(), stat)], false)?;
+            }
         }
         if bound.is_none() {
             report.written += 1;

@@ -602,3 +602,36 @@ fn a_deleted_file_held_as_unreadable_goes_to_the_bin() {
     deleted(&dir, &folder);
     goes_to_the_bin(&dir, &folder);
 }
+
+#[test]
+fn a_pass_that_wrote_a_file_leaves_the_folder_at_rest() {
+    let (dir, folder, _server, mut passes) = watched_notes(&["a.md"]);
+    let note = dir.path().join("a.md");
+    let id = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+    changed_elsewhere(&folder, &id, "words from another device\n");
+    passes.run(&folder, false).unwrap();
+    assert!(
+        std::fs::read_to_string(&note)
+            .unwrap()
+            .contains("words from another device"),
+        "the witness: the pass wrote the file"
+    );
+    assert!(
+        folder.stands_as_read(&note),
+        "the file the pull wrote is not as the folder last read it"
+    );
+    assert!(
+        !passes.tick(&folder).unwrap(),
+        "a tick ran another pass over the file the pull had just written"
+    );
+
+    // The witness: an event naming a file a person has since edited or
+    // removed is not passed over.
+    std::fs::write(&note, "a person's edit\n").unwrap();
+    assert!(!folder.stands_as_read(&note));
+    std::fs::remove_file(&note).unwrap();
+    assert!(!folder.stands_as_read(&note));
+}
