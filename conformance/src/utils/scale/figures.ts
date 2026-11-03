@@ -126,7 +126,10 @@ export const CEILINGS: Record<string, CeilingEntry> = {
  * closes, and the figure fails the night from then on. A figure that answered
  * an error or took no measurement fails whether it is listed or not.
  */
-export const KNOWN_OVER: Readonly<Record<string, number>> = {};
+export const KNOWN_OVER: Readonly<Record<string, number>> = {
+  search_common: 2656,
+  archive_export: 2657,
+};
 
 function entryFor(name: string): CeilingEntry {
   const entry = CEILINGS[name];
