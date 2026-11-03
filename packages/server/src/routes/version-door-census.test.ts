@@ -209,6 +209,8 @@ const UNFILTERED_READERS: Record<string, string> = {
 };
 
 const READER_TAKING = new Set(["list"]);
+/** Returns a number, never a snapshot, so no type reach applies. */
+const COUNTS_ONLY = new Set(["count"]);
 const WRITES = new Set(["create", "restore", "deleteByIds"]);
 
 function unfilteredReads(): string[] {
@@ -223,7 +225,9 @@ function unfilteredReads(): string[] {
   const methods = [...(body ?? "").matchAll(/^ {2}(\w+)\(/gm)].map(
     (m) => m[1] ?? "",
   );
-  return methods.filter((m) => !READER_TAKING.has(m) && !WRITES.has(m));
+  return methods.filter(
+    (m) => !READER_TAKING.has(m) && !COUNTS_ONLY.has(m) && !WRITES.has(m),
+  );
 }
 
 function unfilteredReaders(reads: readonly string[]): string[] {
