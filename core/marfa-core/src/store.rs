@@ -1798,6 +1798,58 @@ pub(crate) fn put_server_item(
     Ok(true)
 }
 
+/// Whether the copy already holds `item` exactly as the server sent it, with
+/// `tags`, and nothing of this device's own laid over it or owed to it. Taking
+/// such a row again changes nothing the copy shows, whoever wrote it.
+pub(crate) fn holds_unchanged(
+    conn: &Connection,
+    item: &WireItem,
+    tags: &[String],
+) -> Result<bool, CoreError> {
+    let same = conn
+        .prepare_cached(
+            "SELECT 1 FROM items
+              WHERE id = ?1 AND type = ?2 AND state = ?3 AND tier IS ?4 AND version = ?5
+                AND schema_version = ?6 AND source = ?7 AND source_id IS ?8
+                AND occurred_at = ?9 AND created_at = ?10 AND updated_at = ?11
+                AND properties = ?12 AND capture_latitude IS ?13
+                AND capture_longitude IS ?14 AND trashed_at IS ?15",
+        )?
+        .query_row(
+            params![
+                item.id,
+                item.r#type,
+                item.state,
+                item.tier,
+                item.version,
+                item.schema_version,
+                item.source,
+                item.source_id,
+                item.occurred_at,
+                item.created_at,
+                item.updated_at,
+                js::json(&Value::Object(js::object_order(&item.properties))),
+                item.capture_latitude,
+                item.capture_longitude,
+                item.trashed_at,
+            ],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !same {
+        return Ok(false);
+    }
+    let mut wanted = tags.to_vec();
+    wanted.sort();
+    wanted.dedup();
+    Ok(tags_for_one(conn, &item.id)? == wanted
+        && beneath_row(conn, Subject::Item, &item.id)?.is_none()
+        && !item_waits(conn, &item.id)?
+        && !owed_read_backs(conn)?.iter().any(|owed| owed.id == item.id)
+        && !crate::body::rule::drops_on_landing(conn, &item.id)?)
+}
+
 /// `put_server_item` for an edge.
 pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Edge, &edge.id)?;

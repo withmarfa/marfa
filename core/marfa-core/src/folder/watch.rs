@@ -164,7 +164,9 @@ impl FollowHealth {
 }
 
 enum Wake {
-    File(notify::Result<notify::Event>),
+    /// What the watcher delivered, with when it delivered it: a pass can run
+    /// for seconds before the loop reads it.
+    File(notify::Result<notify::Event>, Instant),
     Server,
     Retrying(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
@@ -263,7 +265,7 @@ impl Folder {
             .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
         let dir = &absolute;
         let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = sender.send(Wake::File(event));
+            let _ = sender.send(Wake::File(event, crate::clock::now()));
         })
         .map_err(|error| WatchError::Unwatchable(format!("cannot watch: {error}")))?;
         // Before the first pass, so a file arriving during it is not missed.
@@ -299,8 +301,8 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-watch-turn");
-            match crate::clock::recv_timeout(events, stop, TICK) {
-                Ok(Wake::File(Ok(event))) => {
+            match crate::clock::recv_timeout(events, stop, gate.listen_for(crate::clock::now())) {
+                Ok(Wake::File(Ok(event), delivered)) => {
                     if stale {
                         lists = self.settings().and_then(|settings| settings.lists()).ok();
                         stale = false;
@@ -308,7 +310,7 @@ impl Folder {
                     stale |= event.paths.iter().any(|path| settings_file(dir, path));
                     if !event_passed_over(&event, dir, lists.as_ref()) {
                         changed = true;
-                        gate.changed(crate::clock::now());
+                        gate.changed(delivered);
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
@@ -316,11 +318,11 @@ impl Folder {
                         continue;
                     }
                 }
-                Ok(Wake::File(Err(error))) => {
+                Ok(Wake::File(Err(error), delivered)) => {
                     // The watcher may have lost events, so nothing says the
                     // folder is unchanged.
                     changed = true;
-                    gate.changed(crate::clock::now());
+                    gate.changed(delivered);
                     tell(WatchEvent::WatcherFailed(error.to_string())).map_err(WatchError::Told)?;
                 }
                 Ok(Wake::Server) => {
@@ -879,8 +881,11 @@ impl Gate {
         }
     }
 
-    fn changed(&mut self, now: Instant) {
-        self.last_change = now;
+    /// A change that was delivered at `at`. Never moves the last change back:
+    /// the loop reads what arrived during a pass in the order it came, after
+    /// the pass, and a later change stands.
+    fn changed(&mut self, at: Instant) {
+        self.last_change = self.last_change.max(at);
     }
 
     /// Call at a pass's end: its own reads are events passed over, and from
@@ -900,8 +905,15 @@ impl Gate {
             || now.duration_since(self.last_pass) >= HELD_MOST
     }
 
-    fn listen_for(&self, _now: Instant) -> Duration {
-        TICK
+    /// How long to wait for an event before looking again: the settle time
+    /// a change still has to run, or a tick where no pass waits on it.
+    fn listen_for(&self, now: Instant) -> Duration {
+        let settles = (self.last_change + SETTLE).saturating_duration_since(now);
+        let held = (self.last_pass + HELD_MOST).saturating_duration_since(now);
+        match settles.min(held) {
+            left if left.is_zero() => TICK,
+            left => left.min(TICK),
+        }
     }
 }
 
