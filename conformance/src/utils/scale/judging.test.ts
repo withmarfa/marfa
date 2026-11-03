@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  judgeExactCount,
   judgeItemTotal,
   judgePage,
   sumPageErrors,
@@ -108,5 +109,39 @@ describe("the instance's item total", () => {
   it("passes a total at or above the claim, since later steps add items", () => {
     expect(judgeItemTotal(200, '{"active":1000}', 1_000).errors).toBe(0);
     expect(judgeItemTotal(200, '{"active":6000}', 1_000).errors).toBe(0);
+  });
+});
+
+describe("judgeExactCount", () => {
+  it("passes a count equal to the notes generated", () => {
+    expect(judgeExactCount(200, '{"active":100}', 100, "note")).toEqual({
+      value: 100,
+      errors: 0,
+      note: null,
+    });
+  });
+
+  it("fails a count above the notes generated, by the surplus", () => {
+    const judged = judgeExactCount(200, '{"active":103}', 100, "note");
+    expect(judged.value).toBe(103);
+    expect(judged.errors).toBe(3);
+    expect(judged.note).toBe("the folder holds 103 notes and was given 100");
+  });
+
+  it("fails a count below the notes generated, by the shortfall", () => {
+    const judged = judgeExactCount(200, '{"active":98}', 100, "note");
+    expect(judged.errors).toBe(2);
+    expect(judged.note).toBe("the folder holds 98 notes and was given 100");
+  });
+
+  it("fails a stats call that errored or answered nonsense", () => {
+    expect(judgeExactCount(500, "x", 100, "note")).toMatchObject({
+      value: 0,
+      errors: 1,
+    });
+    expect(judgeExactCount(200, "{}", 100, "note")).toMatchObject({
+      value: 0,
+      errors: 1,
+    });
   });
 });

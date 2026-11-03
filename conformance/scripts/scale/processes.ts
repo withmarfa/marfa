@@ -72,6 +72,11 @@ function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
       clearTimeout(timer);
       done(true);
     });
+    // A command that never started never closes: end the wait with it.
+    child.once("error", () => {
+      clearTimeout(timer);
+      done(true);
+    });
   });
 }
 
@@ -129,9 +134,12 @@ export async function runBounded(
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString()).slice(-4_000);
   });
-  const spawnError = new Promise<never>((_, fail) => child.once("error", fail));
-  const ended = Promise.race([waitForExit(child, limitMs), spawnError]);
-  const finished = await ended;
+  let spawnFailure: Error | null = null;
+  child.once("error", (error) => {
+    spawnFailure = error;
+  });
+  const finished = await waitForExit(child, limitMs);
+  if (spawnFailure !== null) throw spawnFailure;
   if (!finished) await endTree(child);
   return {
     exit: finished ? child.exitCode : null,

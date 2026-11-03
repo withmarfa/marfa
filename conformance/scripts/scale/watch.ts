@@ -3,13 +3,16 @@
  * watch costs while nothing changes.
  *
  * The watch is the release `marfa folders watch`, started on the folder the
- * folder step synced and held. A first edit that is not counted tells when it
- * is working, since the watch prints nothing that says so. Then at least 30
- * notes spread across the folder are each edited with a line carrying a marker
- * of its own, and the time from the file write to the first reading of the
- * server that holds the marker is the figure. The server is read with the key
- * the folder uses, every 250 ms, and a change is found by its marker, never
- * by its place in a reply. An edit that has not arrived `ARRIVAL_LIMIT_MS`
+ * folder step synced and held. The watch prints nothing that says it is
+ * working, so two edits that are not counted tell when it is: the first may be
+ * found by its first pass over the folder, and the second, written once the
+ * first has arrived, can only come from the live watch. Then 30 notes spread
+ * evenly across the folder are each edited with a line carrying a marker of
+ * its own, and the time from the file write to the start of the first request
+ * that finds the marker on the server is the figure. The server is asked, with
+ * the key the folder uses, every 250 ms for the 50 notes changed last
+ * (`editPollPath`), and a change is found by its marker, never by its place
+ * in a reply. An edit that has not arrived `ARRIVAL_LIMIT_MS`
  * after the last one was written counts as an error.
  *
  * Then the edits stop and the watch is left alone for `MARFA_SCALE_QUIET_MINUTES`
@@ -30,6 +33,7 @@ import {
 import { cpuSecondsPerMinute, CpuMeter } from "../../src/utils/scale/cpu.js";
 import { distribution, scalar } from "../../src/utils/scale/figures.js";
 import { folderNote } from "../../src/utils/scale/folder-generator.js";
+import { editPollPath } from "../../src/utils/scale/folder-figures.js";
 import { connect, log, ok, Recorder, api, sleep } from "./context.js";
 import { cliEnv, HeldProcess, readTree } from "./processes.js";
 import { FOLDER_SOURCE, readBench } from "./folder.js";
@@ -58,20 +62,21 @@ export async function watch(): Promise<void> {
   const bench = readBench();
   const env = cliEnv({ key: bench.key, registry: bench.registry });
   const connection = { ...connect(), key: bench.key };
-  const since = new Date(Date.now() - 60_000).toISOString();
 
   const readings: Reading[] = [];
   let polling = true;
   let pollFailures = 0;
   const poller = (async () => {
     while (polling) {
+      // Taken before the request is sent, so the time the page takes to come
+      // back is never added to an edit's latency.
+      const seenAt = performance.now();
       const answer = await api(
         "GET",
-        `/items?source=${encodeURIComponent(FOLDER_SOURCE)}&updated_after=${encodeURIComponent(since)}&limit=500`,
+        editPollPath(FOLDER_SOURCE),
         undefined,
         connection,
       );
-      const seenAt = performance.now();
       if (ok(answer)) {
         const found = answer.text.match(MARKER);
         if (found !== null) {
@@ -110,28 +115,32 @@ export async function watch(): Promise<void> {
   };
 
   try {
-    // Not counted: it says when the watch is working.
-    const warm = edit(1);
-    const first = performance.now();
-    while (
-      matchArrivals([warm], readings).latenciesMs.length === 0 &&
-      performance.now() - first < READY_LIMIT_MS
-    ) {
-      stillWatching();
-      await sleep(POLL_MS);
-    }
-    if (matchArrivals([warm], readings).latenciesMs.length === 0) {
-      throw new Error("the watch sent no edit within its start-up limit");
+    // Not counted. The first edit may be found by the watch's own first pass
+    // over the folder, so it does not say the watch is live. A second one,
+    // written after the first has arrived, can only come from the live watch.
+    const begun = performance.now();
+    for (let warm = 0; warm < 2; warm++) {
+      const written1 = edit(1);
+      const waited = performance.now();
+      while (
+        matchArrivals([written1], readings).latenciesMs.length === 0 &&
+        performance.now() - waited < READY_LIMIT_MS
+      ) {
+        stillWatching();
+        await sleep(POLL_MS);
+      }
+      if (matchArrivals([written1], readings).latenciesMs.length === 0) {
+        throw new Error("the watch sent no edit within its start-up limit");
+      }
     }
     log(
-      `the watch is working after ${((performance.now() - first) / 1000).toFixed(1)} s`,
+      `the watch is live after ${((performance.now() - begun) / 1000).toFixed(1)} s`,
     );
 
-    // Spread across the folder, by a step coprime with its size.
-    const stride = Math.max(1, Math.floor(bench.notes / EDITS) | 1);
+    // Spread evenly across the folder, past the notes the warm edits used.
     for (let n = 0; n < EDITS; n++) {
       stillWatching();
-      written.push(edit(2 + ((n * stride) % (bench.notes - 1))));
+      written.push(edit(2 + Math.floor((n * (bench.notes - 1)) / EDITS)));
       await sleep(SPACING_MS);
     }
     const lastWrite = performance.now();

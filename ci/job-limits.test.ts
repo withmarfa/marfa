@@ -13,6 +13,7 @@ const WORKFLOWS = resolve(import.meta.dirname, "..", ".github", "workflows");
 
 interface Step {
   name?: string;
+  "timeout-minutes"?: number;
   if?: string;
   uses?: string;
 }
@@ -65,6 +66,33 @@ describe("job limits", () => {
         `${file}: ${id}`,
       ).toBeLessThanOrEqual(ceiling);
     }
+  });
+
+  it("gives each step of the scale benchmark a limit, the sum of which leaves the job's room to finish", () => {
+    const job = jobsOf("benchmarks.yml").find(([id]) => id === "scale")?.[1];
+    expect(job).toBeDefined();
+    const steps = job?.steps ?? [];
+    // The steps that measure or build, each of which can hang. The rest set up
+    // the toolchain, report and upload, and take seconds.
+    const heavy = steps.filter(
+      (step) =>
+        step["timeout-minutes"] !== undefined ||
+        /^(Build|Boot|Seed|Restart|Reads|Parent|Archive|Storage|Device|Folder)/.test(
+          step.name ?? "",
+        ),
+    );
+    expect(heavy.length).toBeGreaterThan(8);
+    for (const step of heavy) {
+      expect(step["timeout-minutes"], step.name).toBeTypeOf("number");
+    }
+    const sum = heavy.reduce(
+      (a, step) => a + (step["timeout-minutes"] ?? 0),
+      0,
+    );
+    // `finish`, the artifact upload and `judge`, and the toolchain steps,
+    // which take minutes, not hours.
+    const reserve = 20;
+    expect(sum + reserve).toBeLessThanOrEqual(job?.["timeout-minutes"] ?? 0);
   });
 
   it.each(files)("%s uploads an artifact only after a failure", (file) => {

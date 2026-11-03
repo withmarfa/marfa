@@ -9,15 +9,22 @@
  *
  * The first sync is timed in the three steps `folders push` takes: the
  * hydration, the scan (which resolves every link), and the push (which sends
- * the notes and writes their ids back). The whole is limited to 20 minutes;
- * past that the commands are stopped, the figures so far are kept and the
- * night fails on the step.
+ * the notes and writes their ids back). `folder_first_sync` is the whole, from
+ * before `folders add` to the end of the push, gaps included. The whole is
+ * limited to 20 minutes; past that the commands are stopped, the figures so
+ * far are kept and the night fails on the step. The sync is complete only if
+ * the server holds exactly the notes generated, counted as `core.note` items
+ * of the folder's source.
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
+import {
+  FIRST_SYNC_COVERS,
+  firstSyncMs,
+} from "../../src/utils/scale/folder-figures.js";
 import { folderNote } from "../../src/utils/scale/folder-generator.js";
-import { judgeItemTotal } from "../../src/utils/scale/judging.js";
+import { judgeExactCount } from "../../src/utils/scale/judging.js";
 import { api, log, ok, Recorder, stateDir } from "./context.js";
 import { cliEnv, runBounded, type Ran } from "./processes.js";
 
@@ -123,17 +130,29 @@ export async function folder(): Promise<void> {
   const bench: FolderBench = { folderId, key, dir, registry, notes };
   writeFileSync(benchFile(), JSON.stringify(bench));
 
-  const added = await runBounded(
-    ["--json", "folders", "add", dir, "--folder", folderId, "--yes"],
-    env,
-    120_000,
-  );
-  if (added.exit !== 0) throw new Error(note(added, "folders add"));
-
+  // The clock starts before `folders add`, so the figure is what a person
+  // waits from naming the folder to having it pushed.
   const started = performance.now();
   const left = () =>
     Math.max(1_000, FIRST_SYNC_LIMIT_MS - (performance.now() - started));
   let failed: string | null = null;
+
+  const added = await runBounded(
+    ["--json", "folders", "add", dir, "--folder", folderId, "--yes"],
+    env,
+    left(),
+  );
+  if (added.exit !== 0) {
+    failed = note(added, "folders add");
+    recorder.add(
+      scalar("folder_first_sync", "s", (performance.now() - started) / 1000, {
+        errors: 1,
+        note: failed,
+      }),
+    );
+    recorder.finish();
+    throw new Error(failed);
+  }
 
   const hydrate = await runBounded(["folders", "hydrate", dir], env, left());
   if (hydrate.exit !== 0) failed = note(hydrate, "the hydration");
@@ -168,12 +187,15 @@ export async function folder(): Promise<void> {
     );
   }
 
-  // Counted on the server, not taken from the commands' own reports.
+  const endedAt = performance.now();
+
+  // Counted on the server, not taken from the commands' own reports: the
+  // notes of this folder's source, which must equal the notes generated.
   const stats = await api(
     "GET",
-    `/items/stats?source=${encodeURIComponent(FOLDER_SOURCE)}`,
+    `/items/stats?source=${encodeURIComponent(FOLDER_SOURCE)}&type=core.note`,
   );
-  const held = judgeItemTotal(stats.status, stats.text, notes);
+  const held = judgeExactCount(stats.status, stats.text, notes, "note");
   recorder.add(
     scalar("folder_notes_synced", "count", held.value, {
       errors: held.errors,
@@ -181,11 +203,14 @@ export async function folder(): Promise<void> {
     }),
   );
 
-  const wholeMs = (hydrate.ms + (scan?.ms ?? 0) + (push?.ms ?? 0)) / 1000;
+  const problem = failed ?? held.note;
   recorder.add(
-    scalar("folder_first_sync", "s", wholeMs, {
+    scalar("folder_first_sync", "s", firstSyncMs(started, endedAt) / 1000, {
       errors: failed === null && held.errors === 0 ? 0 : 1,
-      ...(failed === null ? {} : { note: failed }),
+      note:
+        problem === null
+          ? FIRST_SYNC_COVERS
+          : `${FIRST_SYNC_COVERS}; ${problem}`,
     }),
   );
   recorder.learnedItems(0);
