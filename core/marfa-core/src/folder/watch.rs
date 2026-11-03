@@ -1041,12 +1041,10 @@ fn stirred(
     pull: &PullReport,
 ) -> bool {
     scan.created
-        + scan.updated
         + scan.renamed
         + scan.deleted
         + scan.moved_away
         + scan.requeued
-        + drain.report.answered
         + drain.gave_way
         + pull.moved
         + pull.removed
@@ -1557,6 +1555,27 @@ mod tests {
         assert!(!telling.unseen_by_pull(began - Duration::from_millis(1)));
         // Before any pull, every change waits for one.
         assert!(Telling::default().unseen_by_pull(began));
+    }
+
+    #[test]
+    fn an_edit_a_pass_sent_and_wrote_back_leaves_no_work_for_a_tick() {
+        let settings = SettingsFileReport::default();
+        let mut scan = heard_nothing();
+        scan.updated = 1;
+        let mut drain = drained();
+        drain.report.answered = 1;
+        let mut pull = PullReport {
+            rewritten: 1,
+            written: 1,
+            ..PullReport::default()
+        };
+        assert!(!stirred(&settings, &scan, &drain, &pull));
+        // The witness: a file the pass has yet to see made, or moved, is work.
+        scan.created = 1;
+        assert!(stirred(&settings, &scan, &drain, &pull));
+        scan.created = 0;
+        pull.moved = 1;
+        assert!(stirred(&settings, &scan, &drain, &pull));
     }
 
     #[test]
