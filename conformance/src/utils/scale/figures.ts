@@ -9,7 +9,8 @@
  */
 import { percentile } from "../timing.js";
 
-export type Unit = "ms" | "s" | "MB" | "ratio" | "per_s" | "count";
+export type Unit =
+  "ms" | "s" | "MB" | "ratio" | "per_s" | "count" | "cpu_s_per_min";
 
 export interface Figure {
   /** Unit-free and stable across nights: the key a night is compared by. */
@@ -68,6 +69,11 @@ const recorded: CeilingEntry = { ceiling: null, issue: null };
  * - #2607: a `parent-of` write. The cycle check alone cannot be seen from
  *   outside, so the ceiling is on the whole request.
  * - #2612: the archive export of the whole instance.
+ * - #2610: the scan of a first folder sync of 10,000 linked notes. The rest of
+ *   the folder and device ceilings are the maintainer's budgets, with no issue:
+ *   the whole first sync, a device copy of the instance and a server change
+ *   reaching a following device. #2611 sets the edit-to-server time, and
+ *   #2608 the quiet watch's CPU.
  */
 export const CEILINGS: Record<string, CeilingEntry> = {
   // Reads at rest.
@@ -102,6 +108,25 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   archive_export: { ceiling: 300, issue: 2612 },
   archive_export_first_byte: recorded,
 
+  // A first sync of 10,000 linked notes into the instance. The scan is
+  // timed alone; the whole sync is the hydration, scan and push together.
+  folder_scan: { ceiling: 60, issue: 2610 },
+  folder_first_sync: { ceiling: 300, issue: null },
+  folder_hydrate: recorded,
+  folder_push: recorded,
+  // The notes the server holds afterwards; a shortfall is an error.
+  folder_notes_synced: recorded,
+
+  // A watch on that folder: an edit reaching the server, and a quiet watch.
+  folder_edit_to_server: { ceiling: 2000, issue: 2611 },
+  folder_watch_cpu: { ceiling: 0.5, issue: 2608 },
+  folder_watch_rss: recorded,
+
+  // A device copying the instance, then following the event stream.
+  device_hydrate: { ceiling: 60, issue: null },
+  device_copy_size: recorded,
+  device_follow_change: { ceiling: 1000, issue: null },
+
   server_restart: { ceiling: 2000, issue: null },
   server_restart_first: recorded,
 
@@ -129,6 +154,8 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 export const KNOWN_OVER: Readonly<Record<string, number>> = {
   search_common: 2656,
   archive_export: 2657,
+  folder_edit_to_server: 2611,
+  folder_watch_cpu: 2608,
 };
 
 function entryFor(name: string): CeilingEntry {

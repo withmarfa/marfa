@@ -56,8 +56,10 @@ describe("job limits", () => {
       const numbers =
         typeof limit === "number" ? [limit] : String(limit).match(/\d+/g);
       expect(numbers, `${file}: ${id}`).not.toBeNull();
-      // The scale benchmark seeds a 250,000-item instance and measures it.
-      const ceiling = file === "benchmarks.yml" && id === "scale" ? 150 : 100;
+      // The scale benchmark seeds a 250,000-item instance, measures it, then
+      // times a folder and a device against it. Its limit is provisional until
+      // a full-size run shows the real time: set it to about twice that.
+      const ceiling = file === "benchmarks.yml" && id === "scale" ? 240 : 100;
       expect(
         Math.max(...(numbers ?? []).map(Number)),
         `${file}: ${id}`,

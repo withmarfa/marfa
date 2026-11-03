@@ -122,6 +122,19 @@ jobs:
   #     tags; 10% sit in the feed tier; at least 100,000 parent-of edges and
   #     about edges besides. A seeded generator makes every night the same.
   #   - Seeded in pages of 1,000 through /items/bulk and /edges/bulk.
+  # After the server figures, the release `marfa` binary measures what a
+  # person's machine does against that instance:
+  #   - `device`: a copy of the whole instance, and a server change reaching a
+  #     device that follows the event stream.
+  #   - `folder`: the first sync of 10,000 generated, linked notes into the
+  #     instance, with a key and a folder query of the folder's own. The first
+  #     sync is stopped and counted as an error after 20 minutes.
+  #   - `watch`: 30 edits timed from the file write to the new version on the
+  #     server, then 10 quiet minutes of the watch's CPU and memory. It is
+  #     inotify here, where a Mac uses FSEvents.
+  # Each of these stops only the processes it started, by process ID, and keeps
+  # what it measured if one hangs. The job limit is provisional until the first
+  # full-size run shows how long the night takes; set it to about twice that.
   # Each step writes a fragment under conformance/reports/scale/, so a step
   # that crashes or times out keeps the figures of the others. The `finish`
   # step merges them, compares them with the previous night's artifact and
@@ -130,7 +143,7 @@ jobs:
   # figures.ts) against an open issue.
   scale:
     name: Scale
-    timeout-minutes: 150
+    timeout-minutes: 240
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -193,6 +206,23 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: conformance
         run: pnpm scale storage
+      # Each of these has a limit of its own inside the script; the step limit
+      # is only a backstop that ends the step if the script itself hangs.
+      - name: Device copy and follow
+        if: ${{ !cancelled() }}
+        timeout-minutes: 40
+        working-directory: conformance
+        run: pnpm scale device
+      - name: Folder first sync
+        if: ${{ !cancelled() }}
+        timeout-minutes: 35
+        working-directory: conformance
+        run: pnpm scale folder
+      - name: Folder watch
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        working-directory: conformance
+        run: pnpm scale watch
 
       - name: Merge, compare and report
         if: ${{ !cancelled() }}

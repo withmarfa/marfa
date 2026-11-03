@@ -8,13 +8,16 @@
  * recorded. `finish` merges and reports, and `judge` fails the night.
  */
 import { bulk } from "./bulk.js";
+import { device } from "./device.js";
 import { edges } from "./edges.js";
 import { exportArchive } from "./export.js";
 import { finish, judge } from "./finish.js";
+import { folder } from "./folder.js";
 import { reads } from "./reads.js";
 import { restart } from "./restart.js";
 import { seed } from "./seed.js";
 import { storage } from "./storage.js";
+import { watch } from "./watch.js";
 
 const STEPS: Record<string, () => Promise<void> | void> = {
   seed,
@@ -24,6 +27,9 @@ const STEPS: Record<string, () => Promise<void> | void> = {
   edges,
   export: exportArchive,
   storage,
+  device,
+  folder,
+  watch,
   finish,
   judge,
 };
