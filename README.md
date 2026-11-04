@@ -37,6 +37,7 @@ The instance is the source of truth. Clients never talk to each other, only to t
 ## Run your own instance
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/5z9-Ja?utm_medium=integration&utm_source=button&utm_campaign=marfa)
+<a href="https://repocloud.io/details/Marfa/"><img src="https://d16t0pc4846x52.cloudfront.net/deploylobe.svg" alt="Deploy on RepoCloud" height="40"></a>
 
 The Railway template creates the server, a volume for its data and a private bucket for backups, and generates the server's secrets. Railway bills the service and its storage to your workspace. [Create a personal Marfa instance on Railway](./deploy/railway.md) has the steps, including claiming the instance.
 
