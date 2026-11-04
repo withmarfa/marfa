@@ -427,7 +427,13 @@ export function scriptHydration(
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
-  scriptStats(server, rows, options.statsHeldUntil, options.reading);
+  scriptStats(
+    server,
+    rows,
+    options.statsHeldUntil,
+    options.reading,
+    edges ?? {},
+  );
   const pageHeld = (request: RecordedRequest, page: Answer): Answer => {
     const first =
       request.query.get("cursor") === null &&
@@ -469,7 +475,14 @@ export function scriptHydration(
         : (options.reading?.(filter) ?? scriptedFilter(filter));
     if (matches === undefined)
       return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+    // A folder narrowed beneath an item lists only what the item reaches by
+    // `parent-of`, as the server does, so a copy that asks for less than it
+    // holds goes red.
+    const reached = beneathOf(request.query.get("beneath"), edges ?? {});
     const inState = forType
+      .filter(
+        (row) => reached === null || reached.has(String(wireItem(row.item).id)),
+      )
       .filter((row) => asked(row.item.state ?? "active"))
       .filter(
         (row) =>
@@ -489,9 +502,12 @@ export function scriptHydration(
       return pageHeld(
         request,
         itemsPage(
-          inState
-            .slice(offset, next)
-            .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+          inState.slice(offset, next).map((row) => ({
+            item: wireItem(
+              reached === null ? row.item : withOwnEdges(row.item, edges ?? {}),
+            ),
+            tags: row.tags,
+          })),
           next < inState.length ? { nextCursor: String(next) } : {},
         ),
       );
@@ -504,6 +520,48 @@ export function scriptHydration(
     );
   });
   scriptTitles(server, rows, options.lookup, options.catalog);
+}
+
+/** A row with the scripted edges it is the source of, as the server's
+ *  `include=edges` draws them, unless the fixture drew its own. Only a
+ *  listing narrowed beneath an item draws them, which is the one listing a
+ *  catch-up holds a moved branch from. */
+function withOwnEdges(
+  item: WireItemOptions,
+  edges: Record<string, WireEdgeOptions[]>,
+): WireItemOptions {
+  if (item.edges !== undefined) return item;
+  const drawn: Record<string, unknown> = {};
+  for (const [type, all] of Object.entries(edges)) {
+    const own = all.filter((edge) => edge.source_id === item.id);
+    if (own.length > 0)
+      drawn[type] = {
+        data: own.map((edge) => wireEdge({ ...edge, edge_type: type })),
+        next_cursor: null,
+      };
+  }
+  return { ...item, edges: drawn };
+}
+
+/** The ids `beneath` reaches: the root and every target of a scripted
+ *  `parent-of` edge from an id already reached, or `null` with no root. */
+function beneathOf(
+  root: string | null,
+  edges: Record<string, WireEdgeOptions[]>,
+): Set<string> | null {
+  if (root === null) return null;
+  const reached = new Set([root]);
+  let grown = true;
+  while (grown) {
+    grown = false;
+    for (const edge of edges["parent-of"] ?? []) {
+      if (reached.has(edge.source_id) && !reached.has(edge.target_id)) {
+        reached.add(edge.target_id);
+        grown = true;
+      }
+    }
+  }
+  return reached;
 }
 
 /** Whether a row's state is one a listing's `state` parameter names:
@@ -705,6 +763,7 @@ export function scriptStats(
   rows: Record<string, Array<FilteredRow>> = {},
   heldUntil?: Promise<void>,
   reading?: FilterReading,
+  edges: Record<string, WireEdgeOptions[]> = {},
 ): void {
   server.answer("GET", "/items/stats", (request) => {
     if (request.headers["x-marfa-reach"] !== undefined)
@@ -716,6 +775,7 @@ export function scriptStats(
       filter === null ? null : (reading?.(filter) ?? scriptedFilter(filter));
     if (matches === undefined)
       return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+    const reached = beneathOf(request.query.get("beneath"), edges);
     const system = request.query.get("include") === "system";
     const byType = request.query.get("by") === "type";
     const counts: Record<string, number> = {};
@@ -732,6 +792,8 @@ export function scriptStats(
         const rowState = row.item.state ?? "active";
         if (!state(rowState)) continue;
         if (matches !== null && !matches(row)) continue;
+        if (reached !== null && !reached.has(String(wireItem(row.item).id)))
+          continue;
         const key = byType ? type : rowState;
         counts[key] = (counts[key] ?? 0) + 1;
       }

@@ -4010,9 +4010,87 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
+         DELETE FROM beneath_reach;
          DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
+}
+
+/// Counts the changes to the `parent-of` edges since the last settle of the
+/// slice's `beneath`; the triggers on `edges` add to it.
+pub(crate) const META_BENEATH_SETTLE: &str = "beneath_settle";
+/// Set where the next settle of `beneath` judges every row the copy holds,
+/// not only those whose place under the root changed: a hydration holds what
+/// its listings brought, which the reach it ends with may not match.
+pub(crate) const META_BENEATH_WHOLE: &str = "beneath_settle_whole";
+
+/// Owes the slice's `beneath` a whole settle, or forgets one owed where the
+/// slice has no `beneath`. The reach the copy held stays until that settle
+/// replaces it, so a row is judged by it while a refill lists.
+pub(crate) fn owe_whole_settle(conn: &Connection) -> Result<(), CoreError> {
+    if slice_query(conn)?.is_some_and(|query| query.beneath.is_some()) {
+        bump_beneath_settle(conn)?;
+        meta_set(conn, META_BENEATH_WHOLE, "true")
+    } else {
+        conn.execute("DELETE FROM beneath_reach", [])?;
+        meta_delete(conn, META_BENEATH_SETTLE)?;
+        meta_delete(conn, META_BENEATH_WHOLE)
+    }
+}
+
+/// The ids the last settle of `beneath` reached (`beneath_reach`).
+pub(crate) fn beneath_reach(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT id FROM beneath_reach")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<Result<_, _>>()?)
+}
+
+pub(crate) fn enter_beneath_reach(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    let mut statement =
+        conn.prepare_cached("INSERT OR IGNORE INTO beneath_reach (id) VALUES (?1)")?;
+    for id in ids {
+        statement.execute([id])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn leave_beneath_reach(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    let mut statement = conn.prepare_cached("DELETE FROM beneath_reach WHERE id = ?1")?;
+    for id in ids {
+        statement.execute([id])?;
+    }
+    Ok(())
+}
+
+/// Every id the copy holds a row under.
+pub(crate) fn item_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT id FROM items")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<Result<_, _>>()?)
+}
+
+fn bump_beneath_settle(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, '1')
+           ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+        [META_BENEATH_SETTLE],
+    )?;
+    Ok(())
+}
+
+/// A condition on `edges` that the `parent-of` edges a walk of `beneath`
+/// follows meet. While a refill runs, an edge it has not brought may be gone
+/// from the server and leaves at its sweep, so only those it brought and
+/// those a waiting write of this device's names are followed.
+pub(crate) fn beneath_edges(conn: &Connection) -> Result<&'static str, CoreError> {
+    Ok(if refilling(conn)? {
+        "(EXISTS (SELECT 1 FROM meta WHERE meta.key = 'edge_brought/' || edges.id)
+          OR edges.id IN (SELECT edge_id FROM queue
+                           WHERE edge_id IS NOT NULL
+                             AND (verdict IS NULL OR verdict IN ('blocked', 'dead'))))"
+    } else {
+        "1"
+    })
 }
 
 fn edge_brought(id: &str) -> String {
@@ -6413,19 +6491,20 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             };
             if row.kind == WriteKind::CreateEdge {
                 delete_edge(conn, id)?;
-                return drop_beneath(conn, Subject::Edge, id);
-            }
-            if let Some(held) = beneath_edge(conn, id)? {
-                upsert_edge(conn, &held.as_wire())?;
-            }
-            lay_waiting_edge_writes_over(conn, id)?;
-            if !edge_write_waits(conn, id)? {
                 drop_beneath(conn, Subject::Edge, id)?;
-                removal_unsent(conn, Subject::Edge, id)?;
+            } else {
+                if let Some(held) = beneath_edge(conn, id)? {
+                    upsert_edge(conn, &held.as_wire())?;
+                }
+                lay_waiting_edge_writes_over(conn, id)?;
+                if !edge_write_waits(conn, id)? {
+                    drop_beneath(conn, Subject::Edge, id)?;
+                    removal_unsent(conn, Subject::Edge, id)?;
+                }
+                // Where the server moved it to a source the copy does not
+                // hold while the refused write waited.
+                let_go_of_untaken_edge(conn, id)?;
             }
-            // Where the server moved it to a source the copy does not hold
-            // while the refused write waited.
-            let_go_of_untaken_edge(conn, id)?;
         }
         None => {}
     }
@@ -10216,7 +10295,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "30313fd29da08100",
+            "08b58201f8fb96d3",
             "the shape of a table changed, which refuses every store made before it"
         );
     }

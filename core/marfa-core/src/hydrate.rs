@@ -59,7 +59,7 @@ fn hydrate_inner(
     let types = declared_types(types)?;
     let edge_types = declared_edge_types(edge_types)?;
     if let Some(query) = query {
-        declared_query(query)?;
+        declared_query(query, &edge_types)?;
     }
     let mut restart = None;
     let mut pages = 0;
@@ -448,6 +448,7 @@ fn attempt(
                 store::clear_slice(&tx)?;
                 store::meta_delete(&tx, store::META_SYNCED_AT)?;
             }
+            store::owe_whole_settle(&tx)?;
             store::replace_catalog(&tx, &catalog_rows)?;
             take_pins(&tx, &pinned)?;
             // A copy filling up answers reads, so it shows what is waiting
@@ -634,6 +635,10 @@ fn attempt(
                 },
             )?;
         }
+
+        // The listings held the rows the root reached as each page was
+        // read; the edges, whole now, say what it reaches.
+        crate::catch_up::settle_listed(core, &context, http, stop)?;
 
         if reached.phase != Phase::Replay {
             // A pin the answer leaves out names no row the key may read
@@ -844,14 +849,26 @@ fn listing_of(key: &str) -> (&str, bool) {
     }
 }
 
-/// A query a copy can be narrowed by: one whose every term the row and its
-/// tags answer, so an event can be judged by the row it carries.
-fn declared_query(query: &SliceQuery) -> Result<()> {
+/// A query a copy can be narrowed by: one whose every filter term the row
+/// and its tags answer, so an event can be judged by the row it carries, and
+/// whose `beneath` the `parent-of` edges the copy holds whole answer, so an
+/// edge event can be judged by the edges held.
+fn declared_query(query: &SliceQuery, edge_types: &[String]) -> Result<()> {
     query.check()?;
     if query.relational()? {
         return Err(CoreError::Invalid(
             "a slice's query narrows by edges or another row, which a working copy cannot yet be narrowed by; hydrate with its states alone".into(),
         ));
+    }
+    if query.beneath.is_some()
+        && !edge_types
+            .iter()
+            .any(|edge_type| edge_type == crate::filter::PARENT_OF)
+    {
+        return Err(CoreError::Invalid(format!(
+            "a slice's query searches beneath an item, which needs the {} edges held whole",
+            crate::filter::PARENT_OF
+        )));
     }
     Ok(())
 }
@@ -1522,6 +1539,71 @@ pub(crate) fn read_with_edges(
         )?);
     }
     Ok(Some((read, edges)))
+}
+
+/// The edges `row` draws of each type not in `whole`, its overflow read
+/// too: the copy holds an edge of a whole type from the stream alone, which
+/// a read can run ahead of.
+pub(crate) fn drawn_edges(
+    http: &Http,
+    stop: &AtomicBool,
+    row: &WireItemWithMetadata,
+    whole: &[String],
+) -> Result<Vec<WireEdge>> {
+    let mut edges = Vec::new();
+    for (edge_type, block) in row.item.edges.iter().flatten() {
+        if whole.contains(edge_type) {
+            continue;
+        }
+        edges.extend(block.data.iter().cloned());
+        edges.extend(fetch_overflow(http, stop, &row.item.id, edge_type, block)?);
+    }
+    Ok(edges)
+}
+
+/// Walks the slice's item listings narrowed by `narrowing`, a listing of each
+/// of `types` in turn. Each page goes to `write` before the next is asked
+/// for, and `stop` is looked at before each request.
+pub(crate) fn walk_listing(
+    http: &Http,
+    stop: &AtomicBool,
+    types: &[String],
+    tier: SliceTier,
+    narrowing: &crate::slice::Listing,
+    mut write: impl FnMut(&[WireItemWithMetadata]) -> Result<()>,
+) -> Result<()> {
+    for declared in types {
+        let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let page = http.items_page(&ItemsQuery {
+                r#type: listing,
+                tier: listed_tier(listing, tier),
+                narrowing: Some(narrowing),
+                cursor: cursor.as_deref(),
+            })?;
+            write(&page.data)?;
+            match page.next_cursor {
+                // A server handing back a cursor it gave before would loop.
+                Some(next) if !seen.insert(next.clone()) => return Err(crate::reach::invalid()),
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a hydration is listing the rows or the edges, which leaves the
+/// edges the copy holds short of whole.
+pub(crate) fn listing(conn: &rusqlite::Connection) -> Result<bool> {
+    let Some(reached) = store::meta_get(conn, store::META_HYDRATE_RESUME)? else {
+        return Ok(false);
+    };
+    let reached: Reached = serde_json::from_str(&reached)?;
+    Ok(matches!(reached.phase, Phase::Items | Phase::Edges))
 }
 
 /// A row held at a later stamp came from an event since the read, and

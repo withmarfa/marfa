@@ -49,6 +49,7 @@ pub(crate) struct Listing {
     /// Comma-separated, as `GET /items` takes it.
     pub state: String,
     pub filter: Option<String>,
+    pub beneath: Option<String>,
     pub tags: Option<&'static str>,
 }
 
@@ -98,14 +99,15 @@ impl SliceQuery {
         states
     }
 
-    /// Whether a term needs edges or another row, which a server listing
-    /// does not narrow by and an event does not carry.
+    /// Whether a filter term needs edges or another row, which a copy is
+    /// not narrowed by: a row's place under `beneath` follows `parent-of`
+    /// alone, which the copy holds whole, but an `edge`, `backref` or `part`
+    /// term reads edges and rows it may not hold.
     pub(crate) fn relational(&self) -> Result<bool> {
-        Ok(self.beneath.is_some()
-            || match &self.filter {
-                Some(filter) => crate::filter::reads(filter)?.relational,
-                None => false,
-            })
+        Ok(match &self.filter {
+            Some(filter) => crate::filter::reads(filter)?.relational,
+            None => false,
+        })
     }
 
     pub(crate) fn reads_status(&self) -> Result<bool> {
@@ -141,10 +143,10 @@ impl SliceQuery {
     }
 
     /// The narrowing a copy holds for this query: its states always named,
-    /// in one order, and its filter only where it needs no edges or another
-    /// row, since a copy cannot yet be narrowed by them; `beneath` always
-    /// needs edges. `None` where that narrows nothing, so a copy of the
-    /// query holds what a copy of its types and tier always has.
+    /// in one order, its `beneath`, and its filter only where it needs no
+    /// edges or another row, since a copy cannot yet be narrowed by them.
+    /// `None` where that narrows nothing, so a copy of the query holds what
+    /// a copy of its types and tier always has.
     pub(crate) fn for_copy(&self) -> Result<Option<SliceQuery>> {
         let member = self.member_states();
         let filter = if self.relational()? {
@@ -152,13 +154,16 @@ impl SliceQuery {
         } else {
             self.filter.clone()
         };
-        if filter.is_none() && member == DEFAULT_STATES.map(ItemState::as_str) {
+        if filter.is_none()
+            && self.beneath.is_none()
+            && member == DEFAULT_STATES.map(ItemState::as_str)
+        {
             return Ok(None);
         }
         Ok(Some(SliceQuery {
             states: Some(member.into_iter().map(str::to_string).collect()),
             filter,
-            beneath: None,
+            beneath: self.beneath.clone(),
         }))
     }
 
@@ -185,6 +190,11 @@ impl SliceQuery {
     /// What a copy narrowed by this query takes of the rows its types and
     /// tier take, as clauses on `items`: a member, in the bin or not, and a
     /// conflicted copy in one of those states.
+    ///
+    /// The query's `beneath` is answered by the reach the last settle wrote
+    /// (`beneath_reach`), not by the edges held now, so a row is held by the
+    /// same answer from one settle to the next whatever order the edges
+    /// between them arrive in.
     pub(crate) fn takes(
         &self,
         catalog: &Catalog,
@@ -196,12 +206,15 @@ impl SliceQuery {
         let mut narrowing = Vec::new();
         crate::filter::narrow(
             self.filter.as_deref(),
-            self.beneath.as_deref(),
+            None,
             whole,
             catalog,
             &mut narrowing,
             values,
         )?;
+        if self.beneath.is_some() {
+            narrowing.push("items.id IN (SELECT id FROM beneath_reach)".into());
+        }
         if !narrowing.is_empty() {
             values.push(Value::String(crate::CONFLICTED_COPY_TAG.into()));
             clauses.push(format!(
@@ -236,6 +249,7 @@ impl SliceQuery {
         Listing {
             state: self.listed_states().join(","),
             filter: (!conflicted).then(|| self.filter.clone()).flatten(),
+            beneath: (!conflicted).then(|| self.beneath.clone()).flatten(),
             tags: conflicted.then_some(crate::CONFLICTED_COPY_TAG),
         }
     }
@@ -312,6 +326,29 @@ pub(crate) fn judge_staged(
     Ok(Some(judged))
 }
 
+/// The ids a settle of `beneath` reaches under `root` by the edges held now
+/// (`store::beneath_edges`): `root` and every id under it, held as a row or
+/// not. `UNION` ends the walk on a cycle, as `filter::beneath_walk` does.
+pub(crate) fn beneath_ids(
+    conn: &rusqlite::Connection,
+    root: &str,
+) -> Result<std::collections::HashSet<String>> {
+    let mut statement = conn.prepare_cached(&format!(
+        "WITH RECURSIVE down(id) AS (
+           SELECT ?1
+           UNION
+           SELECT edges.target_id FROM edges JOIN down ON edges.source_id = down.id
+           WHERE edges.edge_type = '{}' AND {}
+         ) SELECT id FROM down",
+        crate::filter::PARENT_OF,
+        crate::store::beneath_edges(conn)?,
+    ))?;
+    let ids = statement
+        .query_map([root], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -324,6 +361,15 @@ mod tests {
             states: states.map(|states| states.iter().map(|s| s.to_string()).collect()),
             filter: filter.map(str::to_string),
             beneath: None,
+        }
+    }
+
+    impl SliceQuery {
+        fn with_states(self, states: Option<&[&str]>) -> SliceQuery {
+            SliceQuery {
+                states: states.map(|states| states.iter().map(|s| s.to_string()).collect()),
+                ..self
+            }
         }
     }
 
@@ -405,11 +451,6 @@ mod tests {
             archived.for_copy().unwrap(),
             Some(query(Some(&["archived"]), None))
         );
-        let beneath = SliceQuery {
-            beneath: Some("root".into()),
-            ..query(None, Some("tags contains \"work\""))
-        };
-        assert_eq!(beneath.for_copy().unwrap(), None);
         assert_eq!(query(None, None).for_copy().unwrap(), None);
         let tags = query(None, Some("tags contains \"work\""));
         assert!(!tags.relational().unwrap());
@@ -420,6 +461,43 @@ mod tests {
                 Some("tags contains \"work\"")
             ))
         );
+    }
+
+    #[test]
+    fn a_copy_keeps_beneath_with_its_filter_and_without_a_relational_one() {
+        let under = |filter: Option<&str>| SliceQuery {
+            beneath: Some("root".into()),
+            ..query(None, filter)
+        };
+        let both = Some(&["active", "archived"][..]);
+        assert!(!under(None).relational().unwrap());
+        assert_eq!(
+            under(None).for_copy().unwrap(),
+            Some(SliceQuery {
+                beneath: Some("root".into()),
+                ..query(both, None)
+            })
+        );
+        assert_eq!(
+            under(Some("tags contains \"work\"")).for_copy().unwrap(),
+            Some(under(Some("tags contains \"work\"")).with_states(both))
+        );
+        assert_eq!(
+            under(Some("edge[cites] exists")).for_copy().unwrap(),
+            Some(under(None).with_states(both)),
+            "an edge term is dropped, the subtree is kept"
+        );
+    }
+
+    #[test]
+    fn the_listing_sends_beneath_but_not_beside_the_conflicted_copies() {
+        let under = SliceQuery {
+            beneath: Some("root".into()),
+            ..query(None, None)
+        };
+        assert_eq!(under.listing(false).beneath.as_deref(), Some("root"));
+        assert_eq!(under.listing(true).beneath, None);
+        assert!(under.lists_conflicted_apart());
     }
 
     #[test]

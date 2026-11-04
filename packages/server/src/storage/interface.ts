@@ -185,6 +185,10 @@ export interface ItemFilters {
   exclude_system_types?: boolean;
   tags?: string[];
   filter?: string;
+  /** An item id: only that item and the items under it by `parent-of`, at
+   *  any depth, walked only through items `allowed_types`, `excluded_types`
+   *  and `source_filter` admit, as a view's `beneath` walks. */
+  beneath?: string;
   /** The types whose edges a `backref` term counts; omitted, every edge.
    *  The term also counts only edges whose source item `source_filter`
    *  shows. */

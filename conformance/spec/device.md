@@ -4,7 +4,7 @@ A device holds a working copy: a local store of one slice of one server, hydrate
 
 ## The working copy
 
-A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states and its filter (`folders/copy-holds-query`). A slice takes a row when the row's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the row is in one of the query's states or in the bin and the filter matches it, or the row is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one row by id whatever the slice says of it.
+A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states, its filter and the item it narrows beneath (`folders/copy-holds-query`). A slice takes a row when the row's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the row is in one of the query's states or in the bin, the filter matches it and, where the query names an item to narrow beneath, the row is that item or one the item reached along the `parent-of` edges the copy held, at any depth, at the last settle of its reach (`device/catch-up-beneath-leaves`), or the row is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one row by id whatever the slice says of it.
 
 ### `device/slice-held`
 
@@ -30,7 +30,7 @@ Where a slice has a query, and a row of a type and a tier it takes is not pinned
 
 **Reason:** a folder's copy then holds about as many rows as the folder shows, not every row of its types. A row a waiting write names stays, as a pinned row stays, until the write is accepted, refused or withdrawn (a blocked or dead write still waits, to be released), so the person's write is shown and sent against the row it changes, and an edge the person draws keeps both its ends.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`, `› keeps the target of an answered edge write that another waiting write still names`, `› lets go of the target of an edge write withdrawn after an event took it out of the query`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets a row go when an event takes it out of the query, and holds one an event brings into it`, `› keeps a row a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`, `› keeps the target of an answered edge write that another waiting write still names`, `› lets go of the target of an edge write withdrawn after an event took it out of the query`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
 
 ### `device/slice-query-bin`
 
@@ -778,11 +778,11 @@ When a device hydrates, a device MUST read the item listing for each type its sl
 
 ### `device/hydrate-listing-query`
 
-Where a slice has a query, when a device hydrates, a device MUST read the item listing for each type its slice names, at the slice's tier, in the query's states and `trashed`, with the query's filter, and count the items with the same keys.
+Where a slice has a query, when a device hydrates, a device MUST read the item listing for each type its slice names, at the slice's tier, in the query's states and `trashed`, with the query's filter and the item it narrows beneath, and count the items with the same keys.
 
 **Reason:** the server narrows the listing, so a folder of a few rows reads a few rows rather than every row of its types.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
 
 ### `device/hydrate-listing-conflicted`
 
@@ -1187,6 +1187,22 @@ Where a slice's query has a filter, when an `item.deleted`, `item.restored` or `
 **Reason:** the copy held every row its query took before the event, and a move between states changes only those three fields of what a filter reads, so a row the copy did not hold in any state it could have moved from cannot enter. A read for each would cost one request per row, thousands when a bin fills elsewhere.
 
 **Tests:** `device/folders-copy-shrink.test.ts › reads nothing for a row an event bins where the copy held every state it could leave`.
+
+### `device/catch-up-beneath-enters`
+
+Where a slice's query names an item to narrow beneath, when a device settles the item's reach and the item reaches, by the `parent-of` edges the copy holds, a row the copy does not hold that it did not reach at the last settle, a device MUST read that row by id and hold it if the query takes it.
+
+**Reason:** an edge event names the branch's top row alone, and the copy holds `parent-of` whole, so its own edges say which rows came beneath the item. A device settles after applying a change to a `parent-of` edge or a purge, whether the change came from an event, the device's own write, a refusal or a withdrawal: at the head of the stream, when the stream goes quiet and after every 500 such events. A settle walks the edges once and compares the rows the item reaches with those it reached at the last settle, so only the two ends count: a branch moved in, out and in again is read once, a move that keeps a branch beneath reads nothing, and a row drawn into a branch while the branch was out is read when the branch comes back. Rows are read 100 to a request, and a row in the bin, which a read by id leaves out, comes from one listing of the bin beneath the item. A read takes no `parent-of` edge, since a read can run ahead of the stream: a row it shows beneath the branch arrives at the settle after the event that draws it there. Each read is kept as it arrives, so a settle stopped or failed part way reads the rest at the next. The first settle after a hydration lists its edges also reads each row the item reaches that the hydration's listing did not answer, since a row can move between the listing of the items and the listing of the edges.
+
+**Tests:** `device/folders-copy-shrink.test.ts › holds a branch moved beneath the item, and writes its files`.
+
+### `device/catch-up-beneath-leaves`
+
+Where a slice's query names an item to narrow beneath, when a device settles the item's reach and the item no longer reaches a row the copy holds, a device MUST let the row go unless the row is pinned or a write of the device's own to it waits.
+
+**Reason:** between settles, a device judges a row as the last settle reached it, so a branch moved out and back again lets nothing go, even where an event about one of its rows comes between, and a row moved away from a branch while the branch was out leaves at the settle. The item's own state does not narrow the walk, so a branch stays while the item is in the bin and leaves once the item is purged. A refill in place judges by the last settle until it has listed the edges again, so a row unpinned while the refill lists its items stays.
+
+**Tests:** `device/folders-copy-shrink.test.ts › lets go of a branch moved out from beneath the item, but a row a waiting write names`, `› keeps the branch while the item is in the bin, and lets it go once the item is purged`.
 
 ### `device/catch-up-query-catalog`
 

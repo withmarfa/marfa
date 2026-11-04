@@ -232,6 +232,9 @@ fn narrowed<'a>(params: &mut Vec<(&'a str, &'a str)>, narrowing: &'a crate::slic
     if let Some(filter) = &narrowing.filter {
         params.push(("filter", filter));
     }
+    if let Some(beneath) = &narrowing.beneath {
+        params.push(("beneath", beneath));
+    }
     if let Some(tags) = narrowing.tags {
         params.push(("tags", tags));
     }

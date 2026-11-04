@@ -554,6 +554,7 @@ pub(crate) fn replay_build(
     let mut greatest = reach::cursor(&cursor).ok_or_else(reach::invalid)?;
     let mut connected = false;
     let mut prologue_seen = false;
+    let mut unsettled = 0;
     loop {
         let wait = if prologue_seen {
             idle
@@ -614,6 +615,8 @@ pub(crate) fn replay_build(
                         {
                             report.cursor = cursor;
                         }
+                        report.applied +=
+                            settle_beneath(core, context, http, &catalog, &slice, stop)?;
                         reached_head = true;
                         break;
                     }
@@ -645,6 +648,12 @@ pub(crate) fn replay_build(
                             report.skipped += 1;
                         }
                         report.cursor = id.clone();
+                        unsettled += usize::from(may_owe(kind));
+                        if unsettled >= SETTLE_EVERY {
+                            unsettled = 0;
+                            report.applied +=
+                                settle_beneath(core, context, http, &catalog, &slice, stop)?;
+                        }
                     }
                 }
             }
@@ -1223,6 +1232,8 @@ fn read_stream(
     let mut head = None;
     let mut live_confirmed = false;
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
+    // A settle a stop or a failure cut short is owed from before this stream.
+    let mut unsettled = 1;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -1239,10 +1250,22 @@ fn read_stream(
             {
                 return Ok(Ended::Over);
             }
+            Err(RecvTimeoutError::Timeout) if unsettled > 0 => {
+                unsettled = 0;
+                if let Some(ended) =
+                    settle_following(core, context, catalog, slice, stop, report, on_change)?
+                {
+                    return Ok(ended);
+                }
+                continue;
+            }
             Err(RecvTimeoutError::Timeout) => continue,
         };
         heard = now();
         let Frame::Event { id, name, data } = frame else {
+            // A change of this device's own, or the answer to one, owes a
+            // settle no event may follow.
+            unsettled = unsettled.max(1);
             // A heartbeat at the head says the copy is still current.
             if live_confirmed {
                 mark_synced_while_live(core, context, pace, now, synced)?;
@@ -1279,6 +1302,12 @@ fn read_stream(
                     pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                 {
                     report.cursor = cursor;
+                }
+                unsettled = 0;
+                if let Some(ended) =
+                    settle_following(core, context, catalog, slice, stop, report, on_change)?
+                {
+                    return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
                 on_live(live_confirmed);
@@ -1328,12 +1357,62 @@ fn read_stream(
                     None => report.skipped += 1,
                 }
                 report.cursor = id;
+                unsettled += usize::from(may_owe(kind));
+                if unsettled >= SETTLE_EVERY {
+                    unsettled = 0;
+                    if let Some(ended) =
+                        settle_following(core, context, catalog, slice, stop, report, on_change)?
+                    {
+                        return Ok(ended);
+                    }
+                }
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced)?;
                 }
             }
         }
+    }
+}
+
+/// Settles the slice's `beneath` for a follow, telling a settle that changed
+/// the rows held as an edge change. A failure ends the stream as a failed
+/// take does; the settle stays owed, so the next stream makes it.
+fn settle_following(
+    core: &Core,
+    context: &Context,
+    catalog: &Catalog,
+    slice: &Slice,
+    stop: &AtomicBool,
+    report: &mut FollowReport,
+    on_change: &mut dyn FnMut(&Change),
+) -> Result<Option<Ended>> {
+    let settled = core
+        .http()
+        .and_then(|http| settle_beneath(core, context, http, catalog, slice, stop));
+    match settled {
+        Ok(0) => Ok(None),
+        Ok(_) => {
+            report.applied += 1;
+            on_change(&Change {
+                event: ChangeEvent::Applied("edge.updated".into()),
+                item_id: None,
+                edge_id: None,
+                cursor: report.cursor.clone(),
+            });
+            Ok(None)
+        }
+        Err(CoreError::Canceled) if stop.load(Ordering::Relaxed) => Ok(Some(Ended::Stopped)),
+        Err(ref error) if crate::folder::copy_changed(error) => {
+            context.same_copy(&*core.conn()?)?;
+            Ok(Some(Ended::Behind))
+        }
+        Err(error) if error.is_environmental() => {
+            report.failed_opens += 1;
+            report.last_failure = Some(error.to_string());
+            Ok(Some(Ended::Over))
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -1530,6 +1609,258 @@ fn query_takes(
         },
     )?;
     Ok(takes == Some(true))
+}
+
+/// Whether an event of `kind` may change the `parent-of` edges, and so owe
+/// the slice's `beneath` a settle (`store::META_BENEATH_SETTLE`).
+fn may_owe(kind: &str) -> bool {
+    kind.starts_with("edge.") || kind == "item.purged"
+}
+
+/// So many events that may owe a settle (`may_owe`) are settled together,
+/// and no more, before the stream is read on.
+const SETTLE_EVERY: usize = 500;
+
+/// So many ids are let go of, or written to the reach, in one transaction of
+/// a settle.
+const SETTLE_PAGE: usize = 500;
+
+/// Settles the slice's `beneath` where a change to the `parent-of` edges
+/// owes it one (`device/catch-up-beneath-enters`,
+/// `device/catch-up-beneath-leaves`): walks the edges held now from the root
+/// once, lets go of each held row the walk no longer reaches, reads by id,
+/// a hundred to a request, each row it now reaches that the copy does not
+/// hold, and writes the walk as the reach rows are judged by until the next
+/// settle (`beneath_reach`). Only the walk's two ends are judged, so a
+/// branch moved out and back between two settles lets nothing go and is read
+/// for nothing, whatever order its edges arrived in.
+///
+/// A whole settle (`store::META_BENEATH_WHOLE`), the first after a
+/// hydration's listings, judges every row the copy holds against the walk
+/// and reads every row it reaches that the hydration did not answer.
+///
+/// Each page is written in a transaction of its own, the reach with it, so a
+/// settle stopped or failed part way keeps what it wrote and the next settle
+/// does the rest. `stop` is looked at before each page and request. The
+/// count of changes is cleared only where no change was made while the
+/// settle ran. Answers how many rows it held or let go of.
+fn settle_beneath(
+    core: &Core,
+    context: &Context,
+    http: &Http,
+    catalog: &Catalog,
+    slice: &Slice,
+    stop: &AtomicBool,
+) -> Result<u64> {
+    let Some(root) = slice
+        .query
+        .as_ref()
+        .and_then(|query| query.beneath.as_deref())
+    else {
+        return Ok(0);
+    };
+    let http = &context.http(http);
+    let (owed, whole, leaving, entering) = {
+        let conn = core.conn()?;
+        context.same_copy(&conn)?;
+        let Some(owed) = store::meta_get(&conn, store::META_BENEATH_SETTLE)? else {
+            return Ok(0);
+        };
+        // The edges are not yet whole while a hydration lists them.
+        if crate::hydrate::listing(&conn)? {
+            return Ok(0);
+        }
+        let whole = store::meta_get(&conn, store::META_BENEATH_WHOLE)?.is_some();
+        let reach = crate::slice::beneath_ids(&conn, root)?;
+        let held_reach = store::beneath_reach(&conn)?;
+        let mut leaving: Vec<String> = held_reach.difference(&reach).cloned().collect();
+        if whole {
+            for id in store::item_ids(&conn)? {
+                if !reach.contains(&id) && !held_reach.contains(&id) {
+                    leaving.push(id);
+                }
+            }
+        }
+        let mut entering: Vec<String> = if whole {
+            reach.into_iter().collect()
+        } else {
+            reach.difference(&held_reach).cloned().collect()
+        };
+        leaving.sort();
+        entering.sort();
+        (owed, whole, leaving, entering)
+    };
+    let mut changed = 0;
+    for page in leaving.chunks(SETTLE_PAGE) {
+        refuse_if_stopped(stop)?;
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        store::leave_beneath_reach(&tx, page)?;
+        for id in page {
+            if store::item_held(&tx, id)? && store::let_go_unless_kept(&tx, catalog, id)? {
+                changed += 1;
+            }
+        }
+        tx.commit()?;
+    }
+    let mut unread = Vec::new();
+    for page in entering.chunks(SETTLE_PAGE) {
+        refuse_if_stopped(stop)?;
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        let mut held = Vec::new();
+        for id in page {
+            if holds_answered(&tx, id)? || store::removed(&tx, Subject::Item, id)? {
+                held.push(id.clone());
+            } else {
+                unread.push(id.clone());
+            }
+        }
+        store::enter_beneath_reach(&tx, &held)?;
+        tx.commit()?;
+    }
+    let mut left_out = Vec::new();
+    for ids in unread.chunks(crate::http::BULK_GET_LIMIT) {
+        refuse_if_stopped(stop)?;
+        let rows = http.items_by_id(ids)?;
+        let answered: HashSet<&str> = rows.iter().map(|row| row.item.id.as_str()).collect();
+        // A row in the bin, which a read by id leaves out, is listed.
+        left_out.extend(
+            ids.iter()
+                .filter(|id| !answered.contains(id.as_str()))
+                .cloned(),
+        );
+        let answered: Vec<String> = ids
+            .iter()
+            .filter(|id| answered.contains(id.as_str()))
+            .cloned()
+            .collect();
+        changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &answered)?;
+    }
+    if !left_out.is_empty() {
+        let wanted: HashSet<&str> = left_out.iter().map(String::as_str).collect();
+        let bin = crate::slice::Listing {
+            state: "trashed".into(),
+            filter: None,
+            beneath: Some(root.to_string()),
+            tags: None,
+        };
+        crate::hydrate::walk_listing(http, stop, &slice.types, slice.tier, &bin, |page| {
+            let rows: Vec<crate::wire::WireItemWithMetadata> = page
+                .iter()
+                .filter(|row| wanted.contains(row.item.id.as_str()))
+                .cloned()
+                .collect();
+            let reached: Vec<String> = rows.iter().map(|row| row.item.id.clone()).collect();
+            changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &reached)?;
+            Ok(())
+        })?;
+        // An id neither read answered names no row the key may read, and
+        // stays reached and unheld until a change says otherwise.
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        store::enter_beneath_reach(&tx, &left_out)?;
+        tx.commit()?;
+    }
+    let conn = core.conn()?;
+    context.same_copy(&conn)?;
+    if whole {
+        store::meta_delete(&conn, store::META_BENEATH_WHOLE)?;
+    }
+    conn.execute(
+        "DELETE FROM meta WHERE key = ?1 AND value = ?2",
+        [store::META_BENEATH_SETTLE, owed.as_str()],
+    )?;
+    Ok(changed)
+}
+
+/// `settle_beneath` once a hydration has listed the edges: the slice, its
+/// catalog and the reach as the store holds them.
+pub(crate) fn settle_listed(
+    core: &Core,
+    context: &Context,
+    http: &Http,
+    stop: &AtomicBool,
+) -> Result<()> {
+    let (slice, catalog) = {
+        let conn = core.conn()?;
+        (start_build(&conn)?.0, Catalog::load(&conn)?)
+    };
+    settle_beneath(core, context, http, &catalog, &slice, stop)?;
+    Ok(())
+}
+
+/// Whether the copy holds the row as the server last answered it: a refill
+/// keeps the rows it held until its sweep, which takes out one its walk or
+/// its replay did not answer.
+fn holds_answered(conn: &rusqlite::Connection, id: &str) -> Result<bool> {
+    Ok(store::item_held(conn, id)? && !(store::refilling(conn)? && !reach::answered(conn, id)?))
+}
+
+/// Holds each of `rows` the slice takes and the copy does not hold as
+/// answered: a held row is as new as the stream has brought it, and a read
+/// may be older. Of the edges each row taken draws, those of a type the copy
+/// does not hold whole are held; a `parent-of` edge comes from the stream
+/// alone, which a read can run ahead of. `reached` joins the reach in the
+/// same transaction, and each row taken is then judged by the query as held.
+/// How many rows it took and kept.
+#[allow(clippy::too_many_arguments)]
+fn hold_beneath(
+    core: &Core,
+    context: &Context,
+    http: &Http,
+    catalog: &Catalog,
+    slice: &Slice,
+    stop: &AtomicBool,
+    rows: &[crate::wire::WireItemWithMetadata],
+    reached: &[String],
+) -> Result<u64> {
+    let mut takes = Vec::new();
+    for row in rows {
+        if row.listed == Some(true) && in_slice(catalog, slice, &row.item)? {
+            let edges = crate::hydrate::drawn_edges(http, stop, row, &slice.whole)?;
+            takes.push((row, edges));
+        }
+    }
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    context.same_copy(&tx)?;
+    store::enter_beneath_reach(&tx, reached)?;
+    let mut entered = Vec::new();
+    for (row, _) in &takes {
+        let id = &row.item.id;
+        if entered.contains(id)
+            || holds_answered(&tx, id)?
+            || store::removed(&tx, Subject::Item, id)?
+        {
+            continue;
+        }
+        crate::hydrate::hold_row(&tx, catalog, row, &[])?;
+        entered.push(id.clone());
+    }
+    for (row, edges) in &takes {
+        if !entered.contains(&row.item.id) {
+            continue;
+        }
+        for edge in edges {
+            if !store::removed(&tx, Subject::Edge, &edge.id)?
+                && !store::removed(&tx, Subject::Item, &edge.target_id)?
+            {
+                store::take_server_edge(&tx, edge)?;
+            }
+        }
+    }
+    let mut kept = 0;
+    for id in &entered {
+        if !store::let_go_unless_kept(&tx, catalog, id)? {
+            kept += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(kept)
 }
 
 /// `read_tags` stands in for the tags of a frame that carries none.
