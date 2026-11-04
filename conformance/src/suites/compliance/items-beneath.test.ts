@@ -72,7 +72,10 @@ async function keyWith(
 }
 
 /** Every id the listing answers, page by page, sorted. */
-async function listed(query: string, by: MarfaClient = client): Promise<string[]> {
+async function listed(
+  query: string,
+  by: MarfaClient = client,
+): Promise<string[]> {
   const out: string[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 100; page += 1) {
@@ -157,9 +160,7 @@ describe("beneath on GET /items and GET /items/stats", () => {
       { "core.note": "read" },
       { "parent-of": "read" },
     );
-    expect(await listed(`state=active`, reader), "the witness").toContain(
-      leaf,
-    );
+    expect(await listed(`state=active`, reader), "the witness").toContain(leaf);
     expect(await listed(`beneath=${root}`, reader)).toEqual(
       [root, direct].sort(),
     );
@@ -174,8 +175,11 @@ describe("beneath on GET /items and GET /items/stats", () => {
       { about: "read" },
     );
     expect(
-      (await blind.rawRequest(`/items?source=${encodeURIComponent(ctx.source)}`))
-        .status,
+      (
+        await blind.rawRequest(
+          `/items?source=${encodeURIComponent(ctx.source)}`,
+        )
+      ).status,
       "the witness",
     ).toBe(200);
     for (const path of ["/items", "/items/stats"]) {
