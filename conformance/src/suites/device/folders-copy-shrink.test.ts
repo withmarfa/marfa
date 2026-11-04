@@ -26,6 +26,7 @@ import type { SseFrame } from "../../device/scripted-server.js";
 import {
   folderHarness,
   folderItem,
+  readsOf,
   type FilterReading,
   type FolderHarness,
 } from "./harness.js";
@@ -1080,13 +1081,10 @@ describe("a folder's copy narrowed beneath an item", () => {
 
     expect(await heldIds(harness!)).toEqual([id(1), id(2), id(5), id(6)]);
     expect(
-      harness!.server.requests.some(
-        (request) =>
-          request.pathname === "/items" &&
-          request.query.get("beneath") === id(5),
-      ),
-      "the branch was not read beneath where it entered",
-    ).toBe(true);
+      [readsOf(harness!.server, id(5)), readsOf(harness!.server, id(6))],
+      "the branch was not read by id, once",
+    ).toEqual([1, 1]);
+    expect(readsOf(harness!.server, id(2)), "a row held was read").toBe(0);
     expect(readFileSync(join(harness!.dir, "branch.md"), "utf8")).toContain(
       "branch",
     );
