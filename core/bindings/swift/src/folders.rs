@@ -770,7 +770,9 @@ fn event_of(event: marfa_core::WatchEvent) -> Result<FolderEvent, MarfaError> {
         W::Waiting { scan, .. } => FolderEvent::Waiting {
             reason: scan.root_gone.unwrap_or_default(),
         },
-        W::Busy { .. } | W::Missed { .. } | W::Reclaimed { .. } | W::ReclaimFailed(_) => unreachable!("the watch callback drops it"),
+        W::Busy { .. } | W::Missed { .. } | W::Reclaimed { .. } | W::ReclaimFailed(_) => {
+            unreachable!("the watch callback drops it")
+        }
         W::Passed(pass) => {
             let pass = *pass;
             FolderEvent::Passed {

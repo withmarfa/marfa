@@ -106,13 +106,14 @@ fn length_of(conn: &Connection, op: std::ffi::c_int) -> Option<u64> {
             op,
             std::ptr::from_mut(&mut file).cast(),
         );
-        if rc != rusqlite::ffi::SQLITE_OK || file.is_null() {
+        if rc != rusqlite::ffi::SQLITE_OK {
             return None;
         }
-        let methods = (*file).pMethods.as_ref()?;
+        let file = std::ptr::NonNull::new(file)?;
+        let methods = file.as_ref().pMethods.as_ref()?;
         let size_of = methods.xFileSize?;
         let mut size: i64 = 0;
-        if size_of(file, &mut size) != rusqlite::ffi::SQLITE_OK {
+        if size_of(file.as_ptr(), &mut size) != rusqlite::ffi::SQLITE_OK {
             return None;
         }
         u64::try_from(size).ok()
