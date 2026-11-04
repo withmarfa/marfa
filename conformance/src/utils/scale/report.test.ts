@@ -144,7 +144,7 @@ describe("the verdict", () => {
     }
   });
 
-  it("excuses the folder's edit time and quiet watch while their issues are open", () => {
+  it("excuses the quiet watch while its issue is open, and not a slow edit", () => {
     const fragments = healthyFragments();
     fragments[1] = fragmentOf("restart", [
       scalar("folder_watch_cpu", "cpu_s_per_min", 26),
@@ -155,27 +155,26 @@ describe("the verdict", () => {
       ),
     ]);
     const file = mergeFragments(fragments, run);
-    expect(verdictOf(file).passed).toBe(true);
     expect(renderSummary(file, null)).toContain("over, #2608 open");
-    expect(renderSummary(file, null)).toContain("over, #2611 open");
+    expect(verdictOf(file).failedFigures).toEqual(["folder_edit_to_server"]);
     expect(verdictOf(file, {}).failedFigures).toEqual([
       "folder_watch_cpu",
       "folder_edit_to_server",
     ]);
   });
 
-  it("does not excuse an edit that never arrived, even on a listed figure", () => {
+  it("does not excuse a search that answered an error, even on a listed figure", () => {
     const fragments = healthyFragments();
     fragments[1] = fragmentOf("restart", [
       distribution(
-        "folder_edit_to_server",
+        "search_common",
         "ms",
         Array.from({ length: 29 }, () => 100),
         { errors: 1 },
       ),
     ]);
     expect(verdictOf(mergeFragments(fragments, run)).failedFigures).toEqual([
-      "folder_edit_to_server",
+      "search_common",
     ]);
   });
 
