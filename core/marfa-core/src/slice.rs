@@ -326,7 +326,7 @@ pub(crate) fn judge_staged(
     Ok(Some(judged))
 }
 
-/// The ids `beneath` takes under `root` by the edges held now
+/// The ids a settle of `beneath` reaches under `root` by the edges held now
 /// (`store::beneath_edges`): `root` and every id under it, held as a row or
 /// not. `UNION` ends the walk on a cycle, as `filter::beneath_walk` does.
 pub(crate) fn beneath_ids(
