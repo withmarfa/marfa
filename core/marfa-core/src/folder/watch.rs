@@ -76,6 +76,13 @@ pub enum WatchEvent {
     /// was: a change that choice does not follow. Told to a log; the
     /// bindings do not carry it.
     Missed { path: String },
+    /// The copy's file was mostly free pages, from rows that left, and was
+    /// rewritten without them: its size in bytes before and after. Told to a
+    /// log; the bindings do not carry it.
+    Reclaimed { from: u64, to: u64 },
+    /// The rewrite failed and left the copy as it was; it is tried again
+    /// after a wait. Told to a log; the bindings do not carry it.
+    ReclaimFailed(String),
 }
 
 /// One pass of a watch: the settings edit sent, the scan, the drain and the
@@ -458,6 +465,9 @@ impl Folder {
             }
             telling.settled();
             gate.passed(crate::clock::now());
+            if let Some(event) = self.reclaim_space(&[stop, asked]) {
+                tell(event).map_err(WatchError::Told)?;
+            }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-ended");
             (lists, full_every) = self.watch_settings(full_every);
@@ -675,6 +685,8 @@ pub(super) struct Passes {
     health: Mutex<FollowHealth>,
     /// The paths each `Missed` the passes told named.
     pub(super) missed: Vec<String>,
+    /// What the passes told of freed pages given back.
+    pub(super) reclaimed: Vec<WatchEvent>,
     /// The ticks since the last full pass.
     ticks: u64,
     /// The folder's interval between full passes as the watch last read it,
@@ -703,6 +715,9 @@ impl Passes {
         };
         self.every = Some(folder.watch_settings(self.every()).1);
         self.stale = false;
+        if passed.is_ok() {
+            self.reclaimed.extend(folder.reclaim_space(&[&asked]));
+        }
         passed
     }
 

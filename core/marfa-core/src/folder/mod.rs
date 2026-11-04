@@ -713,6 +713,30 @@ impl Folder {
         &self.folder
     }
 
+    /// Gives the copy's freed pages back to the disk where most of the file
+    /// is free (`Core::reclaim_space`), unless any of `stops` is raised. What
+    /// a watch tells of it; `None` where it did nothing or waits for a later
+    /// round.
+    pub(super) fn reclaim_space(
+        &self,
+        stops: &[&std::sync::atomic::AtomicBool],
+    ) -> Option<WatchEvent> {
+        let stopping = std::sync::atomic::AtomicBool::new(
+            stops
+                .iter()
+                .any(|stop| stop.load(std::sync::atomic::Ordering::SeqCst)),
+        );
+        match self.core.reclaim_space(&stopping) {
+            crate::reclaim::Reclaim::Reclaimed { from, to } => {
+                Some(WatchEvent::Reclaimed { from, to })
+            }
+            crate::reclaim::Reclaim::Failed(error) => {
+                Some(WatchEvent::ReclaimFailed(error.to_string()))
+            }
+            crate::reclaim::Reclaim::Nothing | crate::reclaim::Reclaim::Skipped => None,
+        }
+    }
+
     pub fn core(&self) -> &Core {
         &self.core
     }
@@ -2516,6 +2540,8 @@ mod answered_tests;
 mod held_links_tests;
 #[cfg(test)]
 mod quiet_watch_tests;
+#[cfg(test)]
+mod reclaim_tests;
 #[cfg(test)]
 mod relink_tests;
 

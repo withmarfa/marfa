@@ -1204,6 +1204,14 @@ Where a slice's query names an item to narrow beneath, when a device settles the
 
 **Tests:** `device/folders-copy-shrink.test.ts › lets go of a branch moved out from beneath the item, but a row a waiting write names`, `› keeps the branch while the item is in the bin, and lets it go once the item is purged`.
 
+### `device/copy-gives-back-freed-space`
+
+Where a working copy's store has at least 1,024 free pages and at least half of its pages free, when a folder's watch or a folder's sync has finished a round and no hydration or catch-up is running, a device MUST rewrite the store without its free pages.
+
+**Reason:** the store keeps a page that a deleted row frees for the next insert, so a copy that shrinks (`device/catch-up-query-takes`, `device/catch-up-beneath-leaves`) would otherwise stay as large as it ever was. The rule reads the store's own page counts, not the rows that just left, so a copy that shrank before an upgrade is reclaimed at its first round. The rewrite keeps every row, queued write, pin and folder record as it was. One that another writer holds off, or that fails, leaves the store as it was and waits before it is tried again. A reader that holds an older view keeps the file from shrinking until it lets go, so the device does not report the file as smaller before it is, and makes the checkpoint again at a later round, including a round of a later writer after the one that rewrote has closed, because the file being longer than the store's pages, or a log of at least 4 MiB beside it, shows that the checkpoint is owed. A truncation that leaves the file as long as it was is not reported.
+
+**Tests:** `device/folders-copy-shrink.test.ts › rewrites a copy whose rows left without losing a pin, and its search still answers`, `› leaves a copy with little to free as it is`.
+
 ### `device/catch-up-query-catalog`
 
 Where a slice's query reads a type's status field, when a catch-up reads a catalog that changes the status field of a type, a device MUST end the catch-up with its copy expired, giving the reason `catalog_changed`.

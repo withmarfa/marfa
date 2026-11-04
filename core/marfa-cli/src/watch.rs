@@ -537,6 +537,19 @@ fn tell(
             ));
             Ok(())
         }
+        WatchEvent::Reclaimed { from, to } => {
+            say.note(&format!(
+                "gave back {} of disk the copy no longer needs ({from} bytes became {to})",
+                from.saturating_sub(to)
+            ));
+            Ok(())
+        }
+        WatchEvent::ReclaimFailed(error) => {
+            say.note(&format!(
+                "warning: the copy could not be compacted ({error}); it is tried again later and nothing was changed"
+            ));
+            Ok(())
+        }
         WatchEvent::Missed { path } => {
             say.note(&format!(
                 "warning: the hourly check rewrote {path}, which a change had reached and the watch had left as it was"
