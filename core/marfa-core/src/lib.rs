@@ -300,6 +300,9 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
+    /// Set while a `VACUUM` has landed in the log and the checkpoint that
+    /// shrinks the file has not finished: the store's size before it.
+    reclaim_pending: Mutex<Option<u64>>,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -609,6 +612,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
+            reclaim_pending: Mutex::default(),
         })
     }
 
@@ -716,6 +720,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals,
             reclaim_held_until: Mutex::default(),
+            reclaim_pending: Mutex::default(),
         })
     }
 

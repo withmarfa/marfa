@@ -31,6 +31,17 @@ pub(crate) const RETRY_AFTER_BUSY: Duration = Duration::from_secs(30);
 /// so a failure that stands is not met again at every pass.
 pub(crate) const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(15 * 60);
 
+#[cfg(test)]
+type RewriteHook = Box<dyn Fn(&Connection)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Runs on the connection just before the rewrite starts, so a test can
+    /// arm a failure that the preliminary reads do not meet.
+    pub(crate) static TEST_BEFORE_REWRITE: std::cell::RefCell<Option<RewriteHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// What `Core::reclaim_space` did.
 #[derive(Debug)]
 pub(crate) enum Reclaim {
@@ -42,8 +53,8 @@ pub(crate) enum Reclaim {
     /// round tries again.
     Skipped,
     /// The store was rewritten without its free pages. Sizes are in bytes, as
-    /// the pragmas count them; the file itself shrinks once the log has been
-    /// checkpointed, which happens here unless a reader keeps it.
+    /// the pragmas count them; the file has shrunk too: the log was checkpointed
+    /// before this is reported.
     Reclaimed { from: u64, to: u64 },
     /// The rewrite failed and left the store as it was.
     Failed(CoreError),
@@ -68,6 +79,41 @@ fn bytes(conn: &Connection) -> Result<u64, CoreError> {
     let (pages, _) = pages(conn)?;
     let size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
     Ok(u64::try_from(pages).unwrap_or(0) * u64::try_from(size).unwrap_or(0))
+}
+
+/// The connection's usual wait for a lock, which `without_waiting` restores.
+const CONNECTION_WAIT: Duration = Duration::from_secs(5);
+
+/// Runs `work` with the connection refusing to wait for a lock, and gives it
+/// its wait back after, whether `work` succeeded or not.
+fn without_waiting<T>(
+    conn: &Connection,
+    work: impl FnOnce() -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    conn.busy_timeout(Duration::ZERO)?;
+    let result = work();
+    let restored = conn.busy_timeout(CONNECTION_WAIT);
+    let value = result?;
+    restored?;
+    Ok(value)
+}
+
+/// Moves the log into the file and truncates it. `true` only when all of it
+/// went: a reader that holds an older view stops the checkpoint short, which
+/// SQLite reports in the result row (`busy`, then the log's pages and the
+/// pages checkpointed) and not as an error.
+fn checkpointed(conn: &Connection) -> Result<bool, CoreError> {
+    match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    }) {
+        Ok((blocked, log, done)) => Ok(blocked == 0 && log == done),
+        Err(error) if busy(&error) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn busy(error: &rusqlite::Error) -> bool {
@@ -118,7 +164,8 @@ impl Core {
     }
 
     fn reclaim_in(&self, conn: &Connection) -> Result<Reclaim, CoreError> {
-        if !due(conn)? {
+        let owed = self.reclaim_pending.lock().map_or(None, |owed| *owed);
+        if owed.is_none() && !due(conn)? {
             return Ok(Reclaim::Nothing);
         }
         // `VACUUM` is refused inside a transaction, and a store whose
@@ -126,27 +173,57 @@ impl Core {
         if !conn.is_autocommit() || !store::hydration_complete(conn)? {
             return Ok(Reclaim::Skipped);
         }
-        let from = bytes(conn)?;
+        let from = match owed {
+            Some(from) => from,
+            None => bytes(conn)?,
+        };
         // A reader of the store, or a statement of this process, is a try for
-        // later: waiting would hold up the watch.
-        conn.busy_timeout(Duration::ZERO)?;
-        let vacuumed = conn.execute_batch("VACUUM");
-        conn.busy_timeout(Duration::from_secs(5))?;
-        match vacuumed {
-            Ok(()) => {}
-            Err(error) if busy(&error) => {
-                self.hold_off(RETRY_AFTER_BUSY);
-                return Ok(Reclaim::Skipped);
+        // later: waiting, in the rewrite or in the checkpoint, would hold up
+        // the watch and everything else that waits for the connection.
+        let finished = without_waiting(conn, || {
+            if owed.is_none() {
+                #[cfg(test)]
+                TEST_BEFORE_REWRITE.with(|hook| {
+                    if let Some(hook) = hook.borrow().as_ref() {
+                        hook(conn);
+                    }
+                });
+                if let Err(error) = conn.execute_batch("VACUUM") {
+                    return if busy(&error) {
+                        Ok(None)
+                    } else {
+                        Err(error.into())
+                    };
+                }
+                self.owe_checkpoint(Some(from));
             }
-            Err(error) => return Err(error.into()),
+            checkpointed(conn).map(Some)
+        })?;
+        // `None`: the rewrite was refused for want of the store. `Some(false)`:
+        // the rewrite is in the log, and a reader that still holds an older
+        // view keeps the checkpoint from finishing. The file has not shrunk,
+        // so nothing is reported; the checkpoint stays owed, whether or not
+        // pages are free, and a later round makes it.
+        if finished != Some(true) {
+            self.hold_off(RETRY_AFTER_BUSY);
+            return Ok(Reclaim::Skipped);
         }
-        // The rewrite lands in the log. A reader that still holds an older
-        // view keeps the checkpoint from finishing, which a later one does.
-        let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+        self.owe_checkpoint(None);
         Ok(Reclaim::Reclaimed {
             from,
             to: bytes(conn)?,
         })
+    }
+
+    /// Records, or clears, a checkpoint that a rewrite is still owed, with
+    /// the size the store had before it. Kept in memory: a restart finds a
+    /// log that SQLite's own checkpoints (the automatic one, and the one the
+    /// last connection makes on closing) bring into the file, so only the
+    /// wait for that is lost.
+    fn owe_checkpoint(&self, from: Option<u64>) {
+        if let Ok(mut owed) = self.reclaim_pending.lock() {
+            *owed = from;
+        }
     }
 
     fn hold_off(&self, wait: Duration) {

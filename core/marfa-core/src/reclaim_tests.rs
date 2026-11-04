@@ -305,13 +305,12 @@ fn a_store_held_by_another_writer_is_skipped_quietly_and_tried_later() {
 
     assert!(matches!(core.reclaim_space(&go()), Reclaim::Skipped));
     assert_eq!(rows(&core.conn().unwrap()), before);
-    assert!(
-        core.conn()
-            .unwrap()
-            .busy_timeout(std::time::Duration::from_secs(5))
-            .is_ok(),
-        "the connection keeps its wait"
-    );
+    let wait: i64 = core
+        .conn()
+        .unwrap()
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(wait, 5000, "the connection keeps its wait");
 
     other.execute_batch("ROLLBACK").unwrap();
     // The refusal is waited out, not tried again at once.
@@ -324,7 +323,33 @@ fn a_store_held_by_another_writer_is_skipped_quietly_and_tried_later() {
 }
 
 #[test]
-fn a_reader_holding_a_view_does_not_stop_the_rewrite() {
+fn a_reader_holding_a_view_does_not_make_reclaim_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = shrunk(dir.path(), 700, 9);
+    let reader = Connection::open(dir.path().join("core.sqlite")).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT count(*) FROM items", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let done = core.reclaim_space(&go());
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "reclaim waited {:?} for a reader while holding the connection: {done:?}",
+        started.elapsed()
+    );
+    let wait: i64 = core
+        .conn()
+        .unwrap()
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(wait, 5000, "the connection keeps its wait");
+}
+
+#[test]
+fn a_reader_holding_a_view_delays_the_report_until_the_file_is_smaller() {
     let dir = tempfile::tempdir().unwrap();
     let core = shrunk(dir.path(), 700, 9);
     let size = file_size(dir.path());
@@ -334,11 +359,13 @@ fn a_reader_holding_a_view_does_not_stop_the_rewrite() {
         .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
         .unwrap();
 
-    assert!(matches!(
-        core.reclaim_space(&go()),
-        Reclaim::Reclaimed { .. }
-    ));
-
+    // The rewrite is in the log, but the file has not shrunk: not reported.
+    let first = core.reclaim_space(&go());
+    assert!(matches!(first, Reclaim::Skipped), "{first:?}");
+    assert!(
+        file_size(dir.path()) * 4 > size,
+        "the reader keeps the file"
+    );
     assert_eq!(
         reader
             .query_row("SELECT count(*) FROM items", [], |row| row.get::<_, i64>(0))
@@ -346,12 +373,30 @@ fn a_reader_holding_a_view_does_not_stop_the_rewrite() {
         held,
         "the reader still sees its own view"
     );
+
+    // The store no longer has free pages, yet the checkpoint is still owed:
+    // it waits out the busy backoff, then runs by itself.
     reader.execute_batch("COMMIT").unwrap();
-    checkpoint(&core);
+    assert!(!due(&core.conn().unwrap()).unwrap());
+    let early = core.reclaim_space(&go());
+    assert!(matches!(early, Reclaim::Skipped), "backoff: {early:?}");
+    *core.reclaim_held_until.lock().unwrap() = None;
+
+    let second = core.reclaim_space(&go());
+    let Reclaim::Reclaimed { from, to } = second else {
+        panic!("{second:?}");
+    };
+    assert!(to * 4 < from, "{from} became {to}");
     assert!(
         file_size(dir.path()) * 4 < size,
         "{} of {size}",
         file_size(dir.path())
+    );
+    assert_eq!(file_size(dir.path()), to, "the report is the file's size");
+    assert_eq!(wal_size(dir.path()), 0);
+    assert!(
+        matches!(core.reclaim_space(&go()), Reclaim::Nothing),
+        "the work is done once"
     );
 }
 
@@ -375,17 +420,36 @@ fn a_failed_rewrite_leaves_the_store_as_it_was_and_is_not_tried_in_a_loop() {
     let dir = tempfile::tempdir().unwrap();
     let core = shrunk(dir.path(), 700, 9);
     let (before, size) = (rows(&core.conn().unwrap()), file_size(dir.path()));
-    // An error of the kind a full disk raises, from inside the rewrite.
-    static INTERRUPT: AtomicBool = AtomicBool::new(false);
-    let _ = core.conn().unwrap().progress_handler(
-        1,
-        Some(|| INTERRUPT.load(std::sync::atomic::Ordering::SeqCst)),
-    );
-    INTERRUPT.store(true, std::sync::atomic::Ordering::SeqCst);
+    // An error of the kind a full disk raises, from inside the rewrite: armed
+    // only once the preliminary reads are done, so it cannot fire on them.
+    static REWRITING: AtomicBool = AtomicBool::new(false);
+    crate::reclaim::TEST_BEFORE_REWRITE.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(|conn: &Connection| {
+            let _ = conn.progress_handler(
+                1,
+                // Interrupts the rewrite once, then lets later statements run.
+                Some(|| !REWRITING.swap(true, std::sync::atomic::Ordering::SeqCst)),
+            );
+        }));
+    });
 
     let failed = core.reclaim_space(&go());
 
-    INTERRUPT.store(false, std::sync::atomic::Ordering::SeqCst);
+    crate::reclaim::TEST_BEFORE_REWRITE.with(|hook| *hook.borrow_mut() = None);
+    let _ = core
+        .conn()
+        .unwrap()
+        .progress_handler(1, None::<fn() -> bool>);
+    assert!(
+        REWRITING.load(std::sync::atomic::Ordering::SeqCst),
+        "the rewrite had started when it was interrupted"
+    );
+    let wait: i64 = core
+        .conn()
+        .unwrap()
+        .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(wait, 5000, "the connection keeps its wait after a failure");
     assert!(matches!(failed, Reclaim::Failed(_)), "{failed:?}");
     assert_eq!(rows(&core.conn().unwrap()), before);
     assert_eq!(file_size(dir.path()), size);
