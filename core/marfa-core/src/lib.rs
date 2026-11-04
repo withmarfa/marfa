@@ -4263,11 +4263,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
             }
         }
     }
-    let moving = slice::Moving::before_own(tx, &draft.edge_type, [draft.target_id.clone()])?;
     store::upsert_edge(tx, &draft.wire(&id))?;
-    if let Some(moving) = moving {
-        moving.owe(tx, "edge.created")?;
-    }
     store::enqueue(
         tx,
         &store::NewWrite {
@@ -4325,16 +4321,8 @@ fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<Q
             }
         }
     }
-    let moving = slice::Moving::before_own(
-        tx,
-        &held.edge_type,
-        [held.target_id.clone(), next.target_id.clone()],
-    )?;
     store::hold_beneath_edge(tx, id)?;
     store::upsert_edge(tx, &next.as_wire())?;
-    if let Some(moving) = moving {
-        moving.owe(tx, "edge.updated")?;
-    }
     let queued = store::enqueue(
         tx,
         &store::NewWrite {
@@ -4395,12 +4383,8 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge, after: &[String]) -> R
     // A refused delete is reconciled by reading edges by type, and the row
     // is gone from the copy by then.
     let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
-    let moving = slice::Moving::before_own(tx, &held.edge_type, [held.target_id.clone()])?;
     store::hold_beneath_edge(tx, &held.id)?;
     store::delete_edge(tx, &held.id)?;
-    if let Some(moving) = moving {
-        moving.owe(tx, "edge.deleted")?;
-    }
     store::removal_sent(tx, model::Subject::Edge, &held.id)?;
     store::enqueue(
         tx,

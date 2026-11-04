@@ -448,6 +448,7 @@ fn attempt(
                 store::clear_slice(&tx)?;
                 store::meta_delete(&tx, store::META_SYNCED_AT)?;
             }
+            store::owe_whole_settle(&tx)?;
             store::replace_catalog(&tx, &catalog_rows)?;
             take_pins(&tx, &pinned)?;
             // A copy filling up answers reads, so it shows what is waiting
@@ -634,6 +635,10 @@ fn attempt(
                 },
             )?;
         }
+
+        // The listings held the rows the root reached as each page was
+        // read; the edges, whole now, say what it reaches.
+        crate::catch_up::settle_listed(core, &context, http, stop)?;
 
         if reached.phase != Phase::Replay {
             // A pin the answer leaves out names no row the key may read
@@ -1556,24 +1561,17 @@ pub(crate) fn drawn_edges(
     Ok(edges)
 }
 
-/// Walks the slice's listings beneath `top`, the slice's query with `top`
-/// in place of its own `beneath`, so a branch comes in as a hydration would
-/// list it (`device/catch-up-beneath-enters`). Each page goes to `write`,
-/// with `drawn_edges` of its rows, before the next is asked for, and `stop`
-/// is looked at before each request.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn walk_beneath(
+/// Walks the slice's item listings narrowed by `narrowing`, a listing of each
+/// of `types` in turn. Each page goes to `write` before the next is asked
+/// for, and `stop` is looked at before each request.
+pub(crate) fn walk_listing(
     http: &Http,
     stop: &AtomicBool,
     types: &[String],
     tier: SliceTier,
-    query: &SliceQuery,
-    top: &str,
-    whole: &[String],
-    mut write: impl FnMut(&[WireItemWithMetadata], &[WireEdge]) -> Result<()>,
+    narrowing: &crate::slice::Listing,
+    mut write: impl FnMut(&[WireItemWithMetadata]) -> Result<()>,
 ) -> Result<()> {
-    let mut narrowing = query.listing(false);
-    narrowing.beneath = Some(top.to_string());
     for declared in types {
         let listing = (declared != store::EVERY_TYPE).then_some(declared.as_str());
         let mut seen = std::collections::HashSet::new();
@@ -1583,14 +1581,10 @@ pub(crate) fn walk_beneath(
             let page = http.items_page(&ItemsQuery {
                 r#type: listing,
                 tier: listed_tier(listing, tier),
-                narrowing: Some(&narrowing),
+                narrowing: Some(narrowing),
                 cursor: cursor.as_deref(),
             })?;
-            let mut edges = Vec::new();
-            for row in &page.data {
-                edges.extend(drawn_edges(http, stop, row, whole)?);
-            }
-            write(&page.data, &edges)?;
+            write(&page.data)?;
             match page.next_cursor {
                 // A server handing back a cursor it gave before would loop.
                 Some(next) if !seen.insert(next.clone()) => return Err(crate::reach::invalid()),
@@ -1600,6 +1594,16 @@ pub(crate) fn walk_beneath(
         }
     }
     Ok(())
+}
+
+/// Whether a hydration is listing the rows or the edges, which leaves the
+/// edges the copy holds short of whole.
+pub(crate) fn listing(conn: &rusqlite::Connection) -> Result<bool> {
+    let Some(reached) = store::meta_get(conn, store::META_HYDRATE_RESUME)? else {
+        return Ok(false);
+    };
+    let reached: Reached = serde_json::from_str(&reached)?;
+    Ok(matches!(reached.phase, Phase::Items | Phase::Edges))
 }
 
 /// A row held at a later stamp came from an event since the read, and

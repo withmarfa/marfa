@@ -4010,88 +4010,71 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%' OR key LIKE 'beneath_owed/%';",
+         DELETE FROM beneath_reach;
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
 }
 
-pub(crate) const BENEATH_OWED: &str = "beneath_owed/";
+/// Counts the changes to the `parent-of` edges since the last settle of the
+/// slice's `beneath`; the triggers on `edges` add to it.
+pub(crate) const META_BENEATH_SETTLE: &str = "beneath_settle";
+/// Set where the next settle of `beneath` judges every row the copy holds,
+/// not only those whose place under the root changed: a hydration holds what
+/// its listings brought, which the reach it ends with may not match.
+pub(crate) const META_BENEATH_WHOLE: &str = "beneath_settle_whole";
 
-/// A branch top owed a settle: the copy holds the branch as the last settle
-/// left it until the next judges it on the edges held then.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct OwedBeneath {
-    /// The kind of the last event that moved the branch.
-    pub kind: String,
-    /// Whether the root reached the top at the last settle.
-    pub reached: bool,
-    /// A settle has begun to read the branch in: its rows are judged as
-    /// reached, and the next settle judges the top on the edges alone.
-    pub reading: bool,
+/// Owes the slice's `beneath` a whole settle, or forgets one owed where the
+/// slice has no `beneath`. The reach the copy held stays until that settle
+/// replaces it, so a row is judged by it while a refill lists.
+pub(crate) fn owe_whole_settle(conn: &Connection) -> Result<(), CoreError> {
+    if slice_query(conn)?.is_some_and(|query| query.beneath.is_some()) {
+        bump_beneath_settle(conn)?;
+        meta_set(conn, META_BENEATH_WHOLE, "true")
+    } else {
+        conn.execute("DELETE FROM beneath_reach", [])?;
+        meta_delete(conn, META_BENEATH_SETTLE)?;
+        meta_delete(conn, META_BENEATH_WHOLE)
+    }
 }
 
-/// Records that a change of `kind` moved the branch under `top` into or out
-/// of the slice's `beneath`, for the next settle to judge. `reached` is
-/// whether the root reached `top` before the change, kept from the first
-/// change since the last settle.
-pub(crate) fn owe_beneath(
-    conn: &Connection,
-    top: &str,
-    kind: &str,
-    reached: bool,
-) -> Result<(), CoreError> {
-    let key = format!("{BENEATH_OWED}{top}");
-    let owed = match meta_get(conn, &key)? {
-        Some(held) => OwedBeneath {
-            kind: kind.to_string(),
-            ..serde_json::from_str(&held)?
-        },
-        None => OwedBeneath {
-            kind: kind.to_string(),
-            reached,
-            reading: false,
-        },
-    };
-    meta_set(conn, &key, &serde_json::to_string(&owed)?)
+/// The ids the last settle of `beneath` reached (`beneath_reach`).
+pub(crate) fn beneath_reach(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT id FROM beneath_reach")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<Result<_, _>>()?)
 }
 
-/// Each branch top owed a settle, in id order.
-pub(crate) fn owed_beneath(conn: &Connection) -> Result<Vec<(String, OwedBeneath)>, CoreError> {
-    // A range, not `LIKE`, so the key's index is used.
-    let mut statement = conn.prepare_cached(
-        "SELECT substr(key, length(?1) + 1), value FROM meta
-         WHERE key >= ?1 AND key < ?2 ORDER BY key",
+pub(crate) fn enter_beneath_reach(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    let mut statement = conn.prepare_cached("INSERT OR IGNORE INTO beneath_reach (id) VALUES (?1)")?;
+    for id in ids {
+        statement.execute([id])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn leave_beneath_reach(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    let mut statement = conn.prepare_cached("DELETE FROM beneath_reach WHERE id = ?1")?;
+    for id in ids {
+        statement.execute([id])?;
+    }
+    Ok(())
+}
+
+/// Every id the copy holds a row under.
+pub(crate) fn item_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT id FROM items")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<Result<_, _>>()?)
+}
+
+fn bump_beneath_settle(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, '1')
+           ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+        [META_BENEATH_SETTLE],
     )?;
-    let end = format!("{}0", BENEATH_OWED.trim_end_matches('/'));
-    let owed: Vec<(String, String)> = statement
-        .query_map([BENEATH_OWED, end.as_str()], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    owed.into_iter()
-        .map(|(top, held)| Ok((top, serde_json::from_str(&held)?)))
-        .collect()
-}
-
-/// Marks `top`, owed, as being read in (`OwedBeneath::reading`).
-pub(crate) fn reading_beneath(
-    conn: &Connection,
-    top: &str,
-    owed: &OwedBeneath,
-) -> Result<(), CoreError> {
-    let reading = OwedBeneath {
-        reading: true,
-        ..owed.clone()
-    };
-    meta_set(
-        conn,
-        &format!("{BENEATH_OWED}{top}"),
-        &serde_json::to_string(&reading)?,
-    )
-}
-
-pub(crate) fn settled_beneath(conn: &Connection, top: &str) -> Result<(), CoreError> {
-    meta_delete(conn, &format!("{BENEATH_OWED}{top}"))
+    Ok(())
 }
 
 /// A condition on `edges` that the `parent-of` edges a walk of `beneath`
@@ -4118,7 +4101,7 @@ fn edge_brought(id: &str) -> String {
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
-        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%' OR key LIKE 'beneath_owed/%';",
+        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
 }
@@ -6505,7 +6488,6 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             let Some(id) = row.edge_id.as_deref() else {
                 return Ok(());
             };
-            let moving = moving_back(conn, id)?;
             if row.kind == WriteKind::CreateEdge {
                 delete_edge(conn, id)?;
                 drop_beneath(conn, Subject::Edge, id)?;
@@ -6522,35 +6504,10 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
                 // hold while the refused write waited.
                 let_go_of_untaken_edge(conn, id)?;
             }
-            if let Some(moving) = moving {
-                let kind = match row.kind {
-                    WriteKind::CreateEdge => "edge.deleted",
-                    WriteKind::DeleteEdge => "edge.created",
-                    _ => "edge.updated",
-                };
-                moving.owe(conn, kind)?;
-            }
         }
         None => {}
     }
     Ok(())
-}
-
-/// The branch tops putting edge `id` back may move: its target as the copy
-/// holds it now and as the server last sent it.
-fn moving_back(conn: &Connection, id: &str) -> Result<Option<crate::slice::Moving>, CoreError> {
-    let ends: Vec<Edge> = [edge_ends(conn, id)?, beneath_edge(conn, id)?]
-        .into_iter()
-        .flatten()
-        .collect();
-    let Some(edge_type) = ends.first().map(|edge| edge.edge_type.clone()) else {
-        return Ok(None);
-    };
-    crate::slice::Moving::before_own(
-        conn,
-        &edge_type,
-        ends.into_iter().map(|edge| edge.target_id),
-    )
 }
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {

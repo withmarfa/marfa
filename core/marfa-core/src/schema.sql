@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS beneath (
   PRIMARY KEY (subject, id)
 ) WITHOUT ROWID;
 
+-- The ids the slice's `beneath` reached by the `parent-of` edges held at the
+-- last settle, held as a row or not. Between settles the copy judges a row's
+-- place under the root by this alone, so the order its edges arrive in
+-- cannot change what it holds.
+CREATE TABLE IF NOT EXISTS beneath_reach (
+  id TEXT PRIMARY KEY
+) WITHOUT ROWID;
+
 -- A refused write's subject whose read-back has not landed. Not a column of
 -- `queue`: a refused row can be discarded while the copy still owes the read.
 CREATE TABLE IF NOT EXISTS read_backs (
@@ -406,6 +414,35 @@ CREATE TRIGGER IF NOT EXISTS edges_revise_update AFTER UPDATE ON edges BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS edges_revise_delete AFTER DELETE ON edges BEGIN
   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+-- A change to the `parent-of` edges, by any path, owes the slice's `beneath`
+-- a settle (`catch_up::settle_beneath`). A count, so a settle clears only the
+-- changes it read.
+CREATE TRIGGER IF NOT EXISTS edges_beneath_insert AFTER INSERT ON edges
+  WHEN NEW.edge_type = 'parent-of'
+   AND EXISTS (SELECT 1 FROM meta WHERE key = 'slice_query'
+         AND CASE WHEN json_valid(value) THEN json_extract(value, '$.beneath') END IS NOT NULL)
+BEGIN
+  INSERT INTO meta (key, value) VALUES ('beneath_settle', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_beneath_update AFTER UPDATE ON edges
+  WHEN (OLD.edge_type = 'parent-of' OR NEW.edge_type = 'parent-of')
+   AND (OLD.source_id IS NOT NEW.source_id OR OLD.target_id IS NOT NEW.target_id
+        OR OLD.edge_type IS NOT NEW.edge_type)
+   AND EXISTS (SELECT 1 FROM meta WHERE key = 'slice_query'
+         AND CASE WHEN json_valid(value) THEN json_extract(value, '$.beneath') END IS NOT NULL)
+BEGIN
+  INSERT INTO meta (key, value) VALUES ('beneath_settle', '1')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS edges_beneath_delete AFTER DELETE ON edges
+  WHEN OLD.edge_type = 'parent-of'
+   AND EXISTS (SELECT 1 FROM meta WHERE key = 'slice_query'
+         AND CASE WHEN json_valid(value) THEN json_extract(value, '$.beneath') END IS NOT NULL)
+BEGIN
+  INSERT INTO meta (key, value) VALUES ('beneath_settle', '1')
     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS tags_revise_insert AFTER INSERT ON tags BEGIN
