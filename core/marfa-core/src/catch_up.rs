@@ -1652,7 +1652,11 @@ fn settle_beneath(
     slice: &Slice,
     stop: &AtomicBool,
 ) -> Result<u64> {
-    let Some(root) = slice.query.as_ref().and_then(|query| query.beneath.as_deref()) else {
+    let Some(root) = slice
+        .query
+        .as_ref()
+        .and_then(|query| query.beneath.as_deref())
+    else {
         return Ok(0);
     };
     let http = &context.http(http);
@@ -1723,7 +1727,11 @@ fn settle_beneath(
         let rows = http.items_by_id(ids)?;
         let answered: HashSet<&str> = rows.iter().map(|row| row.item.id.as_str()).collect();
         // A row in the bin, which a read by id leaves out, is listed.
-        left_out.extend(ids.iter().filter(|id| !answered.contains(id.as_str())).cloned());
+        left_out.extend(
+            ids.iter()
+                .filter(|id| !answered.contains(id.as_str()))
+                .cloned(),
+        );
         let answered: Vec<String> = ids
             .iter()
             .filter(|id| answered.contains(id.as_str()))
@@ -1824,7 +1832,9 @@ fn hold_beneath(
     let mut entered = Vec::new();
     for (row, _) in &takes {
         let id = &row.item.id;
-        if entered.contains(id) || holds_answered(&tx, id)? || store::removed(&tx, Subject::Item, id)?
+        if entered.contains(id)
+            || holds_answered(&tx, id)?
+            || store::removed(&tx, Subject::Item, id)?
         {
             continue;
         }

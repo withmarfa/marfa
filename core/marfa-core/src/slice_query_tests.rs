@@ -1439,7 +1439,11 @@ fn a_settle_that_fails_part_way_keeps_what_arrived_and_the_retry_completes() {
         chunks.iter().flatten().all(|id| held(&core, id)),
         "the retry did not complete the branch"
     );
-    assert_eq!(reads(&server)[2..], chunks[1..], "the retry read again what it held");
+    assert_eq!(
+        reads(&server)[2..],
+        chunks[1..],
+        "the retry read again what it held"
+    );
     assert_eq!(cursor_of(&core).as_deref(), Some("11"));
 }
 
@@ -1780,7 +1784,10 @@ fn a_branch_out_and_back_reads_a_child_drawn_while_it_was_out() {
 
     core.catch_up().unwrap();
 
-    assert!(held(&core, "fresh"), "the child drawn while out was not read");
+    assert!(
+        held(&core, "fresh"),
+        "the child drawn while out was not read"
+    );
     assert_eq!(reads(&server), [ids(&["fresh"])]);
     assert_eq!(
         held_of(&core),

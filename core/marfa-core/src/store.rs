@@ -4046,7 +4046,8 @@ pub(crate) fn beneath_reach(conn: &Connection) -> Result<HashSet<String>, CoreEr
 }
 
 pub(crate) fn enter_beneath_reach(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
-    let mut statement = conn.prepare_cached("INSERT OR IGNORE INTO beneath_reach (id) VALUES (?1)")?;
+    let mut statement =
+        conn.prepare_cached("INSERT OR IGNORE INTO beneath_reach (id) VALUES (?1)")?;
     for id in ids {
         statement.execute([id])?;
     }
