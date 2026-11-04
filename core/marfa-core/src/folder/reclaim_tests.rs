@@ -55,3 +55,36 @@ fn a_watch_that_is_stopping_starts_no_rewrite() {
         "the same copy is rewritten when nothing stops it"
     );
 }
+
+#[test]
+fn a_checkpoint_a_reader_prevented_is_made_after_the_folder_reopens() {
+    let (dir, folder, _server) = online_folder(nothing_found());
+    crate::reclaim_tests::fill_and_let_go(folder.core(), 700, 9);
+    folder
+        .core()
+        .conn()
+        .unwrap()
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    let before = size(dir.path());
+    let reader =
+        rusqlite::Connection::open(dir.path().join(STATE_DIR).join("core.sqlite")).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT count(*) FROM items", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+    assert!(folder.reclaim_space(&[]).is_none());
+    reader.execute_batch("COMMIT").unwrap();
+    drop(folder);
+    assert!(size(dir.path()) * 4 > before, "the file stays large");
+
+    let folder = Folder::open(dir.path(), None).unwrap();
+    let told = folder.reclaim_space(&[]);
+
+    assert!(
+        matches!(told, Some(WatchEvent::Reclaimed { from, to }) if to < from),
+        "{told:?}"
+    );
+    assert!(size(dir.path()) * 4 < before);
+    drop(reader);
+}

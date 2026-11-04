@@ -401,6 +401,42 @@ fn a_reader_holding_a_view_delays_the_report_until_the_file_is_smaller() {
 }
 
 #[test]
+fn a_checkpoint_a_reader_prevented_is_made_by_the_next_writer_after_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = shrunk(dir.path(), 700, 9);
+    let size = file_size(dir.path());
+    let reader = Connection::open(dir.path().join("core.sqlite")).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT count(*) FROM items", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+    assert!(matches!(core.reclaim_space(&go()), Reclaim::Skipped));
+
+    // The writer closes with the rewrite in the log; the reader's connection
+    // stays open, so nobody makes the last-connection checkpoint.
+    reader.execute_batch("COMMIT").unwrap();
+    drop(core);
+    assert!(
+        file_size(dir.path()) * 4 > size,
+        "the file is still large: {} of {size}",
+        file_size(dir.path())
+    );
+
+    let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+    assert!(!due(&core.conn().unwrap()).unwrap(), "no free pages remain");
+    let done = core.reclaim_space(&go());
+
+    let Reclaim::Reclaimed { from, to } = done else {
+        panic!("{done:?}");
+    };
+    assert!(to * 4 < from, "{from} became {to}");
+    assert_eq!(file_size(dir.path()), to, "the report is the file's size");
+    assert!(file_size(dir.path()) * 4 < size);
+    assert!(matches!(core.reclaim_space(&go()), Reclaim::Nothing));
+    drop(reader);
+}
+
+#[test]
 fn a_statement_of_this_process_holding_the_connection_is_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let core = shrunk(dir.path(), 700, 9);

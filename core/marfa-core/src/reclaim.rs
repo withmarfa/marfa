@@ -81,6 +81,49 @@ fn bytes(conn: &Connection) -> Result<u64, CoreError> {
     Ok(u64::try_from(pages).unwrap_or(0) * u64::try_from(size).unwrap_or(0))
 }
 
+/// The length of the main database file, as the connection's own file system
+/// reports it, so a store opened through a directory is measured in that
+/// directory. `None` where the connection cannot say.
+fn file_length(conn: &Connection) -> Option<u64> {
+    let mut file: *mut rusqlite::ffi::sqlite3_file = std::ptr::null_mut();
+    // SAFETY: `conn.handle()` is live for the borrow. SQLite stores the main
+    // file's handle, which it keeps open as long as the connection, in `file`;
+    // it is read before the borrow ends, and `xFileSize` is its own method.
+    unsafe {
+        let rc = rusqlite::ffi::sqlite3_file_control(
+            conn.handle(),
+            c"main".as_ptr(),
+            rusqlite::ffi::SQLITE_FCNTL_FILE_POINTER,
+            std::ptr::from_mut(&mut file).cast(),
+        );
+        if rc != rusqlite::ffi::SQLITE_OK || file.is_null() {
+            return None;
+        }
+        let methods = (*file).pMethods.as_ref()?;
+        let size_of = methods.xFileSize?;
+        let mut size: i64 = 0;
+        if size_of(file, &mut size) != rusqlite::ffi::SQLITE_OK {
+            return None;
+        }
+        u64::try_from(size).ok()
+    }
+}
+
+/// Whether a rewrite is in the log and the file has not caught up: in WAL
+/// mode `VACUUM` leaves the main file as long as it was until a checkpoint
+/// lands, while `page_count` already reports the new size. Owed when the file
+/// is longer than its pages by at least the free-space threshold, so the
+/// store alone says it, to a writer that opens after the one that rewrote.
+fn checkpoint_owed(conn: &Connection) -> Result<bool, CoreError> {
+    let Some(length) = file_length(conn) else {
+        return Ok(false);
+    };
+    let size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+    let size = u64::try_from(size).unwrap_or(0);
+    let threshold = u64::try_from(MIN_FREE_PAGES).unwrap_or(0) * size;
+    Ok(length >= bytes(conn)?.saturating_add(threshold))
+}
+
 /// The connection's usual wait for a lock, which `without_waiting` restores.
 const CONNECTION_WAIT: Duration = Duration::from_secs(5);
 
@@ -164,8 +207,8 @@ impl Core {
     }
 
     fn reclaim_in(&self, conn: &Connection) -> Result<Reclaim, CoreError> {
-        let owed = self.reclaim_pending.lock().map_or(None, |owed| *owed);
-        if owed.is_none() && !due(conn)? {
+        let owed = checkpoint_owed(conn)?;
+        if !owed && !due(conn)? {
             return Ok(Reclaim::Nothing);
         }
         // `VACUUM` is refused inside a transaction, and a store whose
@@ -173,15 +216,12 @@ impl Core {
         if !conn.is_autocommit() || !store::hydration_complete(conn)? {
             return Ok(Reclaim::Skipped);
         }
-        let from = match owed {
-            Some(from) => from,
-            None => bytes(conn)?,
-        };
+        let from = file_length(conn).map_or_else(|| bytes(conn), Ok)?;
         // A reader of the store, or a statement of this process, is a try for
         // later: waiting, in the rewrite or in the checkpoint, would hold up
         // the watch and everything else that waits for the connection.
         let finished = without_waiting(conn, || {
-            if owed.is_none() {
+            if !owed {
                 #[cfg(test)]
                 TEST_BEFORE_REWRITE.with(|hook| {
                     if let Some(hook) = hook.borrow().as_ref() {
@@ -195,35 +235,22 @@ impl Core {
                         Err(error.into())
                     };
                 }
-                self.owe_checkpoint(Some(from));
             }
             checkpointed(conn).map(Some)
         })?;
         // `None`: the rewrite was refused for want of the store. `Some(false)`:
         // the rewrite is in the log, and a reader that still holds an older
         // view keeps the checkpoint from finishing. The file has not shrunk,
-        // so nothing is reported; the checkpoint stays owed, whether or not
-        // pages are free, and a later round makes it.
+        // so nothing is reported; the file is still longer than its pages, so
+        // a later round, of this writer or the next, makes the checkpoint.
         if finished != Some(true) {
             self.hold_off(RETRY_AFTER_BUSY);
             return Ok(Reclaim::Skipped);
         }
-        self.owe_checkpoint(None);
         Ok(Reclaim::Reclaimed {
             from,
-            to: bytes(conn)?,
+            to: file_length(conn).map_or_else(|| bytes(conn), Ok)?,
         })
-    }
-
-    /// Records, or clears, a checkpoint that a rewrite is still owed, with
-    /// the size the store had before it. Kept in memory: a restart finds a
-    /// log that SQLite's own checkpoints (the automatic one, and the one the
-    /// last connection makes on closing) bring into the file, so only the
-    /// wait for that is lost.
-    fn owe_checkpoint(&self, from: Option<u64>) {
-        if let Ok(mut owed) = self.reclaim_pending.lock() {
-            *owed = from;
-        }
     }
 
     fn hold_off(&self, wait: Duration) {
