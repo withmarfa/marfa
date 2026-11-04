@@ -94,6 +94,12 @@ it("materializes only readable copy rows reached by a beneath query", async () =
         edge_type: "parent-of",
       })),
     },
+    beforeAdd: (server) =>
+      server.copyAnswer(
+        "GET",
+        `/items/${unreadable}`,
+        refusal(404, "item_not_found", "Item not found"),
+      ),
   });
   scriptWrites(harness.server);
   const pulled = await harness.folder.pull();
