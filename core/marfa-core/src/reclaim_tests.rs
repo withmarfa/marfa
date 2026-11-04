@@ -436,6 +436,100 @@ fn a_checkpoint_a_reader_prevented_is_made_by_the_next_writer_after_a_reopen() {
     drop(reader);
 }
 
+/// A reader that holds a view of the store, and keeps its connection open
+/// after the view is released, so no close makes the last-connection
+/// checkpoint.
+fn read_view(dir: &Path) -> Connection {
+    let reader = Connection::open(dir.join("core.sqlite")).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+    reader
+}
+
+/// Rounds until one answers `Nothing`, each past the backoff, at most `cap`.
+fn settle(core: &Core, cap: usize) -> Vec<String> {
+    let mut answers = Vec::new();
+    for _ in 0..cap {
+        *core.reclaim_held_until.lock().unwrap() = None;
+        let answer = core.reclaim_space(&go());
+        let done = matches!(answer, Reclaim::Nothing);
+        answers.push(format!("{answer:?}"));
+        if done {
+            break;
+        }
+    }
+    answers
+}
+
+#[test]
+fn a_log_a_reader_kept_from_the_file_is_truncated_once_the_reader_lets_go() {
+    // The reader starts before the store grows: the growth stays in the log
+    // and the main file stays small, so the file's length says nothing.
+    let dir = tempfile::tempdir().unwrap();
+    let core = open(dir.path());
+    let reader = read_view(dir.path());
+    fill_and_let_go(&core, 700, 9);
+    let first = core.reclaim_space(&go());
+    assert!(
+        wal_size(dir.path()) > 4 << 20,
+        "the log holds the growth: {first:?}"
+    );
+
+    reader.execute_batch("COMMIT").unwrap();
+    let rounds = settle(&core, 5);
+
+    assert!(
+        wal_size(dir.path()) < 1 << 20,
+        "the log is small: {} bytes after {rounds:?}",
+        wal_size(dir.path())
+    );
+    assert_eq!(rounds.last().unwrap(), "Nothing", "it settles: {rounds:?}");
+    drop(reader);
+}
+
+#[test]
+fn a_log_kept_by_a_reader_that_began_after_the_rewrite_is_truncated_after_a_reopen() {
+    // The reader starts after VACUUM: the checkpoint may copy everything,
+    // but the log cannot be reset, and the file is already as short as its
+    // pages.
+    let dir = tempfile::tempdir().unwrap();
+    let core = open(dir.path());
+    fill_and_let_go(&core, 700, 9);
+    core.conn().unwrap().execute_batch("VACUUM").unwrap();
+    let reader = read_view(dir.path());
+    let first = core.reclaim_space(&go());
+    assert!(
+        wal_size(dir.path()) > 4 << 20,
+        "the log stays large: {first:?}"
+    );
+
+    reader.execute_batch("COMMIT").unwrap();
+    drop(core);
+    let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+    let rounds = settle(&core, 5);
+
+    assert!(
+        wal_size(dir.path()) < 1 << 20,
+        "the log is small: {} bytes after {rounds:?}",
+        wal_size(dir.path())
+    );
+    assert_eq!(rounds.last().unwrap(), "Nothing", "it settles: {rounds:?}");
+    drop(reader);
+}
+
+#[test]
+fn a_small_log_costs_a_round_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = open(dir.path());
+    put(&core, "n0000", "note");
+    assert!(matches!(core.reclaim_space(&go()), Reclaim::Nothing));
+    assert!(core.reclaim_held_until.lock().unwrap().is_none());
+}
+
 #[test]
 fn a_statement_of_this_process_holding_the_connection_is_skipped() {
     let dir = tempfile::tempdir().unwrap();

@@ -85,6 +85,16 @@ fn bytes(conn: &Connection) -> Result<u64, CoreError> {
 /// reports it, so a store opened through a directory is measured in that
 /// directory. `None` where the connection cannot say.
 fn file_length(conn: &Connection) -> Option<u64> {
+    length_of(conn, rusqlite::ffi::SQLITE_FCNTL_FILE_POINTER)
+}
+
+/// The length of the log file, which a reset leaves as long as it grew until a
+/// truncating checkpoint. `None` where there is no log file open.
+fn log_length(conn: &Connection) -> Option<u64> {
+    length_of(conn, rusqlite::ffi::SQLITE_FCNTL_JOURNAL_POINTER)
+}
+
+fn length_of(conn: &Connection, op: std::ffi::c_int) -> Option<u64> {
     let mut file: *mut rusqlite::ffi::sqlite3_file = std::ptr::null_mut();
     // SAFETY: `conn.handle()` is live for the borrow. SQLite stores the main
     // file's handle, which it keeps open as long as the connection, in `file`;
@@ -93,7 +103,7 @@ fn file_length(conn: &Connection) -> Option<u64> {
         let rc = rusqlite::ffi::sqlite3_file_control(
             conn.handle(),
             c"main".as_ptr(),
-            rusqlite::ffi::SQLITE_FCNTL_FILE_POINTER,
+            op,
             std::ptr::from_mut(&mut file).cast(),
         );
         if rc != rusqlite::ffi::SQLITE_OK || file.is_null() {
@@ -123,6 +133,29 @@ fn checkpoint_owed(conn: &Connection) -> Result<bool, CoreError> {
     let threshold = u64::try_from(MIN_FREE_PAGES).unwrap_or(0) * size;
     Ok(length >= bytes(conn)?.saturating_add(threshold))
 }
+
+/// Whether the log is large: its file, or the frames a passive checkpoint
+/// counts in it, come to at least the free-space threshold. The file stays as
+/// long as it grew after a reset, and the count stays until the next write
+/// resets the log, so a log that was copied into the main file but not
+/// truncated counts either way. The checkpoint copies what no reader holds back
+/// and never waits; in a store that is not in WAL mode SQLite answers -1.
+fn log_large(conn: &Connection) -> Result<bool, CoreError> {
+    let size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+    let threshold = u64::try_from(MIN_FREE_PAGES.saturating_mul(size)).unwrap_or(0);
+    if log_length(conn).is_some_and(|length| length >= threshold) {
+        return Ok(true);
+    }
+    let log: i64 = match conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| row.get(1)) {
+        Ok(log) => log,
+        Err(error) if busy(&error) => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(u64::try_from(log.saturating_mul(size + WAL_FRAME_HEADER)).unwrap_or(0) >= threshold)
+}
+
+/// The bytes a log frame holds besides its page.
+const WAL_FRAME_HEADER: i64 = 24;
 
 /// The connection's usual wait for a lock, which `without_waiting` restores.
 const CONNECTION_WAIT: Duration = Duration::from_secs(5);
@@ -207,8 +240,9 @@ impl Core {
     }
 
     fn reclaim_in(&self, conn: &Connection) -> Result<Reclaim, CoreError> {
-        let owed = checkpoint_owed(conn)?;
-        if !owed && !due(conn)? {
+        let owed = checkpoint_owed(conn)? || without_waiting(conn, || log_large(conn))?;
+        let rewrite = due(conn)?;
+        if !owed && !rewrite {
             return Ok(Reclaim::Nothing);
         }
         // `VACUUM` is refused inside a transaction, and a store whose
@@ -221,7 +255,7 @@ impl Core {
         // later: waiting, in the rewrite or in the checkpoint, would hold up
         // the watch and everything else that waits for the connection.
         let finished = without_waiting(conn, || {
-            if !owed {
+            if rewrite {
                 #[cfg(test)]
                 TEST_BEFORE_REWRITE.with(|hook| {
                     if let Some(hook) = hook.borrow().as_ref() {
@@ -247,9 +281,13 @@ impl Core {
             self.hold_off(RETRY_AFTER_BUSY);
             return Ok(Reclaim::Skipped);
         }
-        Ok(Reclaim::Reclaimed {
-            from,
-            to: file_length(conn).map_or_else(|| bytes(conn), Ok)?,
+        // A log truncated beside a file that did not shrink is not reported:
+        // the rule is false now, and the watch has nothing to tell.
+        let to = file_length(conn).map_or_else(|| bytes(conn), Ok)?;
+        Ok(if to < from {
+            Reclaim::Reclaimed { from, to }
+        } else {
+            Reclaim::Nothing
         })
     }
 
