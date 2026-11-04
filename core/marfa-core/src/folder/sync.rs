@@ -96,6 +96,12 @@ impl Folder {
             Err(error) => self.health_observe(false, true, None, Some(error), false),
         }
         self.health_send();
+        // A pass that went through, whatever the server said: the copy is
+        // whole, and what it let go of is given back to the disk. A failure
+        // is tried again at a later pass.
+        if matches!(result, Ok(Synced::Done(_))) {
+            let _ = self.reclaim_space(&[]);
+        }
         result
     }
 

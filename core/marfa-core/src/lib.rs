@@ -50,6 +50,9 @@ mod read_bench_tests;
 mod reads;
 #[cfg(test)]
 mod reads_tests;
+mod reclaim;
+#[cfg(test)]
+mod reclaim_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
@@ -295,6 +298,8 @@ pub struct Core {
     /// Each renewal not yet written down, as the digests of the header it
     /// replaced and of the one that replaced it.
     renewals: Arc<Mutex<Vec<(String, String)>>>,
+    /// Before when a `VACUUM` that was refused or failed is not tried again.
+    reclaim_held_until: Mutex<Option<std::time::Instant>>,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -603,6 +608,7 @@ impl Core {
             draining: Mutex::new(()),
             watch: watch::Watch::new(),
             renewals: Arc::default(),
+            reclaim_held_until: Mutex::default(),
         })
     }
 
@@ -709,6 +715,7 @@ impl Core {
             draining: Mutex::new(()),
             watch: watch::Watch::new(),
             renewals,
+            reclaim_held_until: Mutex::default(),
         })
     }
 

@@ -1407,3 +1407,103 @@ describe("a file naming an item a narrowed copy leaves out", () => {
     ]);
   });
 });
+
+describe("giving a shrunk copy's freed pages back to the disk", () => {
+  /** The store's pages, the free ones among them, and the bytes of its file
+   *  and of its log, as the disk holds them. */
+  function pagesOf(dir: string): {
+    pages: number;
+    free: number;
+    file: number;
+    log: number;
+  } {
+    const store = join(dir, ".marfa", "core.sqlite");
+    const [pages = 0, free = 0] = execFileSync("sqlite3", [
+      store,
+      "PRAGMA page_count; PRAGMA freelist_count;",
+    ])
+      .toString()
+      .trim()
+      .split("\n")
+      .map(Number);
+    const size = (path: string): number =>
+      existsSync(path) ? statSync(path).size : 0;
+    return {
+      pages,
+      free,
+      file: size(store),
+      log: size(`${store}-wal`),
+    };
+  }
+
+  it("rewrites a copy whose rows left without losing a pin, and its search still answers", async () => {
+    const log: SseFrame[] = [];
+    const bulk = "lorem ipsum dolor sit amet ".repeat(500);
+    const leaving = Array.from({ length: 400 }, (_, at) =>
+      note(100 + at, `leaving ${at} needle${at}`, ["b"]),
+    );
+    for (const row of leaving) row.item.properties.body = bulk;
+    harness = await folderHarness("copy-reclaim", {
+      settings: { query: { types: ["core.note"] } },
+      rows: {
+        "core.note": [
+          note(1, "kept one", ["a"]),
+          note(2, "kept two", ["a"]),
+          ...leaving,
+        ],
+      },
+      events: [copyHeldLog(log)],
+      pageSize: 200,
+    });
+    scriptFolderWrites(harness);
+    const device = harness.folder.device();
+    // No pull: a file bound to a row would keep the row past the shrink.
+    value(await device.pin(id(100)));
+    expect(await heldIds(harness)).toHaveLength(402);
+
+    moveSettings(
+      harness,
+      log,
+      { query: { types: ["core.note"], filter: TAGGED_A } },
+      "2",
+    );
+    value(await device.catchUp());
+    value(await harness.folder.hydrate());
+    expect(await heldIds(harness)).toEqual([id(1), id(2), id(100)]);
+    const shrunk = pagesOf(harness.dir);
+    const pinnedBefore = value(await device.status()).pinned;
+    expect(pinnedBefore).toContain(id(100));
+    // The witness: the rows left and the disk did not get them back.
+    expect(shrunk.free).toBeGreaterThanOrEqual(1024);
+    expect(shrunk.free * 2).toBeGreaterThanOrEqual(shrunk.pages);
+
+    value(await harness.folder.push());
+
+    const reclaimed = pagesOf(harness.dir);
+    expect(reclaimed.free).toBe(0);
+    expect(reclaimed.file * 4).toBeLessThan(shrunk.pages * 4096);
+    expect(reclaimed.log * 4).toBeLessThan(shrunk.pages * 4096);
+    expect(await heldIds(harness)).toEqual([id(1), id(2), id(100)]);
+    const status = value(await device.status());
+    for (const kept of pinnedBefore) expect(status.pinned).toContain(kept);
+    const found = value(await device.search("needle0"));
+    expect(found.map((hit) => hit.item.id)).toEqual([id(100)]);
+    expect(
+      value(await device.search("kept"))
+        .map((hit) => hit.item.id)
+        .sort(),
+    ).toEqual([id(1), id(2)]);
+  });
+
+  it("leaves a copy with little to free as it is", async () => {
+    harness = await folderHarness("copy-reclaim-small", {
+      settings: { query: { types: ["core.note"] } },
+      rows: { "core.note": [note(1, "one", ["a"]), note(2, "two", ["b"])] },
+    });
+    scriptFolderWrites(harness);
+    value(await harness.folder.push());
+    const before = pagesOf(harness.dir);
+    value(await harness.folder.push());
+    expect(pagesOf(harness.dir).pages).toBe(before.pages);
+  });
+});
