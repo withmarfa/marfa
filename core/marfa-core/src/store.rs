@@ -5933,9 +5933,11 @@ impl RefusedEdgeCreate {
     }
 
     /// Whether a later create of the same edge carries everything this one
-    /// did, and stays in the queue until it is answered or discarded. An
-    /// answer the server took says nothing yet of what the copy holds, and a
-    /// create that was never sent or is set aside may leave with no answer.
+    /// did. An answer the server took says nothing yet of what the copy holds,
+    /// and a dead create or one refused unsent has no answer to stand on. A
+    /// later create can still leave unanswered, withdrawn or lost with its
+    /// body. The file's line and flag still hold the request then, and a
+    /// refused row is never sent again, so this row adds nothing to them.
     pub(crate) fn carried_by_later_create(&self, conn: &Connection) -> Result<bool, CoreError> {
         let mut statement = conn.prepare_cached(
             "SELECT payload FROM queue

@@ -1494,7 +1494,7 @@ When a caller clears the answered writes, a device MUST take out of the queue ea
 
 ### `queue-and-verdicts/clear-keeps-content`
 
-When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, and an edge's create or edit.
+When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, and an edge's create or edit, other than one a folder clears (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
 
 **Reason:** cleared with the answered writes, the words of an edit the server refused because another device deleted the row would be gone with nothing saying so.
 

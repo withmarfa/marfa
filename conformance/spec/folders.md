@@ -6354,7 +6354,7 @@ When a folder's drain begins, a device MUST take out of the folder's queue each 
 
 When a folder's drain begins and the working copy holds, as the server last gave it, an edge with the source, target and type of an edge create the server refused and with every property that create carried, a device MUST take that create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record or a link rewrite still waits on, a create with a receipt or a read still owed, or a create whose refusal a file still shows.
 
-**Reason:** a refused write otherwise leaves only by `queue-and-verdicts/discard-refused`, which a watch's hold on the store refuses, and nothing shows this one to the person, so it would stay for good asking for what the server already holds. A row of the copy's own, at version 0, or with a write waiting on it is no proof of what the server holds.
+**Reason:** a refused write otherwise leaves only by `queue-and-verdicts/discard-refused`, which a watch's hold on the store refuses, and no file shows this one, so it would stay for good asking for what the server already holds. A row of the copy's own, at version 0, or with a write waiting on it is no proof of what the server holds.
 
 **Tests:** `device/folders-cleared-answers.test.ts › takes out a refused edge create once the server has given the copy its edge, moving nothing else`.
 

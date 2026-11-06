@@ -2,7 +2,7 @@
 //! it needs from, so what each drain reads stays the size of what is still to
 //! be answered or kept, not of every write the folder has sent
 //! (`folders/clears-recorded-answers`). It takes out too the refused edge
-//! creates it has proved it no longer needs, which nothing shows a person
+//! creates it has proved it no longer needs
 //! (`folders/clears-satisfied-edge-refusal`,
 //! `folders/clears-repeated-edge-refusal`).
 
@@ -67,8 +67,8 @@ impl Folder {
     /// The writes whose answer the folder has yet to record, by id: each a
     /// file's record still waits on, and each a link rewrite has yet to
     /// settle. `None` where a file's record cannot be read, which may name
-    /// any write. What else reads an answer is kept by `forget_answered`'s
-    /// own rules: a give-way reads refused edge creates, which carry content,
+    /// any write. What else reads an answer is kept by other rules: a
+    /// give-way reads refused placements, which `settled_edge_refusals` leaves,
     /// and blocked writes; the body rule has read every answer it follows
     /// before this, in the same transaction, and a waiting link edge depends
     /// on the body write it was read from.
