@@ -517,6 +517,42 @@ describe("creates in pages", () => {
     expect(door.items.size).toBe(51);
   });
 
+  it("refuses nothing of a page past the request limit that loses its connection, and sends each write the next drain", async () => {
+    const made = await start("pages-long-page-lost");
+    harness = made.harness;
+    const { door } = made;
+    const notes: QueuedWrite[] = [];
+    for (let at = 0; at < 50; at += 1)
+      notes.push(
+        value(
+          await harness.device.create({
+            type: "core.note",
+            properties: { title: `Note ${at}`, body: "x".repeat(25_000) },
+          }),
+        ),
+      );
+    let bytes = 0;
+    door.page = (request) => {
+      bytes = request.body.length;
+      return { kind: "drop" };
+    };
+
+    const first = await drain(harness);
+
+    expect(bytes).toBeGreaterThan(1_048_576);
+    expect(first.undelivered).toBe(50);
+    expect(first.verdicts.filter((entry) => entry.verdict !== null)).toEqual(
+      [],
+    );
+
+    door.page = () => undefined;
+    const second = await drain(harness);
+
+    expect(second.verdicts.map((entry) => entry.verdict)).toEqual(
+      notes.map(() => "accepted"),
+    );
+  });
+
   it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
     const target = "01a00000-0000-7000-8000-0000000000bb";
     // A row of its own, since an edge to a row in the bin is refused before
@@ -1109,48 +1145,6 @@ describe("a folder's first sync", () => {
       });
       return folder;
     }
-
-    it("takes a connection closed with no answer as a refusal, sends the file beside it and does not send it again", async () => {
-      const held = await dropping("request-limit-closed", "Large");
-      // Each quote doubles as it is encoded: 600,000 characters send as 1.2 MB.
-      put(
-        held,
-        "Large.md",
-        `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
-      );
-      put(held, "Small.md", "---\ntitle: Small\n---\ntext\n");
-
-      const pushed = await held.folder.push();
-
-      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-      expect(pushed.ok && pushed.value.drain.undelivered).toBe(0);
-      expect(
-        pushed.ok &&
-          pushed.value.drain.verdicts.some(
-            (entry) =>
-              entry.verdict === "refused" &&
-              entry.reason === "request_too_large",
-          ),
-      ).toBe(true);
-      const sends = (title: string) =>
-        held.server.requests.filter((request) => titled(request, title)).length;
-      expect(sends("Small")).toBe(1);
-      expect(sends("Large")).toBe(1);
-
-      expect((await held.folder.push()).ok).toBe(true);
-      expect(sends("Large")).toBe(1);
-    });
-
-    it("leaves a connection closed on a body within the limit a failure to retry", async () => {
-      const held = await dropping("request-limit-within", "Short");
-      put(held, "Short.md", "---\ntitle: Short\n---\ntext\n");
-
-      const pushed = await held.folder.push();
-
-      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-      expect(pushed.ok && pushed.value.drain.undelivered).toBeGreaterThan(0);
-      expect(JSON.stringify(pushed)).not.toContain("request_too_large");
-    });
 
     it("asks to close the connection of a body past the limit and no other", async () => {
       const held = await dropping("request-limit-connection", "Nothing");

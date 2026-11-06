@@ -49,6 +49,9 @@ describe("adversarial input — large properties", () => {
     expect(r.ok).toBe(false);
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("invalid_properties");
+    const errors = r.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("body");
   });
 
   it("refuses a request over the body cap with request_too_large", async () => {

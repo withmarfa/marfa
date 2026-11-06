@@ -3291,6 +3291,8 @@ Send what the queue holds and record what came back.
 
 One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain. A write that has met one in three drains in a row, no two more than 15 minutes apart and the first at least five minutes ago, is tested: the drain sends the write that does not depend on it and was sent least recently, one never sent first. If the server answers that write, the drain sends the tested write once more, and if that meets one again it is set aside as failing_alone and the drain carries on. If the write sent to test it meets one too, cannot be sent, or the tested write is answered, nothing is set aside. A device that drains less often than every 15 minutes never sets a write aside.
 
+A write over 1 MiB that meets no answer may be past the server's request size, so the drain reads the server's root. If that has no answer the pass ends. If it has one, the drain goes on past the write, or sends it once more where it would be tested, with no other write to test it.
+
 ```text
 marfa device drain [OPTIONS]
 ```

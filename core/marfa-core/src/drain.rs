@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
+use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing, REQUEST_LIMIT};
 use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
@@ -180,6 +180,21 @@ const ENVIRONMENTAL_STREAK: i64 = 3;
 /// whether the write fails alone: a gateway that restarts or flaps for a few
 /// minutes is over before it counts.
 const STREAK_FLOOR_MILLIS: i64 = 5 * 60 * 1000;
+
+/// Whether a write past the size a server takes unless its instance names
+/// more had no answer. A server closes the connection on such a body, which
+/// can destroy its `413`, and a link that drops does the same, so the device
+/// cannot say which it was.
+fn cut_off(answer: &std::result::Result<Answer, CoreError>, payload: &str) -> bool {
+    payload.len() > REQUEST_LIMIT && matches!(answer, Err(CoreError::Network(_)))
+}
+
+/// Why a write past the request size did not go, for what a person reads.
+pub(crate) fn cut_off_reason(bytes: usize) -> String {
+    format!(
+        "the connection ended with no answer while {bytes} bytes were sent, which may be over the server's request size"
+    )
+}
 
 /// Why a write is sent at this point of the pass.
 #[derive(Clone, Copy, PartialEq)]
@@ -1133,6 +1148,8 @@ fn send_queue(
     let mut suspect: Option<Suspect> = None;
     // Sent out of queue order as a test, so the walk does not reach it again.
     let mut tested: HashSet<String> = HashSet::new();
+    // Why the first write the pass went past did not go.
+    let mut went_past: Option<String> = None;
     let mut cursor = 0;
 
     if report.unavailable.is_none() && !pass.changed() {
@@ -1620,6 +1637,13 @@ fn send_queue(
                     && store::now_millis() - streak.began_ms >= STREAK_FLOOR_MILLIS;
             }
         }
+        // A read tells a link that is gone from one that took everything but
+        // this body. A write could not: every write behind this one can be
+        // as long, or a page can have taken them all.
+        let was_cut_off = role == Role::Walk && cut_off(&answer, &payload);
+        let link_up = was_cut_off
+            && crate::catch_up::ask_unless_stopped(stop, http, Http::instance_id).is_ok();
+        counted = counted && (link_up || !was_cut_off);
         if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
             report.answered += 1;
         } else if answer.is_err() && settled.unavailable.is_none() {
@@ -1672,7 +1696,7 @@ fn send_queue(
         );
         // The write has met the failure in three drains in a row, the first
         // five minutes ago: it waits for a write to test it.
-        let mut carry_on = counted;
+        let mut carry_on = counted || link_up;
         if counted {
             suspect = Some(Suspect {
                 id: row.id.clone(),
@@ -1680,8 +1704,15 @@ fn send_queue(
                 at: cursor - 1,
                 unavailable: settled.unavailable.clone().unwrap_or_default(),
                 verdict_at: report.verdicts.len() - 1,
-                phase: Phase::Testing,
+                phase: if link_up {
+                    Phase::Resending
+                } else {
+                    Phase::Testing
+                },
             });
+        } else if link_up {
+            report.undelivered += 1;
+            went_past.get_or_insert_with(|| cut_off_reason(payload.len()));
         }
         // The server answered a write that does not depend on the suspect,
         // and now the suspect is sent again.
@@ -1726,6 +1757,7 @@ fn send_queue(
         }
     }
 
+    report.unavailable = report.unavailable.take().or(went_past);
     crate::body::rule::after_answers(&mut *core.conn()?)?;
     Ok(())
 }

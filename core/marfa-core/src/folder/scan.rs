@@ -874,6 +874,14 @@ impl Folder {
                 ));
                 continue;
             }
+            if let Some(Claim {
+                item_id,
+                bound: Some(bound),
+            }) = &claim
+                && bound.content_hash != file.hash
+            {
+                self.withdraw_not_sent(item_id)?;
+            }
             // A binding to a row the copy no longer holds binds nothing.
             let claim = match claim {
                 Some(Claim {

@@ -1798,6 +1798,19 @@ impl Core {
         if !row.withdrawable() {
             return Ok(false);
         }
+        self.withdraw_as_read(row)
+    }
+
+    /// `withdraw`, for a write that need not be blocked, between drains:
+    /// a file changed since a write of it could not be sent.
+    pub(crate) fn withdraw_unsent(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let row = store::queued_write(&*self.conn()?, id)?;
+        row.map_or(Ok(false), |row| self.withdraw_as_read(row))
+    }
+
+    fn withdraw_as_read(&self, row: QueuedWrite) -> Result<bool> {
+        let id = row.id.as_str();
         let held = store::held_for(&*self.conn()?, id)?;
         let mut reads = vec![drain::read_back(self, &row)?];
         for dependant in &held {

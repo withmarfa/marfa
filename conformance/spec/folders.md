@@ -6858,6 +6858,36 @@ When a folder push scans a document with a size warning, the CLI MUST say the pa
 
 **Tests:** `device/folders.test.ts › warns of a text near the limit`.
 
+### `folders/not-sent-said`
+
+While a file's write has met no answer with a body larger than 1048576 bytes, or is blocked `failing_alone`, a device MUST report the file in `folders status` with the flag `not_sent` and a reason saying why it did not go and what sends it again.
+
+**Reason:** the write has no refusal to show, so without this the file reads as waiting with nothing the matter. The reason names the likely cause, the server's request size, and claims no refusal it did not hear.
+
+**Tests:** `device/cut-off.test.ts › sets a long write aside with nothing else queued, once a read answers and it is cut off again`, `› reports a file that did not go in what a push says and in its status`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+
+### `folders/not-sent-held`
+
+While a file's write is blocked `failing_alone`, a device MUST report the file in `folders status` as `held`.
+
+**Tests:** `device/cut-off.test.ts › sets a long write aside with nothing else queued, once a read answers and it is cut off again`.
+
+### `folders/not-sent-pushed`
+
+When a push ends with a file `folders status` flags `not_sent`, a device MUST list that file in the push's `flagged` with the same reason.
+
+**Reason:** a file set aside is sent by no later push, so its reason would otherwise reach the person only through a command they have no cause to run.
+
+**Tests:** `device/cut-off.test.ts › reports a file that did not go in what a push says and in its status`.
+
+### `folders/changed-file-replaces-not-sent`
+
+When a scan finds a file changed whose write status flags `not_sent`, a device MUST withdraw that write, reading its row back first, and send the file as it now is.
+
+**Reason:** an edit queued behind the write could only wait on it, so a file made smaller would stay stuck behind the bytes that could not go. The read keeps a row the server did commit, and the change goes as an edit of it. Where the server cannot be read, the edit waits behind the write until a later change.
+
+**Tests:** `device/cut-off.test.ts › sends a file as it now is when it changes after its long write was set aside`, `› sends a file as it now is when it changes while its long write still waits`, `› keeps the item a long write committed when the file changes, and sends the change as an edit`.
+
 ### `folders/request-too-large-bytes-kept`
 
 When the server refuses a folder document create or edit with `413 request_too_large`, a device MUST retain the document’s bytes.

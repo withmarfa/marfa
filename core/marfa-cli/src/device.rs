@@ -249,6 +249,12 @@ pub enum DeviceCommand {
     /// meets one too, cannot be sent, or the tested write is answered,
     /// nothing is set aside. A device that drains less often than every 15
     /// minutes never sets a write aside.
+    ///
+    /// A write over 1 MiB that meets no answer may be past the server's
+    /// request size, so the drain reads the server's root. If that has no
+    /// answer the pass ends. If it has one, the drain goes on past the write,
+    /// or sends it once more where it would be tested, with no other write
+    /// to test it.
     Drain,
     /// Clear the writes the server has answered.
     ///

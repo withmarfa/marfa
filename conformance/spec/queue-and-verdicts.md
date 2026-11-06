@@ -876,7 +876,7 @@ When a write is blocked, a device MUST count no refusal against it.
 
 While a write is blocked `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST NOT send it in a drain.
 
-**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `instance_changed` goes to the instance now at the address only when a person sends it there. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test and its second send again (`queue-and-verdicts/stuck-write-suspect`).
+**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `instance_changed` goes to the instance now at the address only when a person sends it there. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test and its second send again (`queue-and-verdicts/stuck-write-suspect`). A folder's file changing is a person looking at it (`folders/changed-file-replaces-not-sent`).
 
 **Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › sends nothing in a later drain for a write blocked conflict_unresolved or key_spent`, `device/stuck-write.test.ts › does not take a write set aside back at the start of a drain`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
 
@@ -952,7 +952,7 @@ When a drain ends at an answer naming no contract, a device MUST say in `unavail
 
 ### `queue-and-verdicts/environmental-ends-pass`
 
-When a write meets an environmental failure, a device MUST send no write after it in that drain, except a write that tests it as a suspect (`queue-and-verdicts/stuck-write-tested`) and the writes after it once it is set aside (`queue-and-verdicts/stuck-write-carries-on`).
+When a write meets an environmental failure, a device MUST send no write after it in that drain, except a write that tests it as a suspect (`queue-and-verdicts/stuck-write-tested`), the writes after it once it is set aside (`queue-and-verdicts/stuck-write-carries-on`) and the writes after a write cut off while the server answers a read (`queue-and-verdicts/cut-off-goes-on`).
 
 **Reason:** gone on to the next write, a drain against a server that cannot be reached would wait out a connection timeout for every write in the queue, and a server that asked for a wait would be asked again at once by every write behind the one it answered.
 
@@ -1000,7 +1000,7 @@ When a drain sends a write, other than to test a suspect, and the write meets an
 
 ### `queue-and-verdicts/stuck-write-tested`
 
-While a drain holds a suspect, a device MUST send, before any other write, the ready write after the suspect that does not depend on the suspect, directly or through another write, and was sent least recently, counting a write never sent as the least recent and, among writes never sent, taking the earlier in the queue.
+While a drain holds a suspect that a read has not tested (`queue-and-verdicts/cut-off-tested-by-read`), a device MUST send, before any other write, the ready write after the suspect that does not depend on the suspect, directly or through another write, and was sent least recently, counting a write never sent as the least recent and, among writes never sent, taking the earlier in the queue.
 
 **Reason:** a write that does not depend on the suspect is one the server's answer can tell apart: if the server takes or refuses it, the server can be reached. A write that waits on the suspect could not be sent without it. One write tests the suspect, so an outage costs a drain the suspect and that write, and no more. The streak does not choose the test: after an outage every queued write can stand at three or more, and a test that skipped them would leave a stuck write at the head with none. The order is the order of the sends the device has made, kept in the store, and not the time of a send, so a clock moved does not change it. The write sent least recently takes its turn, so the test passes through the queue, and a good write behind any number of stuck ones is the test within as many drains as there are writes ahead of it to try.
 
@@ -1056,7 +1056,7 @@ When a suspect is given the verdict `failing_alone`, a device MUST go on with th
 
 ### `queue-and-verdicts/stuck-write-short-streak`
 
-If a drain sends a write that meets an environmental failure other than a `429` and the write does not become a suspect, because its streak is below three or its run began less than five minutes ago, then a device MUST end the pass and leave the write with no verdict, whether or not another write has had an answer in that drain.
+If a drain sends a write that meets an environmental failure other than a `429` and the write does not become a suspect, because its streak is below three or its run began less than five minutes ago, and the drain does not go on past it (`queue-and-verdicts/cut-off-goes-on`), then a device MUST end the pass and leave the write with no verdict, whether or not another write has had an answer in that drain.
 
 **Reason:** a failure met in fewer than three drains in a row, or over less than five minutes, is not shown to be the write's own, and a server that failed one write once cannot be told from one that is stuck. The write stays queued with its streak counted, and is set aside in a later drain (`queue-and-verdicts/stuck-write-suspect`) once it has met the failure in three over five minutes.
 
@@ -1088,7 +1088,7 @@ If the write sent to test a suspect is answered with a refused credential, then 
 
 ### `queue-and-verdicts/stuck-write-alone`
 
-If a drain holds a suspect and no write after it is both ready and independent of the suspect, depending on it neither directly nor through another write, then a device MUST end the pass and leave the suspect with no verdict.
+If a drain holds a suspect that a read has not tested (`queue-and-verdicts/cut-off-tested-by-read`) and no write after it is both ready and independent of the suspect, depending on it neither directly nor through another write, then a device MUST end the pass and leave the suspect with no verdict.
 
 **Reason:** nothing can show the failure is the suspect's own. The suspect stays queued with its streak counted, and a write queued later is the test.
 
@@ -1158,23 +1158,75 @@ If the store is full as a device takes the answer to a write, before the write h
 
 **Tests:** `device/classification.test.ts › ends the drain storage_full when the store fills as it takes an answer, counting nothing`.
 
-## Refusals that park a write
+## A body past the request size
 
-### `queue-and-verdicts/request-too-large-unheard`
+A server closes the connection on a body over its cap with the rest unread, and that close can destroy its `413` before a client still sending reads it. A link that drops, or a proxy or server that restarts, looks the same.
 
-If the connection closes with no answer after a device has connected to send a body larger than 1048576 bytes, then a device MUST treat the request as answered `413 request_too_large`.
+### `queue-and-verdicts/cut-off-no-refusal`
 
-**Reason:** a server closes the connection on a body over its cap with the rest unread, and the close can destroy the `413` before a client that is still sending reads it. Treated as a failure to retry, such a file would hold back every write behind it on every drain. An instance does not say what it set `MARFA_MAX_REQUEST_BYTES` to, so a device reads the close against the default. On an instance that raised it, a link that drops during such a body holds that file until it changes, and its bytes stay on the device. On an instance that lowered it, a body between its cap and the default that loses its answer stays a failure to retry.
+If a connection ends with no answer to a write, then a device MUST NOT give the write the verdict `refused`, whatever the size of its body.
 
-**Tests:** `device/pages.test.ts › takes a connection closed with no answer as a refusal, sends the file beside it and does not send it again`, `› leaves a connection closed on a body within the limit a failure to retry`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+**Reason:** the server may have committed the write, or would take it once the link is back, so only an answer it gave can refuse it. The write goes again under its key, and a commit whose answer was lost is confirmed by that replay. An instance does not say what it set `MARFA_MAX_REQUEST_BYTES` to, so a device cannot read a close against its cap.
+
+**Tests:** `device/cut-off.test.ts › goes on past a long write while the server answers a read, and leaves it queued with no verdict`, `› confirms a long write the server committed by sending it again under its key, with no edit to the file`, `device/pages.test.ts › refuses nothing of a page past the request limit that loses its connection, and sends each write the next drain`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+
+### `queue-and-verdicts/cut-off-read`
+
+When a drain sends a write in its place in the queue, its body is larger than 1048576 bytes and the request fails with no answer, a device MUST read the server's root before it sends anything more in that drain.
+
+**Reason:** a read tells a link that is gone from a link that carries everything but this body. No write can tell them apart for certain: every write behind this one can be as long, and a page can already have taken all the rest.
+
+**Tests:** `device/cut-off.test.ts › ends the pass at a long write when the read after it is not answered, and sets nothing aside`, `› goes on past a long write while the server answers a read, and leaves it queued with no verdict`.
+
+### `queue-and-verdicts/cut-off-read-unanswered`
+
+If the read made after a write was cut off (`queue-and-verdicts/cut-off-read`) has no answer, then a device MUST end the pass and leave the write with no verdict.
+
+**Reason:** a link that is gone is an environmental failure like any other, and it says nothing of the write, so nothing is set aside and every write goes when the link is back.
+
+**Tests:** `device/cut-off.test.ts › ends the pass at a long write when the read after it is not answered, and sets nothing aside`.
+
+### `queue-and-verdicts/cut-off-goes-on`
+
+When the read made after a write was cut off has an answer and the write is not a suspect, a device MUST leave the write with no verdict and go on to the writes after it in that drain.
+
+**Reason:** a body a server will never take must not hold back the files beside it. Left queued, the write goes again in the next drain, so a link that dropped once costs nothing but that send, and its streak counts as any write's (`queue-and-verdicts/streak-counted`).
+
+**Tests:** `device/cut-off.test.ts › goes on past a long write while the server answers a read, and leaves it queued with no verdict`, `› ends the pass at a write within the limit that loses its connection, as for any failure of the link`.
+
+### `queue-and-verdicts/cut-off-tested-by-read`
+
+When the read made after a write was cut off has an answer and the write is a suspect (`queue-and-verdicts/stuck-write-suspect`), a device MUST send the write once more in that drain, sending no other write to test it.
+
+**Reason:** the read has shown the server can be reached, as the answer to a test would. Waiting for a write to test it, a file past the server's cap with nothing queued behind it would be sent on every drain for good. Sent again and cut off again, it is set aside (`queue-and-verdicts/stuck-write-set-aside`); answered, it settles as that answer says (`queue-and-verdicts/stuck-write-resend-answered`).
+
+**Tests:** `device/cut-off.test.ts › sets a long write aside with nothing else queued, once a read answers and it is cut off again`, `› sets each of several long writes aside on its own read, with no write to test it`, `› settles a long write as the server answers it when it is sent again after the read`.
+
+### `queue-and-verdicts/cut-off-said`
+
+When a drain goes on past a write that was cut off and nothing else ends the pass, a device MUST say in `unavailable` that the connection ended with no answer while the body was sent, which may be over the server's request size.
+
+**Reason:** only the size and the close are known. The words name the likely cause and claim no refusal.
+
+**Tests:** `device/cut-off.test.ts › goes on past a long write while the server answers a read, and leaves it queued with no verdict`, `› ends the pass at a write within the limit that loses its connection, as for any failure of the link`.
 
 ### `queue-and-verdicts/request-too-large-connection`
 
-When a device sends a body larger than 1048576 bytes, a device MUST send `Connection: close` with it.
+When a device sends a body larger than 1048576 bytes, whether a write, a page of writes or any other request, a device MUST send `Connection: close` with it.
 
-**Reason:** the server closes the connection just after it answers such a body, and a next request sent on that connection meets the reset as a failure to reach the server, stopping the drain.
+**Reason:** the server closes the connection just after it answers a body over its cap, and a next request sent on that connection meets the reset as a failure to reach the server, stopping the drain. It covers keeping the connection out of the pool, and nothing about whether the body arrives.
 
 **Tests:** `device/pages.test.ts › asks to close the connection of a body past the limit and no other`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+
+## Refusals that park a write
+
+### `queue-and-verdicts/request-too-large-body-unread`
+
+When the server answers a write `413` naming its contract and the body of the answer cannot be read, a device MUST take the answer as `413 request_too_large`.
+
+**Reason:** the server closes the connection as it answers a body over its cap, which can cut the answer short after its status. The status was heard, so this is the server's refusal, and a failure to retry would send the same bytes to the same answer.
+
+**Tests:** `device/cut-off.test.ts › takes a 413 whose body cannot be read as the refusal it is`.
 
 ### `queue-and-verdicts/credential-blocks-queue`
 

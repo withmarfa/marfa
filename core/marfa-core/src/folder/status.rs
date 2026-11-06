@@ -11,7 +11,9 @@ use super::{
 };
 use crate::Result;
 use crate::catalog::Catalog;
-use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
+use crate::error::CoreError;
+use crate::http::REQUEST_LIMIT;
+use crate::model::{BlockedReason, ItemState, QueuedWrite, Verdict, WriteKind};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileStatus {
@@ -95,7 +97,87 @@ impl FileStatus {
     }
 }
 
+/// The flag of a file a write of which keeps failing with no refusal to show.
+const NOT_SENT: &str = "not_sent";
+
+/// Why `row` has not gone, where it was sent and met no answer past the
+/// request size, or was set aside: a person reads this, not the queue.
+fn not_sent_reason(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<String>> {
+    let set_aside = row.blocked_reason() == Some(BlockedReason::FailingAlone);
+    let Some(failure) = row.last_failure.as_ref().filter(|_| row.verdict.is_none() || set_aside)
+    else {
+        return Ok(None);
+    };
+    let bytes = crate::store::payload_of(conn, &row.id)?.len();
+    let why = if failure.status.is_none() && bytes > REQUEST_LIMIT {
+        crate::drain::cut_off_reason(bytes)
+    } else if set_aside {
+        format!(
+            "it met {} each time while the server took other requests",
+            failure.describe()
+        )
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(if set_aside {
+        format!(
+            "{why}, so it is set aside and not sent again until the file changes, or `marfa device release --db .marfa/core.sqlite {}` is run from the folder",
+            row.id
+        )
+    } else {
+        format!("{why}; the next push sends it again")
+    }))
+}
+
 impl Folder {
+    /// The files a queued write of which has not gone and shows no refusal,
+    /// with why, for what a push says.
+    pub(super) fn not_sent(&self) -> Result<Vec<Flagged>> {
+        let conn = self.core.conn()?;
+        let mut reasons = HashMap::new();
+        for row in crate::store::waiting_writes(&conn)? {
+            if let (Some(item), Some(reason)) = (&row.item_id, not_sent_reason(&conn, &row)?) {
+                reasons.insert(item.clone(), reason);
+            }
+        }
+        if reasons.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(state::every_bound(&conn)?
+            .into_iter()
+            .filter_map(|bound| {
+                Some(Flagged {
+                    reason: reasons.get(&bound.item_id)?.clone(),
+                    path: bound.path,
+                    flag: NOT_SENT,
+                    item: None,
+                })
+            })
+            .collect())
+    }
+
+    /// A changed file takes the place of the write of it that could not be
+    /// sent: an edit behind that write could only wait on it. Read back
+    /// first, so a write the server did commit stays. Where the server cannot
+    /// be read the edit waits behind the write, and the next change tries
+    /// again.
+    pub(super) fn withdraw_not_sent(&self, item_id: &str) -> Result<()> {
+        let rows = crate::store::waiting_writes_for_item(&*self.core.conn()?, item_id)?;
+        for row in rows {
+            if not_sent_reason(&*self.core.conn()?, &row)?.is_none() {
+                continue;
+            }
+            match self.core.withdraw_unsent(&row.id) {
+                Ok(_) => {}
+                Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => {
+                    return Err(error);
+                }
+                Err(error) => crate::telemetry::degraded!(&error),
+            }
+        }
+        Ok(())
+    }
+
     /// Writes nothing, so a store opened without holding it answers it.
     pub(super) fn status(&self) -> Result<StatusReport> {
         self.status_reading(None, None)
@@ -369,6 +451,12 @@ impl Folder {
                 || row.target_id.as_deref() == Some(bound.item_id.as_str())
         }) {
             named.push(self.wait_of(row));
+            if let Some(reason) = not_sent_reason(&*self.core.conn()?, row)? {
+                if row.blocked_reason() == Some(BlockedReason::FailingAlone) {
+                    return Ok(entry.because(NOT_SENT, reason));
+                }
+                entry = entry.because(NOT_SENT, reason);
+            }
             if row.verdict == Some(Verdict::Dead) {
                 entry = entry.because(
                     "dead",
