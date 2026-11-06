@@ -6352,7 +6352,7 @@ When a folder's drain begins, a device MUST take out of the folder's queue each 
 
 ### `folders/clears-satisfied-edge-refusal`
 
-When a folder's drain begins and the working copy holds, as the server last gave it, an edge with the source, target and type of an edge create the server refused and with every property that create carried, a device MUST take that create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record still waits on, or a create whose refusal a file still shows.
+When a folder's drain begins and the working copy holds, as the server last gave it, an edge with the source, target and type of an edge create the server refused and with every property that create carried, a device MUST take that create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record, a body's link or a link rewrite still waits on, a create with a receipt or a read still owed, or a create whose refusal a file still shows.
 
 **Reason:** a refused write otherwise leaves only by `queue-and-verdicts/discard-refused`, which a watch's hold on the store refuses, and nothing shows this one to the person, so it would stay for good asking for what the server already holds. A row of the copy's own, at version 0, or with a write waiting on it is no proof of what the server holds.
 
@@ -6360,9 +6360,9 @@ When a folder's drain begins and the working copy holds, as the server last gave
 
 ### `folders/clears-repeated-edge-refusal`
 
-When a folder's drain begins and the folder's queue holds an edge create the server refused and a later create of the same source, target and type that carries every property the earlier one carried and that is unanswered, `blocked` or refused by the server, a device MUST take the earlier create out of the folder's queue, other than a placement, a create another write depends on or follows, or a create whose answer a file's record still waits on.
+When a folder's drain begins and the folder's queue holds an edge create the server refused and a later create of the same source, target and type that carries every property the earlier one carried and that is unanswered, `blocked` or refused by the server, a device MUST take the earlier create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record, a body's link or a link rewrite still waits on, or a create with a receipt or a read still owed.
 
-**Reason:** a refusal the server gave stands until the file changes (`folders/refused-line-retried`), and each save of the file then queues the line's edge again under a new id, so the queue grew by one create with each save for as long as the refusal stood. The later create carries all the earlier one did. A file's flag and its reason are in the file's record and not in the create, so the file shows the refusal as it did.
+**Reason:** a refusal the server gave stands until the file changes (`folders/refused-line-retried`), and each save of the file then queues the line's edge again under a new id, so without this the queue grows by one create with each save for as long as the refusal stands. The later create carries all the earlier one did. A file's flag and its reason are in the file's record and not in the create, so the file shows the refusal as it did.
 
 **Tests:** `device/folders-cleared-answers.test.ts › holds one refused edge create of a line however often its file is saved, and the file keeps its reason`.
 

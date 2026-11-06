@@ -5881,6 +5881,17 @@ pub fn holds_clearable_answers(conn: &Connection) -> Result<bool, CoreError> {
     )?)
 }
 
+/// Whether the queue holds an edge create the server refused, through the
+/// index on the verdict, so a drain with none reads nothing more for them.
+pub(crate) fn holds_refused_edge_create(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM queue
+          WHERE verdict = 'refused' AND kind = 'create_edge' AND sent = 1)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// An edge create the server refused, and what it asked for.
 pub(crate) struct RefusedEdgeCreate {
     pub id: String,

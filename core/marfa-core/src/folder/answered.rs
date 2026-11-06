@@ -23,12 +23,12 @@ impl Folder {
     pub(super) fn clear_answered_if_due(&self) -> Result<usize> {
         let due = {
             let conn = self.core.conn()?;
-            store::holds_clearable_answers(&conn)? || {
-                match self.unrecorded(&conn)? {
-                    Some(kept) => !settled_edge_refusals(&conn, &kept)?.is_empty(),
-                    None => false,
-                }
-            }
+            store::holds_clearable_answers(&conn)?
+                || (store::holds_refused_edge_create(&conn)?
+                    && match self.unrecorded(&conn)? {
+                        Some(kept) => !settled_edge_refusals(&conn, &kept)?.is_empty(),
+                        None => false,
+                    })
         };
         if due { self.clear_answered() } else { Ok(0) }
     }
