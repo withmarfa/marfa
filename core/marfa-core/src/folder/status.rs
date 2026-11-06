@@ -159,6 +159,21 @@ impl Folder {
             .collect())
     }
 
+    /// What the server refused the create of `item_id` as, while the queue
+    /// keeps that refusal.
+    fn refused_create(&self, item_id: &str) -> Result<Option<String>> {
+        let rows = crate::store::read_writes(
+            &*self.core.conn()?,
+            "WHERE item_id = ?1 AND kind = ?2 AND verdict = ?3",
+            [
+                item_id,
+                WriteKind::CreateItem.as_str(),
+                Verdict::Refused.as_str(),
+            ],
+        )?;
+        Ok(rows.into_iter().next_back().and_then(|row| row.reason))
+    }
+
     /// A changed file takes the place of the write of it that could not be
     /// sent: an edit behind that write could only wait on it. Read back
     /// first, so a write the server did commit stays. Where the server cannot
@@ -426,10 +441,18 @@ impl Folder {
             }
             return Ok(match bound.writes.refused.last() {
                 Some(refused) => entry.because(refused_flag(&refused.change), refused.reason.clone()),
-                None => entry.because(
-                    "lost",
-                    "is bound to an item this copy no longer holds, and unchanged since, so nothing is sent; changed, it goes as a new item",
-                ),
+                None => match self.refused_create(&bound.item_id)? {
+                    Some(reason) => entry.because(
+                        "lost",
+                        format!(
+                            "the server refused it as {reason}, so nothing is sent while it stays as it is; changed, it goes as a new item"
+                        ),
+                    ),
+                    None => entry.because(
+                        "lost",
+                        "is bound to an item this copy no longer holds, and unchanged since, so nothing is sent; changed, it goes as a new item",
+                    ),
+                },
             });
         }
         if let Some(held) = &bound.held {

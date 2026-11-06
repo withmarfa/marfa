@@ -6858,6 +6858,14 @@ When a folder push scans a document with a size warning, the CLI MUST say the pa
 
 **Tests:** `device/folders.test.ts › warns of a text near the limit`.
 
+### `folders/refused-create-said`
+
+While a file is held under `folders/lost-row-unchanged-held` and the queue keeps the refusal of its create, a device MUST name that refusal in the reason `folders status` gives.
+
+**Reason:** "bound to an item this copy no longer holds" does not tell a person that the server refused the file, or why.
+
+**Tests:** `device/folders-contract-b.test.ts › preserves a document after a request-too-large %s refusal`.
+
 ### `folders/not-sent-said`
 
 While a file's write has met no answer with a body larger than 1048576 bytes, or is blocked `failing_alone`, a device MUST report the file in `folders status` with the flag `not_sent` and a reason saying why it did not go and what sends it again.
