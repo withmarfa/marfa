@@ -2110,15 +2110,15 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 ### `folders/edge-held-created`
 
-When a held edge name resolves to one item, a device MUST create the edge, unless `folders/edge-line-invalid-keeps-type` leaves the file's edges of that type at that end unchanged, or that end holds one edge at most and already holds one.
+When a held edge name resolves to one item other than the file's own, a device MUST create the edge, unless `folders/edge-line-invalid-keeps-type` leaves the file's edges of that type at that end unchanged, that end holds one edge at most and already holds one, or the device refuses the edge.
 
-**Reason:** At such an end, `folders/edge-replace-one` moves an edge the file showed in one write, and `folders/edge-replace-unshown-refused` flags a file that never showed the edge, so neither creates a second edge.
+**Reason:** At such an end, `folders/edge-replace-one` moves an edge the file showed in one write, and `folders/edge-replace-unshown-refused` flags a file that never showed the edge, so neither creates a second edge. A body link that comes to name its own document makes no edge (`folders/body-self-link`).
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› moves a shown parent to a held name once it resolves, and creates no edge`, `› flags a held name that resolves at an end whose edge the file never showed, and writes nothing`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› moves a shown parent to a held name once it resolves, and creates no edge`, `› flags a held name that resolves at an end whose edge the file never showed, and writes nothing`, `› flags a held name that resolves to an edge the device refuses, and writes nothing`.
 
 ### `folders/edge-held-cleared`
 
-When a held edge name resolves to one item, a device MUST clear the file's `edges` flag only once no line or link of the file, that name's own line included, gives a reason to flag it.
+When a held edge name resolves to one item and no line or link of the file, that name's own line included, gives a reason to flag it, a device MUST clear the file's `edges` flag.
 
 **Reason:** A line can still hold the file after one of its names resolves: another of its names may match nothing, or the name may take the line past its end's cardinality.
 
@@ -2180,9 +2180,9 @@ When an edge has arrived from elsewhere but has not appeared in the file, a devi
 
 ### `folders/edge-line-invalid-keeps-type`
 
-If an edge line has an unresolved target, names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type at that end unchanged.
+If an edge line has an unresolved target, names its own item, is at the wrong end, exceeds its end's cardinality, or holds a value not written as `[[name]]`, then a device MUST leave that file's edges of that type at that end unchanged.
 
-**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› writes the edge of a child-of line beside a held parent-of line in the same file`.
+**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a body link beside a references line not written as a name, and the edge once the line is gone`, `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› writes the edge of a child-of line beside a held parent-of line in the same file`.
 
 ### `folders/edge-line-held-whole`
 
