@@ -2012,7 +2012,7 @@ When a local search names a type or tags, a device MUST narrow it as a local lis
 
 ### `device/filter-as-server`
 
-When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-mixed-logic` and `edges/filter-edge`), a device MUST answer the rows the server answers from the same rows.
+When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-doors`), a device MUST answer the rows the server answers from the same rows.
 
 **Reason:** a copy that answered one expression otherwise than the server would show one set of rows offline and another online for the same question.
 
@@ -2020,7 +2020,7 @@ When a local list or a local search names a filter the server's listing grammar 
 
 ### `device/filter-case-ascii`
 
-When a filter compares by `contains` or `starts_with`, a device MUST match without regard to ASCII case.
+When a filter compares by `contains` or `starts_with`, a device MUST match case as `search-and-filters/filter-text-case` says and `%`, `_` and `\` as `search-and-filters/filter-text-literal` says.
 
 **Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
 

@@ -398,17 +398,25 @@ When `GET /items/{id}` leaves a far end out of `neighbors` for the cap, the serv
 
 ### `edges/filter-edge`
 
-When `GET /items` names `edge[<edge type>]=<id>`, the server MUST list only items that hold an outbound edge of that type to that id.
+When `GET /items` or `GET /items/stats` names `edge[<edge type>]=<id>`, the server MUST select only items that hold an outbound edge of that type to that id.
 
 **Reason:** the query grammar every listing shares is `search-and-filters.md`.
 
-**Tests:** `correctness/edges/edges-query.test.ts › edge[about]=<id> shorthand returns items with outbound about edge to id`.
+**Tests:** `correctness/edges/edges-query.test.ts › edge[about]=<id> shorthand returns items with outbound about edge to id`, `compliance/filter-grammar.test.ts › selects by an edge key and a backref key as the full form does, on the listing and the stats`.
 
 ### `edges/filter-edge-full`
 
-When `GET /items` names `filter=edge[<edge type>] eq "<id>"`, the server MUST list exactly the items `edge[<edge type>]=<id>` lists.
+When a `filter` holds `edge[<edge type>] eq "<id>"`, the server MUST select exactly the items `edge[<edge type>]=<id>` selects.
 
-**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`, `› filter=edge[X] eq "Y" full form returns the same set`.
+**Reason:** the other operators on an edge term are `search-and-filters/filter-edge-neq`, `search-and-filters/filter-edge-exists` and `search-and-filters/filter-edge-not-exists`, and `search-and-filters/filter-backref-eq` states the inbound term.
+
+**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`, `› filter=edge[X] eq "Y" full form returns the same set`, `compliance/filter-grammar.test.ts › selects by an edge key and a backref key as the full form does, on the listing and the stats`, `› answers an edge term the same on the doors beyond the listing`.
+
+### `edges/filter-backref-key`
+
+When `GET /items` or `GET /items/stats` names `backref[<edge type>]=<id>`, the server MUST select exactly the items `backref[<edge type>] eq "<id>"` selects.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by an edge key and a backref key as the full form does, on the listing and the stats`.
 
 ### `edges/filter-edge-type`
 
@@ -2074,11 +2082,11 @@ If `GET /edges/{id}`, `PATCH /edges/{id}` or `DELETE /edges/{id}` names an edge 
 
 ### `edges/filter-term-hidden`
 
-If a filter term of `GET /items`, `GET /search` or `POST /items/bulk-actions` names an edge type the credential may not read, then the server MUST answer `403 edge_permission_denied`.
+If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists names an edge type the credential may not read, then the server MUST answer `403 edge_permission_denied`.
 
 **Reason:** a dropped term would answer a different question under the same status, which is the unfiltered page an unknown parameter is refused to prevent. This holds for `edge[<type>]=`, `backref[<type>]=` and the full `filter=` form, and `POST /items/bulk-actions` refuses it before it matches a row.
 
-**Tests:** `compliance/edge-permissions.test.ts › refuses a filter term naming a relationship the credential may not read`.
+**Tests:** `compliance/edge-permissions.test.ts › refuses a filter term naming a relationship the credential may not read`, `› refuses the term on GET /items/stats and on a view's items, and answers one the credential may read`.
 
 ### `edges/filter-backref`
 

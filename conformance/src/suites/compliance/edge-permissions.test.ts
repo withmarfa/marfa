@@ -7,6 +7,7 @@ import {
   trackEdge,
   trackEdgeType,
   trackKey,
+  trackView,
   cleanup,
 } from "../../utils/setup.js";
 import {
@@ -1134,6 +1135,69 @@ describe("the doors under an item answer only what the credential may read", () 
       `bulk-actions answered a filter naming an unreadable edge type: ${JSON.stringify(bulkRefused.data)}`,
     ).toBe(403);
     expect(bulkRefused.error?.error.code).toBe("edge_permission_denied");
+  });
+
+  it("refuses the term on GET /items/stats and on a view's items, and answers one the credential may read", async () => {
+    const seen = await kind("stats-seen");
+    const unseen = await kind("stats-unseen");
+    const source = await scopedItem(client, "stats-source");
+    const target = await scopedItem(client, "stats-target");
+    await edge(source, target, seen);
+    await edge(source, target, unseen);
+
+    const narrow = await makeKey("underitem-stats-narrow", {
+      type_permissions: { "core.note": "read", "system.view": "read" },
+      edge_permissions: { [seen]: "read" },
+    });
+    const narrowClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: narrow.key,
+    });
+    const stats = (query: string) =>
+      narrowClient.rawRequest<Record<string, number>>(`/items/stats?${query}`);
+
+    for (const [seenQuery, unseenQuery] of [
+      [`edge[${seen}]=${target}`, `edge[${unseen}]=${target}`],
+      [`backref[${seen}]=${source}`, `backref[${unseen}]=${source}`],
+      [
+        `filter=${encodeURIComponent(`edge[${seen}] eq "${target}"`)}`,
+        `filter=${encodeURIComponent(`edge[${unseen}] eq "${target}"`)}`,
+      ],
+    ] as const) {
+      const witness = await stats(seenQuery);
+      expect(witness.status, JSON.stringify(witness.error)).toBe(200);
+      expect(witness.data).toEqual({ active: 1 });
+      const refused = await stats(unseenQuery);
+      expect(
+        refused.status,
+        `stats answered ${unseenQuery}: ${JSON.stringify(refused.data)}`,
+      ).toBe(403);
+      expect(refused.error?.error.code).toBe("edge_permission_denied");
+    }
+
+    const viewOf = async (filter: string): Promise<string> => {
+      const made = await client.createView({
+        title: `ep-${filter}`,
+        query: { filter },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackView(ctx, made.data.item.id);
+      return made.data.item.id;
+    };
+    const seenView = await viewOf(`edge[${seen}] eq "${target}"`);
+    const unseenView = await viewOf(`edge[${unseen}] eq "${target}"`);
+
+    const witness = await narrowClient.listViewItems(seenView, { limit: 100 });
+    expect(witness.ok, JSON.stringify(witness.error)).toBe(true);
+    expect(witness.data.data.map((item) => item.id)).toEqual([source]);
+    const refused = await narrowClient.listViewItems(unseenView, {
+      limit: 100,
+    });
+    expect(
+      refused.status,
+      `a view's items answered a term naming an unreadable edge type: ${JSON.stringify(refused.data)}`,
+    ).toBe(403);
+    expect(refused.error?.error.code).toBe("edge_permission_denied");
   });
 });
 
