@@ -350,6 +350,8 @@ describe("a body link to a retitled item", () => {
     expect(heard.ok, JSON.stringify(heard)).toBe(true);
     expect(existsSync(join(harness!.dir, "Old.md"))).toBe(true);
 
+    // A newcomer takes the old name, so only the standing edge settles it.
+    put(harness!, "Newcomer.md", "---\ntitle: Old\n---\nA newcomer.\n");
     edit(
       harness!,
       "Host.md",
@@ -363,7 +365,10 @@ describe("a body link to a retitled item", () => {
     expect(heldEdges(made.edges)).toContain(`${made.host} about ${gamma}`);
     expect(existsSync(join(harness!.dir, "New.md"))).toBe(true);
 
-    // The file has the new name now, so the old one names nothing.
+    // The file has the new name now, and the newcomer gives the old one up,
+    // so it names nothing.
+    edit(harness!, "Newcomer.md", "title: Old", "title: Newest");
+    expect((await harness!.folder.push()).ok).toBe(true);
     edit(
       harness!,
       "Host.md",
