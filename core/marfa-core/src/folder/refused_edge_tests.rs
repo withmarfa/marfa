@@ -347,9 +347,22 @@ fn a_refused_write_of_another_kind_stays_though_the_edge_is_held() {
     conn.execute(
         "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload,
                             sent, verdict, reason, answer, queued_at, answered_at)
-         VALUES ('moved', 'update_edge', ?1, ?2, 'edge', 'moved', '{\"properties\":{}}',
+         VALUES ('moved', 'update_edge', ?1, ?2, 'edge', 'moved', ?4,
                  1, 'refused', ?3, '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
-        [&fixture.source, &fixture.target, &CONSTRAINT.to_string()],
+        [
+            &fixture.source,
+            &fixture.target,
+            &CONSTRAINT.to_string(),
+            // Shaped as a create's, so only its kind keeps it.
+            &json!({
+                "id": "edge",
+                "source_id": fixture.source,
+                "target_id": fixture.target,
+                "edge_type": ONE_TO_ONE,
+                "properties": {},
+            })
+            .to_string(),
+        ],
     )
     .unwrap();
     conn.execute(
@@ -631,7 +644,7 @@ fn a_refused_placement_stays_for_the_folder_to_settle() {
 }
 
 #[test]
-fn a_refused_create_with_a_read_or_a_receipt_owed_stays() {
+fn a_refused_create_with_a_read_a_receipt_or_a_link_owed_stays() {
     let fixture = fixture();
     let folder = &fixture.folder;
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
@@ -649,6 +662,13 @@ fn a_refused_create_with_a_read_or_a_receipt_owed_stays() {
     )
     .unwrap();
     let unsent = seeded_at(&fixture, "unsent", "0", "refused", ONE_TO_ONE, json!({}));
+    let linked = seeded(&fixture, "linked", ONE_TO_ONE, json!({}));
+    execute(
+        folder,
+        "INSERT INTO body_edges (write_id, item_id, kind, other_id)
+         VALUES ('linked', ?1, 'link', ?2)",
+        [&fixture.source, &fixture.target],
+    );
     // The witness: one with none of those goes.
     let plain = seeded(&fixture, "plain", ONE_TO_ONE, json!({}));
 
@@ -657,6 +677,7 @@ fn a_refused_create_with_a_read_or_a_receipt_owed_stays() {
     assert!(in_queue(folder, &read));
     assert!(in_queue(folder, &receipt));
     assert!(in_queue(folder, &unsent));
+    assert!(in_queue(folder, &linked));
     assert!(!in_queue(folder, &plain));
 }
 
