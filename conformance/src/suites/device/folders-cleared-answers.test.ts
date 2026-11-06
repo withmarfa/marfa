@@ -181,6 +181,16 @@ describe("a folder's refused edge creates", () => {
     const before = await statusOf(made, "Source.md");
     expect(before.status).toBe("in_step");
     const text = read(made, "Source.md");
+    const held = await made.folder.device().edgesFrom(source);
+    expect(
+      held.ok && held.value.filter((edge) => edge.edge_type === "about"),
+      "the witness: the copy holds the edge",
+    ).toMatchObject([{ target_id: target, version: 1 }]);
+
+    expect(
+      await refused(made),
+      "the witness: it goes as a drain begins, not as the edge arrives",
+    ).toHaveLength(1);
 
     const quiet = await made.folder.push();
     expect(quiet.ok, JSON.stringify(quiet)).toBe(true);
@@ -188,8 +198,8 @@ describe("a folder's refused edge creates", () => {
     expect(await statusOf(made, "Source.md")).toEqual(before);
     expect(read(made, "Source.md")).toBe(text);
     expect(sentEdgeWrites(made), "it sent no edge write").toEqual(sent);
-    const held = await made.folder.device().text(["edges", "from", source]);
-    expect(held.ok && held.value).toContain(target);
+    const after = await made.folder.device().edgesFrom(source);
+    expect(after).toEqual(held);
   });
 
   it("holds one refused edge create of a line however often its file is saved, and the file keeps its reason", async () => {
