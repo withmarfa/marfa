@@ -147,6 +147,7 @@ corrupts a copy under it.
 | `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances.    |
 | `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
 | `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
+| `MARFA_SERVER_BIN`          | A server program every boot starts instead of this checkout's server. See "Another implementation".            |
 | `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures, scenario suite and hydration benchmark drive.                    |
 | `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
 | `MARFA_HYDRATION_ROWS`      | Rows in each set of the hydration benchmark. 2,000 when unset.                                                 |
@@ -186,7 +187,47 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 `MARFA_API_URL`, `MARFA_API_KEY`, `MARFA_MANAGEMENT_KEY`, `MARFA_CONTROL_SOCKET`,
 `MARFA_OWNER_COOKIE`, `MARFA_OWNER_SESSION_FILE`, `MARFA_FIXTURE_AUTH_SECRET`,
 `MARFA_BLOB_PATH` and `MARFA_STATUS_LOGS`. The file is private to the test
-account.
+account. For a target with no owner sign-in, it has no `MARFA_OWNER_COOKIE`
+or `MARFA_OWNER_SESSION_FILE`.
+
+### Another implementation
+
+`MARFA_SERVER_BIN=<program>`, in the environment of the process that runs the
+adapter, makes every boot start that program instead of the server in this
+checkout, including the servers fixtures boot for themselves with
+`bootFreshServer`. Nothing in the workspace is built for it. The program
+runs under the same supervisor, with the state directory as its working
+directory and the settings above in its environment, and it must:
+
+- Write JSON lines only to stdout: the readiness record, whose `message` is
+  `Marfa server listening on port <n>`, and request records as
+  [the request log](#the-request-log) says.
+- Answer `GET /health` with 200 on that port.
+- Serve `GET /_control/setup/status`, `POST /_control/setup/claim` and
+  `POST /keys` on the private socket named by `MARFA_CONTROL_SOCKET`.
+- Stop on `SIGTERM`.
+
+When the sign-in fails and `POST /auth/sign-in/email` answers `404 not_found`,
+the adapter takes the target to have no owner sign-in, says so in one line,
+and writes the env file without the owner's session. Fixtures that need the
+owner then fail and say why. `clock` and `fault` fail against a target
+without the hooks. `MARFA_SERVER_BIN` and `MARFA_SERVER_BUILT` cannot both
+be set.
+
+`pnpm chapter-report` reads a Vitest JSON report of a run and prints, for each
+chapter of `spec/`, how many statements had every cited test pass and how
+many tests passed, failed and did not run:
+
+```bash
+pnpm vitest run --project correctness --project compliance --project sync \
+  --reporter=default --reporter=json --outputFile=run.json
+pnpm chapter-report --report run.json --state .marfa-state --json report.json
+```
+
+With `--state`, which must come before `marfa:down` clears the logs, it also
+reads the request logs of the run's server and of the servers fixtures
+booted, and sorts each failed test file into one that reached a door the
+target does not have and one that failed inside what it has.
 
 ### Settings
 

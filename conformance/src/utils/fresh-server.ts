@@ -43,6 +43,7 @@ export interface FreshServer {
   /** Ordinary key explicitly holding management permissions and no content maps. */
   managementKey: string;
   controlSocket: string;
+  /** Throws for a target with no owner sign-in. */
   ownerCookie: string;
   /** Ordinary key holding all content maps and the seven content/app permissions. */
   workingKey: string;
@@ -438,11 +439,19 @@ export async function bootFreshServer(
     }
     return (JSON.parse(line) as { faults: ArmedFault[] }).faults;
   };
+  let ownerCookie = env.MARFA_OWNER_COOKIE;
   const server: FreshServer = {
     apiUrl,
     managementKey,
     controlSocket: env.MARFA_CONTROL_SOCKET!,
-    ownerCookie: env.MARFA_OWNER_COOKIE!,
+    get ownerCookie(): string {
+      if (ownerCookie === undefined) {
+        throw new Error(
+          `the server booted into ${state} has no owner sign-in, so there is no owner cookie`,
+        );
+      }
+      return ownerCookie;
+    },
     workingKey,
     sqlitePath: join(state, "marfa.db"),
     stateDir: state,
@@ -484,7 +493,7 @@ export async function bootFreshServer(
       }
       server.apiUrl = after.MARFA_API_URL;
       server.controlSocket = after.MARFA_CONTROL_SOCKET!;
-      server.ownerCookie = after.MARFA_OWNER_COOKIE!;
+      ownerCookie = after.MARFA_OWNER_COOKIE;
       if (after.MARFA_MANAGEMENT_KEY !== server.managementKey) {
         server.managementKey = after.MARFA_MANAGEMENT_KEY;
         server.workingKey = await mintWorkingKey(
