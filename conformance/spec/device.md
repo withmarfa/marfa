@@ -6380,7 +6380,7 @@ An editor shows a link's parts where they sit in its text and offers the items a
 
 ### `device/link-parts`
 
-When a caller asks for the links in a text, a device MUST answer each link in the order of the text, repeats included, with its text as written, the text between its brackets trimmed, and its name, its heading and its alias.
+When a caller asks for the links in a text, a device MUST answer each link in the order of the text, repeats included, with its text as written, the text between its brackets trimmed and read by `device/link-table-pipe`, and its name, its heading and its alias.
 
 **Reason:** an editor highlights every link it shows, including a repeat and a link to a heading of the same text, which makes no edge. The CLI reads them with `device items link-parts`.
 
@@ -6444,11 +6444,19 @@ A device MUST read a link's name, heading and alias from the text as written, co
 
 ### `device/link-backslash`
 
-A device MUST read a backslash in a link, or before its brackets, as part of the text, except that `device/embed-table-pipe` reads `\|` in an embed in a table cell as `|`.
+A device MUST read a backslash in a link, or before its brackets, as part of the text, except that `device/link-table-pipe` reads `\|` in a link in a table cell as `|`.
 
-**Reason:** Marfa defines no escape in a link, so an editor and the edges read `\[[name]]` alike. The one escape is the pipe of an embed's size in a table cell, which a table needs.
+**Reason:** Marfa defines no other escape in a link, so an editor and the edges read `\[[name]]` alike. The one escape is the pipe of a link's alias in a table cell, which a table needs.
 
-**Tests:** `device/link-parts.test.ts › keeps a backslash as part of the text`.
+**Tests:** `device/link-parts.test.ts › keeps a backslash as part of the text`, `device/link-parts.test.ts › keeps a backslash outside a table cell, where a line with no delimiter row is no table`.
+
+### `device/link-table-pipe`
+
+When a link in a body, or in a text a caller asks about, sits inside a table cell, including a table in a quote or a callout, a device MUST read each `\|` in the link as `|` before reading its name, its heading and its alias.
+
+**Reason:** a table cell cannot hold a bare `|`, so an editor writes a link's alias there as `[[Plan\|Label]]`, which Obsidian shows as a link to `Plan`. A line is in a cell by the same reading as `device/embed-table-pipe`, so a line with no delimiter row under its header is no table, and code in a cell stays unread. The text as written is what the link is answered as.
+
+**Tests:** `device/link-parts.test.ts › reads an escaped pipe in a link in a cell of %s as the bar, placed where it was written`, `device/link-parts.test.ts › leaves code in a table cell unread, and a table in a fence is no table`, `device/body-edges-live.test.ts › makes the edge of a link with an escaped pipe in a cell of %s`, `device/body-edges-live.test.ts › holds a link with an escaped pipe in a table cell under its name, until the item arrives`, `device/body-edges-live.test.ts › keeps the backslash of a link outside a table, whose name then matches nothing`.
 
 ### `device/link-parts-no-copy`
 

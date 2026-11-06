@@ -321,6 +321,38 @@ describe("a body link to a retitled item", () => {
     expect(rewrites(harness!, made.host)).toEqual([]);
   });
 
+  it.each([
+    ["a table", ""],
+    ["a table in a quote", "> "],
+    ["a table in a callout", "> [!note]\n> "],
+  ])(
+    "keeps the escaped pipe of a link in a cell of %s when it renames the link",
+    async (_, opening) => {
+      const prefix = opening.split("\n").pop()!;
+      const body = `${opening}| Note | Link |\n${prefix}| --- | --- |\n${prefix}| [[Old\\|the plan]] | [[Old#Steps\\|steps]] [[Old]] |\n\nSee [[Old|the plan]].\n`;
+      const made = await linked(
+        "retitled-table-pipe",
+        undefined,
+        undefined,
+        `---\ntitle: Host\n---\n${body}`,
+      );
+      retitleElsewhere(made, made.old, "New");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.pull?.relinked).toBe(1);
+      const renamed = body.replaceAll("[[Old", "[[New");
+      expect(bodyOf(harness!, "Host.md")).toBe(renamed);
+      expect(rewrites(harness!, made.host)).toEqual([
+        { body: renamed, version_match: "exact" },
+      ]);
+      expect(heldEdges(made.edges)).toEqual([
+        `${made.host} references ${made.old}`,
+      ]);
+      await settled(harness!);
+    },
+  );
+
   it("keeps naming the item when another takes its old title", async () => {
     const made = await linked("retitled-old-name-taken");
     retitleElsewhere(made, made.old, "New");

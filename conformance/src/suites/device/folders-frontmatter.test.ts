@@ -1692,6 +1692,96 @@ describe("edges in frontmatter", () => {
     ]);
   });
 
+  it("links the item a table cell link names, and holds one that names nothing under that name", async () => {
+    const made = await edgeHarness(
+      "folder-body-table-pipe",
+      [titled(alpha, "Alpha")],
+      [],
+    );
+    harness = made.harness;
+    const table = (cell: string) =>
+      `---\ntitle: Source\n---\n| h |\n| - |\n| ${cell} |\n`;
+    put(harness, "Source.md", table("[[Alpha\\|shown]]"));
+    const resolved = await harness.folder.push();
+    expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.scan.flagged).toEqual([]);
+    const source = String(sentCreates(harness)[0]?.id);
+    expect(heldEdges(made.door)).toEqual([`${source} references ${alpha}`]);
+    expect(bodyOf(harness, "Source.md")).toBe(
+      "| h |\n| - |\n| [[Alpha\\|shown]] |\n",
+    );
+
+    edit(harness, "Source.md", "[[Alpha\\|shown]]", "[[Nothing\\|Label]]");
+    const held = await harness.folder.push();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.scan.flagged).toEqual([
+      expect.objectContaining({
+        path: "Source.md",
+        flag: "edges",
+        reason: expect.stringContaining(
+          "[[Nothing|Label]] in its body matches no item",
+        ),
+      }),
+    ]);
+
+    put(harness, "Nothing.md", "---\ntitle: Nothing\n---\nHere now.\n");
+    const arrived = await harness.folder.push();
+    expect(arrived.ok, JSON.stringify(arrived)).toBe(true);
+    if (!arrived.ok) return;
+    expect(arrived.value.scan.flagged).toEqual([]);
+    const nothing = String(
+      sentCreates(harness).find(
+        (row) =>
+          (row.properties as Record<string, unknown>).title === "Nothing",
+      )?.id,
+    );
+    expect(heldEdges(made.door)).toEqual([`${source} references ${nothing}`]);
+    expect(bodyOf(harness, "Source.md")).toBe(
+      "| h |\n| - |\n| [[Nothing\\|Label]] |\n",
+    );
+  });
+
+  it("reads a link's backslash as text outside a table", async () => {
+    const made = await edgeHarness(
+      "folder-body-no-table",
+      [titled(alpha, "Alpha")],
+      [],
+    );
+    harness = made.harness;
+    // The witness: the same line under a delimiter row makes the edge.
+    put(
+      harness,
+      "Witness.md",
+      "---\ntitle: Witness\n---\n| [[Alpha\\|shown]] |\n| - |\n| [[Alpha\\|shown]] |\n",
+    );
+    put(
+      harness,
+      "Source.md",
+      "---\ntitle: Source\n---\nSee [[Alpha\\|shown]].\n\n| [[Alpha\\|shown]] |\n| b |\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([
+      expect.objectContaining({
+        path: "Source.md",
+        flag: "edges",
+        reason: expect.stringContaining(
+          "[[Alpha\\|shown]] in its body matches no item",
+        ),
+      }),
+    ]);
+    const witness = String(
+      sentCreates(harness).find(
+        (row) =>
+          (row.properties as Record<string, unknown>).title === "Witness",
+      )?.id,
+    );
+    expect(heldEdges(made.door)).toEqual([`${witness} references ${alpha}`]);
+  });
+
   it("ignores body links in code and comments while sending visible links", async () => {
     const made = await edgeHarness(
       "folder-body-code",

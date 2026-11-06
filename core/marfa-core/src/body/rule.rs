@@ -1804,7 +1804,7 @@ fn read_body(
     let id = item.id.as_str();
     let body = body_of(catalog, item);
     let mut links = BodyLinks::default();
-    let names = text::links(body);
+    let names = text::body_links(body);
     let embeds = text::embeds(body);
     if names.is_empty() && embeds.is_empty() {
         return Ok(links);
@@ -1831,8 +1831,8 @@ fn read_body(
     };
     if !names.is_empty() {
         let references = Others::load(conn, catalog, &Placements, &references_of(conn, id)?)?;
-        for raw in names {
-            let typed = Typed::new(&raw);
+        for link in names {
+            let typed = Typed::new(&link.target);
             let resolved = link_offline(
                 conn,
                 id,
@@ -1842,8 +1842,8 @@ fn read_body(
                 Reading::Written(None),
             )?;
             links.links.push(BodyName {
-                text: text::render_link(&raw),
-                target: target(Kind::Link, &raw, resolved),
+                text: text::render_link(&link.written),
+                target: target(Kind::Link, &link.target, resolved),
                 name: typed.name,
             });
         }
@@ -3627,6 +3627,51 @@ mod tests {
             targets(&core.body_links(&host).unwrap().embeds),
             vec![BodyTarget::Pending],
             "the unescaped pipe outside a table read as a name with a file type"
+        );
+    }
+
+    #[test]
+    fn a_link_in_a_table_cell_makes_its_edge_and_keeps_its_text_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let plan = note(&core, "Plan", "");
+        let host = note(&core, "Host", "");
+        // By its id, which binds without a server.
+        let cell = format!("[[{plan}\\|Label]]");
+        let held = |body: &str| {
+            edit(&core, &host, serde_json::json!({ "body": body }));
+            held_out(&core, &host, LINK_EDGE)
+        };
+
+        // Witness: outside a table the backslash is part of the name.
+        assert_eq!(held(&format!("See {cell}.")), Vec::<String>::new());
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Pending],
+        );
+
+        for body in [
+            format!("| h |\n| - |\n| {cell} |"),
+            format!("> | h |\n> | - |\n> | {cell} |"),
+            format!("> [!note]\n> | h |\n> | - |\n> | {cell} |"),
+            format!("| h |\n| - |\n| [[{plan}#Part\\|Label]] |"),
+        ] {
+            assert_eq!(held(&body), vec![plan.clone()], "no edge from {body}");
+            let links = core.body_links(&host).unwrap().links;
+            assert_eq!(
+                targets(&links),
+                vec![BodyTarget::Item { id: plan.clone() }],
+                "{body}"
+            );
+            assert!(links[0].text.contains("\\|"), "{:?}", links[0].text);
+        }
+
+        // The same link written with a bare bar outside the table is one link,
+        // so moving it out of the table keeps its edge.
+        assert_eq!(held(&format!("See [[{plan}|Label]].")), vec![plan.clone()]);
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan }],
         );
     }
 

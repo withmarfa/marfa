@@ -2422,9 +2422,17 @@ If a document's body, with its links renamed to the items' titles for `folders/b
 
 If a document's body, with its links renamed to the items' IDs for `folders/body-link-retitled-id`, would not read as the same links in the same order naming the items meant, with the same embeds and the same cells in each table row, then a device MUST NOT rewrite the document's links.
 
-**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID carries its alias behind a bar, which in a table row, a table in a blockquote or callout included, would end the cell, so such a document keeps its old links.
+**Reason:** a rewrite that changes what the body links to, embeds or lays out in a table changes what the person wrote. A link by ID that had no alias gains one behind a bare bar, which in a table row, a table in a blockquote or callout included, would end the cell, so such a document keeps its old links.
 
 **Tests:** `device/folders-retitled-links.test.ts › leaves a document alone where a link by id would sit in a table row`.
+
+### `folders/body-link-retitled-table-pipe`
+
+When rewriting a link in a table cell for `folders/body-link-retitled`, a device MUST keep each `\|` in the link.
+
+**Reason:** a rewrite replaces the name alone. A bare bar would end the cell and split the table, and a link outside a table has no `\|` to keep, so it keeps what it had.
+
+**Tests:** `device/folders-retitled-links.test.ts › keeps the escaped pipe of a link in a cell of %s when it renames the link`.
 
 ### `folders/body-link-retitled-behind`
 
@@ -2557,6 +2565,14 @@ When an embed in a document's body sits inside a table cell, a device MUST read 
 **Reason:** a folder's embed reads the same body text as a working copy's.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
+
+### `folders/link-table-pipe`
+
+When a link in a document's body sits inside a table cell, a device MUST read it as `device/link-table-pipe` reads it.
+
+**Reason:** a folder's link reads the same body text as a working copy's.
+
+**Tests:** `device/folders-frontmatter.test.ts › links the item a table cell link names, and holds one that names nothing under that name`, `device/folders-frontmatter.test.ts › reads a link's backslash as text outside a table`.
 
 ### `folders/embed-address`
 

@@ -631,6 +631,60 @@ mod tests {
     }
 
     #[test]
+    fn a_link_in_a_table_cell_keeps_its_escaped_pipe_when_it_is_renamed() {
+        for (callout, prefix) in [("", ""), ("", "> "), ("> [!note]\n", "> ")] {
+            let table = |one: &str, two: &str, three: &str| {
+                format!(
+                    "{callout}{prefix}| h | h |\n{prefix}| - | - |\n{prefix}| {one} {two} | {three} |\n"
+                )
+            };
+            let body = table("[[Old\\|Label]]", "[[Old#Part\\|Label]]", "[[Old]]");
+            let renamed = titled(&[
+                ("Old|Label", "New"),
+                ("Old#Part|Label", "New"),
+                ("Old", "New"),
+            ]);
+            assert_eq!(
+                relinked(&body, &renamed).as_deref(),
+                Some(table("[[New\\|Label]]", "[[New#Part\\|Label]]", "[[New]]").as_str()),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_by_id_in_a_table_cell_keeps_its_escaped_pipe() {
+        let body = "| h |\n| - |\n| [[Old\\|Label]] |\n";
+        assert_eq!(
+            relinked(body, &by_id(&["Old|Label"])),
+            Some(format!("| h |\n| - |\n| [[{ID}\\|Label]] |\n"))
+        );
+    }
+
+    #[test]
+    fn a_rename_keeps_each_spelling_of_one_link_where_it_sits() {
+        let body = "[[Old|Label]] and [[Old\\|Label]]\n\n| h |\n| - |\n| [[Old\\|Label]] |\n";
+        let renamed = titled(&[("Old|Label", "New")]);
+        assert_eq!(
+            relinked(body, &renamed).as_deref(),
+            Some("[[New|Label]] and [[Old\\|Label]]\n\n| h |\n| - |\n| [[New\\|Label]] |\n"),
+            "the link outside the table names `Old\\`, so it is another link and keeps its bytes"
+        );
+    }
+
+    #[test]
+    fn a_link_outside_a_table_is_renamed_as_it_was_read() {
+        // Outside a table the backslash is part of the name, and the name is
+        // what a rename replaces.
+        let body = "[[Old\\|Label]] and `[[Old\\|Label]]`\n";
+        let renamed = titled(&[("Old\\|Label", "New")]);
+        assert_eq!(
+            relinked(body, &renamed).as_deref(),
+            Some("[[New|Label]] and `[[Old\\|Label]]`\n")
+        );
+    }
+
+    #[test]
     fn reads_each_line_of_a_table_and_no_other() {
         let text = "intro | not\n\n| a | b |\n|:--|--:|\n| 1 | 2 |\n\nafter | x\n";
         assert_eq!(

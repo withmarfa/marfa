@@ -1,5 +1,7 @@
 //! A body's links and embeds, read as Obsidian shows them.
 
+use std::borrow::Cow;
+use std::iter::Peekable;
 use std::ops::Range;
 
 use serde::Serialize;
@@ -17,7 +19,7 @@ impl Typed {
         let raw = raw.trim();
         Typed {
             raw: raw.to_string(),
-            name: raw[split(raw).name].to_string(),
+            name: raw[split(raw, false).name].to_string(),
         }
     }
 }
@@ -25,16 +27,18 @@ impl Typed {
 /// Byte ranges into the text between a link's brackets: the name up to the
 /// first `|` or `#`; where `#` comes first, a heading up to the next `|`; and
 /// an alias after the first `|`. Each is trimmed, and an empty heading or
-/// alias is none.
+/// alias is none. With `escaped`, the backslash of a `\|` is part of the bar,
+/// so it ends no name or heading.
 struct Split {
     name: Range<usize>,
     heading: Option<Range<usize>>,
     alias: Option<Range<usize>>,
 }
 
-fn split(inner: &str) -> Split {
+fn split(inner: &str, escaped: bool) -> Split {
     let present =
         |range: Range<usize>| Some(trimmed(inner, range)).filter(|range| !range.is_empty());
+    let before_bar = |bar: usize| bar - usize::from(escaped && inner[..bar].ends_with('\\'));
     let Some(at) = inner.find(['|', '#']) else {
         return Split {
             name: trimmed(inner, 0..inner.len()),
@@ -42,19 +46,19 @@ fn split(inner: &str) -> Split {
             alias: None,
         };
     };
-    let name = trimmed(inner, 0..at);
     if inner.as_bytes()[at] == b'|' {
         return Split {
-            name,
+            name: trimmed(inner, 0..before_bar(at)),
             heading: None,
             alias: present(at + 1..inner.len()),
         };
     }
-    match inner[at + 1..].find('|') {
+    let name = trimmed(inner, 0..at);
+    match inner[at + 1..].find('|').map(|bar| at + 1 + bar) {
         Some(bar) => Split {
             name,
-            heading: present(at + 1..at + 1 + bar),
-            alias: present(at + 2 + bar..inner.len()),
+            heading: present(at + 1..before_bar(bar)),
+            alias: present(bar + 1..inner.len()),
         },
         None => Split {
             name,
@@ -83,6 +87,24 @@ struct Bracketed {
     whole: Range<usize>,
     inner: Range<usize>,
     embed: bool,
+    /// Whether it sits in a table cell and holds a `\|`, which it reads as `|`.
+    escaped: bool,
+}
+
+impl Bracketed {
+    /// What it holds in `body`, as it is read.
+    fn read<'a>(&self, body: &'a str) -> Cow<'a, str> {
+        read_bars(&body[self.inner.clone()], self.escaped)
+    }
+}
+
+/// `written` with each `\|` read as `|`, if it is `escaped`.
+fn read_bars(written: &str, escaped: bool) -> Cow<'_, str> {
+    if escaped {
+        Cow::Owned(written.replace("\\|", "|"))
+    } else {
+        Cow::Borrowed(written)
+    }
 }
 
 /// Each `[[`…`]]` and `![[`…`]]` in `body` outside code and comments, in one
@@ -94,6 +116,7 @@ fn bracketed(body: &str) -> Vec<Bracketed> {
     let text = without_code(body);
     let bytes = text.as_bytes();
     let mut found = Vec::new();
+    let mut cells = TableCells::of(body);
     let mut open: Option<usize> = None;
     let mut at = 0;
     while at < bytes.len() {
@@ -105,10 +128,13 @@ fn bracketed(body: &str) -> Vec<Bracketed> {
             b']' if bytes.get(at + 1) == Some(&b']') && open.is_some() => {
                 let start = open.take().expect("checked above");
                 let embed = start > 0 && bytes[start - 1] == b'!';
+                let inner = start + 2..at;
+                let escaped = body[inner.clone()].contains("\\|") && cells.holds(start);
                 found.push(Bracketed {
                     whole: if embed { start - 1 } else { start }..at + 2,
-                    inner: start + 2..at,
+                    inner,
                     embed,
+                    escaped,
                 });
                 at += 2;
             }
@@ -123,28 +149,46 @@ fn bracketed(body: &str) -> Vec<Bracketed> {
 }
 
 /// The links of `body`: each `[[`…`]]` that is not an embed.
-fn link_ranges(body: &str) -> impl Iterator<Item = (Range<usize>, Range<usize>)> {
-    bracketed(body)
-        .into_iter()
-        .filter(|found| !found.embed)
-        .map(|found| (found.whole, found.inner))
+fn link_brackets(body: &str) -> impl Iterator<Item = Bracketed> {
+    bracketed(body).into_iter().filter(|found| !found.embed)
 }
 
-/// The text of each link in a body that names another item, without its
-/// brackets, in order and once each. A link naming only a heading stays
-/// within this document, so it is no edge.
-pub(crate) fn links(body: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for (_, inner) in link_ranges(body) {
-        let target = body[inner].trim();
+/// A link in a body that names another item.
+pub(crate) struct BodyLink {
+    /// The text between its brackets, trimmed, as it is read. This is what
+    /// the link is bound and recorded by.
+    pub(crate) target: String,
+    /// The same text as it is written.
+    pub(crate) written: String,
+}
+
+/// The links of a body that name another item, in order and once for each
+/// way they read. A link naming only a heading stays within this document, so
+/// it is no edge.
+pub(crate) fn body_links(body: &str) -> Vec<BodyLink> {
+    let mut found: Vec<BodyLink> = Vec::new();
+    for bracket in link_brackets(body) {
+        let read = bracket.read(body);
+        let target = read.trim();
         if !target.is_empty()
             && !target.starts_with('#')
-            && !found.iter().any(|held| held == target)
+            && !found.iter().any(|held| held.target == target)
         {
-            found.push(target.to_string());
+            found.push(BodyLink {
+                target: target.to_string(),
+                written: body[bracket.inner].trim().to_string(),
+            });
         }
     }
     found
+}
+
+/// The text each link of a body is read as (`BodyLink::target`).
+pub(crate) fn links(body: &str) -> Vec<String> {
+    body_links(body)
+        .into_iter()
+        .map(|link| link.target)
+        .collect()
 }
 
 /// A link in a text, as `link_parts` reads it. Every position is a range of
@@ -155,8 +199,9 @@ pub struct LinkParts {
     pub text: String,
     pub start: u64,
     pub end: u64,
-    /// The text between the brackets, trimmed, which is what a link is bound
-    /// by and what `link_candidates` takes.
+    /// The text between the brackets, trimmed, with each `\|` of a link in a
+    /// table cell read as `|`, which is what a link is bound by and what
+    /// `link_candidates` takes.
     pub target: String,
     /// What the link names. Empty for a link to a heading of the same text.
     pub name: LinkPart,
@@ -166,6 +211,8 @@ pub struct LinkParts {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LinkPart {
+    /// As it is read, which is as it is written but for a `\|` in the alias of
+    /// a link in a table cell. `start` and `end` place it as it is written.
     pub text: String,
     pub start: u64,
     pub end: u64,
@@ -176,17 +223,23 @@ pub struct LinkPart {
 pub fn link_parts(text: &str) -> Vec<LinkParts> {
     let mut units = Utf16::new(text);
     let mut found = Vec::new();
-    for (whole, inner) in link_ranges(text) {
+    for bracket in link_brackets(text) {
+        let Bracketed {
+            whole,
+            inner,
+            escaped,
+            ..
+        } = bracket;
         let content = &text[inner.clone()];
         let target = trimmed(content, 0..content.len());
         if target.is_empty() {
             continue;
         }
-        let parts = split(content);
+        let parts = split(content, escaped);
         let base = inner.start;
         let start = units.at(whole.start);
         let mut part = |range: Range<usize>| LinkPart {
-            text: text[base + range.start..base + range.end].to_string(),
+            text: read_bars(&content[range.clone()], escaped).into_owned(),
             start: units.at(base + range.start),
             end: units.at(base + range.end),
         };
@@ -197,7 +250,7 @@ pub fn link_parts(text: &str) -> Vec<LinkParts> {
             text: text[whole.clone()].to_string(),
             start,
             end: units.at(whole.end),
-            target: content[target].to_string(),
+            target: read_bars(&content[target], escaped).into_owned(),
             name,
             heading,
             alias,
@@ -262,7 +315,6 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         .filter(|found| found.embed)
         .peekable();
     let mut found: Vec<Embed> = Vec::new();
-    let mut table_cells: Option<Vec<Range<usize>>> = None;
     let mut at = 0usize;
     while let Some(start) = text[at..].find("![") {
         let open = at + start;
@@ -274,17 +326,7 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
         let (embed, used) = if rest.starts_with('[') {
             match named.next_if(|bracket| bracket.whole.start == open) {
                 Some(bracket) => {
-                    let inner = &body[bracket.inner.clone()];
-                    let in_cell = inner.contains("\\|")
-                        && table_cells
-                            .get_or_insert_with(|| table_cells_of(body))
-                            .iter()
-                            .any(|cell| cell.contains(&bracket.whole.start));
-                    let name = if in_cell {
-                        Typed::new(&inner.replace("\\|", "|")).name
-                    } else {
-                        Typed::new(inner).name
-                    };
+                    let name = Typed::new(&bracket.read(body)).name;
                     let embed = (!name.is_empty()).then(|| Embed::Named {
                         raw: body[bracket.whole.clone()].to_string(),
                         name,
@@ -327,10 +369,33 @@ pub(crate) fn embeds(body: &str) -> Vec<Embed> {
     found
 }
 
-/// The byte ranges of the table cells in `text`, in a quote or a callout too.
-/// Read from the raw body: a blanked code span would change what a header
-/// row says and so whether a table is one. `![[` is never found in code, so
-/// a table in a fenced block adds no embed.
+/// The table cells of a text, in a quote or a callout too, read once a link
+/// or an embed asks and walked in the order of the text.
+struct TableCells<'a> {
+    text: &'a str,
+    cells: Option<Peekable<std::vec::IntoIter<Range<usize>>>>,
+}
+
+impl<'a> TableCells<'a> {
+    fn of(text: &'a str) -> TableCells<'a> {
+        TableCells { text, cells: None }
+    }
+
+    /// Whether a cell holds the byte offset `at`, asked in increasing order.
+    fn holds(&mut self, at: usize) -> bool {
+        let text = self.text;
+        let cells = self
+            .cells
+            .get_or_insert_with(|| table_cells_of(text).into_iter().peekable());
+        while cells.next_if(|cell| cell.end <= at).is_some() {}
+        cells.peek().is_some_and(|cell| cell.contains(&at))
+    }
+}
+
+/// The byte ranges of the table cells in `text`, in order. Read from the raw
+/// body: a blanked code span would change what a header row says and so
+/// whether a table is one. A `[[` is never found in code, so a table in a
+/// fenced block adds no link or embed.
 fn table_cells_of(text: &str) -> Vec<Range<usize>> {
     pulldown_cmark::Parser::new_ext(text, pulldown_cmark::Options::ENABLE_TABLES)
         .into_offset_iter()
@@ -824,6 +889,161 @@ mod tests {
         // A code span in the header row does not stop the table being one.
         let coded = "| `a|b` | h |\n| - | - | - |\n| a | ![[t.png\\|200]] | c |";
         assert_eq!(embeds(coded), vec![named("![[t.png\\|200]]", "t.png")]);
+    }
+
+    /// `cell` in a table of its own, in a quote and in a callout.
+    fn tables_holding(cell: &str) -> [String; 3] {
+        let table = format!("| h | h |\n| - | - |\n| a | {cell} |");
+        let quoted = |first: &str| {
+            format!(
+                "{first}{}",
+                table
+                    .lines()
+                    .map(|line| format!("> {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        let quote = quoted("");
+        let callout = quoted("> [!note]\n");
+        [table, quote, callout]
+    }
+
+    #[test]
+    fn a_link_in_a_table_cell_reads_its_escaped_pipe_as_the_bar() {
+        let some = |text: &str| Some(text.to_string());
+        for (cell, target, read) in [
+            (
+                "[[Plan\\|Label]]",
+                "Plan|Label",
+                ("Plan".to_string(), None, some("Label")),
+            ),
+            (
+                "[[Plan#Part\\|Label]]",
+                "Plan#Part|Label",
+                ("Plan".to_string(), some("Part"), some("Label")),
+            ),
+            (
+                "[[Plan#^block\\|Label]]",
+                "Plan#^block|Label",
+                ("Plan".to_string(), some("^block"), some("Label")),
+            ),
+            (
+                "[[ Plan \\| Label ]]",
+                "Plan | Label",
+                ("Plan".to_string(), None, some("Label")),
+            ),
+        ] {
+            for body in tables_holding(cell) {
+                assert_eq!(links(&body), [target], "{body}");
+                let parts = link_parts(&body);
+                assert_eq!(parts.len(), 1, "{body}");
+                assert_eq!(parts[0].text, cell, "the text is as written");
+                assert_eq!(parts[0].target, target);
+                assert_eq!(shown(&parts[0]), read, "{body}");
+                assert_eq!(parts[0].name.text, Typed::new(&parts[0].target).name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_link_in_a_table_cell_places_its_parts_in_the_text_as_written() {
+        let body = "| h |\n| - |\n| é [[Plan#Part\\|a\\|b]] |";
+        let parts = link_parts(body);
+        let utf16: Vec<u16> = body.encode_utf16().collect();
+        let at = |start: u64, end: u64| {
+            String::from_utf16(&utf16[start as usize..end as usize]).unwrap()
+        };
+        let link = &parts[0];
+        assert_eq!(at(link.start, link.end), "[[Plan#Part\\|a\\|b]]");
+        assert_eq!(at(link.name.start, link.name.end), "Plan");
+        let heading = link.heading.as_ref().unwrap();
+        assert_eq!(at(heading.start, heading.end), "Part");
+        let alias = link.alias.as_ref().unwrap();
+        assert_eq!(at(alias.start, alias.end), "a\\|b");
+        assert_eq!(alias.text, "a|b", "each escaped pipe reads as the bar");
+        assert_eq!(link.target, "Plan#Part|a|b");
+    }
+
+    #[test]
+    fn links_in_a_table_cell_are_each_read_and_one_with_no_bar_is_unchanged() {
+        let body = "| h | h |\n| - | - |\n| [[A\\|one]] [[B\\|two]] | [[C]] [[D#Part]] |";
+        assert_eq!(links(body), ["A|one", "B|two", "C", "D#Part"]);
+        let parts = link_parts(body);
+        assert_eq!(
+            parts.iter().map(shown).collect::<Vec<_>>(),
+            vec![
+                ("A".to_string(), None, Some("one".to_string())),
+                ("B".to_string(), None, Some("two".to_string())),
+                ("C".to_string(), None, None),
+                ("D".to_string(), Some("Part".to_string()), None),
+            ]
+        );
+        assert_eq!(parts[2].text, "[[C]]");
+        assert_eq!(parts[2].target, "C");
+    }
+
+    #[test]
+    fn a_link_outside_a_table_cell_keeps_its_backslash() {
+        let cell = "[[Plan\\|Label]]";
+        // The witness: the same link in a table reads the bar.
+        assert_eq!(links(&format!("| h |\n| - |\n| {cell} |")), ["Plan|Label"]);
+        for body in [
+            cell.to_string(),
+            format!("> {cell}"),
+            format!("- {cell}"),
+            // No delimiter row, so no table.
+            format!("| a | {cell} |"),
+            format!("| h | h |\n| a | {cell} |"),
+            // The paragraph after a table, which a blank line ends.
+            format!("| h |\n| - |\n| a |\n\n{cell}"),
+        ] {
+            assert_eq!(links(&body), ["Plan\\|Label"], "{body}");
+            let parts = link_parts(&body);
+            assert_eq!(parts[0].name.text, "Plan\\", "{body}");
+            assert_eq!(parts[0].alias.as_ref().unwrap().text, "Label", "{body}");
+            assert_eq!(parts[0].target, "Plan\\|Label", "{body}");
+        }
+        // A backslash before anything but a bar stays in a table too.
+        assert_eq!(
+            links("| h |\n| - |\n| [[Pl\\an#Pa\\rt]] |"),
+            ["Pl\\an#Pa\\rt"]
+        );
+    }
+
+    #[test]
+    fn code_in_a_table_cell_stays_unread_and_a_fence_is_no_table() {
+        let inline = "| h | h |\n| - | - |\n| `[[Hidden\\|x]]` | [[Seen\\|y]] |";
+        assert_eq!(links(inline), ["Seen|y"]);
+        assert_eq!(link_parts(inline).len(), 1);
+        let fenced = "```\n| h |\n| - |\n| [[Hidden\\|x]] |\n```\n\n| h |\n| - |\n| [[Seen\\|y]] |";
+        assert_eq!(links(fenced), ["Seen|y"]);
+        assert_eq!(
+            embeds("| h | h |\n| - | - |\n| `![[hidden.png\\|2]]` | ![[seen.png\\|3]] |"),
+            vec![named("![[seen.png\\|3]]", "seen.png")]
+        );
+    }
+
+    #[test]
+    fn a_link_and_an_embed_in_one_cell_read_their_pipes_alike() {
+        let body = "| h |\n| - |\n| [[Plan\\|Label]] ![[t.png\\|200]] |";
+        assert_eq!(links(body), ["Plan|Label"]);
+        assert_eq!(embeds(body), vec![named("![[t.png\\|200]]", "t.png")]);
+    }
+
+    #[test]
+    fn a_body_of_many_cells_with_escaped_pipes_is_read_in_one_pass() {
+        let rows = "| [[a\\|b]] | ![[c.png\\|2]] |\n".repeat(50_000);
+        let body = format!("| h | h |\n| - | - |\n{rows}");
+        let started = std::time::Instant::now();
+        assert_eq!(link_parts(&body).len(), 50_000);
+        assert_eq!(links(&body), ["a|b"]);
+        assert_eq!(embeds(&body).len(), 1);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "reading took {:?}, so each link looks through every cell",
+            started.elapsed()
+        );
     }
 
     #[test]
