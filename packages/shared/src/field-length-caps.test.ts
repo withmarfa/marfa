@@ -132,7 +132,10 @@ describe("per-field length caps (the field a type names as its body)", () => {
   }
 
   it("holds a named body to 1,000,000 units and another text field to 100,000, naming the field", () => {
-    registerBody({ body: { type: "string" }, other: { type: "string" } }, "body");
+    registerBody(
+      { body: { type: "string" }, other: { type: "string" } },
+      "body",
+    );
 
     expect(
       verdict("test.caps.body", "body", "a".repeat(DEFAULT_BODY_CAP)),
@@ -149,7 +152,10 @@ describe("per-field length caps (the field a type names as its body)", () => {
   });
 
   it("counts a character outside the Basic Multilingual Plane as two units against both caps", () => {
-    registerBody({ body: { type: "string" }, other: { type: "string" } }, "body");
+    registerBody(
+      { body: { type: "string" }, other: { type: "string" } },
+      "body",
+    );
 
     expect(
       verdict(
