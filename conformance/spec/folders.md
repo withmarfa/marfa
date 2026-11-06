@@ -3846,6 +3846,14 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 **Tests:** `device/binding-folders-clock.test.ts › defers a missing file until the five-second rename grace ends`.
 
+### `folders/delete-grace-keeps-watch-awake`
+
+While the rename grace of a missing file in a watched folder runs, a device MUST go on running passes until a pass has decided the file's deletion.
+
+**Reason:** a pass that measures the grace once at its sweep and again at its end can pass the file over and then rest, so no pass decides the deletion until a file event or the next full pass.
+
+**Tests:** `device/binding-folders-clock.test.ts › sends the delete of a file whose grace ends after the sweep passed it over, with no event to wake the watch`.
+
 ### `folders/delete-rename-cancels`
 
 When a file returns at its own path or a new name within the rename grace, a device MUST cancel its journaled deletion.
@@ -7373,6 +7381,14 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 **Reason:** a file item's file is copied or downloaded as any file that is not a document is, whatever its name, and a half-written file sent is a half-written item.
 
 **Tests:** `device/folders-placement.test.ts › waits for a file item at a document name to stop changing, while every other file goes on, named %s`.
+
+### `folders/settle-measured-at-read`
+
+When a device decides whether a file it read has settled, a device MUST measure the time the file was unchanged up to that read, not up to any later point in the pass.
+
+**Reason:** a pass waits on the server and on its own work between reading a file and sending it, so time measured up to the decision makes a file still being written look settled, and its half-written bytes are sent.
+
+**Tests:** `device/folders-placement.test.ts › waits for a file item at a document name to stop changing however long the server takes to answer, named %s`.
 
 ### `folders/settling-rename-identity`
 

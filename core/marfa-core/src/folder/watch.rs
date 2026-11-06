@@ -502,6 +502,9 @@ impl Folder {
             }
         });
         telling.scan_began = Some(crate::clock::now());
+        // Earlier than the sweep's own clock, so a grace that ends after the
+        // sweep passed its file over still keeps the ticks running.
+        let before_sweep = crate::clock::system_time();
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
@@ -645,7 +648,7 @@ impl Folder {
             && refused.is_none()
             && !stirred(&settings, &scan, &drain, &pull)
             && scan.settling.is_empty()
-            && !self.grace_running()?
+            && !self.grace_running(before_sweep)?
             && drain.rebased == 0
             && drain.report.unavailable.is_none()
             && drain.report.stopped.is_none()

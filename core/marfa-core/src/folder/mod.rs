@@ -53,13 +53,13 @@ pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass};
 pub use watch_record::WatchRecord;
 pub mod state;
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -1437,13 +1437,24 @@ struct Captured {
     route: WalkRoute,
     name: std::ffi::OsString,
     metadata: RefCell<std::fs::Metadata>,
+    /// The clock either side of the stat that took `metadata`.
+    looked: Cell<(SystemTime, SystemTime)>,
+}
+
+/// A file's metadata and the clock either side of the stat that took it.
+fn stat_timed(
+    file: &std::fs::File,
+) -> std::io::Result<(std::fs::Metadata, (SystemTime, SystemTime))> {
+    let before = SystemTime::now();
+    let metadata = file.metadata()?;
+    Ok((metadata, (before, SystemTime::now())))
 }
 
 impl Captured {
     fn open(&self) -> std::io::Result<std::fs::File> {
         let directory = self.route.open()?;
         let file = directory.capture_file(Path::new(&self.name))?;
-        let metadata = file.metadata()?;
+        let (metadata, looked) = stat_timed(&file)?;
         require_birth(identity::born(&self.metadata.borrow()))?;
         require_birth(identity::born(&metadata))?;
         if !same_file(&self.metadata.borrow(), &metadata) {
@@ -1452,12 +1463,23 @@ impl Captured {
             ));
         }
         *self.metadata.borrow_mut() = metadata;
+        self.looked.set(looked);
         Ok(file)
+    }
+
+    /// Whether the file had changed within `settle` when it was last looked
+    /// at. A pass goes on to wait on the server and on its own work after a
+    /// read, so the clock at the decision would call a file still being
+    /// written settled.
+    fn changed_within(&self, settle: Duration) -> bool {
+        let (before, after) = self.looked.get();
+        changed_at(&self.metadata.borrow())
+            .is_some_and(|changed| within_settle(changed, before, after, settle))
     }
 
     fn read_settled(&self, settle: Option<Duration>) -> std::io::Result<Option<Vec<u8>>> {
         let mut file = self.open()?;
-        if settle.is_some_and(|settle| changed_within(&self.metadata.borrow(), settle)) {
+        if settle.is_some_and(|settle| self.changed_within(settle)) {
             return Ok(None);
         }
         let mut bytes = Vec::new();
@@ -1550,8 +1572,10 @@ fn walk_at(
                 walked.left.push((route.clone(), PathBuf::from(name)));
             } else if lists.takes(&relative) {
                 match directory.capture_file(entry).and_then(|file| {
+                    let (metadata, looked) = stat_timed(&file)?;
                     Ok(Captured {
-                        metadata: RefCell::new(file.metadata()?),
+                        metadata: RefCell::new(metadata),
+                        looked: Cell::new(looked),
                         route: route.clone(),
                         name: name.clone(),
                     })
@@ -2413,9 +2437,9 @@ fn blank(value: &Value) -> bool {
 
 /// The status change time where the system keeps one, which an editor
 /// restoring the modification time does not move back.
-fn changed_within(metadata: &std::fs::Metadata, settle: Duration) -> bool {
+fn changed_at(metadata: &std::fs::Metadata) -> Option<SystemTime> {
     #[cfg(unix)]
-    let changed = {
+    {
         use std::os::unix::fs::MetadataExt;
         u64::try_from(metadata.ctime())
             .ok()
@@ -2424,14 +2448,26 @@ fn changed_within(metadata: &std::fs::Metadata, settle: Duration) -> bool {
                     + Duration::new(seconds, u32::try_from(metadata.ctime_nsec()).unwrap_or(0))
             })
             .or_else(|| metadata.modified().ok())
-    };
+    }
     #[cfg(not(unix))]
-    let changed = metadata.modified().ok();
-    changed.is_some_and(|changed| {
-        std::time::SystemTime::now()
-            .duration_since(changed)
-            .is_ok_and(|since| since < settle)
-    })
+    metadata.modified().ok()
+}
+
+/// Whether a file stamped `changed` had changed within `settle` of a stat made
+/// between the clock readings `before` and `after`. Measuring from `before`
+/// means a stall around the stat makes the file look newer, never older.
+fn within_settle(
+    changed: SystemTime,
+    before: SystemTime,
+    after: SystemTime,
+    settle: Duration,
+) -> bool {
+    match before.duration_since(changed) {
+        Ok(since) => since < settle,
+        // A stamp later than the stat is another clock's, such as a network
+        // file system's; waiting for it could hold the file until they meet.
+        Err(_) => changed <= after,
+    }
 }
 
 /// What a quick pass compares with what its last read recorded.
@@ -2777,18 +2813,70 @@ mod tests {
         );
         let captured = &walked.opened[&path];
         let settle = Duration::from_millis(200);
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while changed_within(&captured.metadata.borrow(), settle) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let settled = loop {
+            if let Some(bytes) = captured.read_settled(Some(settle)).unwrap() {
+                break bytes;
+            }
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(settled, b"original".to_vec());
+        // A run stalled for the whole window between the two calls reads the
+        // file, rightly, so the write is tried again.
+        while {
+            std::fs::write(&path, b"still writing").unwrap();
+            captured.read_settled(Some(settle)).unwrap().is_some()
+        } {
+            assert!(std::time::Instant::now() < deadline);
         }
-        assert_eq!(
-            captured.read_settled(Some(settle)).unwrap(),
-            Some(b"original".to_vec())
-        );
+    }
+
+    #[test]
+    fn a_file_is_judged_at_the_stat_and_not_later() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("file.bin");
         std::fs::write(&path, b"still writing").unwrap();
-        assert!(changed_within(&std::fs::metadata(&path).unwrap(), settle));
-        assert_eq!(captured.read_settled(Some(settle)).unwrap(), None);
+        let directory = Directory::open(&root).unwrap();
+        let mut walked = Walked::default();
+        walk(
+            &root,
+            &root,
+            &directory,
+            &Lists::new(&[], &[]).unwrap(),
+            &mut walked,
+        );
+        let captured = &walked.opened[&path];
+        let changed = changed_at(&captured.metadata.borrow()).unwrap();
+        let settle = Duration::from_millis(100);
+        captured.looked.set((changed, changed));
+        std::thread::sleep(settle * 2);
+        assert!(
+            captured.changed_within(settle),
+            "time spent since the stat counted as the file being quiet"
+        );
+        captured.looked.set((changed + settle, changed + settle));
+        assert!(!captured.changed_within(settle));
+    }
+
+    #[test]
+    fn a_change_is_measured_from_before_the_stat() {
+        let settle = Duration::from_millis(250);
+        let changed = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let millis = Duration::from_millis;
+        let at = |before: Duration, after: Duration| {
+            within_settle(changed, changed + before, changed + after, settle)
+        };
+        assert!(at(millis(0), millis(0)));
+        assert!(at(millis(249), millis(10_000)));
+        assert!(!at(millis(250), millis(250)));
+        // During the stat: the clock read before it is older than the stamp.
+        let during = |after: SystemTime| within_settle(changed, changed - millis(5), after, settle);
+        assert!(during(changed + millis(5)));
+        assert!(during(changed));
+        // Beyond the stat: another clock's stamp does not hold the file.
+        assert!(!during(changed - millis(1)));
     }
 
     thread_local! {
