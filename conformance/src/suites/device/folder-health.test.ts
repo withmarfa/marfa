@@ -1,7 +1,10 @@
 import {
   chmodSync,
+  cpSync,
+  existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -11,11 +14,20 @@ import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
 import { join } from "node:path";
 import {
   SCRIPTED_INSTANCE,
+  copyItemEvent,
+  copyReplay,
+  edgeEvent,
   refusal,
+  wireEdge,
+  wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { DoorRow } from "../../device/folder-door.js";
-import { scriptFolderWrites } from "./folders.shared.js";
+import {
+  scriptFolderWrites,
+  settingsFile,
+  withFault,
+} from "./folders.shared.js";
 
 interface Report {
   folder_store_id: string;
@@ -46,6 +58,338 @@ function reports(folder: FolderHarness): Report[] {
     )
     .map((request) => JSON.parse(request.body) as Report);
 }
+
+function latest(folder: FolderHarness): Report {
+  const report = reports(folder).at(-1);
+  if (report === undefined) throw new Error("the folder sent no report");
+  return report;
+}
+
+async function statusOf(folder: FolderHarness) {
+  const status = await folder.folder.status();
+  if (!status.ok) throw new Error(JSON.stringify(status));
+  return status.value;
+}
+
+function flagOf(status: Awaited<ReturnType<typeof statusOf>>, path: string) {
+  const file = status.files.find((entry) => entry.path === path);
+  if (file === undefined) throw new Error(`status does not list ${path}`);
+  return [file.status, file.flag];
+}
+
+it("counts the files its status shows waiting as pending uploads", async () => {
+  harness = await folderHarness("health-pending-uploads", {
+    confirm: false,
+    hydrate: false,
+    files: {
+      "first.md": "first\n",
+      "second.md": "second\n",
+      "photo.bin": "bytes this folder's query takes no type for",
+    },
+  });
+  expect((await harness.folder.pushWaiting()).ok).toBe(true);
+  const status = await statusOf(harness);
+  expect(flagOf(status, "first.md")[0]).toBe("waiting");
+  expect(flagOf(status, "second.md")[0]).toBe("waiting");
+  expect(flagOf(status, "photo.bin")).toEqual(["outside", "query"]);
+  expect(latest(harness).pending_uploads).toBe(2);
+  expect(latest(harness).problems).toEqual([]);
+});
+
+it("counts the removals a large removal holds on disk or from a pull as paused removals and no problem", async () => {
+  const tight = {
+    query: { types: ["core.note"] },
+    defaults: { type: "core.note" },
+    removal_threshold: { files: 2, fraction: 0.25 },
+  };
+  harness = await folderHarness("health-paused-disk", { settings: tight });
+  scriptFolderWrites(harness);
+  for (let n = 0; n < 6; n += 1)
+    writeFileSync(join(harness.dir, `note-${n}.md`), `note ${n}\n`);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).paused_removals).toBe(0);
+  for (let n = 0; n < 3; n += 1) rmSync(join(harness.dir, `note-${n}.md`));
+  expect((await harness.folder.push()).ok).toBe(true);
+  const disk = await statusOf(harness);
+  expect(disk.paused).toMatchObject({ disk: 3, pull: 0 });
+  expect(flagOf(disk, "note-0.md")[1]).toBe("removal");
+  expect(latest(harness)).toMatchObject({ paused_removals: 3, problems: [] });
+
+  const rows = Array.from({ length: 6 }, (_, n) => ({
+    item: {
+      id: `01a00000-0000-7000-8000-00000000010${n}`,
+      properties: { title: `Note ${n}`, body: "body\n" },
+    },
+  }));
+  second = await folderHarness("health-paused-pull", {
+    rows: { "core.note": rows },
+    settings: { ...tight, query: { types: ["core.note"], state: ["active"] } },
+    events: [
+      copyReplay(
+        "4",
+        rows
+          .slice(0, 3)
+          .map((row, n) =>
+            copyItemEvent(
+              String(n + 2),
+              "item.deleted",
+              wireItem({ ...row.item, state: "trashed" }),
+            ),
+          ),
+      ),
+    ],
+  });
+  scriptFolderWrites(second);
+  expect((await second.folder.pull()).ok).toBe(true);
+  expect((await second.folder.device().catchUp()).ok).toBe(true);
+  expect((await second.folder.push()).ok).toBe(true);
+  const pull = await statusOf(second);
+  expect(pull.paused).toMatchObject({ disk: 0, pull: 3 });
+  expect(flagOf(pull, "Note 0.md")[1]).toBe("removal");
+  expect(latest(second)).toMatchObject({ paused_removals: 3, problems: [] });
+});
+
+it("counts each file under the problem code of the flag its status shows", async () => {
+  harness = await folderHarness("health-file-flags", {
+    rows: {
+      "core.note": [
+        {
+          item: {
+            id: "01a00000-0000-7000-8000-000000000101",
+            properties: { title: "Rejected", body: "body\n" },
+          },
+        },
+      ],
+    },
+  });
+  scriptFolderWrites(harness, {
+    door: (door) => {
+      door.update = () =>
+        refusal(400, "validation_error", "that is not allowed");
+    },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const rejected = join(harness.dir, "Rejected.md");
+  writeFileSync(rejected, `${readFileSync(rejected, "utf8")}an edit\n`);
+  writeFileSync(join(harness.dir, "NotText.md"), Buffer.from([255]));
+  writeFileSync(
+    join(harness.dir, "NoTime.md"),
+    "---\noccurred_at: not a time\n---\nbody\n",
+  );
+  writeFileSync(join(harness.dir, "Blank.bin"), "");
+  // The witness: a flag that holds nothing back counts as no problem.
+  writeFileSync(join(harness.dir, "Other.bin"), "not a type the query takes");
+  expect((await harness.folder.push()).ok).toBe(true);
+  const status = await statusOf(harness);
+  expect(flagOf(status, "NotText.md")[1]).toBe("encoding");
+  expect(flagOf(status, "NoTime.md")[1]).toBe("unreadable");
+  expect(flagOf(status, "Rejected.md")[1]).toBe("refused");
+  expect(flagOf(status, "Blank.bin")[1]).toBe("empty");
+  expect(flagOf(status, "Other.bin")[1]).toBe("query");
+  expect(latest(harness).problems).toEqual([
+    { code: "refused", count: 1 },
+    { code: "unreadable", count: 2 },
+    { code: "held_file", count: 1 },
+  ]);
+});
+
+it("counts no problem for a file whose item is already in the bin", async () => {
+  const id = "01a00000-0000-7000-8000-000000000201";
+  const row = { item: { id, properties: { title: "Binned", body: "body\n" } } };
+  harness = await folderHarness("health-gone-file", {
+    rows: { "core.note": [row] },
+    events: [
+      copyReplay("2", [
+        copyItemEvent(
+          "2",
+          "item.deleted",
+          wireItem({ ...row.item, state: "trashed" }),
+        ),
+      ]),
+    ],
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  rmSync(join(harness.dir, "Binned.md"));
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  expect(flagOf(await statusOf(harness), "Binned.md")).toEqual([
+    "waiting",
+    "gone",
+  ]);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness)).toMatchObject({ pending_uploads: 1, problems: [] });
+});
+
+it("counts a directory gone in the walk as a held file, and a file in an unreadable directory only through the directory", async () => {
+  harness = await folderHarness("health-directories");
+  scriptFolderWrites(harness);
+  for (const directory of ["locked", "vanishing"]) {
+    mkdirSync(join(harness.dir, directory));
+    writeFileSync(join(harness.dir, directory, "Bound.md"), "bound\n");
+  }
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).problems).toEqual([]);
+
+  chmodSync(join(harness.dir, "locked"), 0);
+  try {
+    expect(flagOf(await statusOf(harness), "locked/Bound.md")[1]).toBe(
+      "unreadable",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The pull cannot compare the bound file either, which it counts as held.
+    expect(latest(harness).problems).toEqual([
+      { code: "unreadable", count: 1 },
+      { code: "held_file", count: 1 },
+    ]);
+  } finally {
+    chmodSync(join(harness.dir, "locked"), 0o700);
+  }
+
+  const gone = await withFault("vanish-while-walking=vanishing", () =>
+    harness!.folder.push(),
+  );
+  expect(gone.ok && gone.value.scan.directories).toMatchObject([
+    { path: "vanishing", flag: "gone" },
+  ]);
+  expect(latest(harness).problems).toEqual([{ code: "held_file", count: 1 }]);
+});
+
+it("counts what the last pull could not write as pending downloads and held files, until a later pull writes it", async () => {
+  const rows = ["Blocked", "Witness"].map((title, n) => ({
+    item: {
+      id: `01a00000-0000-7000-8000-00000000030${n}`,
+      properties: { title, body: "body\n" },
+    },
+  }));
+  harness = await folderHarness("health-pending-downloads", {
+    rows: { "core.note": rows },
+  });
+  scriptFolderWrites(harness);
+  const pushed = await withFault("rename-new-unsupported=Blocked.md", () =>
+    harness!.folder.push(),
+  );
+  expect(pushed.ok && pushed.value.pull?.flagged).toMatchObject([
+    { path: "Blocked.md", flag: "unwritten" },
+  ]);
+  expect(latest(harness)).toMatchObject({
+    pending_downloads: 1,
+    problems: [{ code: "held_file", count: 1 }],
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  expect((await harness.folder.pushSendOnly()).ok).toBe(true);
+  expect(reports(harness)).toHaveLength(2);
+  expect(latest(harness)).toMatchObject({
+    pending_downloads: 1,
+    problems: [{ code: "held_file", count: 1 }],
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness)).toMatchObject({
+    pending_downloads: 0,
+    problems: [],
+  });
+});
+
+it("counts a tagged copy derived from a bound file as a conflict, and neither one in the bin nor one without the tag", async () => {
+  const id = (n: number) => `01a00000-0000-7000-8000-00000000040${n}`;
+  const original = id(1);
+  const note = (n: number, title: string, state = "active") =>
+    wireItem({
+      id: id(n),
+      state,
+      properties: { title, body: "body\n" },
+    });
+  const derived = (n: number, sequence: string) =>
+    edgeEvent(
+      sequence,
+      "edge.created",
+      wireEdge({
+        id: id(n + 5),
+        source_id: id(n),
+        target_id: original,
+        edge_type: "derived-from",
+      }),
+    );
+  const tags = ["conflicted-copy"];
+  harness = await folderHarness("health-conflict", {
+    rows: {
+      "core.note": [
+        { item: { id: original, properties: { title: "Original" } } },
+      ],
+    },
+    events: [
+      copyReplay("8", [
+        copyItemEvent("2", "item.created", note(2, "Copy"), { tags }),
+        derived(2, "3"),
+        copyItemEvent("4", "item.created", note(3, "Binned"), { tags }),
+        derived(3, "5"),
+        copyItemEvent("6", "item.deleted", note(3, "Binned", "trashed"), {
+          tags,
+        }),
+        copyItemEvent("7", "item.created", note(4, "Untagged")),
+        derived(4, "8"),
+      ]),
+    ],
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect((await harness.folder.device().catchUp()).ok).toBe(true);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).problems).toEqual([{ code: "conflict", count: 1 }]);
+});
+
+it("counts one credential_refused however many files a refused key holds back", async () => {
+  harness = await folderHarness("health-credential");
+  scriptFolderWrites(harness, {
+    creating: () => refusal(401, "unauthorized", "this key was revoked"),
+  });
+  writeFileSync(join(harness.dir, "One.md"), "one\n");
+  writeFileSync(join(harness.dir, "Two.md"), "two\n");
+  await harness.folder.push();
+  const status = await statusOf(harness);
+  expect(flagOf(status, "One.md")[1]).toBe("credential_refused");
+  expect(latest(harness).pending_uploads).toBe(2);
+  expect(latest(harness).problems).toEqual([
+    { code: "credential_refused", count: 1 },
+  ]);
+});
+
+it("counts one settings_invalid while the settings file is refused", async () => {
+  harness = await folderHarness("health-settings");
+  scriptFolderWrites(harness);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).problems).toEqual([]);
+  const file = settingsFile(harness);
+  writeFileSync(file, `${readFileSync(file, "utf8")}include: [not closed\n`);
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(latest(harness).problems).toEqual([
+    { code: "settings_invalid", count: 1 },
+  ]);
+});
+
+it("counts one root_gone when another directory has taken the folder's place", async () => {
+  harness = await folderHarness("health-root-gone");
+  scriptFolderWrites(harness);
+  expect((await harness.folder.push()).ok).toBe(true);
+  const folder = harness;
+  const away = `${folder.dir}.original`;
+  cpSync(folder.dir, `${folder.dir}.replacement`, { recursive: true });
+  try {
+    const pushed = await withFault("replace-root-before-settings-read", () =>
+      folder.folder.push(),
+    );
+    expect(pushed.ok && pushed.value.scan.root_gone).toContain(
+      "no longer the directory",
+    );
+    expect(latest(folder).problems).toEqual([{ code: "root_gone", count: 1 }]);
+  } finally {
+    rmSync(folder.dir, { recursive: true, force: true });
+    if (existsSync(away)) renameSync(away, folder.dir);
+    rmSync(`${folder.dir}.replacement`, { recursive: true, force: true });
+  }
+});
 
 it("reports a confirmed complete sync using the registry's opaque copy identity", async () => {
   harness = await folderHarness("health-complete");
@@ -217,7 +561,7 @@ it("does not advance last full success after an offline push with an empty queue
   const failed = reports(harness).find((report) =>
     report.problems.some((problem) => problem.code === "unavailable"),
   );
-  expect(failed).toBeDefined();
+  expect(failed?.problems).toEqual([{ code: "unavailable", count: 1 }]);
   expect(failed?.last_success_at).toBe(successful.last_success_at);
 });
 
