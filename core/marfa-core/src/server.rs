@@ -9,7 +9,7 @@ pub use crate::store::{
 };
 pub use crate::time::normalize as normalize_time;
 pub use crate::validation::{
-    MAX_TAG_LENGTH, MAX_TAGS_PER_ITEM, id as validate_id, property_names as validate_property_names,
-    tags as validate_tags,
+    MAX_TAG_LENGTH, MAX_TAGS_PER_ITEM, id as validate_id,
+    property_names as validate_property_names, tags as validate_tags,
 };
 pub use crate::wire::{WireCatalog, WireDisplayHints, WireType};

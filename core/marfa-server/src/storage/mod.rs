@@ -60,8 +60,8 @@ impl Db {
         tokio::task::spawn_blocking(move || {
             let start = db.next.fetch_add(1, Ordering::Relaxed);
             let count = db.readers.len();
-            let held = (0..count)
-                .find_map(|offset| db.readers[(start + offset) % count].try_lock().ok());
+            let held =
+                (0..count).find_map(|offset| db.readers[(start + offset) % count].try_lock().ok());
             let conn = match held {
                 Some(conn) => conn,
                 None => db.readers[start % count]

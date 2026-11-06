@@ -62,7 +62,8 @@ pub async fn observe(transport: Transport, mut request: Request, next: Next) -> 
 
     let headers = response.headers_mut();
     headers.insert("x-marfa-contract", HeaderValue::from_static(CONTRACT));
-    if !path.starts_with("/auth/") && !path.starts_with("/.well-known/")
+    if !path.starts_with("/auth/")
+        && !path.starts_with("/.well-known/")
         && let Ok(value) = HeaderValue::from_str(&request_id)
     {
         headers.insert("x-request-id", value);

@@ -137,7 +137,10 @@ impl Caller {
         Err(ApiError::new(
             axum::http::StatusCode::FORBIDDEN,
             "type_not_permitted",
-            format!("This credential may not {} items of type {type_id}.", level.word()),
+            format!(
+                "This credential may not {} items of type {type_id}.",
+                level.word()
+            ),
         )
         .with(json!({ "grant": { "kind": "type", "name": type_id, "level": level.word() } })))
     }
@@ -185,6 +188,7 @@ pub fn hash_key(salt: Option<&str>, key: &str) -> String {
 
 pub fn new_key() -> Result<String, ApiError> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|error| ApiError::internal(format!("no randomness: {error}")))?;
+    getrandom::fill(&mut bytes)
+        .map_err(|error| ApiError::internal(format!("no randomness: {error}")))?;
     Ok(format!("{KEY_PREFIX}{}", hex::encode(bytes)))
 }

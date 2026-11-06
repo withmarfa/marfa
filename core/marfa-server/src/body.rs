@@ -29,10 +29,6 @@ impl FromRequest<App> for JsonBody {
 }
 
 impl JsonBody {
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.get(name).and_then(|value| value.to_str().ok())
-    }
-
     /// The body as a JSON object holding no key outside `allowed`.
     pub async fn object(self, allowed: &[&str]) -> ApiResult<Map<String, Value>> {
         let declared = self
@@ -73,10 +69,13 @@ impl JsonBody {
             }
         };
         if bytes.is_empty() {
-            return Err(ApiError::validation("The body is empty; send a JSON object."));
+            return Err(ApiError::validation(
+                "The body is empty; send a JSON object.",
+            ));
         }
-        let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|error| ApiError::validation(format!("The body is not valid JSON: {error}")))?;
+        let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
+            ApiError::validation(format!("The body is not valid JSON: {error}"))
+        })?;
         let Value::Object(object) = value else {
             return Err(ApiError::validation("The body must be a JSON object."));
         };

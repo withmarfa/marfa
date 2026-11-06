@@ -76,7 +76,11 @@ pub async fn check(app: &App) -> (Status, Value) {
             .read(|conn| Ok(conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))?))
             .await;
         Component {
-            status: if read.is_ok() { Status::Ok } else { Status::Down },
+            status: if read.is_ok() {
+                Status::Ok
+            } else {
+                Status::Down
+            },
             latency_ms: Some(started.elapsed().as_millis() as u64),
         }
     };
@@ -168,5 +172,7 @@ fn free_bytes(path: &Path) -> Option<u64> {
     // is a NUL-terminated string that outlives the call.
     let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
     let answered = unsafe { libc::statvfs(path.as_ptr(), &mut stats) };
+    // The two fields are narrower than u64 on some platforms and not others.
+    #[allow(clippy::useless_conversion)]
     (answered == 0).then(|| u64::from(stats.f_bavail) * u64::from(stats.f_frsize))
 }

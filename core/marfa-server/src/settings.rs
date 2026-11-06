@@ -33,7 +33,12 @@ pub struct Settings {
 
     /// Milliseconds the clock runs ahead of the system's, honoured only with
     /// test hooks on.
-    #[arg(long, env = "MARFA_TEST_CLOCK_OFFSET_MS", default_value_t = 0, allow_negative_numbers = true)]
+    #[arg(
+        long,
+        env = "MARFA_TEST_CLOCK_OFFSET_MS",
+        default_value_t = 0,
+        allow_negative_numbers = true
+    )]
     pub test_clock_offset_ms: i64,
 
     /// How long a write waits on SQLite's lock before it is refused.
