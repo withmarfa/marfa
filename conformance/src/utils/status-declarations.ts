@@ -498,9 +498,8 @@ const CLIENT_CLOSED_REQUEST = 499;
 /**
  * A route the document does not publish is counted, and a sign-in route among
  * them is held to `signInStatuses`: the sign-in routes, `/health` and the
- * document itself are outside the reference by design. Whether a served
- * route is missing from the document is the server's `openapi-routes.test.ts`
- * question, not this one.
+ * document itself are outside the reference by design. This report does not
+ * ask whether a served route is missing from the document.
  */
 export function reportStatuses(
   lines: readonly RequestLine[],

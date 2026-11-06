@@ -1123,8 +1123,8 @@ describe("the instance from the terminal", () => {
     // boot: no door on a running server can make one, so a report read here
     // is empty on every server this suite could be pointed at and an
     // assertion that it is empty would pass against a handler that reports
-    // nothing. The server's own suite is where the populated report is
-    // proved, because seeding a retired type is in-process work.
+    // nothing. `compliance/retired-platform-types.test.ts` asserts the
+    // populated report, on a server whose stored file it arranges.
     expect(Array.isArray(retired.data)).toBe(true);
     const refused = await c.cli.refused(["types", "retired"]);
     expect(refused.code).toBe(1);

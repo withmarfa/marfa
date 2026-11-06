@@ -23,11 +23,10 @@ import { movedClock, DAY_MS } from "../../utils/moved-clock.js";
  * fails the first statement of a run the scheduler started on its own.
  *
  * **The witness for what is absent.** The failed statement is the real one,
- * so the query layer's message for it carries the statement's text and the
- * values it was bound to; the server's own suite holds that
- * (`storage/write-faults.test.ts`). The fixture binds a value no other text
- * holds, and shows below that the same request, with no fault, is logged
- * without it, so its absence from the fault's report is the report's doing.
+ * so the query layer's message for it can carry the statement's text and the
+ * values it was bound to. The fixture binds a value no other text holds, and
+ * shows below that the same request, with no fault, is logged without it, so
+ * its absence from the fault's report is the report's doing.
  */
 let server: FreshServer | undefined;
 
