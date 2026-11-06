@@ -14,6 +14,7 @@ import {
 import {
   EdgeDoor,
   bodyOf,
+  edit,
   frontOf,
   heldEdges,
   idIn,
@@ -336,6 +337,53 @@ describe("a body link to a retitled item", () => {
       ].sort(),
     );
     await settled(harness!);
+  });
+
+  it("reads a line's old name as its edge while the file keeps that name, and holds the line once nothing answers to it", async () => {
+    const made = await linked("retitled-line-old-name");
+    put(harness!, "Gamma.md", "---\ntitle: Gamma\n---\nGamma.\n");
+    put(harness!, "Delta.md", "---\ntitle: Delta\n---\nDelta.\n");
+    expect((await harness!.folder.push()).ok).toBe(true);
+    const gamma = idIn(harness!, "Gamma.md")!;
+    retitleElsewhere(made, made.old, "New");
+    const heard = await harness!.folder.device().catchUp();
+    expect(heard.ok, JSON.stringify(heard)).toBe(true);
+    expect(existsSync(join(harness!.dir, "Old.md"))).toBe(true);
+
+    // A newcomer takes the old name, so only the standing edge settles it.
+    put(harness!, "Newcomer.md", "---\ntitle: Old\n---\nA newcomer.\n");
+    edit(
+      harness!,
+      "Host.md",
+      /about:.*\n/,
+      'about:\n  - "[[Old]]"\n  - "[[Gamma]]"\n',
+    );
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([]);
+    expect(heldEdges(made.edges)).toContain(`${made.host} about ${gamma}`);
+    expect(existsSync(join(harness!.dir, "New.md"))).toBe(true);
+
+    // The file has the new name now, and the newcomer gives the old one up,
+    // so it names nothing.
+    edit(harness!, "Newcomer.md", "title: Old", "title: Newest");
+    expect((await harness!.folder.push()).ok).toBe(true);
+    edit(
+      harness!,
+      "Host.md",
+      /about:[\s\S]*?\n(?=[a-z_]+:|---)/,
+      'about:\n  - "[[Old]]"\n  - "[[Gamma]]"\n  - "[[Delta]]"\n',
+    );
+    const held = await harness!.folder.push();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.scan.flagged[0]?.reason).toContain(
+      "[[Old]] in its about line matches no item",
+    );
+    expect(heldEdges(made.edges)).not.toContain(
+      `${made.host} about ${idIn(harness!, "Delta.md")!}`,
+    );
   });
 
   it.each([

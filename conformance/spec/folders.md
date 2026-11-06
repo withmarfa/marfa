@@ -2108,11 +2108,21 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 **Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
 
+### `folders/edge-held-created`
+
+When a held edge name resolves to one item other than the file's own, a device MUST create the edge, unless `folders/edge-line-invalid-keeps-type` leaves the file's edges of that type at that end unchanged, that end holds one edge at most and already holds one, or the device refuses the edge.
+
+**Reason:** At such an end, `folders/edge-replace-one` moves an edge the file showed in one write, and `folders/edge-replace-unshown-refused` flags a file that never showed the edge, so neither creates a second edge. A body link that comes to name its own document makes no edge (`folders/body-self-link`).
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› moves a shown parent to a held name once it resolves, and creates no edge`, `› flags a held name that resolves at an end whose edge the file never showed, and writes nothing`, `› flags a held name that resolves to an edge the device refuses, and writes nothing`.
+
 ### `folders/edge-held-cleared`
 
-When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
+When a held edge name resolves to one item and no line or link of the file, that name's own line included, gives a reason to flag it, a device MUST clear the file's `edges` flag.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+**Reason:** A line can still hold the file after one of its names resolves: another of its names may match nothing, or the name may take the line past its end's cardinality.
+
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› keeps a file flagged for the names of a line still held once one of them resolves, and clears it with the last`.
 
 ### `folders/edge-held-never-guessed`
 
@@ -2170,9 +2180,17 @@ When an edge has arrived from elsewhere but has not appeared in the file, a devi
 
 ### `folders/edge-line-invalid-keeps-type`
 
-If an edge line has an unresolved target, names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type unchanged.
+If an edge line has an unresolved target, names its own item, is at the wrong end, exceeds its end's cardinality, or holds a value not written as `[[name]]`, then a device MUST leave that file's edges of that type at that end unchanged.
 
-**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`.
+**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a body link beside a references line not written as a name, and the edge once the line is gone`, `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› writes the edge of a child-of line beside a held parent-of line in the same file`.
+
+### `folders/edge-line-held-whole`
+
+If a name on an edge line does not name exactly one existing edge of that line's type at that end, and it matches no readable item, matches more than one readable item, or could not be looked up, then a device MUST NOT create an edge for any other name on that line.
+
+**Reason:** The file is already flagged, so the person can see what holds the line. Writing part of a line would leave what the line owns unclear. A name that names one existing edge holds nothing back, as it keeps naming that edge's item whatever else takes the name (`folders/edge-new-namesake`).
+
+**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while one of its names matches two items, and every edge once it names one`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a line while the lookup of one of its names is refused, and every edge once it is answered`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› creates an edge beside a name that already names one of the line's edges, though another item took that name`, `› writes no edge of a line naming two of its edges by one name, and the edge once it names them apart`, `device/folders-retitled-links.test.ts › reads a line's old name as its edge while the file keeps that name, and holds the line once nothing answers to it`.
 
 ### `folders/edge-line-invalid-report`
 
@@ -2294,9 +2312,11 @@ When a line held because its target was trashed names that target after its rest
 
 ### `folders/body-reference`
 
-When a Markdown body links to another item, a device MUST create a `references` edge from the document item to the linked item.
+When a Markdown body links to another item, a device MUST create a `references` edge from the document item to the linked item, unless `folders/edge-line-invalid-keeps-type` leaves the document's outgoing `references` edges unchanged.
 
-**Tests:** `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`.
+**Reason:** A held `references` line stands down every change to that type at that end, and a body link's edge is one. The edge is created once the line resolves.
+
+**Tests:** `device/folders.test.ts › carries body links to edges, and an edge no link names to a line`, `device/folders-frontmatter.test.ts › writes no edge of a body link while the references line beside it is held, and both once the line resolves`.
 
 ### `folders/body-edge-not-repeated`
 
@@ -2424,11 +2444,11 @@ While a document's `references` edge to an item stands and the device's record o
 
 ### `folders/embed-edge`
 
-When a Markdown body embeds a local file, a device MUST create a `references` edge from the document item to the file item.
+When a Markdown body embeds a local file, a device MUST create a `references` edge from the document item to the file item, unless `folders/edge-line-invalid-keeps-type` leaves the document's outgoing `references` edges unchanged.
 
 **Reason:** the embed is how the body says which file it shows, as a link says which item it names. Showing a file is not owning it, so an edit to the body never decides whether a file goes to the bin with its document.
 
-**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `› references an embedded file, and attaches it only where the query does not hold it`.
+**Tests:** `device/folders-frontmatter.test.ts › sends an embedded file with its file`, `› references an embedded file, and attaches it only where the query does not hold it`, `› writes no reference of an embed while the references line beside it is held, and the reference once the line resolves`.
 
 ### `folders/embed-edge-outside`
 

@@ -31,7 +31,8 @@ import {
 // its name matched no item, or more than one, is resolved again once the
 // working copy changes (`folders/create-before-links`,
 // `folders/edge-held-retried`, `folders/edge-held-quiet`,
-// `folders/edge-held-cleared`, `folders/edge-held-never-guessed`). A name
+// `folders/edge-held-created`, `folders/edge-held-cleared`,
+// `folders/edge-held-never-guessed`). A name
 // the server refused to look up on its own is not asked again
 // (`folders/edge-lookup-no-repeat`), while the names of a lookup it refused
 // as a whole wait and are asked again at the next scan
