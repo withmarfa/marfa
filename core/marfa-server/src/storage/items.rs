@@ -1,7 +1,8 @@
 //! Item rows in the shared `items` and `tags` tables.
 
 use marfa_core::server::{Catalog, fold_name};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use serde_json::{Map, Value, json};
 
 /// The longest title, in UTF-16 code units, that has a title key.
@@ -58,6 +59,28 @@ impl ItemRow {
         item
     }
 
+    /// A row the core read, for a door that took it from the core's search.
+    pub fn from_core(item: &marfa_core::server::Item) -> ItemRow {
+        ItemRow {
+            seq: 0,
+            id: item.id.clone(),
+            type_id: item.r#type.clone(),
+            state: item.state.as_str().to_string(),
+            tier: item.tier.map(|tier| tier.as_str().to_string()),
+            version: item.version,
+            schema_version: item.schema_version,
+            source: item.source.clone(),
+            source_id: item.source_id.clone(),
+            occurred_at: item.occurred_at.clone(),
+            created_at: item.created_at.clone(),
+            updated_at: item.updated_at.clone(),
+            properties: item.properties.clone(),
+            capture_latitude: item.capture_latitude,
+            capture_longitude: item.capture_longitude,
+            trashed_at: item.trashed_at.clone(),
+        }
+    }
+
     pub fn is_live(&self) -> bool {
         self.state != "trashed" && self.trashed_at.is_none()
     }
@@ -97,6 +120,26 @@ pub fn by_id(conn: &Connection, id: &str) -> rusqlite::Result<Option<ItemRow>> {
     conn.prepare_cached(&format!("SELECT {COLUMNS} FROM items WHERE id = ?1"))?
         .query_row([id], from_row)
         .optional()
+}
+
+/// One page of rows chosen by `where_sql` and put in `order_sql`, each with
+/// `extra` (an expression over `items`) read beside it where one is given.
+pub fn select(
+    conn: &Connection,
+    where_sql: &str,
+    order_sql: &str,
+    extra: Option<&str>,
+    limit: usize,
+    values: &[SqlValue],
+) -> rusqlite::Result<Vec<(ItemRow, SqlValue)>> {
+    let extra_sql = extra.map_or_else(|| "NULL".to_string(), str::to_string);
+    let mut statement = conn.prepare_cached(&format!(
+        "SELECT {COLUMNS}, {extra_sql} FROM items WHERE {where_sql} ORDER BY {order_sql} LIMIT {limit}"
+    ))?;
+    let rows = statement.query_map(params_from_iter(values), |row| {
+        Ok((from_row(row)?, row.get::<_, SqlValue>(16)?))
+    })?;
+    rows.collect()
 }
 
 pub fn by_natural_key(

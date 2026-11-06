@@ -24,9 +24,28 @@ pub(crate) fn list_with(
     sort: Option<Sort>,
     unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>> {
+    let sort = ordered(filters, sort)?;
+    let (clauses, values) = narrowing(conn, catalog, filters)?;
+    list_where_with(
+        conn,
+        &clauses,
+        &values,
+        sort,
+        filters.limit,
+        filters.offset,
+        unreadable,
+    )
+}
+
+/// The `WHERE` clauses, and the values they bind, that select the rows
+/// `filters` name. Everything but the order and the page.
+pub fn narrowing(
+    conn: &Connection,
+    catalog: &Catalog,
+    filters: &ListFilters,
+) -> Result<(Vec<String>, Vec<Value>)> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
-    let sort = ordered(filters, sort)?;
 
     narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
     narrow_by_states(
@@ -74,21 +93,13 @@ pub(crate) fn list_with(
         &mut clauses,
         &mut values,
     )?;
-    list_where_with(
-        conn,
-        &clauses,
-        &values,
-        sort,
-        filters.limit,
-        filters.offset,
-        unreadable,
-    )
+    Ok((clauses, values))
 }
 
 /// The order a list is answered in. A named `updated_after` orders by
 /// `updated_at` and then id, ascending, the only order a caller can resume
 /// from, so a list naming another is refused, as the server refuses it.
-fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
+pub fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
     match (sort, filters.updated_after.is_some()) {
         (None, _) => Ok(Sort::unnamed(filters)),
         (Some(sort), true) if sort != Sort::RESUMED => Err(CoreError::Validation {
@@ -159,34 +170,7 @@ pub(crate) fn list_where_with(
     } else {
         clauses.join(" AND ")
     };
-    // The name is spliced into the SQL path, so it is held to the grammar
-    // here whoever built the sort.
-    if let SortField::Property(name) = &sort.field {
-        SortField::property(name)?;
-    }
-    let order_sql = match &sort.field {
-        // Rows with no scalar there go last in either direction, and ties
-        // fall to the id ascending in both, as on the server
-        // (`search-and-filters/sort-property-*`). A number is compared as a
-        // real, as the server compares it, and SQLite puts numbers before
-        // text, a boolean being 0 or 1.
-        SortField::Property(name) => format!(
-            "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
-            sort.direction.as_sql(),
-            expression = property_sort_expression(name),
-        ),
-        // As on the server (`search-and-filters/bin-order`).
-        SortField::TrashedAt => format!(
-            "ORDER BY COALESCE(trashed_at, updated_at) {}, id {}",
-            sort.direction.as_sql(),
-            sort.direction.as_sql()
-        ),
-        field => format!(
-            "ORDER BY {field} {}, id {}",
-            sort.direction.as_sql(),
-            sort.direction.as_sql()
-        ),
-    };
+    let order_sql = format!("ORDER BY {}", order_terms(&sort)?);
     let limit_sql = match (limit, offset) {
         (None, None) => String::new(),
         (limit, offset) => format!(
@@ -196,6 +180,39 @@ pub(crate) fn list_where_with(
         ),
     };
     store::items_where(conn, &where_sql, &order_sql, &limit_sql, values, unreadable)
+}
+
+/// The `ORDER BY` terms of a sort, over `items`.
+///
+/// Rows with no scalar in a sort property go last in either direction, and
+/// ties fall to the id ascending in both, as on the server
+/// (`search-and-filters/sort-property-*`). A number is compared as a real, as
+/// the server compares it, and SQLite puts numbers before text, a boolean
+/// being 0 or 1. The bin's order is the server's
+/// (`search-and-filters/bin-order`).
+pub fn order_terms(sort: &Sort) -> Result<String> {
+    let expression = sort_expression(&sort.field)?;
+    let direction = sort.direction.as_sql();
+    Ok(match &sort.field {
+        SortField::Property(_) => {
+            format!("{expression} IS NULL, {expression} {direction}, items.id ASC")
+        }
+        _ => format!("{expression} {direction}, items.id {direction}"),
+    })
+}
+
+/// What a sort compares: a column, or for a property the scalar it stores
+/// (null where there is none). The property name is spliced into the SQL
+/// path, so it is held to the grammar here whoever built the sort.
+pub fn sort_expression(field: &SortField) -> Result<String> {
+    Ok(match field {
+        SortField::Property(name) => {
+            SortField::property(name)?;
+            property_sort_expression(name)
+        }
+        SortField::TrashedAt => "COALESCE(items.trashed_at, items.updated_at)".into(),
+        other => format!("items.{other}"),
+    })
 }
 
 /// `name` is a property name `SortField::property` has checked, so it is

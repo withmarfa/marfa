@@ -6,8 +6,11 @@ mod connectors;
 mod control;
 mod health;
 mod items;
+mod items_list;
 mod keys;
+mod narrow;
 mod root;
+mod search;
 mod types;
 
 use std::any::Any;
@@ -30,6 +33,8 @@ pub fn router(app: App, transport: Transport) -> Router {
         .merge(keys::router())
         .merge(types::router())
         .merge(items::router())
+        .merge(items_list::router())
+        .merge(search::router())
         .merge(bulk::router())
         .merge(connectors::router());
     if transport == Transport::LocalSocket {
