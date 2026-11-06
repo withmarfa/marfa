@@ -195,41 +195,20 @@ fn refuse_beyond(
     sources: &[String],
     request: &MintRequest,
 ) -> ApiResult<()> {
-    if let Some(beyond) = permissions
-        .iter()
-        .find(|permission| !creator.permissions.contains(permission))
-    {
-        return Err(beyond_reach(beyond));
-    }
-    for spec in &MAP_FIELDS {
-        let held = map_of(&creator.maps, spec.field);
-        let requested = map_of(maps, spec.field);
-        let level = |map: &Map<String, Value>, name: &str| {
-            if spec.axis == "type" {
-                auth::type_level(map, name)
-            } else {
-                auth::flat_level(map, name)
-            }
-        };
-        // Each name either map names: a `none` the creator holds is a
-        // denial a wider wildcard asked for must not lift.
-        for name in requested.keys().chain(held.keys()) {
-            let asked = level(requested, name);
-            if asked > level(held, name) {
-                return Err(beyond_reach(&format!(
-                    "{}:{name}:{}",
-                    spec.axis,
-                    asked.word()
-                )));
-            }
+    match first_beyond(creator, permissions, maps, sources) {
+        None => {}
+        Some(Beyond::Scope(scope)) => return Err(beyond_reach(&scope)),
+        Some(Beyond::Namespace(namespace)) => {
+            return Err(ApiError::forbidden(format!(
+                "This credential does not hold the {namespace} extension namespace, so it cannot give a key reach it does not hold itself."
+            )));
         }
-    }
-    let grantable = |source: &String| *source == creator.source || creator.sources.contains(source);
-    if let Some(beyond) = sources.iter().find(|source| !grantable(source)) {
-        return Err(ApiError::forbidden(format!(
-            "This credential does not claim the source \"{beyond}\", so it cannot give a key a source it may not write under itself."
-        ))
-        .with(json!({ "source": beyond })));
+        Some(Beyond::Source(source)) => {
+            return Err(ApiError::forbidden(format!(
+                "This credential does not claim the source \"{source}\", so it cannot give a key a source it may not write under itself."
+            ))
+            .with(json!({ "source": source })));
+        }
     }
     if let (Some(asked), Some(held)) = (&request.expires_at, &creator.expires_at)
         && asked > held
@@ -239,6 +218,70 @@ fn refuse_beyond(
         ));
     }
     Ok(())
+}
+
+enum Beyond {
+    Scope(String),
+    Namespace(String),
+    Source(String),
+}
+
+/// The first thing asked for that `holder` could not give a key. Minting and
+/// reaching an existing key share this, so a key that could not have been
+/// minted by a holder cannot be listed or revoked by it either.
+fn first_beyond(
+    holder: &Key,
+    permissions: &[String],
+    maps: &Maps,
+    sources: &[String],
+) -> Option<Beyond> {
+    if let Some(beyond) = permissions
+        .iter()
+        .find(|permission| !holder.permissions.contains(permission))
+    {
+        return Some(Beyond::Scope(beyond.clone()));
+    }
+    for spec in &MAP_FIELDS {
+        let held = map_of(&holder.maps, spec.field);
+        let requested = map_of(maps, spec.field);
+        let level = |map: &Map<String, Value>, name: &str| {
+            if spec.axis == "type" {
+                auth::type_level(map, name)
+            } else {
+                auth::flat_level(map, name)
+            }
+        };
+        // Each name either map names: a `none` the holder has is a denial a
+        // wider wildcard asked for must not lift.
+        for name in requested.keys().chain(held.keys()) {
+            let asked = level(requested, name);
+            if asked > level(held, name) {
+                return Some(match spec.axis {
+                    "extension" => Beyond::Namespace(name.clone()),
+                    axis => Beyond::Scope(map_scope(axis, name, asked.word())),
+                });
+            }
+        }
+    }
+    let grantable = |source: &&String| **source == holder.source || holder.sources.contains(source);
+    sources
+        .iter()
+        .find(|source| !grantable(source))
+        .map(|source| Beyond::Source(source.clone()))
+}
+
+fn map_scope(axis: &str, name: &str, level: &str) -> String {
+    match (axis, name) {
+        ("type", _) => format!("{name}:{level}"),
+        (axis, "*") if axis != "edge" => format!("{axis}:{level}"),
+        (axis, _) => format!("{axis}.{name}:{level}"),
+    }
+}
+
+/// `target` is `holder` itself, or a key `holder` could have minted.
+fn within_reach(holder: &Key, target: &Key) -> bool {
+    target.id == holder.id
+        || first_beyond(holder, &target.permissions, &target.maps, &target.sources).is_none()
 }
 
 fn beyond_reach(scope: &str) -> ApiError {
@@ -417,20 +460,28 @@ impl MintRequest {
     }
 }
 
-fn require_key_reader(caller: &Caller) -> ApiResult<()> {
+/// The key whose reach bounds what this caller sees of other keys, or none
+/// for a caller who reaches every key. Refuses a caller who may reach none.
+fn reach_limit(caller: &Caller) -> ApiResult<Option<Key>> {
     if caller.require("keys.manage").is_ok() {
-        return Ok(());
+        return Ok(None);
     }
-    caller.require("keys.mint").map_err(|_| {
-        ApiError::forbidden("This operation requires the keys.manage or keys.mint permission.")
-            .with(json!({ "required_scope": "keys.manage" }))
-    })
+    caller.require("keys.mint")?;
+    Ok(caller.key().cloned())
 }
 
 async fn list(State(app): State<App>, caller: Caller) -> ApiResult<impl IntoResponse> {
-    require_key_reader(&caller)?;
+    let limit = reach_limit(&caller)?;
     let live = app.db.read(|conn| Ok(keys::live(conn)?)).await?;
-    let data: Vec<Value> = live.iter().map(Key::to_json).collect();
+    let data: Vec<Value> = live
+        .iter()
+        .filter(|key| {
+            limit
+                .as_ref()
+                .is_none_or(|holder| within_reach(holder, key))
+        })
+        .map(Key::to_json)
+        .collect();
     Ok(axum::Json(json!({ "data": data, "next_cursor": null })))
 }
 
@@ -459,7 +510,7 @@ async fn revoke(
     caller: Caller,
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
-    require_key_reader(&caller)?;
+    let limit = reach_limit(&caller)?;
     marfa_core::server::validate_id("id", &id)?;
     let actor = caller
         .key()
@@ -467,12 +518,23 @@ async fn revoke(
     app.db
         .write(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            if !keys::revoke(&tx, &id, &clock::now_stamp())? {
-                return Err(ApiError::new(
+            // A key out of reach answers as an id no key holds, so the door
+            // does not say which keys exist.
+            let not_found = || {
+                ApiError::new(
                     StatusCode::NOT_FOUND,
                     "api_key_not_found",
                     "No live key has this id.",
-                ));
+                )
+            };
+            if let Some(holder) = &limit {
+                let target = keys::live_by_id(&tx, &id)?.ok_or_else(not_found)?;
+                if !within_reach(holder, &target) {
+                    return Err(not_found());
+                }
+            }
+            if !keys::revoke(&tx, &id, &clock::now_stamp())? {
+                return Err(not_found());
             }
             audit(&tx, "key.revoke", &actor, "api_key", &id, json!({}))?;
             tx.commit()?;
@@ -480,4 +542,64 @@ async fn revoke(
         })
         .await?;
     Ok(axum::Json(json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(id: &str, permissions: &[&str], types: Value) -> Key {
+        let Value::Object(types) = types else {
+            panic!("a type map is an object");
+        };
+        Key {
+            id: id.into(),
+            label: id.into(),
+            source: id.into(),
+            sources: Vec::new(),
+            permissions: permissions.iter().map(|p| p.to_string()).collect(),
+            default_tier: "library".into(),
+            maps: Maps {
+                types,
+                ..Maps::default()
+            },
+            created_at: String::new(),
+            expires_at: None,
+            last_used_at: None,
+        }
+    }
+
+    #[test]
+    fn a_narrow_minter_reaches_itself_and_what_it_could_mint() {
+        let narrow = key("narrow", &["keys.mint"], json!({ "core.bookmark": "read" }));
+        let child = key("child", &[], json!({ "core.bookmark": "read" }));
+        let wider_map = key("wide", &[], json!({ "*": "write" }));
+        let wider_permission = key("admin", &["keys.manage"], json!({}));
+        assert!(within_reach(&narrow, &narrow));
+        assert!(within_reach(&narrow, &child));
+        assert!(!within_reach(&narrow, &wider_map));
+        assert!(!within_reach(&narrow, &wider_permission));
+    }
+
+    #[test]
+    fn a_held_denial_is_not_lifted_by_a_wildcard() {
+        let holder = key(
+            "holder",
+            &[],
+            json!({ "*": "read", "system.folder": "none" }),
+        );
+        let wildcard = key("wildcard", &[], json!({ "*": "read" }));
+        assert!(!within_reach(&holder, &wildcard));
+    }
+
+    #[test]
+    fn scopes_are_spelled_as_each_map_spells_them() {
+        assert_eq!(map_scope("type", "*", "write"), "*:write");
+        assert_eq!(map_scope("type", "core.note", "read"), "core.note:read");
+        assert_eq!(map_scope("edge", "*", "read"), "edge.*:read");
+        assert_eq!(map_scope("metadata", "*", "read"), "metadata:read");
+        assert_eq!(map_scope("metadata", "x", "read"), "metadata.x:read");
+        assert_eq!(map_scope("profile", "*", "write"), "profile:write");
+        assert_eq!(map_scope("profile", "name", "read"), "profile.name:read");
+    }
 }

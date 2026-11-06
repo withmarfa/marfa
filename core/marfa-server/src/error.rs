@@ -36,6 +36,14 @@ impl ApiError {
         ApiError::new(StatusCode::BAD_REQUEST, "validation_error", message)
     }
 
+    /// A refusal of one body field, named so a caller can tell it from a
+    /// body wrong elsewhere.
+    pub fn field(path: &str, message: impl Into<String>) -> ApiError {
+        let message = message.into();
+        ApiError::validation(format!("{path}: {message}"))
+            .with(json!({ "errors": [{ "path": path, "message": message }] }))
+    }
+
     pub fn not_found() -> ApiError {
         ApiError::new(StatusCode::NOT_FOUND, "not_found", "Not found")
     }

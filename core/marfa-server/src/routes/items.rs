@@ -105,18 +105,18 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
             .with(json!({ "field": "type" })));
         }
         Some(Value::String(type_id)) if well_formed_type(type_id) => type_id.clone(),
-        Some(_) => return Err(ApiError::validation("type: Must be a type identifier.")),
+        Some(_) => return Err(ApiError::field("type", "Must be a type identifier.")),
     };
     let properties = match body.get("properties") {
         None | Some(Value::Null) => Map::new(),
         Some(Value::Object(properties)) => properties.clone(),
-        Some(_) => return Err(ApiError::validation("properties: Must be an object.")),
+        Some(_) => return Err(ApiError::field("properties", "Must be an object.")),
     };
     let text = |field: &str| -> ApiResult<Option<String>> {
         match body.get(field) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(text)) if !text.is_empty() => Ok(Some(text.clone())),
-            Some(_) => Err(ApiError::validation(format!("{field}: Must be text."))),
+            Some(_) => Err(ApiError::field(field, "Must be text.")),
         }
     };
     let id = text("id")?;
@@ -126,7 +126,7 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     let state = match text("state")?.as_deref() {
         None => None,
         Some(state @ ("active" | "archived")) => Some(state.to_string()),
-        Some(_) => return Err(ApiError::validation("state: Must be active or archived.")),
+        Some(_) => return Err(ApiError::field("state", "Must be active or archived.")),
     };
     let occurred_at = match text("occurred_at")? {
         None => None,
@@ -138,23 +138,24 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     let mode = match text("mode")?.as_deref() {
         None | Some("upsert") => Mode::Upsert,
         Some("create_only") => Mode::CreateOnly,
-        Some(_) => return Err(ApiError::validation("mode: Must be upsert or create_only.")),
+        Some(_) => return Err(ApiError::field("mode", "Must be upsert or create_only.")),
     };
     let tier = match text("tier")?.as_deref() {
         None => None,
         Some(tier @ ("library" | "feed")) => Some(tier.to_string()),
-        Some(_) => return Err(ApiError::validation("tier: Must be library or feed.")),
+        Some(_) => return Err(ApiError::field("tier", "Must be library or feed.")),
     };
     let coordinate = |field: &str, bound: f64| -> ApiResult<Option<f64>> {
         match body.get(field) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Number(number)) => match number.as_f64() {
                 Some(value) if (-bound..=bound).contains(&value) => Ok(Some(value)),
-                _ => Err(ApiError::validation(format!(
-                    "{field}: Must be between -{bound} and {bound}."
-                ))),
+                _ => Err(ApiError::field(
+                    field,
+                    format!("Must be between -{bound} and {bound}."),
+                )),
             },
-            Some(_) => Err(ApiError::validation(format!("{field}: Must be a number."))),
+            Some(_) => Err(ApiError::field(field, "Must be a number.")),
         }
     };
     let capture_latitude = coordinate("capture_latitude", 90.0)?;
@@ -173,17 +174,18 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
                 value
                     .as_str()
                     .map(str::to_string)
-                    .ok_or_else(|| ApiError::validation(format!("tags[{at}]: Must be text.")))
+                    .ok_or_else(|| ApiError::field(&format!("tags[{at}]"), "Must be text."))
             })
             .collect::<ApiResult<_>>()?,
-        Some(_) => return Err(ApiError::validation("tags: Must be an array of text.")),
+        Some(_) => return Err(ApiError::field("tags", "Must be an array of text.")),
     };
     match body.get("version") {
         None | Some(Value::Null) => {}
         Some(Value::Number(number)) if number.as_u64().is_some_and(|version| version >= 1) => {}
         Some(_) => {
-            return Err(ApiError::validation(
-                "version: Must be a positive whole number.",
+            return Err(ApiError::field(
+                "version",
+                "Must be a positive whole number.",
             ));
         }
     }
@@ -191,8 +193,9 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
         None | Some(Value::Null) => {}
         Some(Value::Object(edges)) if edges.is_empty() => {}
         Some(_) => {
-            return Err(ApiError::validation(
-                "edges: This server does not write edges yet.",
+            return Err(ApiError::field(
+                "edges",
+                "This server does not write edges yet.",
             ));
         }
     }

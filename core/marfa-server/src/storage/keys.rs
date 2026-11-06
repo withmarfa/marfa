@@ -118,6 +118,14 @@ pub fn live(conn: &Connection) -> rusqlite::Result<Vec<Key>> {
     rows.collect()
 }
 
+pub fn live_by_id(conn: &Connection, id: &str) -> rusqlite::Result<Option<Key>> {
+    conn.prepare_cached(&format!(
+        "SELECT {COLUMNS} FROM api_keys WHERE id = ?1 AND revoked_at IS NULL"
+    ))?
+    .query_row([id], from_row)
+    .optional()
+}
+
 /// Whether a live key writes under `source` as its own.
 pub fn source_taken(conn: &Connection, source: &str) -> rusqlite::Result<bool> {
     conn.prepare_cached(
