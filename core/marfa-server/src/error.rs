@@ -107,6 +107,7 @@ impl From<CoreError> for ApiError {
                 refusal.details = details.map(|details| *details);
                 refusal
             }
+            CoreError::Invalid(message) => ApiError::validation(message),
             CoreError::UnknownType { message } => {
                 ApiError::new(StatusCode::BAD_REQUEST, "unknown_type", message)
             }

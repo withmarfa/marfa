@@ -13,8 +13,8 @@ pub use crate::query::{
 };
 pub use crate::search::{Order as SearchOrder, search_page};
 pub use crate::store::{
-    CatalogChange, META_CATALOG_VERSION, SCHEMA, Unreadable, index_item, replace_edge_types,
-    replace_types,
+    CatalogChange, META_CATALOG_VERSION, META_SLICE_EDGE_TYPES, SCHEMA, Unreadable, index_item,
+    meta_set, replace_edge_types, replace_types,
 };
 pub use crate::time::normalize as normalize_time;
 pub use crate::validation::{

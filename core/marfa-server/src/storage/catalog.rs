@@ -14,6 +14,19 @@ pub fn seed(conn: &mut Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     server::replace_types(&tx, &shipped.types).map_err(|error| error.to_string())?;
     server::replace_edge_types(&tx, &shipped.edge_types).map_err(|error| error.to_string())?;
+    // A working copy holds an edge type whole only if it says so; this server
+    // holds every edge, so the core's `backref` terms are answered.
+    let edge_ids: Vec<&str> = shipped
+        .edge_types
+        .iter()
+        .filter_map(|edge_type| edge_type.get("id")?.as_str())
+        .collect();
+    server::meta_set(
+        &tx,
+        server::META_SLICE_EDGE_TYPES,
+        &serde_json::to_string(&edge_ids).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     tx.execute(
         "INSERT INTO meta (key, value) VALUES (?1, '1') ON CONFLICT (key) DO NOTHING",
         params![server::META_CATALOG_VERSION],
