@@ -489,6 +489,12 @@ describe("where a file sits", () => {
           { timeout: 30000, interval: 100 },
         );
         expect(sentCreates(harness)).toHaveLength(replacement ? 1 : 0);
+        // The pass that sent the file pulls its own write after the send, and
+        // tells of it last: a file removed between the two is a different case.
+        await vi.waitFor(
+          () => expect(watching.stdout).toContain(" 1 updated,"),
+          { timeout: 30000, interval: 100 },
+        );
         rmSync(moving);
         await vi.waitFor(
           () =>
