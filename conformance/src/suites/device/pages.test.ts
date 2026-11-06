@@ -1083,4 +1083,94 @@ describe("a folder's first sync", () => {
       ),
     ).toEqual(["Large"]);
   });
+
+  describe("a body past the request limit", () => {
+    const large = "user.large_text";
+    const titled = (request: RecordedRequest, title: string) =>
+      request.method === "POST" &&
+      request.pathname === "/items" &&
+      (JSON.parse(request.body) as { properties: { title?: string } })
+        .properties.title === title;
+
+    /** A folder whose creates titled `dropped` lose their connection. */
+    async function dropping(name: string, dropped: string) {
+      folder = await folderHarness(name, {
+        settings: { query: { types: ["core.note", large] } },
+        catalog: typeCatalog([
+          wireType(large, {
+            bodyField: "body",
+            fields: { title: { type: "string" }, body: { type: "string" } },
+          }),
+        ]),
+      });
+      scriptFolderWrites(folder, {
+        creating: (answer, request) =>
+          titled(request, dropped) ? { kind: "drop" } : answer,
+      });
+      return folder;
+    }
+
+    it("takes a connection closed with no answer as a refusal, sends the file beside it and does not send it again", async () => {
+      const held = await dropping("request-limit-closed", "Large");
+      // Each quote doubles as it is encoded: 600,000 characters send as 1.2 MB.
+      put(
+        held,
+        "Large.md",
+        `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
+      );
+      put(held, "Small.md", "---\ntitle: Small\n---\ntext\n");
+
+      const pushed = await held.folder.push();
+
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(pushed.ok && pushed.value.drain.undelivered).toBe(0);
+      expect(
+        pushed.ok &&
+          pushed.value.drain.verdicts.some(
+            (entry) =>
+              entry.verdict === "refused" &&
+              entry.reason === "request_too_large",
+          ),
+      ).toBe(true);
+      const sends = (title: string) =>
+        held.server.requests.filter((request) => titled(request, title)).length;
+      expect(sends("Small")).toBe(1);
+      expect(sends("Large")).toBe(1);
+
+      expect((await held.folder.push()).ok).toBe(true);
+      expect(sends("Large")).toBe(1);
+    });
+
+    it("leaves a connection closed on a body within the limit a failure to retry", async () => {
+      const held = await dropping("request-limit-within", "Short");
+      put(held, "Short.md", "---\ntitle: Short\n---\ntext\n");
+
+      const pushed = await held.folder.push();
+
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(pushed.ok && pushed.value.drain.undelivered).toBeGreaterThan(0);
+      expect(JSON.stringify(pushed)).not.toContain("request_too_large");
+    });
+
+    it("asks to close the connection of a body past the limit and no other", async () => {
+      const held = await dropping("request-limit-connection", "Nothing");
+      put(
+        held,
+        "Large.md",
+        `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
+      );
+      put(held, "Small.md", "---\ntitle: Small\n---\ntext\n");
+
+      expect((await held.folder.push()).ok).toBe(true);
+
+      const connection = (title: string) =>
+        held.server.requests.find((request) => titled(request, title))?.headers
+          .connection;
+      expect(connection("Large")).toBe("close");
+      expect(connection("Small")).not.toBe("close");
+      expect(
+        held.server.requests.some((request) => titled(request, "Small")),
+      ).toBe(true);
+    });
+  });
 });

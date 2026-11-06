@@ -1160,6 +1160,22 @@ If the store is full as a device takes the answer to a write, before the write h
 
 ## Refusals that park a write
 
+### `queue-and-verdicts/request-too-large-unheard`
+
+If the connection closes with no answer after a device has connected to send a body larger than 1048576 bytes, then a device MUST treat the request as answered `413 request_too_large`.
+
+**Reason:** a server closes the connection on a body over its cap with the rest unread, and the close can destroy the `413` before a client that is still sending reads it. Treated as a failure to retry, such a file would hold back every write behind it on every drain. An instance does not say what it set `MARFA_MAX_REQUEST_BYTES` to, so a device reads the close against the default. On an instance that raised it, a link that drops during such a body holds that file until it changes, and its bytes stay on the device. On an instance that lowered it, a body between its cap and the default that loses its answer stays a failure to retry.
+
+**Tests:** `device/pages.test.ts › takes a connection closed with no answer as a refusal, sends the file beside it and does not send it again`, `› leaves a connection closed on a body within the limit a failure to retry`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+
+### `queue-and-verdicts/request-too-large-connection`
+
+When a device sends a body larger than 1048576 bytes, a device MUST send `Connection: close` with it.
+
+**Reason:** the server closes the connection just after it answers such a body, and a next request sent on that connection meets the reset as a failure to reach the server, stopping the drain.
+
+**Tests:** `device/pages.test.ts › asks to close the connection of a body past the limit and no other`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+
 ### `queue-and-verdicts/credential-blocks-queue`
 
 When the server answers a write `401` naming its contract, a device MUST block that write and every other write with no verdict `credential_refused`.
