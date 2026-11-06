@@ -3812,7 +3812,7 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 ### `folders/delete-grace-keeps-watch-awake`
 
-While the rename grace of a missing file runs, a device watching the folder MUST go on running passes until a pass has decided the file's deletion.
+While the rename grace of a missing file in a watched folder runs, a device MUST go on running passes until a pass has decided the file's deletion.
 
 **Reason:** a pass that measures the grace once at its sweep and again at its end can pass the file over and then rest, so no pass decides the deletion until a file event or the next full pass.
 
