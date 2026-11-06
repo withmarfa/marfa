@@ -1093,7 +1093,17 @@ impl Catalog {
                 message: format!("{type_id} is not a type this copy holds"),
             });
         }
-        let resolved = self.resolved(type_id)?;
+        let mut resolved = self.resolved(type_id)?;
+        if let Some(definition) = self
+            .body_field(type_id)
+            .and_then(|body| resolved.get_mut(body))
+            .and_then(Value::as_object_mut)
+            .filter(|definition| definition.get("type").and_then(Value::as_str) == Some("string"))
+        {
+            definition
+                .entry("maxLength")
+                .or_insert(json!(crate::validation::BODY_MAX_LENGTH));
+        }
         let every: Vec<(&str, Value)> = EVERY_TYPE_TAKES
             .iter()
             .map(|(name, items)| (*name, json!({ "type": "array", "items_type": items })))
@@ -1586,6 +1596,121 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// A catalog of `parent`, naming `parent_body` as its body, and `child`
+    /// beneath it, naming `child_body` where it names one.
+    fn with_bodies(parent_body: Option<&str>, child_body: Option<&str>) -> Catalog {
+        let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
+        let parent = catalog.entries.get_mut("parent").unwrap();
+        parent.body_field = parent_body.map(str::to_string);
+        parent.definitions = serde_json::json!({
+            "description": {"type": "string"},
+            "body": {"type": "string"},
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        catalog.entries.get_mut("child").unwrap().body_field = child_body.map(str::to_string);
+        catalog
+    }
+
+    /// The field named by a refusal, or `None` where the value is taken.
+    fn refused_field(catalog: &Catalog, type_id: &str, field: &str, text: String) -> Option<String> {
+        let mut properties = Map::new();
+        properties.insert(field.to_string(), Value::String(text));
+        catalog
+            .validate_properties(type_id, &properties, false)
+            .err()
+            .map(|refusal| match refusal {
+                CoreError::Validation { message, .. } => message
+                    .split(':')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+                other => panic!("expected a validation refusal, got {other:?}"),
+            })
+    }
+
+    #[test]
+    fn a_named_body_holds_a_million_units_and_other_text_a_hundred_thousand() {
+        let catalog = with_bodies(Some("body"), None);
+        let refused = |field, text| refused_field(&catalog, "parent", field, text);
+        assert_eq!(refused("body", "x".repeat(1_000_000)), None);
+        assert_eq!(refused("body", "x".repeat(1_000_001)).as_deref(), Some("body"));
+        assert_eq!(refused("description", "x".repeat(100_000)), None);
+        assert_eq!(
+            refused("description", "x".repeat(100_001)).as_deref(),
+            Some("description")
+        );
+    }
+
+    #[test]
+    fn a_character_outside_the_basic_plane_counts_two_units_against_both_limits() {
+        let catalog = with_bodies(Some("body"), None);
+        let refused = |field, text| refused_field(&catalog, "parent", field, text);
+        let astral = |before| format!("{}\u{1F600}", "x".repeat(before));
+        assert_eq!(refused("body", astral(999_998)), None);
+        assert_eq!(refused("body", astral(999_999)).as_deref(), Some("body"));
+        assert_eq!(refused("description", astral(99_998)), None);
+        assert_eq!(
+            refused("description", astral(99_999)).as_deref(),
+            Some("description")
+        );
+    }
+
+    #[test]
+    fn a_body_follows_the_nearest_type_that_names_one() {
+        let long = || "x".repeat(100_001);
+        let inherits = with_bodies(Some("description"), None);
+        assert_eq!(refused_field(&inherits, "child", "description", long()), None);
+        assert_eq!(
+            refused_field(&inherits, "child", "body", long()).as_deref(),
+            Some("body")
+        );
+        let renames = with_bodies(Some("description"), Some("body"));
+        assert_eq!(refused_field(&renames, "parent", "description", long()), None);
+        assert_eq!(
+            refused_field(&renames, "child", "description", long()).as_deref(),
+            Some("description")
+        );
+        assert_eq!(refused_field(&renames, "child", "body", long()), None);
+    }
+
+    #[test]
+    fn a_field_called_body_on_a_type_naming_none_keeps_the_shorter_limit() {
+        let catalog = with_bodies(None, None);
+        assert_eq!(refused_field(&catalog, "child", "body", "x".repeat(100_000)), None);
+        assert_eq!(
+            refused_field(&catalog, "child", "body", "x".repeat(100_001)).as_deref(),
+            Some("body")
+        );
+    }
+
+    #[test]
+    fn a_body_fields_own_length_wins_in_both_directions() {
+        let declaring = |max: u64| {
+            let mut catalog = with_bodies(Some("body"), None);
+            catalog.entries.get_mut("parent").unwrap().definitions = serde_json::json!({
+                "body": {"type": "string", "maxLength": max},
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            catalog
+        };
+        let lower = declaring(50);
+        assert_eq!(refused_field(&lower, "parent", "body", "x".repeat(50)), None);
+        assert_eq!(
+            refused_field(&lower, "parent", "body", "x".repeat(51)).as_deref(),
+            Some("body")
+        );
+        let higher = declaring(2_000_000);
+        assert_eq!(refused_field(&higher, "parent", "body", "x".repeat(1_000_001)), None);
+        assert_eq!(
+            refused_field(&higher, "parent", "body", "x".repeat(2_000_001)).as_deref(),
+            Some("body")
+        );
     }
 
     #[test]

@@ -273,7 +273,9 @@ const FieldDefinitionSchema = z
       .number()
       .int()
       .optional()
-      .describe("The longest value a `string` or `enum` field allows."),
+      .describe(
+        "The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other.",
+      ),
     maxItems: z
       .number()
       .int()
@@ -305,7 +307,7 @@ const DisplayHintsSchema = z
       .string()
       .optional()
       .describe(
-        "The field that holds an item's body for display. The field holds Markdown.",
+        "The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise.",
       ),
     name_from_body: z
       .boolean()

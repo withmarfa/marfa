@@ -15,6 +15,14 @@ pub(crate) const MAX_TAG_LENGTH: usize = 128;
 /// Most tags one item may hold: the server's `MAX_TAGS_PER_ITEM`.
 pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
 
+/// Longest value, in UTF-16 code units, of a string field with no `maxLength`
+/// of its own.
+const STRING_MAX_LENGTH: u64 = 100_000;
+
+/// Longest value, in UTF-16 code units, of the string field a type names as its
+/// body, where it has no `maxLength` of its own (`items/property-length-body`).
+pub(crate) const BODY_MAX_LENGTH: u64 = 1_000_000;
+
 /// The tags a write may carry, as the server holds them: at most
 /// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
 /// as JavaScript's `trim` reads blank, not `.` or `..`, which a URL path
@@ -180,7 +188,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
             .unwrap_or(default)
     };
     let bounded = |text: &str| {
-        let max = limit("maxLength", 100_000);
+        let max = limit("maxLength", STRING_MAX_LENGTH);
         if text.encode_utf16().count() as u64 > max {
             Some(format!("Must contain at most {max} UTF-16 code units"))
         } else if text.contains('\0') {

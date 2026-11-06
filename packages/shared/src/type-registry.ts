@@ -814,16 +814,12 @@ const noNullByte = (schema: z.ZodString): z.ZodType =>
 // Defense-in-depth caps applied per-field, independent of the server's
 // global request-body size limit. They bound a single field even when the
 // overall body is under the request cap (e.g. one enormous string in an
-// otherwise small payload). Generous on purpose — they trip on abuse, not
-// on legitimate long-form content; the per-field `maxLength` / `maxItems`
-// overrides raise (or lower) them where a type genuinely needs it.
-/**
- * Exported because a server-side writer that produces a string field has to
- * bound its output by what this will accept. Enrichment truncated at its own
- * independently-chosen ceiling and wrote a value the write path then refused,
- * on an item nobody could edit afterwards.
- */
-export const DEFAULT_MAX_STRING_LENGTH = 100_000;
+// otherwise small payload). Generous on purpose: they trip on abuse, not
+// on legitimate long-form content. The field a type names as its body holds
+// documents, so it takes a longer default. The per-field `maxLength` /
+// `maxItems` overrides raise (or lower) them where a type genuinely needs it.
+const DEFAULT_MAX_STRING_LENGTH = 100_000;
+const DEFAULT_MAX_BODY_LENGTH = 1_000_000;
 const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
 
 // Match the working copy's UTF-16 bound rather than the reader library's
@@ -1114,9 +1110,40 @@ function getZodSchema(
   const fields = getResolvedFields(typeId);
   if (!fields) return undefined;
 
-  const schema = fieldsToZod(fields, strict);
+  const schema = fieldsToZod(withBodyLength(fields, typeId), strict);
   cache.set(key, schema);
   return schema;
+}
+
+/**
+ * The fields with the body's default length written in, where the type names a
+ * string field with no `maxLength` as its body. Called after
+ * `getResolvedFields`, which refuses a looping chain.
+ */
+function withBodyLength(
+  fields: Record<string, FieldDefinition>,
+  typeId: string,
+): Record<string, FieldDefinition> {
+  let body: string | undefined;
+  for (
+    let at = resolveSchema(typeId);
+    at && body === undefined;
+    at = at.parent ? resolveSchema(at.parent) : undefined
+  ) {
+    body = at.display_hints?.body_field;
+  }
+  const field =
+    body !== undefined && Object.hasOwn(fields, body)
+      ? fields[body]
+      : undefined;
+  if (body === undefined || field?.type !== "string") return fields;
+  return {
+    ...fields,
+    [body]: {
+      ...field,
+      maxLength: field.maxLength ?? DEFAULT_MAX_BODY_LENGTH,
+    },
+  };
 }
 
 function fieldsToZod(

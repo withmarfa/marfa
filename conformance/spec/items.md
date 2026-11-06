@@ -446,9 +446,49 @@ If a write names a string property containing U+0000, then the server MUST answe
 
 ### `items/property-length-cap`
 
-If a write names a string property longer than the field's `maxLength`, or than 100,000 where the field declares none, then the server MUST answer `400 invalid_properties` naming the field.
+If a write leaves an item with a string property longer than the length its field allows, then the server MUST answer `400 invalid_properties` naming the field.
 
-**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/validation.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/adversarial.test.ts › refuses a body over the field's length cap with invalid_properties`.
+**Reason:** a create, an update, a bulk write and a move are each judged by the type the item would hold the value under, so a move can be refused for a value that was allowed where it stood.
+
+**Tests:** `compliance/validation.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/adversarial.test.ts › refuses a body over the field's length cap with invalid_properties`, `compliance/body-field-length.test.ts › holds a create, an update and a bulk write to the body's length`, `compliance/body-field-length.test.ts › refuses a move that puts a long body under a shorter field, and keeps the item`.
+
+### `items/property-length-declared`
+
+Where a string field declares a `maxLength`, the server MUST allow it that many units and no more.
+
+**Reason:** a field's own `maxLength` wins over either default, lower or higher.
+
+**Tests:** `compliance/body-field-length.test.ts › lets a body field's own maxLength win, lower or higher`.
+
+### `items/property-length-body`
+
+Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 units and no more.
+
+**Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 units of multi-byte text, or of text JSON escapes, can pass.
+
+**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/body-field-length.test.ts › follows a body a type names, inherits or renames`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
+
+### `items/property-length-default`
+
+Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 units and no more.
+
+**Reason:** the limit follows what a type names, not what a field is called, so a field called `body` on a type that names no body takes this default.
+
+**Tests:** `compliance/validation.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/body-field-length.test.ts › holds a field called body to 100,000 where the type names no body`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
+
+### `items/property-length-hint-changed`
+
+When a replacement of a type changes its `display_hints.body_field`, the server MUST leave every value items of the type hold as it is.
+
+**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, and refuses an edit until it is shortened`.
+
+### `items/property-length-held-over`
+
+If an update leaves in place a value longer than its field now allows, then the server MUST answer `400 invalid_properties` naming the field.
+
+**Reason:** the whole result of an update is judged, so a value a type no longer allows is shortened before the item takes another edit. It stays readable meanwhile, and the type can be changed back.
+
+**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, and refuses an edit until it is shortened`.
 
 ### `items/property-length-units`
 

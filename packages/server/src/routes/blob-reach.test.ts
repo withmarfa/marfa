@@ -7,7 +7,6 @@
  * a key, nothing lends them before the door under test writes the digest,
  * and a reader that may read every type is refused them until it has.
  */
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
@@ -23,6 +22,8 @@ import {
   cleanupTestContext,
 } from "../test-utils.js";
 import { blobPrincipal } from "./_blob-reach.js";
+
+const MAX_TEXT_CHARS = 100_000;
 
 let ctx: TestContext;
 let seq = 0;
@@ -53,7 +54,7 @@ function sweeper(): TextEnrichmentSweeper {
     batchSize: 64,
     itemTimeoutMs: 60_000,
     maxBlobBytes: 20 * 1024 * 1024,
-    maxTextChars: DEFAULT_MAX_STRING_LENGTH,
+    maxTextChars: MAX_TEXT_CHARS,
     maxAttempts: 3,
     maxInflatedBytes: 64 * 1024 * 1024,
     maxMemoryBytes: 256 * 1024 * 1024,
