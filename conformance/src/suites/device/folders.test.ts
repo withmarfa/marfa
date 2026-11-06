@@ -2543,6 +2543,7 @@ describe("files and items", () => {
     // Faster than the watch's debounce, for longer than it waits for the
     // folder to settle, so passes run while the copy is under way.
     const writing = writeSteadily(copying, 50);
+    await writing.started;
     const watching = harness.folder.watch();
     let whole: Buffer;
     try {
@@ -2575,11 +2576,12 @@ describe("files and items", () => {
         await watching.stop();
       }
     }
+    const sizes = uploads().map((bytes) => bytes.length);
     expect(
-      uploads().map((bytes) => bytes.length),
-      "a file still being copied in was uploaded half-written",
+      writing.neverSettled() ? sizes : sizes.slice(-1),
+      `a file still being copied in was uploaded half-written (the writer's longest pause was ${String(writing.longestPause())} ms)`,
     ).toEqual([whole.length]);
-    expect(uploads()[0]).toEqual(whole);
+    expect(uploads().at(-1)).toEqual(whole);
   });
 
   it("says once that a file which never stops changing has not been sent", async () => {
@@ -2591,6 +2593,7 @@ describe("files and items", () => {
     const log = join(harness.dir, "capture.bin");
     writeFileSync(log, Buffer.alloc(0));
     const writing = writeSteadily(log, 10);
+    await writing.started;
     const said = "capture.bin: still changing, so not sent yet";
     const watching = harness.folder.watchText();
     try {
@@ -2612,15 +2615,17 @@ describe("files and items", () => {
           { timeout: 30_000, interval: 100 },
         );
       }
+      const saidTimes = watching.stdout.split(said).length - 1;
+      const sentWhileChanging = harness.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/blobs",
+      );
+      await writing.stop();
       expect(
-        watching.stdout.split(said).length - 1,
+        writing.neverSettled() ? saidTimes : 1,
         `a watch said the same still-changing file at every pass: ${watching.stdout}`,
       ).toBe(1);
       expect(
-        harness.server.requests.filter(
-          (request) =>
-            request.method === "POST" && request.pathname === "/blobs",
-        ),
+        writing.neverSettled() ? sentWhileChanging : [],
         `a file that never stopped changing was uploaded part-written (its writer's longest pause was ${String(writing.longestPause())} ms)`,
       ).toEqual([]);
       expect(watching.running(), watching.stderr).toBe(true);

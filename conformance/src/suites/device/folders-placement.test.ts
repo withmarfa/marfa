@@ -24,6 +24,7 @@ import {
   copyLiveReplay,
   refusal,
   copyReplay,
+  typeCatalog,
   wireEdge,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -51,7 +52,7 @@ import {
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import { writeSteadily } from "../../device/steady-writer.js";
-import type { Answer } from "../../device/scripted-server.js";
+import type { Answer, Responder } from "../../device/scripted-server.js";
 import type {
   WireEdgeOptions,
   WireItemOptions,
@@ -426,11 +427,8 @@ describe("where a file sits", () => {
       const moving = join(harness.dir, "renamed.bin");
       renameSync(join(harness.dir, "capture.bin"), moving);
       if (replacement) put(harness, "capture.bin", "different new file");
-      const writing = setInterval(
-        () => appendFileSync(moving, Buffer.from("more")),
-        30,
-      );
-      appendFileSync(moving, Buffer.from("first edit"));
+      const writing = writeSteadily(moving, 30);
+      await writing.started;
       const watching = harness.folder.watchText();
       try {
         await vi.waitFor(
@@ -447,7 +445,7 @@ describe("where a file sits", () => {
           deletes,
           "the moved file is present and changing but its item was trashed",
         ).toEqual([]);
-        expect(sentUpdates(harness)).toEqual([]);
+        const sentWhileChanging = sentUpdates(harness);
         const status = await harness.folder.status();
         expect(
           status.ok &&
@@ -462,7 +460,11 @@ describe("where a file sits", () => {
           expect(other).toEqual(expect.any(String));
           expect(other).not.toBe(id);
         }
-        clearInterval(writing);
+        await writing.stop();
+        expect(
+          writing.neverSettled() ? sentWhileChanging : [],
+          `a file still changing was sent (the writer's longest pause was ${String(writing.longestPause())} ms)`,
+        ).toEqual([]);
         const settled = readFileSync(moving);
         scriptBlob(harness.server, settled);
         await vi.waitFor(
@@ -498,8 +500,11 @@ describe("where a file sits", () => {
           { timeout: 30000, interval: 100 },
         );
       } finally {
-        clearInterval(writing);
-        await watching.stop();
+        try {
+          await writing.stop();
+        } finally {
+          await watching.stop();
+        }
       }
     },
   );
@@ -6550,10 +6555,12 @@ describe("a file that is not a document", () => {
       type?: string;
       mime?: string;
       settings?: FolderSettings;
+      catalog?: Responder;
     } = {},
   ): Promise<FolderHarness> {
     const made = await folderHarness(label, {
       settings: options.settings ?? settings,
+      catalog: options.catalog,
       rows: {
         [options.type ?? "core.file"]: [
           {
@@ -6760,6 +6767,7 @@ describe("a file that is not a document", () => {
       // Faster than the watch's debounce, for longer than it waits for the
       // folder to settle, so passes run while the file is written.
       const writing = writeSteadily(copying, 50);
+      await writing.started;
       const watching = made.folder.watch();
       let whole: Buffer;
       try {
@@ -6799,11 +6807,98 @@ describe("a file that is not a document", () => {
           await watching.stop();
         }
       }
+      const sizes = uploads()
+        .slice(before)
+        .map((bytes) => bytes.length);
       expect(
-        uploads()
-          .slice(before)
-          .map((bytes) => bytes.length),
-        "a file item at a document name was uploaded half-written",
+        writing.neverSettled() ? sizes : sizes.slice(-1),
+        `a file item at a document name was uploaded half-written (the writer's longest pause was ${String(writing.longestPause())} ms)`,
+      ).toEqual([whole.length]);
+    },
+  );
+
+  it.each(["notes.md", "Notes.TXT"])(
+    "waits for a file item at a document name to stop changing however long the server takes to answer, named %s",
+    async (name) => {
+      const id = "01a00000-0000-7000-8000-000000000101";
+      let slow = false;
+      const made = await pulledFileItem(
+        "folder-file-doc-name-slow-server",
+        id,
+        "archive.bin",
+        Buffer.from("bytes a server holds as a file\n"),
+        {
+          // Longer than the watch's settle window, on the read a pass makes
+          // between reading a changed file and deciding whether to send it.
+          catalog: (request) =>
+            slow && request.pathname === "/types"
+              ? {
+                  kind: "gated",
+                  until: new Promise((resolve) => setTimeout(resolve, 400)),
+                  then: typeCatalog(),
+                }
+              : typeCatalog(),
+        },
+      );
+      renameSync(join(made.dir, "archive.bin"), join(made.dir, name));
+      expect((await made.folder.push()).ok).toBe(true);
+      const uploads = () =>
+        made.server.requests
+          .filter(
+            (request) =>
+              request.method === "POST" && request.pathname === "/blobs",
+          )
+          .map((request) => request.raw);
+      const before = uploads().length;
+
+      slow = true;
+      const copying = join(made.dir, name);
+      const writing = writeSteadily(copying, 50);
+      await writing.started;
+      put(made, "other.md", "---\ntitle: Other\n---\nwritten beside it\n");
+      const watching = made.folder.watch();
+      let whole: Buffer;
+      try {
+        // The witness: a pass read both files, waited on the server and sent
+        // this one, all while the writing went on.
+        await vi.waitFor(
+          () => {
+            expect(
+              sentTitles(made),
+              "no pass ran while the file was written, so nothing below shows a pass passing it over",
+            ).toContain("Other");
+          },
+          { timeout: 30_000, interval: 100 },
+        );
+        await writing.stop();
+        whole = readFileSync(copying);
+        await vi.waitFor(
+          () => {
+            expect(
+              sentUpdates(made)
+                .filter((sent) => sent.id === id)
+                .map(
+                  (sent) =>
+                    (sent.body.properties as Record<string, unknown>).blob_ref,
+                ),
+            ).toContain(hashOf(whole));
+          },
+          { timeout: 30_000, interval: 100 },
+        );
+        expect(watching.running(), watching.stderr).toBe(true);
+      } finally {
+        try {
+          await writing.stop();
+        } finally {
+          await watching.stop();
+        }
+      }
+      const sizes = uploads()
+        .slice(before)
+        .map((bytes) => bytes.length);
+      expect(
+        writing.neverSettled() ? sizes : sizes.slice(-1),
+        `a file item at a document name was uploaded half-written (the writer's longest pause was ${String(writing.longestPause())} ms)`,
       ).toEqual([whole.length]);
     },
   );

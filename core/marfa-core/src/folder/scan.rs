@@ -11,8 +11,7 @@ use super::{
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, bytes_type, captured_identities, carries_frontmatter, changed_within, copy_refused,
-    document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_admission_refusal, local_properties_refusal, name_of, named_by_its_file, near_limit,
     one_per_name, placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
@@ -841,7 +840,7 @@ impl Folder {
                 walked
                     .opened
                     .get(&file.path)
-                    .is_some_and(|captured| changed_within(&captured.metadata.borrow(), settle))
+                    .is_some_and(|captured| captured.changed_within(settle))
             });
             // No blob the server holds is empty, so a file item emptied in
             // place, as an editor does before it writes, keeps its bytes until
