@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { refusal } from "../../device/marfa-answers.js";
+import { answers, refusal } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
-import { edit, idIn, put, scriptFolderWrites } from "./folders.shared.js";
+import {
+  EdgeDoor,
+  edit,
+  idIn,
+  put,
+  read,
+  scriptFolderWrites,
+  sentEdgeWrites,
+} from "./folders.shared.js";
 
 /**
  * A folder takes the writes the server answered out of its queue once it has
@@ -101,5 +109,112 @@ describe("a folder's answered writes", () => {
     expect(flagged.get("Refused.md")?.[1]).toContain("validation_error");
     expect(flagged.get("Tagged.md")?.[0]).toBe("refused");
     expect(flagged.get("Tagged.md")?.[1]).toContain("validation_error");
+  });
+});
+
+describe("a folder's refused edge creates", () => {
+  /** A folder of two notes, its first naming nothing yet. */
+  async function twoNotes(label: string) {
+    const edges = new EdgeDoor();
+    harness = await folderHarness(label, { events: [edges.stream()] });
+    scriptFolderWrites(harness, { edges });
+    const made = harness;
+    put(made, "Source.md", "source\n");
+    put(made, "Target.md", "target\n");
+    const added = await made.folder.push();
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    const target = idIn(made, "Target.md") ?? "";
+    edges.placing = (edge) =>
+      edge.edge_type === "about"
+        ? answers.edgeCardinality({ target_id: target, edge_type: "about" })
+        : undefined;
+    return { made, edges, source: idIn(made, "Source.md") ?? "", target };
+  }
+
+  async function refused(made: FolderHarness) {
+    const queued = await made.folder.device().queue();
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    return (queued.ok ? queued.value : []).filter(
+      (write) => write.kind === "create_edge" && write.verdict === "refused",
+    );
+  }
+
+  async function statusOf(made: FolderHarness, path: string) {
+    const status = await made.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    const file = (status.ok ? status.value.files : []).find(
+      (entry) => entry.path === path,
+    );
+    if (file === undefined) throw new Error(`no status for ${path}`);
+    return file;
+  }
+
+  it("takes out a refused edge create once the server has given the copy its edge, moving nothing else", async () => {
+    const { made, edges, source, target } = await twoNotes(
+      "folder-refused-edge-satisfied",
+    );
+    edit(made, "Source.md", /marfa_id:/, `about: "[[${target}]]"\nmarfa_id:`);
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(await refused(made)).toHaveLength(1);
+    expect((await statusOf(made, "Source.md")).flag).toBe("refused");
+
+    // The file stops naming it, so no file shows the refusal.
+    edit(made, "Source.md", `about: "[[${target}]]"\n`, "");
+    expect((await made.folder.push()).ok).toBe(true);
+    expect((await statusOf(made, "Source.md")).flag).toBeUndefined();
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(
+      await refused(made),
+      "the witness: it stays while the copy does not hold the edge",
+    ).toHaveLength(1);
+
+    // Another machine makes the edge, which the next push reads.
+    edges.placing = undefined;
+    edges.create({
+      id: "01a00000-0000-7000-8000-0000000e0001",
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+    });
+    expect((await made.folder.push()).ok).toBe(true);
+    const sent = sentEdgeWrites(made);
+    const before = await statusOf(made, "Source.md");
+    expect(before.status).toBe("in_step");
+    const text = read(made, "Source.md");
+
+    const quiet = await made.folder.push();
+    expect(quiet.ok, JSON.stringify(quiet)).toBe(true);
+    expect(await refused(made)).toEqual([]);
+    expect(await statusOf(made, "Source.md")).toEqual(before);
+    expect(read(made, "Source.md")).toBe(text);
+    expect(sentEdgeWrites(made), "it sent no edge write").toEqual(sent);
+    const held = await made.folder.device().text(["edges", "from", source]);
+    expect(held.ok && held.value).toContain(target);
+  });
+
+  it("holds one refused edge create of a line however often its file is saved, and the file keeps its reason", async () => {
+    const { made, source, target } = await twoNotes(
+      "folder-refused-edge-repeated",
+    );
+    edit(made, "Source.md", /marfa_id:/, `about: "[[${target}]]"\nmarfa_id:`);
+    expect((await made.folder.push()).ok).toBe(true);
+    const [first] = await refused(made);
+    expect(first).toBeDefined();
+
+    for (const words of ["again", "and again"]) {
+      edit(made, "Source.md", /source|again/, words);
+      expect((await made.folder.push()).ok).toBe(true);
+    }
+
+    expect(
+      sentEdgeWrites(made),
+      "the witness: each save sent its own create",
+    ).toEqual(Array(3).fill(`create ${source} about ${target}`));
+    const left = await refused(made);
+    expect(left).toHaveLength(1);
+    expect(left[0]?.id).not.toBe(first?.id);
+    const file = await statusOf(made, "Source.md");
+    expect(file.flag).toBe("refused");
+    expect(file.reason).toContain("edge_constraint_violation");
   });
 });
