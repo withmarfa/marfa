@@ -56,7 +56,7 @@ When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid repo
 
 While a `system.folder` is `revoked`, the server MUST accept a valid report to `PUT /folders/{id}/status` from a sign-in that can read the folder.
 
-**Reason:** a folder is `active` or `revoked` and never `trashed`, as the `Lifecycle` section of `items.md` says of every `system.*` item, so this is the one state a folder leaves `active` for.
+**Reason:** a `system.*` item is `active` or `revoked` and never `trashed` (`items/system-lifecycle`), so this is the one state a folder leaves `active` for.
 
 **Tests:** `compliance/folder-status.test.ts › keeps taking and answering reports for a revoked folder`.
 
