@@ -638,6 +638,8 @@ When a `filter` applies `not_exists` to `edge[<edge type>]`, the server MUST sel
 
 When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the rows that are the target of an edge of that type whose source is that id.
 
+**Reason:** which inbound edges count is `edges/filter-backref`.
+
 **Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the rows that an edge of the type from that item points at`.
 
 ### `search-and-filters/filter-backref-neq`
@@ -674,7 +676,7 @@ If a `filter` applies to `edge[<edge type>]` or `backref[<edge type>]` an operat
 
 When `GET /items`, `GET /search` or `POST /items/bulk-actions` names no `state` and its `filter` holds a `state` term, the server MUST select only the rows in the `active` state that the term selects.
 
-**Reason:** the term narrows the default and does not replace it, so `filter=state eq "archived"` alone selects nothing. Naming `state=archived` or `state=any` reaches those rows.
+**Reason:** the term narrows the default and does not replace it, so `filter=state eq "archived"` alone selects nothing. Naming `state=archived` reaches those rows, as does `state=any` on `GET /items` and `GET /search`.
 
 **Tests:** `compliance/filter-grammar.test.ts › meets the default state when no state is named, so state eq archived alone selects nothing`.
 
