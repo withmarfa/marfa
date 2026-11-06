@@ -2043,7 +2043,6 @@ fn http_date(raw: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-/// Only for an answer naming the server's contract; `Http::refused` decides.
 /// A server closes the connection a body over its cap arrived on, just after
 /// answering. Told to close first, the client does not pool that connection,
 /// where the next request could meet the reset.
@@ -2072,6 +2071,7 @@ fn closed_while_connected(error: &ureq::Error) -> bool {
     )
 }
 
+/// Only for an answer naming the server's contract; `Http::refused` decides.
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
