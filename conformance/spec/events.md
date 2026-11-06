@@ -1285,6 +1285,18 @@ When `limit` cuts the list of deliveries short, the server MUST answer a `next_c
 
 **Tests:** `compliance/webhooks.test.ts › pages its delivery log by cursor, every delivery once`.
 
+### `events/record-limit-default`
+
+When `GET /webhooks/{id}/deliveries` names no `limit`, the server MUST answer a page of at most 50 deliveries.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
+### `events/record-limit-bounds`
+
+If `GET /webhooks/{id}/deliveries` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
+
 ## Retries
 
 A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or direct owner or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
@@ -1794,6 +1806,18 @@ If `created_after` or `created_before` is not an instant, then the server MUST a
 When `limit` cuts the audit listing short, the server MUST answer a `next_cursor` that, followed, reaches every row once.
 
 **Tests:** `compliance/audit.test.ts › paginates with a cursor and delivers every row once`.
+
+### `events/audit-limit-default`
+
+When `GET /audit` names no `limit`, the server MUST answer a page of at most 50 entries.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
+### `events/audit-limit-bounds`
+
+If `GET /audit` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `events/audit-newest-first`
 

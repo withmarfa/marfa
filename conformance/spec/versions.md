@@ -176,9 +176,9 @@ When `GET /items/{id}/versions` names no `limit`, the server MUST answer a page 
 
 ### `versions/history-limit-refused`
 
-If `GET /items/{id}/versions` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error`.
+If `GET /items/{id}/versions` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/version-reach.test.ts › holds a page to 1 to 200 snapshots and fills it to 50 where it names no limit`.
+**Tests:** `compliance/version-reach.test.ts › holds a page to 1 to 200 snapshots and fills it to 50 where it names no limit`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `versions/history-continues`
 

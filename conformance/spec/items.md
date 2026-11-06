@@ -2534,6 +2534,18 @@ When `GET /trash` lists items, the server MUST select only trashed non-system it
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
+### `items/owner-trash-limit-default`
+
+When `GET /trash` names no `limit`, the server MUST answer a page of at most 25 summaries.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
+### `items/owner-trash-limit-bounds`
+
+If `GET /trash` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
+
 ### `items/owner-trash-actions`
 
 When a recent owner session or a private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` under that item summary, the server MUST apply the corresponding item lifecycle operation, including its cascade, restoration and connection protections.

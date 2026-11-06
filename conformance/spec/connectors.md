@@ -530,9 +530,9 @@ When `GET /connectors/{id}/runs` names no `limit`, the server MUST list at most 
 
 ### `connectors/runs-limit-bounds`
 
-If `GET /connectors/{id}/runs` names a `limit` outside 1 to 200, then the server MUST answer `400 validation_error`.
+If `GET /connectors/{id}/runs` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connectors.test.ts › keeps the last hundred runs`.
+**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connectors.test.ts › keeps the last hundred runs`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `connectors/runs-paged`
 
@@ -1164,9 +1164,9 @@ When `GET /connectors/{id}/agreements` names no `limit`, the server MUST list at
 
 ### `connectors/list-agreements-limit-bounds`
 
-If `GET /connectors/{id}/agreements` names a `limit` outside 1 to 200, then the server MUST answer `400 validation_error`.
+If `GET /connectors/{id}/agreements` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `connectors/list-agreements-paged`
 

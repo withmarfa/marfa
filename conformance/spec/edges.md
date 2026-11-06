@@ -230,6 +230,12 @@ When a key pages `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backr
 
 **Tests:** `correctness/edges/edges-list.test.ts › paginates with a cursor and delivers every edge once`, `correctness/edges/edges-backrefs.test.ts › paginates via cursor across many inbound edges`, `correctness/edges/edges-response.test.ts › per-type hydration caps a block and carries a next_cursor when over the limit`.
 
+### `edges/list-limit-default`
+
+When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names no `limit`, the server MUST answer a page of at most 50 edges.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
 ### `edges/list-limit`
 
 When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` from 1 to 500, the server MUST answer a page of at most that many edges.
@@ -246,9 +252,9 @@ When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a
 
 ### `edges/list-limit-refused`
 
-If `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names a `limit` that is below 1 or is not a number, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`, `compliance/edge-gaps.test.ts › takes a limit of 500 and of 501, and refuses 0`.
+**Tests:** `compliance/edge-listings.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on every edge listing`, `compliance/edge-gaps.test.ts › takes a limit of 500 and of 501, and refuses 0`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`.
 
 ### `edges/list-unknown-key`
 

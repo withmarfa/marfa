@@ -310,7 +310,25 @@ When `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `POST /it
 
 When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names tags, the server MUST select only the rows that carry every tag named.
 
+**Reason:** a blank entry of a `tags` list names no tag, so it asks nothing of a row (`search-and-filters/tags-blank-search`, `search-and-filters/tags-blank-listing`).
+
 **Tests:** `correctness/tags.test.ts › narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named`, `› filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
+
+### `search-and-filters/tags-blank-search`
+
+When `GET /search` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
+
+**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page would read as no item carrying the tag.
+
+**Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the search`.
+
+### `search-and-filters/tags-blank-listing`
+
+When `GET /items` or `GET /items/stats` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
+
+**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page would read as no item carrying the tag.
+
+**Tests:** waiting on #2678.
 
 ### `search-and-filters/tier-narrows`
 
@@ -1010,6 +1028,14 @@ When a client follows `next_cursor` through a `GET /items` listing sorted by a p
 
 The rows of one page and the key that continues them are in `search-and-filters/page-envelope`.
 
+Every listing has a default page and a largest page, and a `limit` past the largest page gets one of two answers. A device walks `GET /items`, `GET /edges` and `GET /items/{id}/edges` to fill its copy, so those listings and `GET /items/{id}/backrefs` answer the largest page, and a device built for a larger page still walks the listing by `next_cursor`. Every other listing refuses the `limit`, so a caller learns that it asked for more than one page holds. This section holds `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default` and `inbound-webhooks/deliveries-limit-default`.
+
+### `search-and-filters/limit-listing-default`
+
+When `GET /items` names no `limit`, the server MUST answer a page of at most 50 items.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
 ### `search-and-filters/limit-listing`
 
 When `GET /items` names a `limit` from 1 to 500, the server MUST answer a page of at most that many items.
@@ -1026,9 +1052,15 @@ When `GET /items` names a `limit` above 500, the server MUST answer a page of at
 
 ### `search-and-filters/limit-listing-refused`
 
-If `GET /items` names a `limit` below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /items` names a `limit` that is below 1 or is not a number, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on the listing`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 500, reads 501 as 500 and refuses 0, on the listing`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`.
+
+### `search-and-filters/limit-search-default`
+
+When `GET /search` names no `limit`, the server MUST answer a page of at most 20 hits.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
 
 ### `search-and-filters/limit-search`
 
@@ -1046,9 +1078,9 @@ When `GET /items` or `GET /search` names a `limit` with a `type` or `state` filt
 
 ### `search-and-filters/limit-search-refused`
 
-If `GET /search` names a `limit` above 100 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+If `GET /search` names a `limit` that is not a whole number of 1 to 100, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `correctness/pagination.test.ts › takes a limit of 100 and refuses 101 and 0, on the search`.
+**Tests:** `correctness/pagination.test.ts › takes a limit of 100 and refuses 101 and 0, on the search`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `search-and-filters/cursor-continues`
 
@@ -1064,11 +1096,43 @@ When a page of `GET /items` holds the last row, the server MUST answer `next_cur
 
 ### `search-and-filters/cursor-other-listing`
 
-If a `GET /items` request sends a `cursor` that another listing or another ordering issued, then the server MUST answer `400 validation_error`.
+If a `GET /items` request sends a `cursor` that another listing issued, or that `GET /items` issued under an order its `sort`, `direction`, `updated_after` and `state` resolve differently, then the server MUST answer `400 validation_error`.
 
-**Reason:** every ordering compares an ISO timestamp or a property value, so the wrong cursor would answer a page that is simply not the next page.
+**Reason:** every ordering compares an ISO timestamp or a property value, so the wrong cursor would answer a page that is simply not the next page. `updated_after` and `state=trashed` alone each decide the order when no `sort` is named (`search-and-filters/updated-after-order`, `search-and-filters/bin-order`).
 
 **Tests:** `correctness/pagination.test.ts › refuses a cursor issued by another listing or ordering`.
+
+### `search-and-filters/cursor-default-order`
+
+When a `GET /items` request sends a `cursor` issued under the default order, the server MUST continue it whether the request leaves `sort` and `direction` out or names `created_at` and `desc`.
+
+**Tests:** `correctness/pagination.test.ts › continues a cursor whether the default order is spelled out or left out`.
+
+### `search-and-filters/cursor-any-limit`
+
+When a `GET /items` request sends a `cursor` with a `limit` other than the one the page it came from named, the server MUST continue the listing from that page.
+
+**Tests:** `correctness/pagination.test.ts › continues a cursor under another limit`.
+
+## The order of a listing
+
+### `search-and-filters/listing-default-order`
+
+When `GET /items` names `sort=created_at`, or names no `sort` or `updated_after` and is not `state=trashed` alone, the server MUST order the items by `created_at`, newest first unless `direction=asc`, then by `id` in the same direction.
+
+**Tests:** `correctness/pagination.test.ts › orders a listing with no sort by created_at, then by id in the same direction`.
+
+### `search-and-filters/listing-sort-updated`
+
+When `GET /items` names `sort=updated_at`, the server MUST order the items by `updated_at`, newest first unless `direction=asc`.
+
+**Tests:** `correctness/pagination.test.ts › orders a listing by updated_at when it names that sort`.
+
+### `search-and-filters/listing-sort-invalid`
+
+If `GET /items` names a `sort` that is not `created_at`, `updated_at`, `occurred_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `correctness/pagination.test.ts › refuses a sort or direction it does not take`.
 
 ## Search
 
@@ -1130,11 +1194,17 @@ If a `GET /search` request sends a `cursor` that another listing issued, that an
 
 ### `search-and-filters/search-cursor-parameters`
 
-If a `GET /search` request sends a `cursor` that a search issued under a different `source`, `updated_after`, `updated_before`, `sort` or `direction`, then the server MUST answer `400 validation_error`.
+If a `GET /search` request sends a `cursor` that a search issued under a different `q`, `type`, `state`, `source`, `include`, `tags`, `filter`, `occurred_after`, `occurred_before`, `updated_after`, `updated_before`, `sort` or `direction`, then the server MUST answer `400 validation_error`.
 
 **Reason:** a position is meaningful only in the ranking it came from, so a cursor continued under another order or another set of hits would skip or repeat hits with no signal.
 
-**Tests:** `compliance/search-ordering.test.ts › refuses a cursor issued under another sort, direction or filter`.
+**Tests:** `compliance/search-ordering.test.ts › refuses a cursor issued under another sort, direction or filter`, `› refuses a cursor under any other query, type, state, list or time bound`.
+
+### `search-and-filters/search-cursor-any-limit`
+
+When a `GET /search` request sends a `cursor` with a `limit` other than the one the page it came from named, the server MUST continue the search from that page.
+
+**Tests:** `compliance/search-ordering.test.ts › continues a cursor under another limit`.
 
 ### `search-and-filters/search-cursor-default-order`
 
@@ -2875,6 +2945,18 @@ When `GET /items/summaries` receives `q`, the server MUST match the trimmed quer
 When `GET /items/summaries` returns a page, the server MUST order matches by `created_at` descending with `id` descending as a tie-break, using `limit` and `cursor` for pagination.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-limit-default`
+
+When `GET /items/summaries` names no `limit`, the server MUST answer a page of at most 50 summaries.
+
+**Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
+
+### `search-and-filters/owner-summaries-limit-bounds`
+
+If `GET /items/summaries` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `search-and-filters/owner-summaries-boundary`
 

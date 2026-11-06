@@ -4,11 +4,13 @@ import type { TestContext } from "../../client/types.js";
 import {
   createSecondClient,
   createTestContext,
+  getOwnerClient,
   trackItem,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, generateId } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { itemsArchive } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -147,6 +149,71 @@ describe("pagination correctness", () => {
     expect(otherListing.ok).toBe(false);
     expect(otherListing.status).toBe(400);
     expect(otherListing.error?.error.code).toBe("validation_error");
+
+    // An order follows from more than `sort`: each of these resolves to
+    // another one, though the request is one the door takes without the cursor.
+    const byDefault = await client.listItems({ limit: 5, source: ctx.source });
+    expect(byDefault.ok).toBe(true);
+    const created = encodeURIComponent(byDefault.data.next_cursor!);
+    const scope = `source=${encodeURIComponent(ctx.source)}&limit=5`;
+    for (const order of [
+      "direction=asc",
+      "sort=updated_at",
+      "sort=occurred_at",
+      "sort=properties.title",
+      "state=trashed",
+      "updated_after=2000-01-01T00:00:00.000Z",
+    ]) {
+      const fresh = await client.rawRequest(`/items?${scope}&${order}`);
+      expect(fresh.status, order).toBe(200);
+      const res = await client.rawRequest(
+        `/items?${scope}&${order}&cursor=${created}`,
+      );
+      expect(res.status, order).toBe(400);
+      expect(res.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("continues a cursor whether the default order is spelled out or left out", async () => {
+    const first = await client.listItems({ limit: 5, source: ctx.source });
+    expect(first.ok).toBe(true);
+    const cursor = first.data.next_cursor!;
+    const expected = await client.listItems({
+      limit: 5,
+      source: ctx.source,
+      cursor,
+    });
+    expect(expected.ok).toBe(true);
+    const scope = `source=${encodeURIComponent(ctx.source)}&limit=5&cursor=${encodeURIComponent(cursor)}`;
+    for (const spelled of [
+      "sort=created_at",
+      "direction=desc",
+      "sort=created_at&direction=desc",
+    ]) {
+      const page = await client.rawRequest<{ data: { id: string }[] }>(
+        `/items?${scope}&${spelled}`,
+      );
+      expect(page.status, spelled).toBe(200);
+      expect(
+        page.data.data.map((row) => row.id),
+        spelled,
+      ).toEqual(expected.data.data.map((row) => row.id));
+    }
+  });
+
+  it("continues a cursor under another limit", async () => {
+    const first = await client.listItems({ limit: 2, source: ctx.source });
+    expect(first.ok).toBe(true);
+    const next = await client.listItems({
+      limit: 3,
+      source: ctx.source,
+      cursor: first.data.next_cursor!,
+    });
+    expect(next.ok).toBe(true);
+    const all = await client.listItems({ limit: 5, source: ctx.source });
+    expect(
+      [...first.data.data, ...next.data.data].map((row) => row.id),
+    ).toEqual(all.data.data.map((row) => row.id));
   });
 
   it("a nonexistent type is refused rather than answered with an empty page", async () => {
@@ -165,6 +232,113 @@ describe("pagination correctness", () => {
     const page = await client.search("Pagination", { limit: 2 });
     expect(page.ok).toBe(true);
     expect(page.data.data.length).toBe(2);
+  });
+});
+
+describe("the order of the listing", () => {
+  const at = (hour: number) =>
+    `2020-01-01T${String(hour).padStart(2, "0")}:00:00.000Z`;
+  let ordered: MarfaClient;
+  let source: string;
+  let newestFirst: string[];
+  const ids = async (query: string): Promise<string[]> => {
+    const page = await ordered.rawRequest<{ data: { id: string }[] }>(
+      `/items?source=${encodeURIComponent(source)}&${query}`,
+    );
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    return page.data.data.map((row) => row.id);
+  };
+
+  beforeAll(async () => {
+    ordered = await createSecondClient(ctx, "order");
+    source = `${ctx.source}-order`;
+    // No write door gives two rows one `created_at`, but an archive may. The
+    // rows are written in ascending ID order, so a tie that fell to the order
+    // of the writes would not come out descending.
+    const tied = [generateId(), generateId(), generateId()].sort();
+    const [older, newer] = [generateId(), generateId()];
+    const restored = await getOwnerClient().restoreArchive(
+      itemsArchive(
+        [
+          { id: newer!, created_at: at(3), updated_at: at(1) },
+          ...tied.map((id, i) => ({
+            id,
+            created_at: at(2),
+            updated_at: at(4 + i),
+          })),
+          { id: older!, created_at: at(1), updated_at: at(9) },
+        ].map((row) => ({
+          ...row,
+          type: "core.note",
+          source,
+          properties: { body: "listing order" },
+        })),
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.imported).toBe(5);
+    newestFirst = [newer!, ...[...tied].reverse(), older!];
+    for (const id of newestFirst) trackItem(ctx, id);
+    for (const id of tied) {
+      const row = await ordered.getItem(id);
+      expect(row.data.item.created_at).toBe(at(2));
+    }
+  });
+
+  it("orders a listing with no sort by created_at, then by id in the same direction", async () => {
+    expect(await ids("")).toEqual(newestFirst);
+    expect(await ids("sort=created_at")).toEqual(newestFirst);
+    const oldestFirst = [...newestFirst].reverse();
+    expect(await ids("direction=asc")).toEqual(oldestFirst);
+    expect(await ids("sort=created_at&direction=asc")).toEqual(oldestFirst);
+
+    // The cursor keeps its place inside a tie.
+    const walked: string[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await ordered.listItems({
+        source,
+        limit: 1,
+        cursor: cursor ?? undefined,
+      });
+      expect(page.ok).toBe(true);
+      walked.push(...page.data.data.map((row) => row.id));
+      cursor = page.data.next_cursor;
+    } while (cursor);
+    expect(walked).toEqual(newestFirst);
+  });
+
+  it("orders a listing by updated_at when it names that sort", async () => {
+    const [newer, ...others] = newestFirst;
+    const older = others.pop();
+    const latestFirst = [older, ...others, newer];
+    expect(await ids("sort=updated_at")).toEqual(latestFirst);
+    expect(await ids("sort=updated_at&direction=asc")).toEqual(
+      [...latestFirst].reverse(),
+    );
+  });
+
+  it("refuses a sort or direction it does not take", async () => {
+    for (const [query, path] of [
+      ["sort=nope", "sort"],
+      ["sort=relevance", "sort"],
+      ["sort=trashed_at", "sort"],
+      ["sort=properties.Title", "sort"],
+      ["sort=properties.a-b", "sort"],
+      ["direction=up", "direction"],
+    ] as const) {
+      const refused = await ordered.rawRequest(
+        `/items?source=${encodeURIComponent(source)}&${query}`,
+      );
+      expect(refused.status, query).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.errors).toMatchObject([{ path }]);
+    }
+    // The witness: the door takes each of the orders it declares.
+    expect(await ids("sort=occurred_at")).toHaveLength(newestFirst.length);
+    expect(await ids("sort=properties.body_2")).toHaveLength(
+      newestFirst.length,
+    );
   });
 });
 
