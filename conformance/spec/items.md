@@ -466,7 +466,7 @@ Where a string field declares no `maxLength` and its type names it as `display_h
 
 **Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 units of multi-byte text, or of text JSON escapes, can pass.
 
-**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/body-field-length.test.ts › follows a body a type names, inherits or renames`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
+**Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/body-field-length.test.ts › follows a body a type names, inherits or renames`, `compliance/body-field-length.test.ts › gives core.event's description the body's length, and a child that renames its body puts it back`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
 
 ### `items/property-length-default`
 

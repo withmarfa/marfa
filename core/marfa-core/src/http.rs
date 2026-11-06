@@ -1338,8 +1338,8 @@ impl Http {
             let request = closing_past_limit(request, outgoing.body.len())
                 .body(outgoing.body)
                 .map_err(|error| {
-                CoreError::Invalid(format!("this write cannot be sent: {error}"))
-            })?;
+                    CoreError::Invalid(format!("this write cannot be sent: {error}"))
+                })?;
             self.agent
                 .run(request)
                 .map_err(|error| self.cut_off(outgoing.body.len(), error))
@@ -2658,7 +2658,9 @@ mod tests {
             };
             let (mut first, _) = listener.accept().unwrap();
             assert!(read_request(&mut first));
-            first.write_all(empty("413 Payload Too Large").as_bytes()).unwrap();
+            first
+                .write_all(empty("413 Payload Too Large").as_bytes())
+                .unwrap();
             let reused = read_request(&mut first);
             if reused {
                 first.write_all(empty("200 OK").as_bytes()).unwrap();

@@ -26,6 +26,7 @@ const UNNAMED = `user.bodylength-${RUN}-unnamed`;
 const LOWER = `user.bodylength-${RUN}-lower`;
 const HIGHER = `user.bodylength-${RUN}-higher`;
 const CHANGING = `user.bodylength-${RUN}-changing`;
+const EVENT_RENAMES = `user.bodylength-${RUN}-event-renames`;
 
 const text = { type: "string" } as const;
 
@@ -85,6 +86,12 @@ beforeAll(async () => {
     fields: {},
     display_hints: { body_field: "body" },
   });
+  await register({
+    id: EVENT_RENAMES,
+    parent: "core.event",
+    fields: { body: text },
+    display_hints: { body_field: "body" },
+  });
   await register({ id: UNNAMED, fields: { body: text } });
   await register({
     id: LOWER,
@@ -129,6 +136,21 @@ describe("the length a text field allows", () => {
     expect(
       await verdict(RENAMES, "description", "x".repeat(OTHER + 1)),
     ).toEqual(["description"]);
+  });
+
+  it("gives core.event's description the body's length, and a child that renames its body puts it back", async () => {
+    const event = { starts_at: "2026-11-06T10:00:00Z", title: "Event" };
+    const write = (type: string, description: string) =>
+      client.createItem({ type, properties: { ...event, description } });
+    const own = await write("core.event", "x".repeat(BODY));
+    expect(own.status, JSON.stringify(own.error)).toBe(201);
+    trackItem(ctx, own.data.item.id);
+    const child = await write(EVENT_RENAMES, "x".repeat(OTHER + 1));
+    expect(child.status).toBe(400);
+    expect(refusedFields(child.error)).toEqual(["description"]);
+    const fits = await write(EVENT_RENAMES, "x".repeat(OTHER));
+    expect(fits.status, JSON.stringify(fits.error)).toBe(201);
+    trackItem(ctx, fits.data.item.id);
   });
 
   it("answers the same at each limit for a character outside the Basic Multilingual Plane", async () => {
