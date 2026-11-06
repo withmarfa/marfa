@@ -11,7 +11,8 @@ use super::{
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds, executable, fields, id_named, identity, is_document, landing, line_of, lines,
+    bytes_of, bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds,
+    executable, fields, id_named, identity, is_document, landing, line_of, lines,
     local_admission_refusal, local_properties_refusal, name_of, named_by_its_file, near_limit,
     one_per_name, placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
 };

@@ -1442,7 +1442,9 @@ struct Captured {
 }
 
 /// A file's metadata and the clock either side of the stat that took it.
-fn stat_timed(file: &std::fs::File) -> std::io::Result<(std::fs::Metadata, (SystemTime, SystemTime))> {
+fn stat_timed(
+    file: &std::fs::File,
+) -> std::io::Result<(std::fs::Metadata, (SystemTime, SystemTime))> {
     let before = SystemTime::now();
     let metadata = file.metadata()?;
     Ok((metadata, (before, SystemTime::now())))

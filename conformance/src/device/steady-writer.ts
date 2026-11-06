@@ -1,7 +1,11 @@
 import { Worker } from "node:worker_threads";
 
-/** How long a file must stay unchanged before a folder watch may read it. */
-const WATCH_SETTLE_MS = 250;
+/**
+ * The longest pause that cannot have let a folder watch read the file: its
+ * settle window of 250 ms, less the grain of a file system's clock, which can
+ * stamp a change up to a tick early and so make the file look older.
+ */
+const NEVER_SETTLED_MS = 230;
 
 /**
  * Appends to a file from a thread of its own, so a pause in the test's event
@@ -70,7 +74,7 @@ export function writeSteadily(path: string, everyMs: number): SteadyWriter {
   return {
     started,
     longestPause,
-    neverSettled: () => longestPause() < WATCH_SETTLE_MS,
+    neverSettled: () => longestPause() < NEVER_SETTLED_MS,
     async stop() {
       Atomics.store(state, 0, 1);
       await exited;
