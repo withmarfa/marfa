@@ -7340,7 +7340,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/settle-measured-at-read`
 
-When a device decides whether a file it read has settled, it MUST measure the time the file was unchanged up to that read, not up to any later point in the pass.
+When a device decides whether a file it read has settled, a device MUST measure the time the file was unchanged up to that read, not up to any later point in the pass.
 
 **Reason:** a pass waits on the server and on its own work between reading a file and sending it, so time measured up to the decision makes a file still being written look settled, and its half-written bytes are sent.
 
