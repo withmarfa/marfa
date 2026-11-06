@@ -367,6 +367,9 @@ describe("the view's items door", () => {
     const source = await freshSource();
     const tagged = (tags: string[]) => note(source, "Tagged", {}, { tags });
     const accented = await tagged(["é", "f"]);
+    // UTF-16 code units would put the emoji before U+FFFD; bytes put it after.
+    const replacement = await tagged(["�"]);
+    const emoji = await tagged(["\u{1F600}"]);
     const none = await note(source, "Untagged");
     const lone = await tagged(["d"]);
     const wide = await tagged(["a", "z"]);
@@ -384,12 +387,16 @@ describe("the view's items door", () => {
       middle.id,
       lone.id,
       accented.id,
+      replacement.id,
+      emoji.id,
       none.id,
     ]);
     const down = await viewOf(source, {
       sort: [{ by: "tags", direction: "desc" }],
     });
     expect(await listed(down)).toEqual([
+      emoji.id,
+      replacement.id,
       accented.id,
       lone.id,
       middle.id,
@@ -410,6 +417,9 @@ describe("the view's items door", () => {
       ["2^53", 2 ** 53],
       ["true", true],
       ["accented", "é"],
+      // UTF-16 code units would put the emoji before U+FFFD; bytes put it after.
+      ["replacement", "�"],
+      ["emoji", "\u{1F600}"],
       ["object", { nested: 1 }],
       ["one", 1],
       ["negative", -2],
@@ -451,6 +461,8 @@ describe("the view's items door", () => {
         "text Z",
         "text a",
         "accented",
+        "replacement",
+        "emoji",
         ...tail,
       ]),
     );
@@ -459,6 +471,8 @@ describe("the view's items door", () => {
     });
     expect(await listed(down)).toEqual(
       ids([
+        "emoji",
+        "replacement",
         "accented",
         "text a",
         "text Z",

@@ -66,6 +66,8 @@ beforeAll(async () => {
     "Z",
     "a",
     "é",
+    "�",
+    "\u{1F600}",
     null,
     undefined,
     {},
@@ -100,7 +102,15 @@ beforeAll(async () => {
     tags: [mark],
     properties: { body: "untitled" },
   });
-  for (const tags of [["é", "f"], [], ["a", "z"], ["b", "a"], ["B", "y"]]) {
+  for (const tags of [
+    ["é", "f"],
+    ["�"],
+    ["\u{1F600}"],
+    [],
+    ["a", "z"],
+    ["b", "a"],
+    ["B", "y"],
+  ]) {
     await made({
       type: "core.note",
       tags,
