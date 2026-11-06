@@ -1,9 +1,9 @@
 import { Worker } from "node:worker_threads";
 
 /**
- * The longest pause that cannot have let a folder watch read the file: its
- * settle window of 250 ms, less the grain of a file system's clock, which can
- * stamp a change up to a tick early and so make the file look older.
+ * The shortest pause that may have let a folder watch read the file: its
+ * settle window of 250 ms, less 20 ms for the grain of a file system's clock,
+ * which can stamp a change up to a tick early and so make the file look older.
  */
 const NEVER_SETTLED_MS = 230;
 
@@ -49,6 +49,10 @@ while (Atomics.load(state, 0) === 0) {
   }
   last = changed;
   Atomics.wait(sleeper, 0, 0, every);
+}
+if (last !== undefined) {
+  const pause = Number((BigInt(Date.now()) * 1000000n - last) / 1000000n);
+  if (pause > Atomics.load(state, 1)) Atomics.store(state, 1, pause);
 }
 `;
 
