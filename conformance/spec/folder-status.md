@@ -6,6 +6,8 @@
 
 When an authenticated sign-in that can read a `system.folder` submits a valid report to `PUT /folders/{id}/status`, the server MUST answer `200` with `accepted`, the latest stored `sequence`, and its `received_at`.
 
+**Reason:** the server stores and sums a report's counts and problem codes without judging them; what they mean is a device's to state, in `folders/report-pending-uploads`, `folders/report-pending-downloads`, `folders/report-paused-removals`, `folders/report-file-problems` and the statements beside them.
+
 **Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`.
 
 ### `folder-status/read-only-report`
