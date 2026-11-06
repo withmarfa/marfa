@@ -1,6 +1,6 @@
 # Events
 
-`GET /events` is a server-sent event stream of the writes to items and edges, resumable by cursor, and outbound webhooks deliver the same events to a URL. The audit log, which records the writes the events announce, closes the chapter.
+`GET /events` is a server-sent event stream of the writes to items and edges, resumable by cursor, and outbound webhooks deliver those events to a URL, except the writes `items/bulk-fanout` holds back. The audit log, which records the writes the events announce, closes the chapter.
 
 Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 

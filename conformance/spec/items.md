@@ -2154,7 +2154,7 @@ When a tag operation writes an item's tags, the server MUST move the item's `upd
 
 When `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata` or a bulk `update_tags` action commits for an item, the server MUST announce `metadata.changed`, whether or not the item's tags change.
 
-**Reason:** the frame carries the item's tags as they stand, so a frame that repeats them changes nothing for a subscriber.
+**Reason:** such a write still moves the item's `updated_at` (`items/tag-updated-at`), and a client learns the new time from the frame.
 
 **Tests:** `compliance/events-contract.test.ts › announces metadata.changed on a tag write`, `› announces metadata.changed for each tag write that changes nothing`.
 
