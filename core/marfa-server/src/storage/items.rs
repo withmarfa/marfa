@@ -1,7 +1,11 @@
 //! Item rows in the shared `items` and `tags` tables.
 
+use marfa_core::server::{Catalog, fold_name};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Value, json};
+
+/// The longest title, in UTF-16 code units, that has a title key.
+const MAX_TITLE_UNITS: usize = 1000;
 
 #[derive(Debug, Clone)]
 pub struct ItemRow {
@@ -167,5 +171,51 @@ pub fn add_tags(conn: &Connection, id: &str, tags: &[String]) -> rusqlite::Resul
     for tag in tags {
         insert.execute(params![id, tag])?;
     }
+    Ok(())
+}
+
+/// What an item is found by: its title folded, or none for a `system.*`
+/// item and for one with no text in its title property.
+fn title_key(catalog: &Catalog, item: &ItemRow) -> Option<String> {
+    if item.type_id.starts_with("system.") {
+        return None;
+    }
+    let title = item
+        .properties
+        .get(catalog.title_property(&item.type_id))?
+        .as_str()?
+        .trim();
+    (!title.is_empty() && title.encode_utf16().count() <= MAX_TITLE_UNITS).then(|| fold_name(title))
+}
+
+/// Brings the item's title key in step with the properties it now holds.
+pub fn sync_title_key(
+    conn: &Connection,
+    catalog: &Catalog,
+    item: &ItemRow,
+) -> rusqlite::Result<()> {
+    match title_key(catalog, item) {
+        None => {
+            conn.prepare_cached("DELETE FROM item_title_keys WHERE item_id = ?1")?
+                .execute([&item.id])?;
+        }
+        Some(key) => {
+            conn.prepare_cached(
+                "INSERT INTO item_title_keys (item_id, title_key) VALUES (?1, ?2)
+                 ON CONFLICT (item_id) DO UPDATE SET title_key = excluded.title_key",
+            )?
+            .execute(params![item.id, key])?;
+        }
+    }
+    Ok(())
+}
+
+/// Records the row's search key, the `seq` its full-text row is filed under.
+pub fn add_search_key(conn: &Connection, item: &ItemRow) -> rusqlite::Result<()> {
+    conn.prepare_cached(
+        "INSERT INTO item_search_keys (seq, item_id) VALUES (?1, ?2)
+         ON CONFLICT (item_id) DO NOTHING",
+    )?
+    .execute(params![item.seq, item.id])?;
     Ok(())
 }

@@ -72,8 +72,23 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log (action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_target_kind ON audit_log (target_kind);
 CREATE UNIQUE INDEX IF NOT EXISTS items_natural_key ON items (source, source_id)
   WHERE source_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS item_title_keys (
+  item_id TEXT PRIMARY KEY NOT NULL,
+  title_key TEXT NOT NULL,
+  FOREIGN KEY (item_id) REFERENCES items (id) ON UPDATE NO ACTION ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_item_title_keys_key ON item_title_keys (title_key, item_id);
+CREATE TABLE IF NOT EXISTS item_search_keys (
+  seq INTEGER PRIMARY KEY NOT NULL,
+  item_id TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS item_search_keys_item_id_unique ON item_search_keys (item_id);
 ";
 
 pub fn apply(conn: &Connection) -> rusqlite::Result<()> {

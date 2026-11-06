@@ -4,6 +4,7 @@
 
 pub use crate::builtin::catalog as builtin_catalog;
 pub use crate::catalog::{Catalog, Indexing, edge_type, edge_types, item_type, item_types};
+pub use crate::names::folded as fold_name;
 pub use crate::store::{
     CatalogChange, META_CATALOG_VERSION, SCHEMA, index_item, replace_edge_types, replace_types,
 };

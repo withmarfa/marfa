@@ -1,6 +1,9 @@
-//! The one function every item write goes through. A write is judged by the
-//! core's rules, then written in one transaction: the item row, its version,
-//! an event, an audit entry, its tags and its search row.
+//! The one write every item door goes through: `POST /items` and each entry
+//! of `POST /items/bulk`. A write is judged by the core's rules, then written
+//! in one transaction: the item row, its tags, its title key, its search
+//! rows and an event, with a version row beside an update. The caller adds
+//! the audit entry, one for a single write and one for each entry or page of
+//! a bulk write.
 
 use axum::http::StatusCode;
 use marfa_core::server::{self as core, Catalog};
@@ -12,29 +15,42 @@ use crate::auth::{Caller, Level};
 use crate::clock;
 use crate::error::{ApiError, ApiResult};
 use crate::storage::items::{self, ItemRow};
+use crate::storage::keys;
 
 /// The version of the item shape this server writes.
 const SCHEMA_VERSION: i64 = 1;
 /// The source the local command writes under when it names none.
 const LOCAL_SOURCE: &str = "local";
 
+/// Which door a write came through, which decides how it meets an item that
+/// already holds its natural key or id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Upsert,
-    CreateOnly,
+pub enum Door {
+    Item,
+    ItemCreateOnly,
+    BulkUpsert,
+    BulkCreateOnly,
 }
 
-/// A create or upsert, as `POST /items` names it.
+impl Door {
+    fn bulk(self) -> bool {
+        matches!(self, Door::BulkUpsert | Door::BulkCreateOnly)
+    }
+}
+
+/// A create or upsert, as `POST /items` or a bulk entry names it.
 #[derive(Debug, Clone)]
 pub struct ItemWrite {
     pub type_id: String,
     pub properties: Map<String, Value>,
+    /// Whether `properties` replace an existing item's, not merge into them.
+    pub replace: bool,
     pub id: Option<String>,
     pub state: Option<String>,
     pub occurred_at: Option<String>,
     pub source: Option<String>,
     pub source_id: Option<String>,
-    pub mode: Mode,
+    pub door: Door,
     pub tier: Option<String>,
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
@@ -46,6 +62,11 @@ pub enum Outcome {
     Updated,
     /// The write was already made; nothing changed and no event was written.
     Acknowledged,
+    /// A bulk entry that wrote nothing, and why.
+    Skipped {
+        reason: &'static str,
+        disclosed: bool,
+    },
 }
 
 pub struct Written {
@@ -58,7 +79,7 @@ impl Written {
     pub fn status(&self) -> StatusCode {
         match self.outcome {
             Outcome::Created => StatusCode::CREATED,
-            Outcome::Updated | Outcome::Acknowledged => StatusCode::OK,
+            _ => StatusCode::OK,
         }
     }
 
@@ -75,12 +96,98 @@ impl Written {
 }
 
 /// Who made a write, as the log and audit rows record it.
-struct Actor {
-    id: String,
-    key_id: Option<String>,
+#[derive(Clone)]
+pub struct Actor {
+    pub id: String,
+    pub key_id: Option<String>,
 }
 
-pub async fn write_item(app: &App, caller: &Caller, write: ItemWrite) -> ApiResult<Written> {
+pub fn actor_of(caller: &Caller) -> Actor {
+    Actor {
+        id: caller
+            .key()
+            .map_or_else(|| "local".to_string(), |key| key.id.clone()),
+        key_id: caller.key().map(|key| key.id.clone()),
+    }
+}
+
+/// What the caller's key reaches, read inside the transaction that writes,
+/// so a key revoked or narrowed since the request began is held to it.
+pub struct Reach(Option<Map<String, Value>>);
+
+impl Reach {
+    fn open(conn: &Connection, actor: &Actor) -> ApiResult<Reach> {
+        let Some(key_id) = &actor.key_id else {
+            return Ok(Reach(None));
+        };
+        let key = keys::live_by_id(conn, key_id)?.ok_or_else(ApiError::unauthorized)?;
+        Ok(Reach(Some(key.maps.types)))
+    }
+
+    fn level(&self, type_id: &str) -> Level {
+        match &self.0 {
+            None => Level::Write,
+            Some(map) => crate::auth::type_level(map, type_id),
+        }
+    }
+
+    fn may_read(&self, type_id: &str) -> bool {
+        self.level(type_id) >= Level::Read
+    }
+
+    fn may_write(&self, type_id: &str) -> bool {
+        self.level(type_id) >= Level::Write
+    }
+
+    /// Refuses a write to a type, naming the type the caller itself named.
+    fn require_write(&self, type_id: &str) -> ApiResult<()> {
+        if self.may_write(type_id) {
+            return Ok(());
+        }
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "type_not_permitted",
+            format!("This credential may not write items of type {type_id}."),
+        )
+        .with(json!({ "grant": { "kind": "type", "name": type_id, "level": "write" } })))
+    }
+
+    /// Refuses a write to the item a natural key or id resolved, naming
+    /// nothing of it.
+    fn require_write_held(&self, held: &ItemRow) -> ApiResult<()> {
+        if self.may_write(&held.type_id) {
+            return Ok(());
+        }
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "type_not_permitted",
+            "This credential may not write the item this entry names.",
+        ))
+    }
+}
+
+/// A write that has passed every check that needs no stored row.
+pub struct Prepared {
+    write: ItemWrite,
+    source: String,
+    tier: String,
+    properties: Map<String, Value>,
+}
+
+/// A new item starts active or archived. A bulk entry that resolves an item
+/// ignores its state, so only an entry that can be nothing but a create is
+/// asked before the item is looked up.
+fn creatable_state(state: Option<&str>) -> ApiResult<()> {
+    match state {
+        None | Some("active" | "archived") => Ok(()),
+        Some(_) => Err(ApiError::field("state", "Must be active or archived.")),
+    }
+}
+
+pub fn prepare(app: &App, caller: &Caller, write: ItemWrite) -> ApiResult<Prepared> {
+    if !write.door.bulk() || (write.id.is_none() && write.source_id.is_none()) {
+        creatable_state(write.state.as_deref())?;
+    }
     if write.type_id.starts_with("system.") {
         return Err(type_refused(&write.type_id));
     }
@@ -92,8 +199,7 @@ pub async fn write_item(app: &App, caller: &Caller, write: ItemWrite) -> ApiResu
         .or_else(|| caller.key().map(|key| key.default_tier.clone()))
         .unwrap_or_else(|| "library".into());
 
-    let catalog = app.catalog.clone();
-    if !catalog.known(&write.type_id) {
+    if !app.catalog.known(&write.type_id) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "unknown_type",
@@ -102,98 +208,190 @@ pub async fn write_item(app: &App, caller: &Caller, write: ItemWrite) -> ApiResu
     }
     core::validate_property_names(&write.properties)?;
     core::validate_tags(&write.tags)?;
-    let properties = judged(&catalog, &write.type_id, &write.properties)?;
+    let properties = judged(&app.catalog, &write.type_id, &write.properties)?;
+    Ok(Prepared {
+        write,
+        source,
+        tier,
+        properties,
+    })
+}
 
-    let readable = readable_types(caller);
-    let actor = Actor {
-        id: caller
-            .key()
-            .map_or_else(|| "local".to_string(), |key| key.id.clone()),
-        key_id: caller.key().map(|key| key.id.clone()),
-    };
+/// `POST /items`: one write, one transaction, one audit entry.
+pub async fn write_item(app: &App, caller: &Caller, write: ItemWrite) -> ApiResult<Written> {
+    let prepared = prepare(app, caller, write)?;
+    let catalog = app.catalog.clone();
+    let actor = actor_of(caller);
     app.db
         .write(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let written = write_in(
-                &tx, &catalog, &write, &source, &tier, properties, &readable, &actor,
-            )?;
+            let written = commit(&tx, &catalog, prepared, &actor)?;
+            let event = match written.outcome {
+                Outcome::Created => Some("item.created"),
+                Outcome::Updated => Some("item.updated"),
+                _ => None,
+            };
+            if let Some(event) = event {
+                audit(
+                    &tx,
+                    event,
+                    &actor.id,
+                    "item",
+                    &written.item.id,
+                    json!({ "type": written.item.type_id, "version": written.item.version }),
+                )?;
+            }
             tx.commit()?;
             Ok(written)
         })
         .await
 }
 
-/// Which types the caller may read, asked inside the transaction where the
-/// caller itself cannot go.
-fn readable_types(caller: &Caller) -> impl Fn(&str) -> bool + Send + 'static {
-    let map = caller.key().map(|key| key.maps.types.clone());
-    move |type_id| match &map {
-        None => true,
-        Some(map) => crate::auth::type_level(map, type_id) >= Level::Read,
-    }
+/// Writes one prepared write inside the caller's transaction.
+pub fn commit(
+    tx: &Connection,
+    catalog: &Catalog,
+    prepared: Prepared,
+    actor: &Actor,
+) -> ApiResult<Written> {
+    let reach = Reach::open(tx, actor)?;
+    reach.require_write(&prepared.write.type_id)?;
+    write_in(tx, catalog, prepared, &reach, actor)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn write_in(
     tx: &Connection,
     catalog: &Catalog,
-    write: &ItemWrite,
-    source: &str,
-    tier: &str,
-    properties: Map<String, Value>,
-    readable: &dyn Fn(&str) -> bool,
+    prepared: Prepared,
+    reach: &Reach,
     actor: &Actor,
 ) -> ApiResult<Written> {
+    let Prepared {
+        write,
+        source,
+        tier,
+        properties,
+    } = prepared;
+
     // A natural key that resolves an item decides the write before an id.
     if let Some(source_id) = &write.source_id
-        && let Some(held) = items::by_natural_key(tx, source, source_id)?
+        && let Some(held) = items::by_natural_key(tx, &source, source_id)?
     {
-        if held.type_id != write.type_id {
-            return Err(ApiError::conflict(
-                "type_mismatch",
-                format!(
-                    "The source and source_id name an item of type {}, not {}.",
-                    held.type_id, write.type_id
-                ),
-            ));
+        match write.door {
+            Door::BulkCreateOnly => {
+                let disclosed = reach.may_read(&held.type_id);
+                return Ok(skipped(held, "duplicate_source", disclosed));
+            }
+            Door::ItemCreateOnly => {
+                if held.type_id != write.type_id {
+                    return Err(type_mismatch(&held, &write.type_id));
+                }
+                return Err(item_exists(&held.id, "source_id"));
+            }
+            Door::Item | Door::BulkUpsert => {
+                reach.require_write_held(&held)?;
+                if held.type_id != write.type_id {
+                    return Err(type_mismatch(&held, &write.type_id));
+                }
+                if !held.is_live() {
+                    return unchanged(tx, held, write.door);
+                }
+                return upsert(tx, catalog, &write, held, properties, actor);
+            }
         }
-        if write.mode == Mode::CreateOnly {
-            return Err(item_exists(&held.id, "source_id"));
-        }
-        if !held.is_live() {
-            return acknowledged(tx, held);
-        }
-        return upsert(tx, catalog, write, held, properties, actor);
     }
 
     if let Some(id) = &write.id
         && let Some(held) = items::by_id(tx, id)?
     {
-        if !readable(&held.type_id) {
-            return Err(ApiError::conflict(
-                "conflict",
-                "An item this credential cannot read already has this id.",
-            ));
+        match write.door {
+            Door::BulkCreateOnly => return Ok(skipped(held, "duplicate_id", true)),
+            Door::ItemCreateOnly => {
+                if !reach.may_read(&held.type_id) {
+                    return Err(unreadable_id());
+                }
+                return Err(item_exists(&held.id, "id"));
+            }
+            Door::Item => {
+                if !reach.may_read(&held.type_id) {
+                    return Err(unreadable_id());
+                }
+                if held.type_id != write.type_id {
+                    return Err(id_reused(id));
+                }
+                return acknowledged(tx, held);
+            }
+            Door::BulkUpsert => {
+                if !reach.may_read(&held.type_id) {
+                    return Err(unreadable_id());
+                }
+                if held.type_id != write.type_id {
+                    return Err(id_reused(id));
+                }
+                reach.require_write_held(&held)?;
+                if !held.is_live() {
+                    return Ok(skipped(held, "trashed", true));
+                }
+                if write.source_id.is_some() && write.source_id != held.source_id {
+                    return Err(ApiError::validation(
+                        "This server does not move an item's natural key yet.",
+                    ));
+                }
+                return upsert(tx, catalog, &write, held, properties, actor);
+            }
         }
-        if write.mode == Mode::CreateOnly {
-            return Err(item_exists(&held.id, "id"));
-        }
-        if held.type_id != write.type_id {
-            return Err(ApiError::conflict(
-                "id_reused",
-                format!("The item {id} already exists as another type."),
-            )
-            .with(json!({ "differs": ["type"] })));
-        }
-        return acknowledged(tx, held);
     }
 
-    create(tx, catalog, write, source, tier, properties, actor)
+    create(tx, catalog, &write, &source, &tier, properties, actor)
+}
+
+fn type_mismatch(held: &ItemRow, declared: &str) -> ApiError {
+    ApiError::conflict(
+        "type_mismatch",
+        format!(
+            "The source and source_id name an item of type {}, not {declared}.",
+            held.type_id
+        ),
+    )
+    .with(json!({ "actual_type": held.type_id }))
+}
+
+fn id_reused(id: &str) -> ApiError {
+    ApiError::conflict(
+        "id_reused",
+        format!("The item {id} already exists as another type."),
+    )
+    .with(json!({ "differs": ["type"] }))
+}
+
+fn unreadable_id() -> ApiError {
+    ApiError::conflict(
+        "conflict",
+        "An item this credential cannot read already has this id.",
+    )
 }
 
 fn item_exists(existing_id: &str, matched_by: &str) -> ApiError {
     ApiError::conflict("item_exists", "The item this create names already exists.")
         .with(json!({ "existing_id": existing_id, "matched_by": matched_by }))
+}
+
+fn skipped(item: ItemRow, reason: &'static str, disclosed: bool) -> Written {
+    Written {
+        outcome: Outcome::Skipped { reason, disclosed },
+        item,
+        tags: Vec::new(),
+    }
+}
+
+/// A held item in the bin: a bulk entry skips it, and a single write
+/// acknowledges it.
+fn unchanged(tx: &Connection, held: ItemRow, door: Door) -> ApiResult<Written> {
+    if door.bulk() {
+        Ok(skipped(held, "trashed", true))
+    } else {
+        acknowledged(tx, held)
+    }
 }
 
 fn acknowledged(tx: &Connection, item: ItemRow) -> ApiResult<Written> {
@@ -214,6 +412,7 @@ fn create(
     properties: Map<String, Value>,
     actor: &Actor,
 ) -> ApiResult<Written> {
+    creatable_state(write.state.as_deref())?;
     let now = clock::now_stamp();
     let mut item = ItemRow {
         seq: 0,
@@ -238,6 +437,7 @@ fn create(
     };
     item.seq = items::insert(tx, &item)?;
     items::add_tags(tx, &item.id, &write.tags)?;
+    items::sync_title_key(tx, catalog, &item)?;
     let tags = items::tags(tx, &item.id)?;
     record(tx, catalog, &item, &tags, "item.created", actor)?;
     Ok(Written {
@@ -247,8 +447,8 @@ fn create(
     })
 }
 
-/// A write naming a live item's natural key merges its properties into the
-/// item at the next version.
+/// A write naming a live item's natural key lays its properties over the
+/// item's, or takes them as the whole set, at the next version.
 fn upsert(
     tx: &Connection,
     catalog: &Catalog,
@@ -257,11 +457,20 @@ fn upsert(
     properties: Map<String, Value>,
     actor: &Actor,
 ) -> ApiResult<Written> {
-    let mut merged = item.properties.clone();
-    for (name, value) in properties {
-        merged.insert(name, value);
-    }
-    catalog.validate_properties(&item.type_id, &merged, true)?;
+    let before = item.to_json();
+    let before_tags = items::tags(tx, &item.id)?;
+    let merged = if write.replace {
+        properties
+    } else {
+        let mut merged = item.properties.clone();
+        for (name, value) in properties {
+            merged.insert(name, value);
+        }
+        merged
+    };
+    catalog
+        .validate_properties(&item.type_id, &merged, true)
+        .map_err(field_errors)?;
     item.properties = catalog.in_answer_order(&item.type_id, &merged);
     item.version += 1;
     item.updated_at = clock::now_stamp();
@@ -276,7 +485,9 @@ fn upsert(
         item.capture_longitude = write.capture_longitude;
     }
     items::update(tx, &item)?;
+    snapshot(tx, &item.id, item.version - 1, &before, &before_tags, actor)?;
     items::add_tags(tx, &item.id, &write.tags)?;
+    items::sync_title_key(tx, catalog, &item)?;
     let tags = items::tags(tx, &item.id)?;
     record(tx, catalog, &item, &tags, "item.updated", actor)?;
     Ok(Written {
@@ -286,8 +497,32 @@ fn upsert(
     })
 }
 
-/// What every change to an item writes beside the row: its version, an
-/// event, an audit entry and its search row.
+/// The row an update replaced, kept as its version.
+fn snapshot(
+    tx: &Connection,
+    id: &str,
+    version: i64,
+    before: &Value,
+    tags: &[String],
+    actor: &Actor,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO item_versions (item_id, version, item, tags, key_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?
+    .execute(params![
+        id,
+        version,
+        before.to_string(),
+        json!(tags).to_string(),
+        actor.key_id,
+        clock::now_stamp()
+    ])?;
+    Ok(())
+}
+
+/// What every change to an item writes beside the row: an event and its
+/// search rows.
 fn record(
     tx: &Connection,
     catalog: &Catalog,
@@ -296,20 +531,6 @@ fn record(
     event: &str,
     actor: &Actor,
 ) -> ApiResult<()> {
-    let snapshot = item.to_json();
-    let now = clock::now_stamp();
-    tx.prepare_cached(
-        "INSERT INTO item_versions (item_id, version, item, tags, key_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?
-    .execute(params![
-        item.id,
-        item.version,
-        snapshot.to_string(),
-        json!(tags).to_string(),
-        actor.key_id,
-        now
-    ])?;
     tx.prepare_cached(
         "INSERT INTO event_log (event, entity_id, item_type, version, source, key_id, payload,
            created_at)
@@ -322,17 +543,15 @@ fn record(
         item.version,
         item.source,
         actor.key_id,
-        json!({ "item": snapshot, "tags": tags }).to_string(),
-        now
+        json!({
+            "event_type": event,
+            "item": item.to_json(),
+            "metadata": items::metadata(&item.id, tags),
+        })
+        .to_string(),
+        clock::now_stamp()
     ])?;
-    audit(
-        tx,
-        event,
-        &actor.id,
-        "item",
-        &item.id,
-        json!({ "type": item.type_id, "version": item.version }),
-    )?;
+    items::add_search_key(tx, item)?;
     core::index_item(
         tx,
         catalog,

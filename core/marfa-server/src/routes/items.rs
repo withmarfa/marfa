@@ -1,4 +1,5 @@
-//! `POST /items` and `GET /items/{id}`.
+//! `POST /items` and `GET /items/{id}`; `read_create` also reads a bulk
+//! entry.
 
 use axum::Router;
 use axum::extract::{Path, State};
@@ -13,7 +14,7 @@ use crate::auth::{Caller, Level};
 use crate::body::JsonBody;
 use crate::error::{ApiError, ApiResult};
 use crate::storage::items;
-use crate::write::{self, ItemWrite, Mode};
+use crate::write::{self, Door, ItemWrite};
 
 const CREATE_FIELDS: [&str; 14] = [
     "type",
@@ -86,7 +87,7 @@ async fn read(
     }
 }
 
-fn no_content_map() -> ApiError {
+pub(super) fn no_content_map() -> ApiError {
     ApiError::new(
         StatusCode::FORBIDDEN,
         "type_not_permitted",
@@ -94,7 +95,7 @@ fn no_content_map() -> ApiError {
     )
 }
 
-fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
+pub(super) fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     let type_id = match body.get("type") {
         None | Some(Value::Null) => {
             return Err(ApiError::new(
@@ -123,11 +124,7 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     if let Some(id) = &id {
         core::validate_id("id", id)?;
     }
-    let state = match text("state")?.as_deref() {
-        None => None,
-        Some(state @ ("active" | "archived")) => Some(state.to_string()),
-        Some(_) => return Err(ApiError::field("state", "Must be active or archived.")),
-    };
+    let state = text("state")?;
     let occurred_at = match text("occurred_at")? {
         None => None,
         Some(at) => Some(
@@ -135,9 +132,9 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
                 .map_err(|error| ApiError::from(error).with(json!({ "field": "occurred_at" })))?,
         ),
     };
-    let mode = match text("mode")?.as_deref() {
-        None | Some("upsert") => Mode::Upsert,
-        Some("create_only") => Mode::CreateOnly,
+    let door = match text("mode")?.as_deref() {
+        None | Some("upsert") => Door::Item,
+        Some("create_only") => Door::ItemCreateOnly,
         Some(_) => return Err(ApiError::field("mode", "Must be upsert or create_only.")),
     };
     let tier = match text("tier")?.as_deref() {
@@ -202,12 +199,13 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     Ok(ItemWrite {
         type_id,
         properties,
+        replace: false,
         id,
         state,
         occurred_at,
         source: text("source")?,
         source_id: text("source_id")?,
-        mode,
+        door,
         tier,
         capture_latitude,
         capture_longitude,
@@ -215,13 +213,17 @@ fn read_create(body: &Map<String, Value>) -> ApiResult<ItemWrite> {
     })
 }
 
-/// Lowercase dotted segments, each starting with a letter.
+/// Two or more dotted segments, each starting with a lowercase letter, up to
+/// 128 characters; `app.` names exactly three.
 fn well_formed_type(type_id: &str) -> bool {
-    !type_id.is_empty()
-        && type_id.split('.').all(|segment| {
+    let segments: Vec<&str> = type_id.split('.').collect();
+    type_id.len() <= 128
+        && segments.len() >= 2
+        && (segments[0] != "app" || segments.len() == 3)
+        && segments.iter().all(|segment| {
             segment.starts_with(|c: char| c.is_ascii_lowercase())
                 && segment
                     .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         })
 }
