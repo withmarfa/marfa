@@ -8184,6 +8184,10 @@ mod tests {
             ),
             ("withdraw", reader.withdraw("blocked").unwrap_err()),
             (
+                "withdraw_unsent",
+                reader.withdraw_unsent("blocked").unwrap_err(),
+            ),
+            (
                 "withdraw_alone",
                 reader.withdraw_alone("blocked").unwrap_err(),
             ),
@@ -8359,7 +8363,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            55,
+            56,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

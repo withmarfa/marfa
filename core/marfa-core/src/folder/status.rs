@@ -104,7 +104,10 @@ const NOT_SENT: &str = "not_sent";
 /// request size, or was set aside: a person reads this, not the queue.
 fn not_sent_reason(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<String>> {
     let set_aside = row.blocked_reason() == Some(BlockedReason::FailingAlone);
-    let Some(failure) = row.last_failure.as_ref().filter(|_| row.verdict.is_none() || set_aside)
+    let Some(failure) = row
+        .last_failure
+        .as_ref()
+        .filter(|_| row.verdict.is_none() || set_aside)
     else {
         return Ok(None);
     };

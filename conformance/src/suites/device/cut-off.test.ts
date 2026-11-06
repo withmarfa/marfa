@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  answers,
-  typeCatalog,
-  wireType,
-} from "../../device/marfa-answers.js";
+import { answers, typeCatalog, wireType } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import type { DrainReport } from "../../device/protocol.js";
 import {
@@ -76,7 +72,8 @@ async function cutting(
     },
     creating: (answer, request) => {
       if (!cut(titleOf(request))) return answer;
-      if (!landed) door?.rows.delete((JSON.parse(request.body) as { id: string }).id);
+      if (!landed)
+        door?.rows.delete((JSON.parse(request.body) as { id: string }).id);
       return CUT_OFF;
     },
   });
@@ -84,7 +81,11 @@ async function cutting(
 }
 
 function putLong(own: FolderHarness, title: string): void {
-  put(own, `${title}.md`, `---\ntype: ${LARGE}\ntitle: ${title}\n---\n${LONG}\n`);
+  put(
+    own,
+    `${title}.md`,
+    `---\ntype: ${LARGE}\ntitle: ${title}\n---\n${LONG}\n`,
+  );
 }
 
 function putShort(own: FolderHarness, title: string): void {
@@ -289,7 +290,10 @@ describe("a write past the request limit that meets no answer", () => {
   });
 
   it("sends a file as it now is when it changes while its long write still waits", async () => {
-    const own = await cutting("cut-off-changed-early", (title) => title === "Long");
+    const own = await cutting(
+      "cut-off-changed-early",
+      (title) => title === "Long",
+    );
     putLong(own, "Long");
     await push(own);
 

@@ -10,7 +10,9 @@ use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing, REQUEST_LIMIT};
+use crate::http::{
+    Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing, REQUEST_LIMIT,
+};
 use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
