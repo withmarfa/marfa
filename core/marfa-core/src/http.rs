@@ -216,6 +216,115 @@ impl<T: Transport> Transport for RefusalTransport<T> {
     }
 }
 
+/// A server or a reverse proxy may answer a body over its cap and stop reading
+/// it, then close the connection. A client that only writes meets a closed
+/// socket with the answer unread, and on some systems can no longer read it, so
+/// it watches for the answer while it sends (RFC 9112, section 9.6). Once one
+/// begins, or the send fails, the rest of the body is dropped and the read that
+/// follows hears the answer, or fails as the send did where none came.
+#[derive(Debug)]
+struct AnswerWhileSending;
+
+/// How much of a request goes before the watching starts, so a request that
+/// fits one write costs no wait.
+const WATCH_AFTER: usize = 64 * 1024;
+
+/// How long each look for an answer waits between writes of a long body.
+const WATCH_FOR: Duration = Duration::from_millis(1);
+
+impl<T: Transport> Connector<T> for AnswerWhileSending {
+    type Out = WatchingTransport<T>;
+
+    fn connect(
+        &self,
+        _: &ConnectionDetails,
+        transport: Option<T>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        Ok(transport.map(|transport| WatchingTransport {
+            transport,
+            unanswered: 0,
+            stopped: false,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct WatchingTransport<T> {
+    transport: T,
+    /// Bytes sent since the last read of an answer.
+    unanswered: usize,
+    stopped: bool,
+}
+
+impl<T: Transport> WatchingTransport<T> {
+    fn answer_began(&mut self, sending: NextTimeout) -> bool {
+        let look = NextTimeout {
+            after: ureq::unversioned::transport::time::Duration::Exact(WATCH_FOR),
+            reason: ureq::Timeout::RecvResponse,
+            ..sending
+        };
+        let dbg_r = self.transport.maybe_await_input(look);
+        eprintln!("DBG look {:?} unanswered {}", dbg_r.as_ref().map_err(|e| e.to_string()), self.unanswered);
+        match dbg_r {
+            Ok(_) => true,
+            Err(ureq::Error::Timeout(_)) => false,
+            Err(ureq::Error::Io(error)) => !matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ),
+            Err(_) => true,
+        }
+    }
+}
+
+impl<T: Transport> Transport for WatchingTransport<T> {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        self.transport.buffers()
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        if self.stopped || (self.unanswered >= WATCH_AFTER && self.answer_began(timeout)) {
+            self.stopped = true;
+            return Ok(());
+        }
+        let dbg_at = std::time::Instant::now();
+        let dbg_s = self.transport.transmit_output(amount, timeout);
+        eprintln!("DBG sent {amount} {:?} {:?}", dbg_s.as_ref().map_err(|e| e.to_string()), dbg_at.elapsed());
+        match dbg_s {
+            Err(ureq::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                ) =>
+            {
+                self.stopped = true;
+                Ok(())
+            }
+            sent => {
+                self.unanswered += amount;
+                sent
+            }
+        }
+    }
+
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        self.unanswered = 0;
+        let dbg_i = self.transport.maybe_await_input(timeout);
+        eprintln!("DBG await {:?} input {} open {}", dbg_i.as_ref().map_err(|e| e.to_string()), self.transport.buffers().input().len(), self.transport.is_open());
+        dbg_i
+    }
+
+    fn is_open(&mut self) -> bool {
+        !self.stopped && self.transport.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.transport.is_tls()
+    }
+}
+
 pub struct ItemsQuery<'a> {
     /// `None` lists every type the key reads.
     pub r#type: Option<&'a str>,
@@ -462,13 +571,15 @@ impl Http {
         let base = base_of(url)?;
         let agent = Agent::with_parts(
             config.clone(),
-            connector(),
+            connector().chain(AnswerWhileSending),
             ureq::unversioned::resolver::DefaultResolver::default(),
         );
         let stream_agent: StreamAgent = Arc::new(move |deadline| {
             Agent::with_parts(
                 config.clone(),
-                connector().chain(RefusalDeadline(deadline)),
+                connector()
+                    .chain(AnswerWhileSending)
+                    .chain(RefusalDeadline(deadline)),
                 ureq::unversioned::resolver::DefaultResolver::default(),
             )
         });
@@ -2475,6 +2586,52 @@ mod tests {
             assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
             serving.join().unwrap().unwrap();
         }
+    }
+
+    /// The server answers a body over its cap and closes the connection
+    /// without reading the rest, so the device's write fails with the answer
+    /// already waiting (`folders/request-too-large-edit-held`).
+    #[test]
+    fn an_answer_sent_before_the_body_was_read_is_still_heard() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = [0u8; 4096];
+            Read::read(&mut socket, &mut head).unwrap();
+            let body = r#"{"error":{"code":"request_too_large","message":"Request body too large"}}"#;
+            write!(
+                socket,
+                "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            // A real server holds the connection a moment before it closes it.
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        let call = Call {
+            method: Method::Post,
+            segments: &["items"],
+            params: &[],
+            headers: &[],
+            // Past what the system's socket buffers take without the peer reading.
+            body: CallBody::Reader(Box::new(std::io::Cursor::new(vec![b'x'; 32 * 1024 * 1024]))),
+            credential: true,
+            stream: false,
+        };
+
+        let answer = Http::new(&url, "k").unwrap().fetch(call, true);
+
+        serving.join().unwrap();
+        assert!(
+            matches!(
+                &answer,
+                Err(CoreError::Server { status: 413, code, .. }) if code == "request_too_large"
+            ),
+            "{:?}",
+            answer.map(|_| "answered")
+        );
     }
 
     /// Answers one request with `answer`, written as it is, once the request
