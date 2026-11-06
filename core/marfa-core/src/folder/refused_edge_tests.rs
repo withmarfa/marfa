@@ -644,7 +644,7 @@ fn a_refused_placement_stays_for_the_folder_to_settle() {
 }
 
 #[test]
-fn a_refused_create_with_a_read_a_receipt_or_a_link_owed_stays() {
+fn a_refused_create_with_a_read_or_a_receipt_owed_stays() {
     let fixture = fixture();
     let folder = &fixture.folder;
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
@@ -662,13 +662,6 @@ fn a_refused_create_with_a_read_a_receipt_or_a_link_owed_stays() {
     )
     .unwrap();
     let unsent = seeded_at(&fixture, "unsent", "0", "refused", ONE_TO_ONE, json!({}));
-    let linked = seeded(&fixture, "linked", ONE_TO_ONE, json!({}));
-    execute(
-        folder,
-        "INSERT INTO body_edges (write_id, item_id, kind, other_id)
-         VALUES ('linked', ?1, 'link', ?2)",
-        [&fixture.source, &fixture.target],
-    );
     // The witness: one with none of those goes.
     let plain = seeded(&fixture, "plain", ONE_TO_ONE, json!({}));
 
@@ -677,8 +670,32 @@ fn a_refused_create_with_a_read_a_receipt_or_a_link_owed_stays() {
     assert!(in_queue(folder, &read));
     assert!(in_queue(folder, &receipt));
     assert!(in_queue(folder, &unsent));
-    assert!(in_queue(folder, &linked));
     assert!(!in_queue(folder, &plain));
+}
+
+#[test]
+fn a_body_reads_its_links_refusal_before_the_create_goes() {
+    let fixture = fixture();
+    let folder = &fixture.folder;
+    held(&fixture, "edge", ONE_TO_ONE, json!({}));
+    let linked = seeded(&fixture, "linked", ONE_TO_ONE, json!({}));
+    execute(
+        folder,
+        "INSERT INTO body_edges (write_id, item_id, kind, other_id)
+         VALUES ('linked', ?1, 'link', ?2)",
+        [&fixture.source, &fixture.target],
+    );
+
+    folder.clear_answered().unwrap();
+
+    assert!(!in_queue(folder, &linked));
+    let waiting: i64 = folder
+        .core
+        .conn()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM body_edges", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(waiting, 0);
 }
 
 #[test]

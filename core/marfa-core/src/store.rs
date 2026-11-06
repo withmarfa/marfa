@@ -5960,13 +5960,11 @@ impl RefusedEdgeCreate {
     }
 
     /// Whether nothing still rests on this row: no write depends on or follows
-    /// it, no body's link waits on its answer, and no receipt or read is owed
-    /// for it. Finding what depends on it reads the queue, so call this last.
+    /// it, and no receipt or read is owed for it. Finding what depends on it reads the queue, so call this last.
     pub(crate) fn nothing_rests_on_it(&self, conn: &Connection) -> Result<bool, CoreError> {
         Ok(conn.query_row(
             "SELECT NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || ?1)
                 AND NOT EXISTS (SELECT 1 FROM read_backs WHERE subject = 'edge' AND id = ?2)
-                AND NOT EXISTS (SELECT 1 FROM body_edges WHERE write_id = ?1)
                 AND NOT EXISTS (SELECT 1 FROM queue WHERE id <> ?1
                       AND (follows = ?1 OR instr(depends_on, ?1) > 0))",
             params![self.id, self.edge_id],
