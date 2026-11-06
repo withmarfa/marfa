@@ -99,7 +99,7 @@ async function measure(argv: string[]): Promise<void> {
       "singles",
     ),
     starts: whole(values.starts, 5, "starts"),
-    settleMs: whole(values["settle-ms"], 10_000, "settle-ms"),
+    settleMs: whole(values["settle-ms"], 30_000, "settle-ms"),
     restMs: whole(values["rest-ms"], 60_000, "rest-ms"),
     record,
     ids: [],
@@ -140,7 +140,7 @@ async function measure(argv: string[]): Promise<void> {
       ctx,
       "rss_after_bulk_10s_mb",
       "Server memory 10 s after the load",
-      ctx.settleMs,
+      Math.min(10_000, ctx.restMs),
     );
     const waited = performance.now() - started;
     await restingMemory(

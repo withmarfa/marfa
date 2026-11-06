@@ -52,8 +52,9 @@ function databases(state: string): string[] {
 
 const sizeOf = (file: string) => (existsSync(file) ? statSync(file).size : 0);
 
-async function sqlite(db: string, sql: string): Promise<unknown[]> {
-  const { stdout } = await run("sqlite3", ["-readonly", "-json", db, sql], {
+/** A query on the harness's own copy, which a WAL database needs writable. */
+async function sqlite(copy: string, sql: string): Promise<unknown[]> {
+  const { stdout } = await run("sqlite3", ["-json", copy, sql], {
     maxBuffer: 64 * MB,
   });
   return stdout.trim() === "" ? [] : (JSON.parse(stdout) as unknown[]);
@@ -69,8 +70,6 @@ async function describe(db: string): Promise<Record<string, unknown>> {
   const summary: Record<string, unknown> = {
     page_size: pageSize === 1 ? 65_536 : pageSize,
     journal: bytes[18] === 2 ? "wal" : "rollback",
-    pages: bytes.readUInt32BE(28),
-    freelist_pages: bytes.readUInt32BE(36),
   };
   const scratch = mkdtempSync(join(tmpdir(), "slice-bench-"));
   try {
@@ -115,6 +114,12 @@ async function describe(db: string): Promise<Record<string, unknown>> {
     const indexBytes = [...used.entries()]
       .filter(([name]) => !tables.some((table) => table.name === name))
       .reduce((sum, [, size]) => sum + size, 0);
+    const [pages] = (await sqlite(
+      copy,
+      "SELECT page_count AS pages, freelist_count AS free FROM pragma_page_count, pragma_freelist_count",
+    )) as { pages: number; free: number }[];
+    summary.pages = pages?.pages ?? null;
+    summary.freelist_pages = pages?.free ?? null;
     summary.tables = rows;
     summary.index_bytes = used.size > 0 ? indexBytes : null;
   } catch (error) {

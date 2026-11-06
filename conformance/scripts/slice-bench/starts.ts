@@ -139,7 +139,7 @@ export async function warmStarts(ctx: Context): Promise<void> {
     const output = await boot.done;
     const exit = /previous exit (\{.*\})/.exec(output)?.[1];
     if (exit !== undefined) stops.push((JSON.parse(exit) as { ms: number }).ms);
-    log(`warm start ${i + 1}: ${ms} ms`);
+    log(`warm start ${i + 1}: ${Math.round(ms)} ms`);
     if (i === 0) first = ms;
     else times.push(ms);
   }
@@ -190,7 +190,7 @@ export async function coldStarts(ctx: Context): Promise<void> {
       const boot = adapter(["up", "--state", state, "--port", String(port)]);
       const ms = await timeBoot(state, port, undefined, boot);
       await boot.done;
-      log(`cold start ${i}: ${ms} ms`);
+      log(`cold start ${i}: ${Math.round(ms)} ms`);
       times.push(ms);
     } finally {
       await adapter(["down", "--state", state]).done;
