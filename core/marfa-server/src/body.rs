@@ -31,6 +31,17 @@ impl FromRequest<App> for JsonBody {
 impl JsonBody {
     /// The body as a JSON object holding no key outside `allowed`.
     pub async fn object(self, allowed: &[&str]) -> ApiResult<Map<String, Value>> {
+        let limit = self.limit;
+        self.object_within(allowed, limit).await
+    }
+
+    /// As `object`, for a door whose body may be larger than the standing
+    /// limit.
+    pub async fn object_within(
+        self,
+        allowed: &[&str],
+        limit: usize,
+    ) -> ApiResult<Map<String, Value>> {
         let declared = self
             .headers
             .get(header::CONTENT_TYPE)
@@ -45,7 +56,7 @@ impl JsonBody {
             ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request_too_large",
-                format!("The body is larger than {} bytes.", self.limit),
+                format!("The body is larger than {} bytes.", limit),
             )
         };
         let length = self
@@ -53,10 +64,10 @@ impl JsonBody {
             .get(header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<usize>().ok());
-        if length.is_some_and(|length| length > self.limit) {
+        if length.is_some_and(|length| length > limit) {
             return Err(too_large());
         }
-        let bytes = match axum::body::to_bytes(self.body, self.limit).await {
+        let bytes = match axum::body::to_bytes(self.body, limit).await {
             Ok(bytes) => bytes,
             Err(error) => {
                 let over = std::error::Error::source(&error)

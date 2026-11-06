@@ -1,6 +1,7 @@
 //! One router per door group, merged. The control socket serves every door
 //! the public listener does, plus `/_control`.
 
+mod bulk;
 mod connectors;
 mod control;
 mod health;
@@ -29,6 +30,7 @@ pub fn router(app: App, transport: Transport) -> Router {
         .merge(keys::router())
         .merge(types::router())
         .merge(items::router())
+        .merge(bulk::router())
         .merge(connectors::router());
     if transport == Transport::LocalSocket {
         routes = routes.merge(control::router());
