@@ -632,8 +632,7 @@ mod tests {
 
     #[test]
     fn a_link_in_a_table_cell_keeps_its_escaped_pipe_when_it_is_renamed() {
-        for prefix in ["", "> ", "> "] {
-            let callout = if prefix.is_empty() { "" } else { "> [!note]\n" };
+        for (callout, prefix) in [("", ""), ("", "> "), ("> [!note]\n", "> ")] {
             let table = |one: &str, two: &str, three: &str| {
                 format!(
                     "{callout}{prefix}| h | h |\n{prefix}| - | - |\n{prefix}| {one} {two} | {three} |\n"
