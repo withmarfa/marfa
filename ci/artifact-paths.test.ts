@@ -18,22 +18,22 @@ interface Step {
   with?: { path?: string };
 }
 interface Job {
-  env?: Record<string, unknown>;
+  env?: Record<string, string>;
   steps?: Step[];
 }
 interface Workflow {
-  env?: Record<string, unknown>;
+  env?: Record<string, string>;
   jobs: Record<string, Job>;
 }
 
 /** A variable's value, from the job or workflow, or a step's `$GITHUB_ENV` line. */
 function valueOf(name: string, job: Job, workflow: Workflow): string | null {
   const declared = job.env?.[name] ?? workflow.env?.[name];
-  if (declared !== undefined) return String(declared);
+  if (declared !== undefined) return declared;
   for (const step of job.steps ?? []) {
-    const written = (step.run ?? "").match(
-      new RegExp(`${name}=([^\\s"]+)"?\\s*>>\\s*"?\\$GITHUB_ENV`),
-    );
+    const written = new RegExp(
+      `${name}=([^\\s"]+)"?\\s*>>\\s*"?\\$GITHUB_ENV`,
+    ).exec(step.run ?? "");
     if (written?.[1] !== undefined) return written[1];
   }
   return null;
@@ -137,9 +137,7 @@ describe("a job's env", () => {
   it.each(files)("%s names no runner context in a job's env", (file) => {
     for (const [id, job] of Object.entries(read(file).jobs)) {
       for (const [name, value] of Object.entries(job.env ?? {})) {
-        expect(String(value), `${id}: ${name}`).not.toMatch(
-          /\$\{\{[^}]*\brunner\./,
-        );
+        expect(value, `${id}: ${name}`).not.toMatch(/\$\{\{[^}]*\brunner\./);
       }
     }
   });
