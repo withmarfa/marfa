@@ -89,19 +89,27 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
     "Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.",
 };
 
-/** When each event is sent, written for this table from the stream's own frame descriptions. */
+/** When each event is sent, written for this table, with the statements that hold each write to its event. */
 const EVENT_TEXT: Readonly<Record<string, string>> = {
-  "item.created": "An item is created.",
-  "item.updated": "An item is updated.",
-  "item.deleted": "An item is moved to the bin.",
-  "item.restored": "An item in the bin is restored.",
-  "item.purged": "A trashed item is destroyed.",
-  "item.state_changed": "An item moves to another lifecycle state.",
-  "metadata.changed": "An item's tags or extensions change.",
-  "edge.created": "An edge is created.",
+  "item.created": "A write creates an item (`events/create-announced`).",
+  "item.updated":
+    "A write changes an item (`events/update-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).",
+  "item.deleted":
+    "An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).",
+  "item.restored":
+    "An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).",
+  "item.purged":
+    "An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).",
+  "item.state_changed":
+    "A transition moves an item to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`).",
+  "metadata.changed":
+    "A tag write, whether or not it changes the tags (`items/tag-announced`), or an extension write (`items/extension-announced`).",
+  "edge.created":
+    "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`).",
   "edge.updated":
-    "An edge's properties change, or one of its ends moves to another item.",
-  "edge.deleted": "An edge is deleted.",
+    "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
+  "edge.deleted":
+    "An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).",
   stream_cursor:
     "First, when the stream read the log as it opened: where the log stood then.",
   stream_live:

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -100,6 +100,52 @@ async function deliver(
   } finally {
     await stream.close();
   }
+}
+
+function rowOf(event: SseEvent): string | undefined {
+  const data = event.data as { item?: { id?: string }; edge?: { id?: string } };
+  return data.item?.id ?? data.edge?.id;
+}
+
+/**
+ * The frames `act` causes, read up to the frame of a witness written after it.
+ * Frames carry ascending ids, so a frame missing from these is absent, not late.
+ */
+async function announced(
+  act: () => Promise<void>,
+  signal: AbortSignal,
+): Promise<SseEvent[]> {
+  return withStream(apiUrl, apiKey, {}, async (stream) => {
+    await new Promise((r) => setTimeout(r, 250));
+    await act();
+    const witness = await seed("witness");
+    const { events } = await collectUntil(
+      stream,
+      (evts) => evts.some((e) => rowOf(e) === witness),
+      `the witness ${witness}`,
+      signal,
+    );
+    return events.slice(
+      0,
+      events.findIndex((e) => rowOf(e) === witness),
+    );
+  });
+}
+
+function eventsOf(frames: SseEvent[], id: string): string[] {
+  return frames.filter((e) => rowOf(e) === id).map((e) => e.event);
+}
+
+async function runAction(
+  input: Parameters<MarfaClient["bulkAction"]>[0],
+): Promise<void> {
+  const queued = await client.bulkAction(input);
+  expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+  const job = await client.pollBulkActionToTerminal(
+    (queued.data as BulkActionJob).id,
+  );
+  expect(job.status, job.error).toBe("completed");
+  expect(job.succeeded).toBe(1);
 }
 
 describe("event stream contract", () => {
@@ -1078,5 +1124,225 @@ describe("the answers of the plain stream and the order its checks run in", () =
       query: "type=Not-A-Type!,core.nothing_registers_this",
     });
     expect(malformedFirst.code).toBe("validation_error");
+  });
+});
+
+describe("which event each write announces", () => {
+  it("announces item.created for an item POST /items or a POST /items/bulk entry creates", async ({
+    signal,
+  }) => {
+    const rows: string[] = [];
+    const frames = await announced(async () => {
+      const single = await client.createItem(
+        createNote({ source: ctx.source }),
+      );
+      expect(single.status, JSON.stringify(single.error)).toBe(201);
+      rows.push(single.data.item.id);
+      const bulk = await client.bulkItems([createNote({ source: ctx.source })]);
+      expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+      expect(bulk.data.results[0]?.outcome).toBe("created");
+      rows.push(bulk.data.results[0]!.id!);
+    }, signal);
+    for (const id of rows) {
+      trackItem(ctx, id);
+      expect(eventsOf(frames, id)).toEqual(["item.created"]);
+    }
+  });
+
+  it("announces item.updated once for each write to an item, however little it changes", async ({
+    signal,
+  }) => {
+    const tag = `updated-${ctx.runId}`;
+    const body = {
+      type: "core.note",
+      source: ctx.source,
+      source_id: tag,
+      properties: { body: "same" },
+    };
+    const created = await client.createItem(body);
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.addTags(id, [tag])).ok).toBe(true);
+
+    const frames = await announced(async () => {
+      const current = await client.getItem(id);
+      const version = current.data.item.version;
+      const same = await client.updateItem(id, {
+        properties: { body: "same" },
+        version,
+      });
+      expect(same.status, JSON.stringify(same.error)).toBe(200);
+      expect(same.data.item.version).toBe(version + 1);
+      const landed = await client.createItem(body);
+      expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+      expect(landed.data.item.id).toBe(id);
+      const bulk = await client.bulkItems([body]);
+      expect(bulk.data.results[0]?.outcome).toBe("updated");
+      await runAction({
+        action: "update_properties",
+        patch: { body: "same" },
+        filter: { tags: [tag] },
+      });
+      await runAction({
+        action: "update_occurred_at",
+        occurred_at: "2026-01-02T00:00:00.000Z",
+        filter: { tags: [tag] },
+      });
+    }, signal);
+    expect(eventsOf(frames, id)).toEqual(Array(5).fill("item.updated"));
+  });
+
+  it("announces a delete only as item.deleted and a restore only as item.restored", async ({
+    signal,
+  }) => {
+    const id = await seed("delete-restore-only");
+    const frames = await announced(async () => {
+      expect((await client.deleteItem(id)).ok).toBe(true);
+      expect((await client.restoreItem(id)).ok).toBe(true);
+      expect((await client.trashItems([id])).ok).toBe(true);
+      expect((await client.restoreItem(id)).ok).toBe(true);
+    }, signal);
+    expect(eventsOf(frames, id)).toEqual([
+      "item.deleted",
+      "item.restored",
+      "item.deleted",
+      "item.restored",
+    ]);
+  });
+
+  it("announces a transition as item.state_changed, single or by bulk action, with item.deleted or item.restored when it crosses the bin", async ({
+    signal,
+  }) => {
+    const single = await seed("transition-single");
+    const byJob = await seed("transition-job");
+    const tag = `transition-${ctx.runId}`;
+    expect((await client.addTags(byJob, [tag])).ok).toBe(true);
+
+    const moves = [
+      ["active", "archived"],
+      ["archived", "active"],
+      ["active", "trashed"],
+      ["trashed", "active"],
+    ] as const;
+    const frames = await announced(async () => {
+      for (const [from, to] of moves) {
+        const moved = await client.transitionItem(single, to);
+        expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+        await runAction({
+          action: "transition",
+          state: to,
+          filter: { tags: [tag], state: from },
+        });
+      }
+    }, signal);
+    const expected = [
+      "item.deleted",
+      "item.restored",
+      ...Array<string>(4).fill("item.state_changed"),
+    ];
+    expect(eventsOf(frames, single).sort()).toEqual(expected);
+    expect(eventsOf(frames, byJob).sort()).toEqual(expected);
+  });
+
+  it("announces each item a bulk purge takes as item.purged", async ({
+    signal,
+  }) => {
+    const id = await seed("purge-job");
+    const tag = `purge-${ctx.runId}`;
+    expect((await client.addTags(id, [tag])).ok).toBe(true);
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    const frames = await announced(async () => {
+      await runAction({
+        action: "purge",
+        confirm: "PURGE",
+        filter: { tags: [tag], state: "trashed" },
+      });
+    }, signal);
+    expect(eventsOf(frames, id)).toEqual(["item.purged"]);
+  });
+
+  it("announces metadata.changed for each tag write that changes nothing", async ({
+    signal,
+  }) => {
+    const id = await seed("tags-same");
+    const tag = `same-${ctx.runId}`;
+    expect((await client.addTags(id, [tag])).ok).toBe(true);
+    const frames = await announced(async () => {
+      expect((await client.addTags(id, [tag])).ok).toBe(true);
+      expect((await client.removeTag(id, `absent-${ctx.runId}`)).ok).toBe(true);
+      expect((await client.replaceMetadata(id, { tags: [tag] })).ok).toBe(true);
+      await runAction({
+        action: "update_tags",
+        add: [tag],
+        filter: { tags: [tag] },
+      });
+    }, signal);
+    const mine = frames.filter((e) => rowOf(e) === id);
+    expect(mine.map((e) => e.event)).toEqual(Array(4).fill("metadata.changed"));
+    for (const frame of mine) {
+      expect(
+        (frame.data as { metadata?: { tags?: string[] } }).metadata?.tags,
+      ).toEqual([tag]);
+    }
+  });
+
+  it("announces each edge a POST /edges/bulk entry creates or writes, however little it changes", async ({
+    signal,
+  }) => {
+    const source_id = await seed("bulk-edge-source");
+    const target_id = await seed("bulk-edge-target");
+    const send = async (n: number, outcome: string): Promise<string> => {
+      const r = await client.bulkEdges({
+        edges: [
+          { source_id, target_id, edge_type: "about", properties: { n } },
+        ],
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      expect(r.data.results[0]?.outcome).toBe(outcome);
+      return r.data.results[0]!.id!;
+    };
+    let id = "";
+    const frames = await announced(async () => {
+      id = await send(1, "created");
+      await send(2, "updated");
+      await send(2, "updated");
+    }, signal);
+    trackEdge(ctx, id);
+    expect(eventsOf(frames, id)).toEqual([
+      "edge.created",
+      "edge.updated",
+      "edge.updated",
+    ]);
+  });
+
+  it("announces each edge the edges of an item write create or remove", async ({
+    signal,
+  }) => {
+    const first = await seed("inline-edge-first");
+    const second = await seed("inline-edge-second");
+    let id = "";
+    const frames = await announced(async () => {
+      const created = await client.createItem(
+        createNote({ source: ctx.source, edges: { about: [first] } }),
+      );
+      expect(created.status, JSON.stringify(created.error)).toBe(201);
+      id = created.data.item.id;
+      trackItem(ctx, id);
+      const patched = await client.updateItem(id, {
+        edges: { about: [second] },
+        version: created.data.item.version,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    }, signal);
+    const edgeFrames = frames.filter(
+      (e) =>
+        (e.data as { edge?: { source_id?: string } }).edge?.source_id === id,
+    );
+    expect(edgeFrames.map((e) => e.event).sort()).toEqual([
+      "edge.created",
+      "edge.created",
+      "edge.deleted",
+    ]);
   });
 });

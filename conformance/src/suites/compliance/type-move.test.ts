@@ -18,15 +18,17 @@ import {
 } from "../../utils/setup.js";
 import { generateId } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 let receiver: Receiver;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "type-move",
   ));
@@ -288,6 +290,79 @@ describe("moving a type's items", () => {
     });
     expect((await client.getWebhook(named)).data.type_filter).toBe(contract);
     expect((await client.getWebhook(pattern)).data.type_filter).toBe(`${ns}.*`);
+  });
+
+  it("announces each moved item to a stream and delivers it to no webhook, while the same webhook delivers a later write", async ({
+    signal,
+  }) => {
+    const { deal, contract } = await pair("announced");
+    const id = await item(deal, { name: "moved" });
+    const hook = await client.createWebhook({
+      url: receiver.hookUrl("move-announced"),
+      events: ["item.updated"],
+    });
+    expect(hook.status, JSON.stringify(hook.error)).toBe(201);
+    trackWebhook(ctx, hook.data.id, client);
+
+    const isMoved = (e: { event: string; data: unknown }): boolean =>
+      e.event === "item.updated" &&
+      (e.data as { item?: { id?: string } }).item?.id === id;
+    const frame = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      await move(deal, { to: contract });
+      const { events } = await collectUntil(
+        stream,
+        (evts) => evts.some(isMoved),
+        `item.updated for ${id}`,
+        signal,
+      );
+      return events.find(isMoved);
+    });
+    expect((frame?.data as { item: { type: string } }).item.type).toBe(
+      contract,
+    );
+
+    const current = await client.getItem(id);
+    const later = await client.updateItem(id, {
+      properties: { name: "written later" },
+      version: current.data.item.version,
+    });
+    expect(later.status, JSON.stringify(later.error)).toBe(200);
+    const delivery = await receiver.waitFor(
+      (r) => r.path === "/hook/move-announced" && r.body.includes(id),
+    );
+    expect(delivery.body).toContain("written later");
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/move-announced" && r.body.includes(id),
+      ),
+    ).toHaveLength(1);
+    const deliveries = await client.listWebhookDeliveries(hook.data.id);
+    expect(deliveries.data.data).toHaveLength(1);
+  });
+
+  it("delivers the rewrite of a folder and of a view to a webhook", async () => {
+    const { deal, contract } = await pair("delivered");
+    await item(deal, { name: "moved" });
+    const folderId = await folder({ query: { types: [deal] } });
+    const viewId = await view({ types: [deal] });
+    const hook = await client.createWebhook({
+      url: receiver.hookUrl("move-settings"),
+      events: ["item.updated"],
+    });
+    expect(hook.status, JSON.stringify(hook.error)).toBe(201);
+    trackWebhook(ctx, hook.data.id, client);
+
+    const result = await move(deal, { to: contract });
+    expect(result.settings_rewritten).toBe(true);
+
+    for (const id of [folderId, viewId]) {
+      const delivery = await receiver.waitFor(
+        (r) => r.path === "/hook/move-settings" && r.body.includes(id),
+      );
+      expect(delivery.headers["x-marfa-event-type"]).toBe("item.updated");
+      expect(delivery.body).toContain(contract);
+    }
   });
 
   it("moves what the new type accepts, rewrites no setting, and a second run finishes", async () => {

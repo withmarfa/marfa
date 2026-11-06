@@ -5,6 +5,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import type { SseEvent } from "../../utils/sse.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("owner-trash");
@@ -224,4 +226,45 @@ it("lets the owner remove only unused custom types", async () => {
   expect((await owner("/types/user.empty", { method: "DELETE" })).status).toBe(
     200,
   );
+});
+it("announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else", async ({
+  signal,
+}) => {
+  const rowOf = (e: SseEvent) =>
+    (e.data as { item?: { id?: string } }).item?.id;
+  const purged = await note("Purged");
+  const emptied = await note("Emptied");
+  const frames = await withStream(
+    server.apiUrl,
+    server.workingKey,
+    {},
+    async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      for (const action of ["trash", "restore", "trash", "purge"]) {
+        const r = await act(purged.id, action);
+        expect(r.status, action).toBe(200);
+      }
+      expect((await act(emptied.id, "trash")).status).toBe(200);
+      expect((await owner("/trash/empty", { method: "POST" })).status).toBe(
+        200,
+      );
+      const witness = await note("Witness");
+      const { events } = await collectUntil(
+        stream,
+        (evts) => evts.some((e) => rowOf(e) === witness.id),
+        `the witness ${witness.id}`,
+        signal,
+      );
+      return events;
+    },
+  );
+  const of = (id: string) =>
+    frames.filter((e) => rowOf(e) === id).map((e) => e.event);
+  expect(of(purged.id)).toEqual([
+    "item.deleted",
+    "item.restored",
+    "item.deleted",
+    "item.purged",
+  ]);
+  expect(of(emptied.id)).toEqual(["item.deleted", "item.purged"]);
 });
