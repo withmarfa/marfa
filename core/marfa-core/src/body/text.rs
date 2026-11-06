@@ -987,10 +987,7 @@ mod tests {
     fn a_link_outside_a_table_cell_keeps_its_backslash() {
         let cell = "[[Plan\\|Label]]";
         // The witness: the same link in a table reads the bar.
-        assert_eq!(
-            links(&format!("| h |\n| - |\n| {cell} |")),
-            ["Plan|Label"]
-        );
+        assert_eq!(links(&format!("| h |\n| - |\n| {cell} |")), ["Plan|Label"]);
         for body in [
             cell.to_string(),
             format!("> {cell}"),

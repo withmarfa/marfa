@@ -3636,7 +3636,8 @@ mod tests {
         let core = copy(&dir);
         let plan = note(&core, "Plan", "");
         let host = note(&core, "Host", "");
-        let cell = "[[Plan\\|Label]]";
+        // By its id, which binds without a server.
+        let cell = format!("[[{plan}\\|Label]]");
         let held = |body: &str| {
             edit(&core, &host, serde_json::json!({ "body": body }));
             held_out(&core, &host, LINK_EDGE)
@@ -3653,7 +3654,7 @@ mod tests {
             format!("| h |\n| - |\n| {cell} |"),
             format!("> | h |\n> | - |\n> | {cell} |"),
             format!("> [!note]\n> | h |\n> | - |\n> | {cell} |"),
-            "| h |\n| - |\n| [[Plan#Part\\|Label]] |".to_string(),
+            format!("| h |\n| - |\n| [[{plan}#Part\\|Label]] |"),
         ] {
             assert_eq!(held(&body), vec![plan.clone()], "no edge from {body}");
             let links = core.body_links(&host).unwrap().links;
@@ -3667,7 +3668,7 @@ mod tests {
 
         // The same link written with a bare bar outside the table is one link,
         // so moving it out of the table keeps its edge.
-        assert_eq!(held("See [[Plan|Label]]."), vec![plan.clone()]);
+        assert_eq!(held(&format!("See [[{plan}|Label]].")), vec![plan.clone()]);
         assert_eq!(
             targets(&core.body_links(&host).unwrap().links),
             vec![BodyTarget::Item { id: plan }],

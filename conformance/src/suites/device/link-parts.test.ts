@@ -237,7 +237,10 @@ describe("a link's parts", () => {
       await parts(harness.device, `${table}| \`[[Plan\\|Label]]\` |\n`),
     ).toEqual([]);
     expect(
-      await parts(harness.device, `\`\`\`\n${table}| [[Plan\\|Label]] |\n\`\`\`\n`),
+      await parts(
+        harness.device,
+        `\`\`\`\n${table}| [[Plan\\|Label]] |\n\`\`\`\n`,
+      ),
     ).toEqual([]);
   });
 
