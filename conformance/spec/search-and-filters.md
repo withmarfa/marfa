@@ -310,7 +310,7 @@ When `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `POST /it
 
 When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names tags, the server MUST select only the rows that carry every tag named.
 
-**Reason:** a blank entry of a `tags` list names no tag, so it asks nothing of a row (`search-and-filters/tags-blank-search`, `search-and-filters/tags-blank-listing`).
+**Reason:** where `tags` is a comma-separated list, a blank entry names no tag, so it asks nothing of a row (`search-and-filters/tags-blank-search`, `search-and-filters/tags-blank-listing`).
 
 **Tests:** `correctness/tags.test.ts › narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named`, `› filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
 
@@ -1028,7 +1028,7 @@ When a client follows `next_cursor` through a `GET /items` listing sorted by a p
 
 The rows of one page and the key that continues them are in `search-and-filters/page-envelope`.
 
-Every listing has a default page and a largest page, and a `limit` past the largest page gets one of two answers. A device walks `GET /items`, `GET /edges` and `GET /items/{id}/edges` to fill its copy, so those listings and `GET /items/{id}/backrefs` answer the largest page, and a device built for a larger page still walks the listing by `next_cursor`. Every other listing refuses the `limit`, so a caller learns that it asked for more than one page holds. This section holds `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default` and `inbound-webhooks/deliveries-limit-default`.
+This section holds the pages of `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default` and `inbound-webhooks/deliveries-limit-default`.
 
 ### `search-and-filters/limit-listing-default`
 
