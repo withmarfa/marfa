@@ -3843,7 +3843,7 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
 
 /// Writes nothing where the catalog is unchanged, as `replace_types` does.
 /// Answers whether it changed.
-fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
+pub fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
     let wanted = edge_rows_of(rows)?;
     if edge_type_rows(conn)? == wanted {
         return Ok(false);
@@ -3971,6 +3971,20 @@ fn reindex_where(conn: &Connection, only: Option<&str>) -> Result<(), CoreError>
         )?;
     }
     Ok(())
+}
+
+/// Indexes one row for search from `properties`, with a catalog the caller
+/// has already loaded, so a writer indexing many rows loads it once.
+pub fn index_item(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    seq: i64,
+    id: &str,
+    type_id: &str,
+    state: &str,
+    properties: &Map<String, Value>,
+) -> Result<(), CoreError> {
+    index_row(conn, seq, id, state, properties, &catalog.indexing(type_id))
 }
 
 fn index_row(

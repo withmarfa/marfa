@@ -10,10 +10,10 @@ use crate::url_host;
 /// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
 /// removed through its own URL path, so one longer could be written and never
 /// removed.
-pub(crate) const MAX_TAG_LENGTH: usize = 128;
+pub const MAX_TAG_LENGTH: usize = 128;
 
 /// Most tags one item may hold: the server's `MAX_TAGS_PER_ITEM`.
-pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
+pub const MAX_TAGS_PER_ITEM: usize = 100;
 
 /// The tags a write may carry, as the server holds them: at most
 /// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
@@ -21,7 +21,7 @@ pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
 /// cannot name as a segment, and at most `MAX_TAG_LENGTH` UTF-16 code units.
 /// A write the server would refuse is refused here, so it is never saved or
 /// queued only to come back refused.
-pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
+pub fn tags(tags: &[String]) -> Result<(), CoreError> {
     let mut errors: Vec<String> = tags
         .iter()
         .enumerate()
@@ -64,7 +64,7 @@ pub(crate) fn tag_count(before: usize, after: usize) -> Result<(), CoreError> {
 }
 
 /// The property names a write may carry, as the server holds them: not empty.
-pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), CoreError> {
+pub fn property_names(properties: &Map<String, Value>) -> Result<(), CoreError> {
     refuse(
         properties
             .keys()
@@ -100,7 +100,7 @@ pub(crate) fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Res
 /// UUIDv7. The server refuses any other `400 invalid_id`, and then refuses a
 /// read of it the same way, so a copy that queued one could never read the
 /// row back to put itself right.
-pub(crate) fn id(field: &str, id: &str) -> Result<(), CoreError> {
+pub fn id(field: &str, id: &str) -> Result<(), CoreError> {
     let bytes = id.as_bytes();
     let hex = |b: &u8| b.is_ascii_digit() || (b'a'..=b'f').contains(b);
     let valid = bytes.len() == 36

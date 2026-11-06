@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-core", "marfa-cli", "bindings/node"]
+members = ["marfa-core", "marfa-cli", "marfa-server", "bindings/node"]
 exclude = ["bindings/swift"]
 
 [workspace.package]
