@@ -4,6 +4,11 @@
  */
 import {
   KNOWN_OVER,
+  MIN_PROBE_READINGS,
+  overTimeCeilingAlone,
+  PROBE_REFERENCE_MS,
+  slowRunner,
+  SLOW_RUNNER_FACTOR,
   type Figure,
   type Fragment,
   type Unit,
@@ -91,6 +96,10 @@ export function mergeFragments(
 export interface Verdict {
   passed: boolean;
   failedFigures: string[];
+  /** Over a time ceiling on a slow runner: shown, and failing nothing. */
+  notJudged: string[];
+  /** Why the runner counts as slow tonight; empty when it does not. */
+  slowRunner: string[];
   missingSteps: string[];
   problems: string[];
 }
@@ -108,10 +117,14 @@ export function verdictOf(
   file: FiguresFile,
   known: Readonly<Record<string, number>> = KNOWN_OVER,
 ): Verdict {
-  const failedFigures = file.figures
-    .filter(
-      (figure) => !figure.passed && knownOverIssue(figure, known) === null,
-    )
+  const reasons = slowRunner(file.figures);
+  const missed = file.figures.filter(
+    (figure) => !figure.passed && knownOverIssue(figure, known) === null,
+  );
+  const isNotJudged = (figure: Figure) =>
+    reasons.length > 0 && overTimeCeilingAlone(figure);
+  const failedFigures = missed
+    .filter((figure) => !isNotJudged(figure))
     .map((figure) => figure.name);
   return {
     passed:
@@ -119,6 +132,8 @@ export function verdictOf(
       file.missingSteps.length === 0 &&
       file.problems.length === 0,
     failedFigures,
+    notJudged: missed.filter(isNotJudged).map((figure) => figure.name),
+    slowRunner: reasons,
     missingSteps: file.missingSteps,
     problems: file.problems,
   };
@@ -154,6 +169,35 @@ function isFigure(value: unknown): value is Figure {
     UNITS.includes(f.unit as Unit) &&
     typeof f.passed === "boolean"
   );
+}
+
+/**
+ * A step's fragment file. A step killed while writing leaves it cut off, which
+ * is no fragment, so the merge names the step. A figure whose value was not a
+ * number comes back with a null value and must stay: it fails the night.
+ */
+export function parseFragment(text: string): Fragment | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== "object" || raw === null) return null;
+  const fragment = raw as Record<string, unknown>;
+  if (typeof fragment.step !== "string" || !Array.isArray(fragment.figures)) {
+    return null;
+  }
+  return {
+    step: fragment.step,
+    figures: fragment.figures.filter(
+      (figure: unknown): figure is Figure =>
+        typeof figure === "object" &&
+        figure !== null &&
+        typeof (figure as Record<string, unknown>).name === "string",
+    ),
+    items: typeof fragment.items === "number" ? fragment.items : null,
+  };
 }
 
 /**
@@ -235,11 +279,32 @@ function label(figure: Figure): string {
 function verdictCell(
   figure: Figure,
   known: Readonly<Record<string, number>>,
+  verdict: Verdict,
 ): string {
   const issue = knownOverIssue(figure, known);
   if (issue !== null) return `over, #${issue} open`;
+  if (verdict.notJudged.includes(figure.name)) return "not judged: slow runner";
   if (!figure.passed) return "**FAIL**";
   return figure.ceiling === null ? "recorded" : "pass";
+}
+
+/** Whether every ceiling was judged tonight, and if not, which were not and why. */
+function runnerLine(figures: readonly Figure[], verdict: Verdict): string {
+  if (verdict.slowRunner.length > 0) {
+    const missed =
+      verdict.notJudged.length > 0
+        ? `A figure over a time ceiling is not judged tonight: ${verdict.notJudged.join(", ")}.`
+        : "No figure was over a time ceiling, so every ceiling was judged.";
+    return `**Slow runner:** ${verdict.slowRunner.join("; ")}, over the ${SLOW_RUNNER_FACTOR} times that counts as slow. ${missed} A figure with errors or no measurement, a memory or size figure and \`seed_errors\` are judged as on any night.`;
+  }
+  const probed = figures.some(
+    (figure) =>
+      figure.name in PROBE_REFERENCE_MS &&
+      (figure.samples ?? 0) >= MIN_PROBE_READINGS,
+  );
+  return probed
+    ? "Runner: normal speed, so every ceiling was judged."
+    : "Runner: the probe left too few readings, so every ceiling was judged.";
 }
 
 /** The Markdown the run's summary shows. */
@@ -255,8 +320,16 @@ export function renderSummary(
     tonight.items === null
       ? "an instance of unknown size"
       : `${tonight.items.toLocaleString("en-US")} items`;
+  const notJudged = verdict.notJudged.length;
+  const headline = !verdict.passed
+    ? "**The night failed.**"
+    : notJudged > 0
+      ? `Passed, with ${notJudged} time figure${notJudged === 1 ? "" : "s"} not judged.`
+      : "Passed";
   lines.push(
-    `${verdict.passed ? "Passed" : "**The night failed.**"} ${size}, commit \`${tonight.commit}\`, profile ${tonight.profile}.`,
+    `${headline} ${size}, commit \`${tonight.commit}\`, profile ${tonight.profile}.`,
+    "",
+    runnerLine(tonight.figures, verdict),
     "",
   );
 
@@ -314,7 +387,7 @@ export function renderSummary(
           ? "new"
           : change(figure, old),
       ceiling,
-      verdictCell(figure, known),
+      verdictCell(figure, known, verdict),
     ];
     lines.push(`| ${row.map(cell).join(" | ")} |`);
   }

@@ -135,14 +135,20 @@ jobs:
   # Each of these stops only the processes it started, by process ID, and keeps
   # what it measured if one hangs. Every measuring step has a limit of its own,
   # and they add up, with room for the report, the upload and the verdict, to
-  # less than the job's. A full-size run takes 45 to 60 minutes, the seed 20
-  # to 30; the device and folder steps stay above their own 20-minute stops.
+  # no more than the job's. A full-size run takes 45 to 75 minutes, the seed 15
+  # to 45, depending on the host; the device and folder steps stay above their
+  # own 20-minute stops.
   # Each step writes a fragment under conformance/reports/scale/, so a step
   # that crashes or times out keeps the figures of the others. The `finish`
   # step merges them, compares them with the previous night's artifact and
   # writes the table to the job summary. A figure over its ceiling fails the
   # night unless it is listed in KNOWN_OVER (conformance/src/utils/scale/
   # figures.ts) against an open issue.
+  # Hosted runners vary by more than the ceilings allow, so each step first
+  # takes a reading of the host's speed, with no Marfa code. When the night's
+  # median is well over its reference, a figure over a time ceiling is shown as
+  # not judged and does not fail the night. Errors, a missing measurement,
+  # memory and size still fail it, and with no readings every figure is judged.
   scale:
     name: Scale
     timeout-minutes: 180
@@ -151,7 +157,6 @@ jobs:
       contents: read
       actions: read
     env:
-      MARFA_SCALE_STATE: ${{ github.workspace }}/../marfa-scale
       # The memory and restart figures are of the built server a person runs,
       # not the sources through tsx. The build is the step above. The built
       # server has no test hooks (clock shim, fault routes), which nothing
@@ -159,6 +164,10 @@ jobs:
       MARFA_SERVER_BUILT: "true"
       MARFA_DEVICE_BIN: ${{ github.workspace }}/core/target/release/marfa
     steps:
+      # A step, since a job's `env` cannot read the `runner` context. No `..`
+      # in it: `upload-artifact` refuses such a path.
+      - name: Name the state directory
+        run: echo "MARFA_SCALE_STATE=$RUNNER_TEMP/marfa-scale" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
@@ -179,22 +188,22 @@ jobs:
         run: cargo build --locked --release -p marfa-cli
 
       - name: Boot the server from this checkout
-        timeout-minutes: 3
+        timeout-minutes: 2
         working-directory: conformance
         run: pnpm marfa:up --state "$MARFA_SCALE_STATE"
 
       - name: Seed
-        timeout-minutes: 40
+        timeout-minutes: 60
         working-directory: conformance
         run: pnpm scale seed
       - name: Restart
         if: ${{ !cancelled() }}
-        timeout-minutes: 3
+        timeout-minutes: 2
         working-directory: conformance
         run: pnpm scale restart
       - name: Reads
         if: ${{ !cancelled() }}
-        timeout-minutes: 5
+        timeout-minutes: 3
         working-directory: conformance
         run: pnpm scale reads
       - name: Reads during bulk writes
@@ -204,7 +213,7 @@ jobs:
         run: pnpm scale bulk
       - name: Parent-of writes
         if: ${{ !cancelled() }}
-        timeout-minutes: 3
+        timeout-minutes: 2
         working-directory: conformance
         run: pnpm scale edges
       - name: Archive export
@@ -214,24 +223,24 @@ jobs:
         run: pnpm scale export
       - name: Storage
         if: ${{ !cancelled() }}
-        timeout-minutes: 3
+        timeout-minutes: 2
         working-directory: conformance
         run: pnpm scale storage
       # Each of these has a limit of its own inside the script; the step limit
       # is only a backstop that ends the step if the script itself hangs.
       - name: Device copy and follow
         if: ${{ !cancelled() }}
-        timeout-minutes: 25
+        timeout-minutes: 23
         working-directory: conformance
         run: pnpm scale device
       - name: Folder first sync
         if: ${{ !cancelled() }}
-        timeout-minutes: 25
+        timeout-minutes: 23
         working-directory: conformance
         run: pnpm scale folder
       - name: Folder watch
         if: ${{ !cancelled() }}
-        timeout-minutes: 20
+        timeout-minutes: 17
         working-directory: conformance
         run: pnpm scale watch
 
@@ -255,6 +264,13 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+      # Before the log and the stop: a night that fails only on its figures
+      # keeps the log too, and `marfa:down` clears the state directory.
+      - name: Judge the night
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm scale judge
+
       - name: Keep the server log
         if: failure()
         uses: actions/upload-artifact@v7
@@ -269,11 +285,6 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$MARFA_SCALE_STATE"
-
-      - name: Judge the night
-        if: ${{ !cancelled() }}
-        working-directory: conformance
-        run: pnpm scale judge
 
   report-failure:
     name: Report a failed scheduled run

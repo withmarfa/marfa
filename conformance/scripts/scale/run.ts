@@ -5,7 +5,8 @@
  *
  * A step records its figures whether or not they meet their ceilings and
  * ends normally; one that crashes ends non-zero and leaves what it had
- * recorded. `finish` merges and reports, and `judge` fails the night.
+ * recorded. `finish` merges and reports, and `judge` fails the night. Each
+ * measuring step first takes one reading of the runner's speed (`probe.ts`).
  */
 import { bulk } from "./bulk.js";
 import { device } from "./device.js";
@@ -13,6 +14,7 @@ import { edges } from "./edges.js";
 import { exportArchive } from "./export.js";
 import { finish, judge } from "./finish.js";
 import { folder } from "./folder.js";
+import { recordProbe } from "./probe.js";
 import { reads } from "./reads.js";
 import { restart } from "./restart.js";
 import { seed } from "./seed.js";
@@ -41,6 +43,7 @@ if (step === undefined) {
   process.exit(2);
 }
 try {
+  if (name !== "finish" && name !== "judge") recordProbe(name);
   await step();
 } catch (error) {
   console.error(

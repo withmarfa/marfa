@@ -40,6 +40,7 @@ export function benchmarkEvent(
   file: FiguresFile,
   sender: { token: string; distinctId: string },
 ): BenchmarkEvent {
+  const verdict = verdictOf(file);
   const properties: BenchmarkEvent["properties"] = {
     // One fixed id for every night would otherwise make one person.
     $process_person_profile: false,
@@ -47,8 +48,10 @@ export function benchmarkEvent(
     run_id: file.runId,
     profile: file.profile,
     items: file.items,
-    passed: verdictOf(file).passed,
+    passed: verdict.passed,
     failed_count: failedCount(file),
+    slow_runner: verdict.slowRunner.length > 0,
+    not_judged_count: verdict.notJudged.length,
   };
   for (const figure of file.figures) {
     // A figure that took no measurement has no value to send: its zero would

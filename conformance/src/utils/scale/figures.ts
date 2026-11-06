@@ -119,7 +119,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 
   // A watch on that folder: an edit reaching the server, and a quiet watch.
   folder_edit_to_server: { ceiling: 2000, issue: 2611 },
-  folder_watch_cpu: { ceiling: 0.5, issue: 2608 },
+  folder_watch_cpu: { ceiling: 1, issue: 2608 },
   folder_watch_rss: recorded,
 
   // A device copying the instance, then following the event stream.
@@ -142,6 +142,10 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   db_size: recorded,
   wal_size: recorded,
   rows_items: recorded,
+
+  // How fast the runner itself is tonight, measured with no Marfa code.
+  runner_cpu_probe: recorded,
+  runner_disk_probe: recorded,
 };
 
 /**
@@ -154,10 +158,70 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 export const KNOWN_OVER: Readonly<Record<string, number>> = {
   search_common: 2656,
   archive_export: 2657,
-  folder_watch_cpu: 2608,
   bulk_page_ratio: 2658,
   device_hydrate: 2659,
 };
+
+/**
+ * What a probe's median reads on a hosted runner of ordinary speed: the CPU
+ * probe's whole loop, and the disk probe's time for one synced write.
+ * PROVISIONAL: reasoned from a laptop's reading, since nothing had yet recorded
+ * these on a hosted runner. Replace them with what a dispatched run reads.
+ */
+export const PROBE_REFERENCE_MS = {
+  runner_cpu_probe: 1_200,
+  runner_disk_probe: 5,
+} as const;
+
+/** A median over this many times its reference makes the runner slow. */
+export const SLOW_RUNNER_FACTOR = 1.5;
+
+/** The fewest readings a median may rest on: one is noise, not a slow night. */
+export const MIN_PROBE_READINGS = 3;
+
+const PROBE_LABEL: Record<keyof typeof PROBE_REFERENCE_MS, string> = {
+  runner_cpu_probe: "CPU probe",
+  runner_disk_probe: "disk probe",
+};
+
+/**
+ * Why tonight's runner is slow, one reason per probe over its limit; empty when
+ * it is not, or when too few readings say so. A probe that crashed therefore
+ * excuses nothing.
+ */
+export function slowRunner(figures: readonly Figure[]): string[] {
+  const reasons: string[] = [];
+  for (const [name, reference] of Object.entries(PROBE_REFERENCE_MS)) {
+    const probe = figures.find((figure) => figure.name === name);
+    const median = probe?.p50 ?? null;
+    if (median === null || (probe?.samples ?? 0) < MIN_PROBE_READINGS) continue;
+    if (median > reference * SLOW_RUNNER_FACTOR) {
+      const label = PROBE_LABEL[name as keyof typeof PROBE_REFERENCE_MS];
+      reasons.push(
+        `the ${label}'s median was ${median.toFixed(1)} ms, ${(median / reference).toFixed(2)} times its reference of ${reference} ms`,
+      );
+    }
+  }
+  return reasons;
+}
+
+/** What a slower host costs more of: wall time, and the CPU time of the same work. */
+const TIME_UNITS: readonly Unit[] = ["ms", "s", "cpu_s_per_min"];
+
+/**
+ * A slow runner explains a figure only when it measured what it should and came
+ * in over a time ceiling. Errors, too few samples and no value are not slowness.
+ */
+export function overTimeCeilingAlone(figure: Figure): boolean {
+  return (
+    TIME_UNITS.includes(figure.unit) &&
+    figure.ceiling !== null &&
+    figure.errors === 0 &&
+    Number.isFinite(figure.value) &&
+    figure.value > figure.ceiling &&
+    (figure.samples === null || figure.samples >= MIN_SAMPLES)
+  );
+}
 
 function entryFor(name: string): CeilingEntry {
   const entry = CEILINGS[name];

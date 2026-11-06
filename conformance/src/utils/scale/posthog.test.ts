@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { distribution, scalar } from "./figures.js";
+import { PROBE_REFERENCE_MS, distribution, scalar } from "./figures.js";
 import { benchmarkEvent, captureUrl, propertyName } from "./posthog.js";
 import type { FiguresFile } from "./report.js";
 
@@ -72,12 +72,14 @@ describe("the event", () => {
         "get_item_p95_ms",
         "items",
         "items_seeded_count",
+        "not_judged_count",
         "passed",
         "profile",
         "rss_at_rest_mb",
         "run_id",
         "seed_rate_per_s",
         "server_restart_ms",
+        "slow_runner",
       ].sort(),
     );
   });
@@ -137,10 +139,12 @@ describe("the event", () => {
         "commit",
         "failed_count",
         "items",
+        "not_judged_count",
         "passed",
         "profile",
         "rss_peak_mb",
         "run_id",
+        "slow_runner",
       ].sort(),
     );
     expect(unmeasured.properties).toMatchObject({
@@ -166,5 +170,48 @@ describe("the capture address", () => {
     expect(captureUrl("https://eu.i.posthog.com/")).toBe(
       "https://eu.i.posthog.com/i/v0/e/",
     );
+  });
+});
+
+describe("a night on a slow runner", () => {
+  const probe = (
+    name: "runner_cpu_probe" | "runner_disk_probe",
+    times: number,
+  ) =>
+    distribution(
+      name,
+      "ms",
+      Array.from({ length: 5 }, () => PROBE_REFERENCE_MS[name] * times),
+    );
+  const event = (cpuTimes: number) =>
+    benchmarkEvent(
+      {
+        ...file,
+        figures: [
+          probe("runner_cpu_probe", cpuTimes),
+          probe("runner_disk_probe", 1),
+          scalar("server_restart", "ms", 5_000),
+        ],
+      },
+      { token: "t", distinctId: "d" },
+    ).properties;
+
+  it("says so, counts what it did not judge and keeps the probe's figures", () => {
+    expect(event(2)).toMatchObject({
+      passed: true,
+      slow_runner: true,
+      not_judged_count: 1,
+      failed_count: 0,
+    });
+    expect(event(2)).toHaveProperty("runner_cpu_probe_p50_ms");
+  });
+
+  it("sends the same figure as failed on a normal runner", () => {
+    expect(event(1)).toMatchObject({
+      passed: false,
+      slow_runner: false,
+      not_judged_count: 0,
+      failed_count: 1,
+    });
   });
 });
