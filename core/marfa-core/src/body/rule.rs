@@ -1804,7 +1804,7 @@ fn read_body(
     let id = item.id.as_str();
     let body = body_of(catalog, item);
     let mut links = BodyLinks::default();
-    let names = text::links(body);
+    let names = text::body_links(body);
     let embeds = text::embeds(body);
     if names.is_empty() && embeds.is_empty() {
         return Ok(links);
@@ -1831,8 +1831,8 @@ fn read_body(
     };
     if !names.is_empty() {
         let references = Others::load(conn, catalog, &Placements, &references_of(conn, id)?)?;
-        for raw in names {
-            let typed = Typed::new(&raw);
+        for link in names {
+            let typed = Typed::new(&link.target);
             let resolved = link_offline(
                 conn,
                 id,
@@ -1842,8 +1842,8 @@ fn read_body(
                 Reading::Written(None),
             )?;
             links.links.push(BodyName {
-                text: text::render_link(&raw),
-                target: target(Kind::Link, &raw, resolved),
+                text: text::render_link(&link.written),
+                target: target(Kind::Link, &link.target, resolved),
                 name: typed.name,
             });
         }
