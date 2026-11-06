@@ -583,12 +583,12 @@ fn only_an_edge_the_server_gave_the_copy_proves_a_refused_create_satisfied() {
         "INSERT INTO read_backs (subject, id) VALUES ('edge', 'edge')",
         [],
     );
-    folder.drain().unwrap();
+    folder.clear_answered().unwrap();
     assert!(in_queue(folder, &refused), "an edge with a read owed");
 
     // The witness: with all of that gone, the server's edge proves it.
     execute(folder, "DELETE FROM read_backs", []);
-    folder.drain().unwrap();
+    folder.clear_answered().unwrap();
     assert!(!in_queue(folder, &refused));
 }
 
@@ -661,14 +661,14 @@ fn a_refused_create_with_a_read_or_a_receipt_owed_stays() {
 }
 
 #[test]
-fn a_refused_create_whose_payload_cannot_be_read_stays_and_stops_no_drain() {
+fn a_refused_create_whose_payload_names_no_edge_stays_and_stops_no_drain() {
     let fixture = fixture();
     let folder = &fixture.folder;
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
     let damaged = seeded(&fixture, "damaged", ONE_TO_ONE, json!({}));
     execute(
         folder,
-        "UPDATE queue SET payload = 'not json' WHERE id = ?1",
+        "UPDATE queue SET payload = '{}' WHERE id = ?1",
         [&damaged],
     );
     let plain = seeded(&fixture, "plain", ONE_TO_ONE, json!({}));

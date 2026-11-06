@@ -9,8 +9,8 @@ use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{
-    BlockedReason, Completeness, Edge, Item, ItemState, QueuedWrite, SliceTier, Subject, Tier,
-    Verdict, WriteKind,
+    BlockedReason, Completeness, Edge, EdgeDraft, Item, ItemState, QueuedWrite, SliceTier, Subject,
+    Tier, Verdict, WriteKind,
 };
 use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
 
