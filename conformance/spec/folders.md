@@ -2110,9 +2110,9 @@ While a file flagged `edges` because a name matched no item or more than one ite
 
 ### `folders/edge-held-cleared`
 
-When a held edge name resolves to one item, a device MUST create the edge, and, when no other line or link holds the file, clear its `edges` flag.
+When a held edge name resolves to one item, a device MUST create the edge, unless `folders/edge-line-invalid-keeps-type` leaves the file's edges of that type at that end unchanged, and, when no other line or link holds the file, clear its `edges` flag.
 
-**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`.
+**Tests:** `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`, `› resolves a link once its target, created on another device, is pulled in`, `› never guesses between two items of one name, and resolves once one goes to the bin`, `› holds a link as waiting while the server is out of reach, and resolves it once it answers`, `› holds the links a server without the title lookup left waiting, says so once, and resolves them once it has one, the files unedited`, `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`.
 
 ### `folders/edge-held-never-guessed`
 
@@ -2170,9 +2170,17 @@ When an edge has arrived from elsewhere but has not appeared in the file, a devi
 
 ### `folders/edge-line-invalid-keeps-type`
 
-If an edge line has an unresolved target, names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type unchanged.
+If an edge line has an unresolved target, names its own item, is at the wrong end, or exceeds its end's cardinality, then a device MUST leave that file's edges of that type at that end unchanged.
 
-**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`.
+**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`.
+
+### `folders/edge-line-held-whole`
+
+If a name on an edge line matches no readable item, matches more than one readable item, or could not be looked up, then a device MUST NOT create an edge for any other name on that line.
+
+**Reason:** The file is already flagged, so the person can see and fix the name. Writing part of a line would leave what the line owns unclear.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a line while one of its names matches no item, and every edge once it does`, `› writes no edge of a line while one of its names matches two items, and every edge once it names one`, `› writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers`, `› writes no edge of a line while the lookup of one of its names is refused, and every edge once it is answered`, `› writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`.
 
 ### `folders/edge-line-invalid-report`
 

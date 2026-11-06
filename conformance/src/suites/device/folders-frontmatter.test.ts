@@ -558,6 +558,256 @@ describe("edges in frontmatter", () => {
     ]);
   });
 
+  it("writes no edge of a line while one of its names matches no item, and every edge once it does", async () => {
+    const made = await edgeHarness(
+      "folder-edge-line-unmatched",
+      [titled(alpha, "Alpha")],
+      [],
+    );
+    harness = made.harness;
+    const text = '---\nabout:\n  - "[[Alpha]]"\n  - "[[Plans]]"\n---\nnamed\n';
+    put(harness, "New.md", text);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+      "a line naming something nothing answers to was not flagged",
+    ).toEqual([["New.md", "edges"]]);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain(
+      "[[Plans]] in its about line matches no item",
+    );
+    expect(
+      sentEdgeWrites(harness),
+      "the name that resolves made its edge while another on its line matched nothing",
+    ).toEqual([]);
+    expect(read(harness, "New.md"), "the file was not left as typed").toBe(
+      text,
+    );
+
+    // The witness: the same line, unedited, with both names resolving.
+    put(harness, "Plans.md", "The plans.\n");
+    const resolved = await harness.folder.push();
+    expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.scan.flagged).toEqual([]);
+    const idOf = (title: string) =>
+      String(
+        sentCreates(harness!).find(
+          (sent) =>
+            (sent.properties as Record<string, unknown>).title === title,
+        )?.id,
+      );
+    expect(sentEdgeWrites(harness).sort()).toEqual(
+      [
+        `create ${idOf("New")} about ${alpha}`,
+        `create ${idOf("New")} about ${idOf("Plans")}`,
+      ].sort(),
+    );
+    expect(frontOf(harness, "New.md")).toContain(
+      'about:\n  - "[[Alpha]]"\n  - "[[Plans]]"',
+    );
+  });
+
+  it("writes no edge of a line while one of its names matches two items, and every edge once it names one", async () => {
+    const twin = "01a00000-0000-7000-8000-00000000e10b";
+    const made = await edgeHarness(
+      "folder-edge-line-ambiguous",
+      [
+        titled(alpha, "Alpha"),
+        titled(gamma, "Gamma"),
+        titled(beta, "Twin"),
+        titled(twin, "twin", "core.bookmark"),
+      ],
+      [],
+    );
+    harness = made.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    edit(
+      harness,
+      "Alpha.md",
+      /marfa_id:/,
+      'about:\n  - "[[Gamma]]"\n  - "[[Twin]]"\nmarfa_id:',
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Alpha.md", "edges"]]);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain("more than one");
+    expect(
+      sentEdgeWrites(harness),
+      "the name that resolves made its edge while another on its line named two items",
+    ).toEqual([]);
+
+    // The witness: the same line, naming one of the two.
+    edit(harness, "Alpha.md", "[[Twin]]", `[[${twin}]]`);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness).sort()).toEqual(
+      [
+        `create ${alpha} about ${gamma}`,
+        `create ${alpha} about ${twin}`,
+      ].sort(),
+    );
+  });
+
+  it("writes no edge of a line while a lookup of one of its names waits, out of reach or refused as a call, and every edge once it answers", async () => {
+    let answering = false;
+    const made = await edgeHarness(
+      "folder-edge-line-waiting",
+      [titled(alpha, "Alpha"), titled(beta, "Beta"), titled(gamma, "Gamma")],
+      [],
+      {
+        lookup: () =>
+          answering ? undefined : refusal(404, "not_found", "Not found"),
+      },
+    );
+    harness = made.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // An id resolves from the copy, so only the title waits on the server.
+    edit(
+      harness,
+      "Alpha.md",
+      /marfa_id:/,
+      `about:\n  - "[[${beta}]]"\n  - "[[Gamma]]"\nmarfa_id:`,
+    );
+    await harness.server.offline();
+    const offline = await harness.folder.push();
+    await harness.server.online();
+    expect(offline.ok, JSON.stringify(offline)).toBe(true);
+    if (!offline.ok) return;
+    expect(offline.value.scan.flagged[0]?.reason).toContain(
+      "[[Gamma]] in its about line is looked up once the server can be asked",
+    );
+
+    // A write queued out of reach would be sent by this push, which the
+    // server answers though it still refuses the lookup.
+    const refused = await harness.folder.push();
+    expect(refused.ok, JSON.stringify(refused)).toBe(true);
+    if (!refused.ok) return;
+    expect(refused.value.scan.flagged[0]?.reason).toContain(
+      "[[Gamma]] in its about line is looked up once the server can be asked",
+    );
+    expect(
+      sentEdgeWrites(harness),
+      "the name that resolves made its edge while another on its line waited",
+    ).toEqual([]);
+
+    // The witness: the same line, unedited, once the lookup is answered.
+    answering = true;
+    const resolved = await harness.folder.push();
+    expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.scan.flagged).toEqual([]);
+    expect(sentEdgeWrites(harness).sort()).toEqual(
+      [
+        `create ${alpha} about ${beta}`,
+        `create ${alpha} about ${gamma}`,
+      ].sort(),
+    );
+  });
+
+  it("writes no edge of a line while the lookup of one of its names is refused, and every edge once it is answered", async () => {
+    let refusing = true;
+    const made = await edgeHarness(
+      "folder-edge-line-refused",
+      [titled(alpha, "Alpha"), titled(beta, "Beta"), titled(gamma, "Gamma")],
+      [],
+      {
+        lookup: (name) =>
+          refusing && name === "Gamma"
+            ? refusal(403, "forbidden", "This key may not list here")
+            : undefined,
+      },
+    );
+    harness = made.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // An id is left out of the lookup, so the call carries the one name, and
+    // the server's refusal is that name's.
+    edit(
+      harness,
+      "Alpha.md",
+      /marfa_id:/,
+      `about:\n  - "[[${beta}]]"\n  - "[[Gamma]]"\nmarfa_id:`,
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Alpha.md", "edges"]]);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain(
+      "[[Gamma]] in its about line could not be looked up (forbidden",
+    );
+    expect(
+      sentEdgeWrites(harness),
+      "the name that resolves made its edge while another on its line was refused",
+    ).toEqual([]);
+
+    // The witness: the file edited, as a refused name is asked again only
+    // then, and the lookup answered.
+    refusing = false;
+    edit(harness, "Alpha.md", /\nAlpha\n$/, "\nAlpha, edited\n");
+    const resolved = await harness.folder.push();
+    expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.scan.flagged).toEqual([]);
+    expect(sentEdgeWrites(harness).sort()).toEqual(
+      [
+        `create ${alpha} about ${beta}`,
+        `create ${alpha} about ${gamma}`,
+      ].sort(),
+    );
+  });
+
+  it("writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents", async () => {
+    const made = await edgeHarness(
+      "folder-edge-line-one-parent",
+      [titled(project, "Project")],
+      [],
+    );
+    harness = made.harness;
+    const text =
+      '---\nchild-of:\n  - "[[Project]]"\n  - "[[Nowhere]]"\n---\nchild\n';
+    put(harness, "Child.md", text);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Child.md", "edges"]]);
+    expect(pushed.value.scan.flagged[0]?.reason).toContain(
+      "[[Nowhere]] in its child-of line matches no item",
+    );
+    expect(sentEdgeWrites(harness)).toEqual([]);
+    expect(read(harness, "Child.md")).toBe(text);
+
+    // Once both resolve the line names two parents, and an item has one.
+    put(harness, "Nowhere.md", "Now somewhere.\n");
+    const two = await harness.folder.push();
+    expect(two.ok, JSON.stringify(two)).toBe(true);
+    if (!two.ok) return;
+    expect(
+      two.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([["Child.md", "edges"]]);
+    expect(two.value.scan.flagged[0]?.reason).toContain("one at most");
+    expect(sentEdgeWrites(harness)).toEqual([]);
+
+    // The witness: the line naming one parent makes the edge.
+    edit(harness, "Child.md", '  - "[[Nowhere]]"\n', "");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const childId = String(
+      sentCreates(harness).find(
+        (sent) =>
+          (sent.properties as Record<string, unknown>).title === "Child",
+      )?.id,
+    );
+    expect(sentEdgeWrites(harness)).toEqual([
+      `create ${project} parent-of ${childId}`,
+    ]);
+  });
+
   it("leaves an existing link unchanged when a same-named item appears", async () => {
     const newcomer = "01a00000-0000-7000-8000-00000000e109";
     let appeared: Record<string, unknown> = {};
