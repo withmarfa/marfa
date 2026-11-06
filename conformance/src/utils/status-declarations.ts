@@ -73,9 +73,8 @@ const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 
 /**
  * The sign-in library's own routes, which it serves under one `/auth/*`
- * pattern: the server's route walk sees the pattern, not these, so each is
- * named here with why. A request under the pattern is held to the route its
- * path names.
+ * pattern, so each is named here with why. A request under the pattern is held
+ * to the route its path names.
  */
 export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "POST /auth/sign-in/email": "password sign-in, which the sign-in form calls",
@@ -103,8 +102,8 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
 
 /**
  * The routes the server serves outside its document, each with why: the
- * server's own list, which its route walk holds to its route table, and the
- * sign-in library's routes. A served route missing from here is reported, so
+ * server's own list and the sign-in library's routes. A served route missing
+ * from here is reported, so
  * the document cannot lose a door into this bucket without somebody writing
  * the reason down.
  */

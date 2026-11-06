@@ -1,6 +1,6 @@
 # Coverage
 
-Every operation the server publishes in its OpenAPI document, with the fixture that asserts it. `compliance/instance.test.ts` reads the served document and fails when a published operation is missing from this table, so an operation cannot appear on the server without a row here.
+Every operation the server publishes in its OpenAPI document, with the fixture that asserts it. `compliance/instance.test.ts` reads the served document and fails when a published operation is missing from this table, so a published operation cannot go without a row here.
 
 Status values:
 

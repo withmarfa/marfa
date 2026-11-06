@@ -415,9 +415,9 @@ describe("the instance", () => {
 
   it("names no release for a build made from a checkout", async () => {
     // The server this run boots is a checkout, never a numbered release. The
-    // field it omits is one the server gives a release build: `app.root.test.ts`
-    // in the server's package and `scripts/check-image.sh` against a built image
-    // show the same door giving it.
+    // field it omits is one the server gives a release build:
+    // `scripts/check-image.sh` against a built image shows the same door giving
+    // it.
     const root = await client.root();
     expect(root.ok).toBe(true);
     expect(root.data).not.toHaveProperty("release");
