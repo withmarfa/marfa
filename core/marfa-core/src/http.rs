@@ -34,8 +34,9 @@ pub const EDGE_PAGE_LIMIT: u32 = 500;
 pub const BULK_GET_LIMIT: usize = 100;
 
 /// The server's cap on a request's body unless its instance names another,
-/// past which it answers `413 request_too_large`. An instance does not say
-/// what it set, so a device holds every request to the default.
+/// past which it answers `413 request_too_large` and closes the connection.
+/// An instance does not say what it set, so a device holds every request to
+/// the default.
 pub const REQUEST_LIMIT: usize = 1_048_576;
 
 /// The most values `POST /items/lookup` takes in one request
@@ -774,6 +775,25 @@ impl Http {
         ))
     }
 
+    /// A transport failure sending a text body of `length` bytes. A server
+    /// closes the connection on a body over its cap with the rest unread, and
+    /// the close can destroy its `413` before the device reads it, so a body
+    /// past the default cap that meets a closed connection is taken as refused
+    /// (`queue-and-verdicts/request-too-large-unheard`).
+    fn cut_off(&self, length: usize, error: ureq::Error) -> CoreError {
+        if length <= REQUEST_LIMIT || !closed_while_connected(&error) {
+            return self.unreached(error);
+        }
+        CoreError::Server {
+            status: 413,
+            code: "request_too_large".into(),
+            message: format!(
+                "the connection closed with no answer while {length} bytes were sent, past the {REQUEST_LIMIT} a server takes unless its instance names more"
+            ),
+            details: None,
+        }
+    }
+
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
         let page: WirePage<WireType> = self.get_json(&["types"], &[])?;
         self.whole_catalog(page.next_cursor, "type")?;
@@ -1315,13 +1335,34 @@ impl Http {
             if let Some(instance) = &self.instance {
                 request = request.header(INSTANCE_HEADER, instance);
             }
-            let request = request.body(outgoing.body).map_err(|error| {
+            let request = closing_past_limit(request, outgoing.body.len())
+                .body(outgoing.body)
+                .map_err(|error| {
                 CoreError::Invalid(format!("this write cannot be sent: {error}"))
             })?;
             self.agent
                 .run(request)
-                .map_err(|error| self.unreached(error))
-        })?;
+                .map_err(|error| self.cut_off(outgoing.body.len(), error))
+        });
+        let response = match response {
+            Err(CoreError::Server {
+                status,
+                code,
+                message,
+                ..
+            }) if status == 413 => {
+                return Ok(Answer {
+                    status,
+                    body: serde_json::json!({ "error": { "code": code, "message": message } })
+                        .to_string(),
+                    code,
+                    retry_after_seconds: None,
+                    replayed: false,
+                    contract_named: true,
+                });
+            }
+            response => response?,
+        };
         let status = response.status().as_u16();
         self.hold(&response, status, true)?;
         let contract_named = header(&response, CONTRACT_HEADER).is_some();
@@ -1567,12 +1608,18 @@ impl Http {
         let send = |authorization: Option<&str>, text: Option<&str>| {
             let builder = builder(authorization);
             match text {
-                Some(text) => {
-                    self.dispatch(builder.body(text).map_err(cannot_send)?, budget.clone())
-                }
-                None => self.dispatch(builder.body(()).map_err(cannot_send)?, budget.clone()),
+                Some(text) => self
+                    .dispatch(
+                        closing_past_limit(builder, text.len())
+                            .body(text)
+                            .map_err(cannot_send)?,
+                        budget.clone(),
+                    )
+                    .map_err(|error| self.cut_off(text.len(), error)),
+                None => self
+                    .dispatch(builder.body(()).map_err(cannot_send)?, budget.clone())
+                    .map_err(network),
             }
-            .map_err(network)
         };
         let text = match &call.body {
             CallBody::None => None,
@@ -1997,6 +2044,34 @@ fn http_date(raw: &str) -> Option<i64> {
 }
 
 /// Only for an answer naming the server's contract; `Http::refused` decides.
+/// A server closes the connection a body over its cap arrived on, just after
+/// answering. Told to close first, the client does not pool that connection,
+/// where the next request could meet the reset.
+fn closing_past_limit(
+    builder: ureq::http::request::Builder,
+    length: usize,
+) -> ureq::http::request::Builder {
+    if length > REQUEST_LIMIT {
+        builder.header("Connection", "close")
+    } else {
+        builder
+    }
+}
+
+/// The peer closed a connection that was made: never a failure to reach it.
+fn closed_while_connected(error: &ureq::Error) -> bool {
+    use std::io::ErrorKind::{
+        BrokenPipe, ConnectionAborted, ConnectionReset, NotConnected, UnexpectedEof,
+    };
+    matches!(
+        error,
+        ureq::Error::Io(error) if matches!(
+            error.kind(),
+            BrokenPipe | ConnectionAborted | ConnectionReset | NotConnected | UnexpectedEof
+        )
+    )
+}
+
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
@@ -2475,6 +2550,211 @@ mod tests {
             assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
             serving.join().unwrap().unwrap();
         }
+    }
+
+    /// Reads a request's head, answers `413` and closes with the rest of the
+    /// body unread, as the server does for a body over its cap.
+    fn serve_closing_early() -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let _ = Read::read(&mut socket, &mut [0u8; 4096]);
+            let body = r#"{"error":{"code":"request_too_large"}}"#;
+            let _ = write!(
+                socket,
+                "HTTP/1.1 413 Payload Too Large\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        (url, serving)
+    }
+
+    /// Far past what the system's socket buffers take without the peer reading.
+    const LONG_BODY: usize = 32 * 1024 * 1024;
+
+    fn post_items(body: &str) -> Call<'_> {
+        Call {
+            method: Method::Post,
+            segments: &["items"],
+            params: &[],
+            headers: &[],
+            body: CallBody::Json(body),
+            credential: true,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn a_connection_closed_while_sending_a_body_over_the_limit_is_too_large() {
+        let (url, serving) = serve_closing_early();
+        let body = "x".repeat(LONG_BODY);
+        let answer = Http::new(&url, "k")
+            .unwrap()
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: &body,
+                idempotency_key: "key",
+            })
+            .unwrap();
+        serving.join().unwrap();
+        assert_eq!(
+            (answer.status, answer.code.as_str()),
+            (413, "request_too_large")
+        );
+        assert!(!answer.is_environmental(), "{}", answer.body);
+
+        let (url, serving) = serve_closing_early();
+        let refused = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items(&body), true)
+            .map(|_| "answered");
+        serving.join().unwrap();
+        assert!(
+            matches!(
+                &refused,
+                Err(CoreError::Server { status: 413, code, .. }) if code == "request_too_large"
+            ),
+            "{refused:?}"
+        );
+    }
+
+    /// Answers one request with a `413`, leaves its connection open and says
+    /// whether the client sent the next request down it.
+    fn serve_noting_reuse() -> (String, std::thread::JoinHandle<bool>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            let read_request = |socket: &mut std::net::TcpStream| {
+                let mut seen = Vec::new();
+                let mut chunk = [0u8; 65536];
+                loop {
+                    let got = Read::read(socket, &mut chunk).unwrap();
+                    seen.extend_from_slice(&chunk[..got]);
+                    let text = String::from_utf8_lossy(&seen).to_lowercase();
+                    let Some(end) = text.find("\r\n\r\n") else {
+                        if got == 0 {
+                            return false;
+                        }
+                        continue;
+                    };
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                    if seen.len() >= end + 4 + length {
+                        return true;
+                    }
+                }
+            };
+            let empty = |status: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 2\r\n\r\n{{}}"
+                )
+            };
+            let (mut first, _) = listener.accept().unwrap();
+            assert!(read_request(&mut first));
+            first.write_all(empty("413 Payload Too Large").as_bytes()).unwrap();
+            let reused = read_request(&mut first);
+            if reused {
+                first.write_all(empty("200 OK").as_bytes()).unwrap();
+            } else {
+                let (mut second, _) = listener.accept().unwrap();
+                assert!(read_request(&mut second));
+                second.write_all(empty("200 OK").as_bytes()).unwrap();
+            }
+            reused
+        });
+        (url, serving)
+    }
+
+    #[test]
+    fn a_connection_that_carried_a_body_over_the_limit_is_not_used_again() {
+        let long = "x".repeat(REQUEST_LIMIT + 1);
+        let next = |http: &Http| {
+            http.fetch(
+                Call {
+                    method: Method::Get,
+                    segments: &["items"],
+                    params: &[],
+                    headers: &[],
+                    body: CallBody::None,
+                    credential: true,
+                    stream: false,
+                },
+                true,
+            )
+            .map(|_| ())
+            .unwrap();
+        };
+
+        let (url, serving) = serve_noting_reuse();
+        let http = Http::new(&url, "k").unwrap();
+        let answer = http
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: &long,
+                idempotency_key: "key",
+            })
+            .unwrap();
+        assert_eq!(answer.status, 413);
+        next(&http);
+        assert!(!serving.join().unwrap());
+
+        // The witness: within the limit, the same exchange shares the connection.
+        let (url, serving) = serve_noting_reuse();
+        let http = Http::new(&url, "k").unwrap();
+        let answer = http
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: "{}",
+                idempotency_key: "key",
+            })
+            .unwrap();
+        assert_eq!(answer.status, 413);
+        next(&http);
+        assert!(serving.join().unwrap());
+
+        let (url, serving) = serve_noting_reuse();
+        let http = Http::new(&url, "k").unwrap();
+        let _ = http.fetch(post_items(&long), true);
+        next(&http);
+        assert!(!serving.join().unwrap());
+    }
+
+    #[test]
+    fn a_closed_connection_stays_a_network_failure_within_the_limit_or_unconnected() {
+        // Read whole, then closed with no answer.
+        let (url, serving) = serve(Vec::new());
+        let body = "x".repeat(REQUEST_LIMIT);
+        let within = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items(&body), true)
+            .map(|_| "answered");
+        serving.join().unwrap().unwrap();
+        assert!(matches!(&within, Err(CoreError::Network(_))), "{within:?}");
+
+        // Nothing listens, so nothing of the body was refused.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let body = "x".repeat(REQUEST_LIMIT + 1);
+        let unconnected = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items(&body), true)
+            .map(|_| "answered");
+        assert!(
+            matches!(&unconnected, Err(CoreError::Network(_))),
+            "{unconnected:?}"
+        );
     }
 
     /// Answers one request with `answer`, written as it is, once the request
