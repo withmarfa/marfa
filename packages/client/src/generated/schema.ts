@@ -2625,7 +2625,7 @@ export interface components {
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
-            /** @description The field that holds an item's body for display. The field holds Markdown. */
+            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise. */
             body_field?: string;
             /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
             name_from_body?: boolean;
@@ -4085,7 +4085,7 @@ export interface components {
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
-            /** @description The longest value a `string` or `enum` field allows. */
+            /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
             maxLength?: number;
             /** @description The most elements an `array` field allows. */
             maxItems?: number;
