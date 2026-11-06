@@ -424,6 +424,43 @@ describe("folder clock and scan boundaries", () => {
     await device.hooks.release("folder-pass-ended");
   });
 
+  it("sends the delete of a file whose grace ends after the sweep passed it over, with no event to wake the watch", async () => {
+    const harness = await prepared("binding-grace-ends-in-pass", {
+      "note.md": "---\ntitle: Note\n---\nwords\n",
+    });
+    const { device, dir, server } = harness;
+    const deletes = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname.startsWith("/items/"),
+      ).length;
+    unlinkSync(join(dir, "note.md"));
+    await device.hooks.hold("folder-pass-pull");
+    await startFirstPass(harness);
+    // The sweep is done, inside the grace, and the pass is not.
+    await untilHeld(device, "folder-pass-pull");
+    expect(deletes()).toBe(0);
+    await device.clock.advance(5_000);
+    await device.hooks.release("folder-pass-pull");
+    await untilHeld(device, "folder-pass-ended");
+    expect(deletes()).toBe(0);
+
+    await nextTurn(harness);
+    await device.hooks.release("folder-watch-turn");
+    await vi.waitFor(
+      async () => {
+        await device.clock.advance(1_000);
+        expect(
+          await device.hooks.waiting("folder-pass-ended"),
+          "the watch came to rest with a file past its grace and undecided",
+        ).toBe(1);
+      },
+      { timeout: 10_000, interval: 100 },
+    );
+    expect(deletes()).toBe(1);
+    await device.hooks.release("folder-pass-ended");
+  });
+
   it("renders no file on a quick or full pass of a quiet folder, and renders one after an edit", async () => {
     const harness = await prepared("binding-quiet-pass", {
       "first.md": "---\ntitle: First\n---\nfirst words\n",

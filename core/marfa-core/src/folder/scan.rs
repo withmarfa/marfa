@@ -218,11 +218,11 @@ fn millis_of(stamp: &str) -> Option<i64> {
 }
 
 impl Folder {
-    /// Whether a missing file's grace has yet to run out, which only the
-    /// passing of time moves on: the sweep acts on it once it has. A stamp
+    /// Whether a missing file's grace had yet to run out at `at`, which only
+    /// the passing of time moves on: the sweep acts on it once it has. A stamp
     /// this cannot read never runs out, so nothing waits on it.
-    pub(super) fn grace_running(&self) -> Result<bool> {
-        let Some(now) = millis_of(&crate::store::iso_at(crate::clock::system_time())) else {
+    pub(super) fn grace_running(&self, at: std::time::SystemTime) -> Result<bool> {
+        let Some(now) = millis_of(&crate::store::iso_at(at)) else {
             return Ok(false);
         };
         let grace = RENAME_GRACE.as_millis() as i64;

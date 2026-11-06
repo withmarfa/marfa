@@ -3810,6 +3810,14 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 **Tests:** `device/binding-folders-clock.test.ts › defers a missing file until the five-second rename grace ends`.
 
+### `folders/delete-grace-keeps-watch-awake`
+
+While the rename grace of a missing file runs, a device watching the folder MUST go on running passes until a pass has decided the file's deletion.
+
+**Reason:** a pass that measures the grace once at its sweep and again at its end can pass the file over and then rest, so no pass decides the deletion until a file event or the next full pass.
+
+**Tests:** `device/binding-folders-clock.test.ts › sends the delete of a file whose grace ends after the sweep passed it over, with no event to wake the watch`.
+
 ### `folders/delete-rename-cancels`
 
 When a file returns at its own path or a new name within the rename grace, a device MUST cancel its journaled deletion.
