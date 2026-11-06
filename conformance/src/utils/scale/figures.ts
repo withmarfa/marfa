@@ -174,35 +174,54 @@ export const PROBE_REFERENCE_MS = {
 } as const;
 
 /** A median over this many times its reference makes the runner slow. */
-export const SLOW_RUNNER_FACTOR = 1.5;
+export const SLOW_RUNNER_FACTOR = 1.25;
+
+/**
+ * How far past its ceiling, beyond the runner's own slowness, a figure may be
+ * and still be put down to the runner. A noisy host hits the tail hardest: an
+ * edit's p95 reached 2.95 times its ceiling on a host 1.7 times slower.
+ */
+export const NOT_JUDGED_MARGIN = 2;
 
 /** The fewest readings a median may rest on: one is noise, not a slow night. */
 export const MIN_PROBE_READINGS = 3;
 
-const PROBE_LABEL: Record<keyof typeof PROBE_REFERENCE_MS, string> = {
+type ProbeName = keyof typeof PROBE_REFERENCE_MS;
+
+const PROBE_LABEL: Record<ProbeName, string> = {
   runner_cpu_probe: "CPU probe",
   runner_disk_probe: "disk probe",
 };
 
+const PROBE_NAMES = Object.keys(PROBE_REFERENCE_MS) as ProbeName[];
+
 /**
- * Why tonight's runner is slow, one reason per probe over its limit; empty when
- * it is not, or when too few readings say so. A probe that crashed therefore
- * excuses nothing.
+ * How many times its reference a probe read tonight, when that makes the runner
+ * slow; null when it does not, or when too few readings say so. A probe that
+ * crashed therefore excuses nothing.
  */
+function slowFactor(
+  figures: readonly Figure[],
+  name: ProbeName,
+): number | null {
+  const probe = figures.find((figure) => figure.name === name);
+  const median = probe?.p50 ?? null;
+  if (median === null || (probe?.samples ?? 0) < MIN_PROBE_READINGS)
+    return null;
+  const factor = median / PROBE_REFERENCE_MS[name];
+  return factor > SLOW_RUNNER_FACTOR ? factor : null;
+}
+
+/** Why tonight's runner is slow, one reason per probe over its limit. */
 export function slowRunner(figures: readonly Figure[]): string[] {
-  const reasons: string[] = [];
-  for (const [name, reference] of Object.entries(PROBE_REFERENCE_MS)) {
-    const probe = figures.find((figure) => figure.name === name);
-    const median = probe?.p50 ?? null;
-    if (median === null || (probe?.samples ?? 0) < MIN_PROBE_READINGS) continue;
-    if (median > reference * SLOW_RUNNER_FACTOR) {
-      const label = PROBE_LABEL[name as keyof typeof PROBE_REFERENCE_MS];
-      reasons.push(
-        `the ${label}'s median was ${median.toFixed(1)} ms, ${(median / reference).toFixed(2)} times its reference of ${reference} ms`,
-      );
-    }
-  }
-  return reasons;
+  return PROBE_NAMES.flatMap((name) => {
+    const factor = slowFactor(figures, name);
+    if (factor === null) return [];
+    const reference = PROBE_REFERENCE_MS[name];
+    return [
+      `the ${PROBE_LABEL[name]}'s median was ${(factor * reference).toFixed(1)} ms, ${factor.toFixed(2)} times its reference of ${reference} ms`,
+    ];
+  });
 }
 
 /** What a slower host costs more of: wall time, and the CPU time of the same work. */
@@ -220,6 +239,26 @@ export function overTimeCeilingAlone(figure: Figure): boolean {
     Number.isFinite(figure.value) &&
     figure.value > figure.ceiling &&
     (figure.samples === null || figure.samples >= MIN_SAMPLES)
+  );
+}
+
+/**
+ * Whether tonight's runner explains this figure's miss. CPU time grows only
+ * with a slow CPU, so a slow disk does not excuse it. The bound keeps a
+ * regression that loads the disk between steps from excusing itself whole.
+ */
+export function explainedBySlowRunner(
+  figure: Figure,
+  figures: readonly Figure[],
+): boolean {
+  if (!overTimeCeilingAlone(figure)) return false;
+  const probes: readonly ProbeName[] =
+    figure.unit === "cpu_s_per_min" ? ["runner_cpu_probe"] : PROBE_NAMES;
+  const factors = probes.flatMap((name) => slowFactor(figures, name) ?? []);
+  if (factors.length === 0) return false;
+  return (
+    figure.value <=
+    (figure.ceiling as number) * Math.max(...factors) * NOT_JUDGED_MARGIN
   );
 }
 

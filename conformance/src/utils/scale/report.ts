@@ -3,9 +3,9 @@
  * night's, and judging it. Pure: the steps and the final script do the I/O.
  */
 import {
+  explainedBySlowRunner,
   KNOWN_OVER,
   MIN_PROBE_READINGS,
-  overTimeCeilingAlone,
   PROBE_REFERENCE_MS,
   slowRunner,
   SLOW_RUNNER_FACTOR,
@@ -122,7 +122,7 @@ export function verdictOf(
     (figure) => !figure.passed && knownOverIssue(figure, known) === null,
   );
   const isNotJudged = (figure: Figure) =>
-    reasons.length > 0 && overTimeCeilingAlone(figure);
+    explainedBySlowRunner(figure, file.figures);
   const failedFigures = missed
     .filter((figure) => !isNotJudged(figure))
     .map((figure) => figure.name);
@@ -294,7 +294,7 @@ function runnerLine(figures: readonly Figure[], verdict: Verdict): string {
     const missed =
       verdict.notJudged.length > 0
         ? `A figure over a time ceiling is not judged tonight: ${verdict.notJudged.join(", ")}.`
-        : "No figure was over a time ceiling, so every ceiling was judged.";
+        : "Every ceiling was judged.";
     return `**Slow runner:** ${verdict.slowRunner.join("; ")}, over the ${SLOW_RUNNER_FACTOR} times that counts as slow. ${missed} A figure with errors or no measurement, a memory or size figure and \`seed_errors\` are judged as on any night.`;
   }
   const probed = figures.some(

@@ -1,5 +1,5 @@
 /**
- * `actions/upload-artifact` refuses a path with a `.` or `..` segment, and
+ * `actions/upload-artifact` refuses a path with a `..` segment, or a `.` segment after the first, and
  * failing there both turns the step red and loses what it was keeping. A path
  * can hide the segment in a variable, so each is read through the environment
  * the workflow gives it.
@@ -55,7 +55,11 @@ function refusedPaths(workflow: Workflow): string[] {
         );
         const unresolved = /\$\{\{\s*env\./.test(read);
         const segments = read.split(/[\\/]/);
-        if (unresolved || segments.includes(".") || segments.includes("..")) {
+        if (
+          unresolved ||
+          segments.includes("..") ||
+          segments.slice(1).includes(".")
+        ) {
           refused.push(`${id}: ${step.name ?? "unnamed"}: ${read}`);
         }
       }
@@ -81,7 +85,7 @@ describe("what upload-artifact is given", () => {
 
   it.each([
     ["a parent segment", { jobs: { a: { steps: [upload("x/../y/log")] } } }],
-    ["a current segment", { jobs: { a: { steps: [upload("./y/log")] } } }],
+    ["a current segment", { jobs: { a: { steps: [upload("x/./log")] } } }],
     [
       "a parent segment in the job's variable",
       {

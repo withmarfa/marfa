@@ -4,6 +4,7 @@ import {
   KNOWN_OVER,
   MIN_PROBE_READINGS,
   PROBE_REFERENCE_MS,
+  NOT_JUDGED_MARGIN,
   SLOW_RUNNER_FACTOR,
   distribution,
   fragmentOf,
@@ -201,7 +202,7 @@ function probesAt(cpuTimes: number, diskTimes = 1, readings = 5) {
   return [of("runner_cpu_probe", cpuTimes), of("runner_disk_probe", diskTimes)];
 }
 
-const overTime = () => scalar("server_restart", "ms", 5_000);
+const overTime = () => scalar("server_restart", "ms", 3_000);
 
 describe("the verdict on a slow runner", () => {
   const verdictWith = (...figures: ReturnType<typeof scalar>[]) =>
@@ -296,6 +297,30 @@ describe("the verdict on a slow runner", () => {
     ]);
   });
 
+  it("does not take a slow disk as the reason for a quiet watch's CPU", () => {
+    const cpu = scalar("folder_watch_cpu", "cpu_s_per_min", 2);
+    expect(verdictWith(...probesAt(1, 2), cpu).failedFigures).toEqual([
+      "folder_watch_cpu",
+    ]);
+    // The witness: a slow CPU does explain it.
+    expect(verdictWith(...probesAt(2, 1), cpu).notJudged).toEqual([
+      "folder_watch_cpu",
+    ]);
+  });
+
+  it("fails a figure further over its ceiling than the runner's slowness explains", () => {
+    const limit = 2_000 * 2 * NOT_JUDGED_MARGIN;
+    const past = scalar("server_restart", "ms", limit + 1);
+    expect(verdictWith(...probesAt(2), past).failedFigures).toEqual([
+      "server_restart",
+    ]);
+    // The witness: at the bound it is put down to the runner.
+    const at = scalar("server_restart", "ms", limit);
+    expect(verdictWith(...probesAt(2), at).notJudged).toEqual([
+      "server_restart",
+    ]);
+  });
+
   it("calls a median that exactly meets the factor normal, and one just over it slow", () => {
     const at = verdictWith(...probesAt(SLOW_RUNNER_FACTOR), overTime());
     expect(at.slowRunner).toEqual([]);
@@ -342,7 +367,7 @@ describe("the verdict on a slow runner", () => {
     expect(text).toMatch(/\*\*Slow runner:\*\*.*CPU probe.*2\.00 times/);
     expect(text).toMatch(/not judged tonight: server_restart/);
     expect(text).toMatch(
-      /\| server_restart \| 5000\.0 ms \| none \| none \| 2000\.0 ms \| not judged: slow runner \|/,
+      /\| server_restart \| 3000\.0 ms \| none \| none \| 2000\.0 ms \| not judged: slow runner \|/,
     );
     expect(text).toMatch(/\| get_item \(p95\) .* pass \|/);
   });
