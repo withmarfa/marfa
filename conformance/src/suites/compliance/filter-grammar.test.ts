@@ -340,6 +340,12 @@ describe("the limits of a filter", () => {
       );
       expect(past.status, "a total of 2,049").toBe(400);
       expect(past.error?.error.code).toBe("validation_error");
+      const backrefAdded = ` AND backref[about] eq "${target}"`.length;
+      const backref = await asked(
+        `filter=${enc(ofLength(2049 - backrefAdded))}&${enc("backref[about]")}=${target}`,
+      );
+      expect(backref.status, "a total of 2,049 with a backref key").toBe(400);
+      expect(backref.error?.error.code).toBe("validation_error");
       // The witness: the same filter is within the limit with no key beside it.
       const alone = await asked(`filter=${enc(ofLength(2049 - added))}`);
       expect(alone.status, "the filter alone").toBe(200);
