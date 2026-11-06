@@ -3631,6 +3631,50 @@ mod tests {
     }
 
     #[test]
+    fn a_link_in_a_table_cell_makes_its_edge_and_keeps_its_text_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let plan = note(&core, "Plan", "");
+        let host = note(&core, "Host", "");
+        let cell = "[[Plan\\|Label]]";
+        let held = |body: &str| {
+            edit(&core, &host, serde_json::json!({ "body": body }));
+            held_out(&core, &host, LINK_EDGE)
+        };
+
+        // Witness: outside a table the backslash is part of the name.
+        assert_eq!(held(&format!("See {cell}.")), Vec::<String>::new());
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Pending],
+        );
+
+        for body in [
+            format!("| h |\n| - |\n| {cell} |"),
+            format!("> | h |\n> | - |\n> | {cell} |"),
+            format!("> [!note]\n> | h |\n> | - |\n> | {cell} |"),
+            "| h |\n| - |\n| [[Plan#Part\\|Label]] |".to_string(),
+        ] {
+            assert_eq!(held(&body), vec![plan.clone()], "no edge from {body}");
+            let links = core.body_links(&host).unwrap().links;
+            assert_eq!(
+                targets(&links),
+                vec![BodyTarget::Item { id: plan.clone() }],
+                "{body}"
+            );
+            assert!(links[0].text.contains("\\|"), "{:?}", links[0].text);
+        }
+
+        // The same link written with a bare bar outside the table is one link,
+        // so moving it out of the table keeps its edge.
+        assert_eq!(held("See [[Plan|Label]]."), vec![plan.clone()]);
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan }],
+        );
+    }
+
+    #[test]
     fn an_embed_text_names_its_file_alone_or_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let core = copy(&dir);

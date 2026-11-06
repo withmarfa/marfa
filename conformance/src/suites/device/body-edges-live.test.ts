@@ -355,6 +355,70 @@ describe("links", () => {
     ]);
   });
 
+  it.each([
+    ["a table", ""],
+    ["a table in a quote", "> "],
+    ["a table in a callout", "> [!note]\n> "],
+  ])(
+    "makes the edge of a link with an escaped pipe in a cell of %s",
+    async (form, opening) => {
+      const name = named(`Cell plan ${form}`);
+      const plan = await note(device, name);
+      const prefix = opening.split("\n").pop()!;
+      const table = (cell: string) =>
+        `${opening}| h |\n${prefix}| - |\n${prefix}| ${cell} |\n`;
+      const typed = [`[[${name}\\|Label]]`, `[[${name}#Part\\|Other]]`];
+      const body = table(typed.join(" "));
+      const host = await note(device, named(`Cell host ${form}`), body);
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([plan.id]);
+      const links = value(await device.bodyLinks(host.id)).links;
+      expect(links.map((link) => [link.text, link.name, link.target])).toEqual(
+        typed.map((text) => [text, name, { state: "item", id: plan.id }]),
+      );
+      const stored = await client.getItem(host.id);
+      expect(stored.ok).toBe(true);
+      expect(stored.data.item.properties.body).toBe(body);
+    },
+  );
+
+  it("holds a link with an escaped pipe in a table cell under its name, until the item arrives", async () => {
+    const name = named("Nothing yet in a cell");
+    const host = await note(
+      device,
+      named("Cell waiting host"),
+      `| h |\n| - |\n| [[${name}\\|Label]] |\n`,
+    );
+    await drained(device);
+    expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+      { state: "missing" },
+    ]);
+    expect(await referencesFrom(host.id)).toEqual([]);
+    const arrived = await remoteNote(name);
+    value(await device.catchUp());
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([arrived]);
+  });
+
+  it("keeps the backslash of a link outside a table, whose name then matches nothing", async () => {
+    const name = named("Outside plan");
+    const plan = await note(device, name);
+    // The witness: the same name with a bare bar makes the edge.
+    const bare = await note(
+      device,
+      named("Outside bare host"),
+      `See [[${name}|Label]].`,
+    );
+    const escaped = await note(
+      device,
+      named("Outside escaped host"),
+      `See [[${name}\\|Label]].\n\n| a | [[${name}\\|Label]] |\n| b | c |\n`,
+    );
+    await drained(device);
+    expect(await referencesFrom(bare.id)).toEqual([plan.id]);
+    expect(await referencesFrom(escaped.id)).toEqual([]);
+  });
+
   it("reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up", async () => {
     const body = `waiting on [[${named("Nobody yet")}]]`;
     const host = await note(device, named("Waiting host"), body);

@@ -177,6 +177,70 @@ describe("a link's parts", () => {
     expect(found.map((link) => link.name.text)).toEqual(["escaped", "x\\"]);
   });
 
+  it.each([
+    ["a table", ""],
+    ["a table in a quote", "> "],
+    ["a table in a callout", "> [!note]\n> "],
+  ])(
+    "reads an escaped pipe in a link in a cell of %s as the bar, placed where it was written",
+    async (_, opening) => {
+      harness = await startHarness("link-parts-table-pipe");
+      const prefix = opening.split("\n").pop()!;
+      const text = `${opening}| h |\n${prefix}| - |\n${prefix}| [[Plan\\|Label]] [[Plan#Part\\|Other]] [[Bare]] |\n`;
+      const found = await parts(harness.device, text);
+      expect(
+        found.map((link) => [
+          link.text,
+          link.target,
+          link.name.text,
+          link.heading?.text,
+          link.alias?.text,
+        ]),
+      ).toEqual([
+        ["[[Plan\\|Label]]", "Plan|Label", "Plan", undefined, "Label"],
+        ["[[Plan#Part\\|Other]]", "Plan#Part|Other", "Plan", "Part", "Other"],
+        ["[[Bare]]", "Bare", "Bare", undefined, undefined],
+      ]);
+      for (const link of found) {
+        expect(text.slice(link.start, link.end)).toBe(link.text);
+        for (const part of [link.name, link.heading, link.alias]) {
+          if (part) expect(text.slice(part.start, part.end)).toBe(part.text);
+        }
+      }
+    },
+  );
+
+  it("keeps a backslash outside a table cell, where a line with no delimiter row is no table", async () => {
+    harness = await startHarness("link-parts-no-table");
+    const device = harness.device;
+    const read = async (text: string) =>
+      (await parts(device, text)).map((link) => [
+        link.name.text,
+        link.alias?.text,
+      ]);
+    const asText = [["Plan\\", "Label"]];
+    expect(await read("See [[Plan\\|Label]].")).toEqual(asText);
+    expect(await read("| a | [[Plan\\|Label]] |\n| b | c |\n")).toEqual(asText);
+    expect(await read("| h |\n| - |\n\nSee [[Plan\\|Label]].\n")).toEqual(
+      asText,
+    );
+  });
+
+  it("leaves code in a table cell unread, and a table in a fence is no table", async () => {
+    harness = await startHarness("link-parts-table-code");
+    const table = "| h |\n| - |\n";
+    // The witness: the same cell with its link out of code reads.
+    expect(
+      await parts(harness.device, `${table}| [[Plan\\|Label]] |\n`),
+    ).toHaveLength(1);
+    expect(
+      await parts(harness.device, `${table}| \`[[Plan\\|Label]]\` |\n`),
+    ).toEqual([]);
+    expect(
+      await parts(harness.device, `\`\`\`\n${table}| [[Plan\\|Label]] |\n\`\`\`\n`),
+    ).toEqual([]);
+  });
+
   it("reads a long text with many unclosed links", async () => {
     harness = await startHarness("link-parts-long");
     const text = `${"[[".repeat(20_000)} ${"[[a]] ".repeat(10_000)}`;

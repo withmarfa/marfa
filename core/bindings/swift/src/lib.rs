@@ -1204,8 +1204,9 @@ pub struct LinkParts {
     pub text: String,
     pub start: u64,
     pub end: u64,
-    /// The text between the brackets, trimmed: what the link is bound by and
-    /// what `link_candidates` takes.
+    /// The text between the brackets, trimmed, with an escaped pipe in a table
+    /// cell read as the bar: what the link is bound by and what
+    /// `link_candidates` takes.
     pub target: String,
     /// What the link names. Empty for a link to a heading of the same text.
     pub name: LinkPart,
