@@ -888,7 +888,7 @@ fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
 
 /// Whether a link or embed's row still answers for it: it names an item the
 /// edge to which stands, or it says the server refused the edge, which stays
-/// the answer until the refused write is discarded (`device/body-name-refused`).
+/// the answer whatever becomes of the refused write (`device/body-name-refused`).
 /// Any other row, a name the server has not settled or one whose edge has
 /// gone, is replaced by what the copy reads now.
 fn answered(

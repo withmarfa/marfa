@@ -6118,9 +6118,9 @@ When a body names an edge of a type and ends the copy holds already, a device MU
 
 ### `device/body-edge-refused`
 
-If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded.
+If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded or a folder clears it (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
 
-**Reason:** a refused write is kept as any refused write is (`queue-and-verdicts/clear-keeps-content` and `queue-and-verdicts/discard-refused`), so the person can see it.
+**Reason:** a refused write is kept as any refused write is (`queue-and-verdicts/clear-keeps-content` and `queue-and-verdicts/discard-refused`).
 
 **Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
 

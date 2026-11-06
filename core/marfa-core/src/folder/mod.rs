@@ -2579,6 +2579,8 @@ mod quiet_watch_tests;
 #[cfg(test)]
 mod reclaim_tests;
 #[cfg(test)]
+mod refused_edge_tests;
+#[cfg(test)]
 mod relink_tests;
 
 #[cfg(test)]

@@ -9,8 +9,8 @@ use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{
-    BlockedReason, Completeness, Edge, Item, ItemState, QueuedWrite, SliceTier, Subject, Tier,
-    Verdict, WriteKind,
+    BlockedReason, Completeness, Edge, EdgeDraft, Item, ItemState, QueuedWrite, SliceTier, Subject,
+    Tier, Verdict, WriteKind,
 };
 use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
 
@@ -5879,6 +5879,140 @@ pub fn holds_clearable_answers(conn: &Connection) -> Result<bool, CoreError> {
         ],
         |row| row.get(0),
     )?)
+}
+
+/// Whether the queue holds an edge create the server refused, through the
+/// index on the verdict, so a drain with none reads nothing more for them.
+pub(crate) fn holds_refused_edge_create(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM queue
+          WHERE verdict = 'refused' AND kind = 'create_edge' AND sent = 1)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// An edge create the server refused, and what it asked for.
+pub(crate) struct RefusedEdgeCreate {
+    pub id: String,
+    seq: i64,
+    edge_id: Option<String>,
+    pub asked: EdgeDraft,
+}
+
+impl RefusedEdgeCreate {
+    /// Whether the copy holds the edge asked for as the server last gave it,
+    /// with everything the create carried. A row of the copy's own has version
+    /// 0, and one with a write waiting or a read owed may not be the server's
+    /// as it stands.
+    pub(crate) fn satisfied_by_server(&self, conn: &Connection) -> Result<bool, CoreError> {
+        let mut statement = conn.prepare_cached(
+            "SELECT properties FROM edges AS edge
+              WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3 AND version > 0
+                AND NOT EXISTS (SELECT 1 FROM queue AS write WHERE write.edge_id = edge.id
+                      AND (write.verdict IS NULL OR write.verdict IN ('blocked', 'dead')))
+                AND NOT EXISTS (SELECT 1 FROM read_backs AS owed
+                      WHERE owed.subject = 'edge' AND owed.id = edge.id)",
+        )?;
+        let held = statement.query_map(
+            params![
+                self.asked.source_id,
+                self.asked.edge_type,
+                self.asked.target_id
+            ],
+            |row| row.get::<_, String>(0),
+        )?;
+        for properties in held {
+            if serde_json::from_str::<Map<String, Value>>(&properties?)
+                .is_ok_and(|properties| carries(&properties, &self.asked.properties))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether a later create of the same edge carries everything this one
+    /// did. An answer the server took says nothing yet of what the copy holds,
+    /// and a dead create or one refused unsent has no answer to stand on. A
+    /// later create can still leave unanswered, withdrawn or lost with its
+    /// body. The file's line and flag still hold the request then, and a
+    /// refused row is never sent again, so this row adds nothing to them.
+    pub(crate) fn carried_by_later_create(&self, conn: &Connection) -> Result<bool, CoreError> {
+        let mut statement = conn.prepare_cached(
+            "SELECT payload FROM queue
+              WHERE item_id = ?1 AND target_id = ?2 AND kind = 'create_edge' AND seq > ?3
+                AND (verdict IS NULL OR verdict = 'blocked' OR (verdict = 'refused' AND sent = 1))",
+        )?;
+        let later = statement.query_map(
+            params![self.asked.source_id, self.asked.target_id, self.seq],
+            |row| row.get::<_, String>(0),
+        )?;
+        for payload in later {
+            if EdgeDraft::from_payload(&payload?).is_ok_and(|(_, later)| {
+                later.source_id == self.asked.source_id
+                    && later.target_id == self.asked.target_id
+                    && later.edge_type == self.asked.edge_type
+                    && carries(&later.properties, &self.asked.properties)
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether nothing still rests on this row: no write depends on or follows
+    /// it, and no receipt or read is owed for it. Finding what depends on it
+    /// reads the queue, so call this last.
+    pub(crate) fn nothing_rests_on_it(&self, conn: &Connection) -> Result<bool, CoreError> {
+        Ok(conn.query_row(
+            "SELECT NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || ?1)
+                AND NOT EXISTS (SELECT 1 FROM read_backs WHERE subject = 'edge' AND id = ?2)
+                AND NOT EXISTS (SELECT 1 FROM queue WHERE id <> ?1
+                      AND (follows = ?1 OR instr(depends_on, ?1) > 0))",
+            params![self.id, self.edge_id],
+            |row| row.get(0),
+        )?)
+    }
+}
+
+/// Whether `held` holds each of `asked`'s properties with its value.
+fn carries(held: &Map<String, Value>, asked: &Map<String, Value>) -> bool {
+    asked
+        .iter()
+        .all(|(name, value)| held.get(name) == Some(value))
+}
+
+/// The edge creates the server refused, oldest first, through the index on
+/// the verdict. One refused unsent has no answer from the server and may yet
+/// be released, and one whose payload cannot be read asks for nothing this can
+/// compare, so neither is among them.
+pub(crate) fn refused_edge_creates(conn: &Connection) -> Result<Vec<RefusedEdgeCreate>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT id, seq, edge_id, payload FROM queue
+          WHERE verdict = 'refused' AND kind = 'create_edge' AND sent = 1 ORDER BY seq",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut refused = Vec::new();
+    for row in rows {
+        let (id, seq, edge_id, payload) = row?;
+        if let Ok((_, asked)) = EdgeDraft::from_payload(&payload) {
+            refused.push(RefusedEdgeCreate {
+                id,
+                seq,
+                edge_id,
+                asked,
+            });
+        }
+    }
+    Ok(refused)
 }
 
 /// `only` is a JSON array of the ids to clear, or `None` for any; `except` a
