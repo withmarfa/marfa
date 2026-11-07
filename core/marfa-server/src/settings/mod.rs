@@ -115,6 +115,7 @@ impl Settings {
             _ => return Err(Refused { lines: problems }),
         };
         fixed.check_together(&environment, &mut problems);
+        problems.extend(together::seed_lines(&seeds, &fixed));
         if !problems.is_empty() {
             return Err(Refused { lines: problems });
         }
@@ -209,6 +210,49 @@ mod tests {
 
     fn row(key: &str, value: &str) -> [(String, String); 1] {
         [(key.to_string(), value.to_string())]
+    }
+
+    #[test]
+    fn under_hooks_a_start_refuses_seeds_that_break_a_rule_across_settings() {
+        let lower = |pairs: &[(&str, &str)]| refused(&[&[IN_MEMORY, HOOKS], pairs].concat());
+        assert_eq!(
+            lower(&[
+                ("VERSION_RECENT_DAYS", "40"),
+                ("VERSION_DAILY_SNAPSHOT_DAYS", "39")
+            ]),
+            ["VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS (got \"39\")"]
+        );
+        assert_eq!(
+            lower(&[
+                ("VERSION_DAILY_SNAPSHOT_DAYS", "100"),
+                ("VERSION_WEEKLY_SNAPSHOT_DAYS", "99")
+            ]),
+            [
+                "VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS (got \"99\")"
+            ]
+        );
+        assert_eq!(
+            lower(&[
+                ("VERSION_RECENT_DAYS", "soon"),
+                ("VERSION_DAILY_SNAPSHOT_DAYS", "1")
+            ]),
+            ["VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got \"soon\")"],
+            "a rule across settings waits until each one parses"
+        );
+        opened(&[
+            HOOKS,
+            ("VERSION_RECENT_DAYS", "40"),
+            ("VERSION_DAILY_SNAPSHOT_DAYS", "40"),
+            ("VERSION_WEEKLY_SNAPSHOT_DAYS", "40"),
+        ]);
+    }
+
+    #[test]
+    fn with_hooks_off_no_seed_is_read_so_none_is_judged() {
+        opened(&[
+            ("VERSION_RECENT_DAYS", "40"),
+            ("VERSION_DAILY_SNAPSHOT_DAYS", "39"),
+        ]);
     }
 
     #[test]
