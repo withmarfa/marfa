@@ -4,6 +4,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use super::EXIT_BY_SIGNAL;
 use crate::Sandbox;
 
 /// The descriptors a child may hold: three standard ones, the sandbox's while it is
@@ -113,8 +115,18 @@ fn close_listed_descriptors(folder: &str) {
     }
 }
 
+/// Ends the process with the signal in its exit code.
+#[cfg(target_os = "macos")]
+extern "C" fn end_without_a_report(signal: libc::c_int) {
+    // SAFETY: _exit is safe to call in a signal handler, and ends the process.
+    unsafe { libc::_exit(EXIT_BY_SIGNAL + signal) }
+}
+
 /// A crash here is a bad file doing what was expected, so on macOS it does not go to
 /// the crash reporter, which would leave a report on the owner's disk for each one.
+/// A process that dies of `abort` is reported whatever its exception ports say, so the
+/// signals the reporter watches end the process themselves. A stack overflow leaves no
+/// stack to run a handler on, and for that the ports are cleared.
 #[cfg(target_os = "macos")]
 fn no_crash_reports() {
     /// `EXC_MASK_ALL`.
@@ -136,6 +148,19 @@ fn no_crash_reports() {
             behavior: libc::c_int,
             new_flavor: libc::c_int,
         ) -> libc::c_int;
+    }
+    let handler = end_without_a_report as extern "C" fn(libc::c_int);
+    for signal in [
+        libc::SIGABRT,
+        libc::SIGBUS,
+        libc::SIGFPE,
+        libc::SIGILL,
+        libc::SIGSEGV,
+        libc::SIGSYS,
+        libc::SIGTRAP,
+    ] {
+        // SAFETY: the handler calls only _exit.
+        unsafe { libc::signal(signal, handler as libc::sighandler_t) };
     }
     // SAFETY: a null port removes this task's handlers, and touches nothing else.
     unsafe {

@@ -575,6 +575,11 @@ mod faults {
         crashes_naming("abort", "SIGABRT")
     }
 
+    /// It has no stack left, so it ends by the kernel's hand whatever handler is set.
+    pub(super) fn a_stack_overflow_is_a_crash_named_by_its_signal() -> Result<(), Failed> {
+        crashes_naming("stack-overflow", "SIG")
+    }
+
     fn times_out_on_time(name: &str) -> Result<(), Failed> {
         let limit = Duration::from_millis(400);
         let options = Options {
@@ -1107,6 +1112,10 @@ fn main() {
         (
             "an_abort_is_a_crash_named_by_its_signal",
             faults::an_abort_is_a_crash_named_by_its_signal,
+        ),
+        (
+            "a_stack_overflow_is_a_crash_named_by_its_signal",
+            faults::a_stack_overflow_is_a_crash_named_by_its_signal,
         ),
         ("a_hang_times_out_on_time", faults::a_hang_times_out_on_time),
         ("a_spin_times_out_on_time", faults::a_spin_times_out_on_time),

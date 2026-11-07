@@ -33,6 +33,10 @@ const EXIT_PARENT_GONE: i32 = 73;
 /// A child was started with arguments or a request it cannot read.
 const EXIT_BAD_REQUEST: i32 = 74;
 
+/// Added to a signal's number, the exit code of a child on macOS that a signal would
+/// have ended.
+const EXIT_BY_SIGNAL: i32 = 128;
+
 /// Where the program starts itself from, set by `serve_child_if_asked`. `None` inside
 /// means that the call was made and the program could not find itself.
 static PROGRAM: OnceLock<Option<PathBuf>> = OnceLock::new();

@@ -54,6 +54,7 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
             None
         }
         "abort" => std::process::abort(),
+        "stack-overflow" => Some(deeper(0).to_string()),
         "hang" => loop {
             std::thread::sleep(Duration::from_secs(3600));
         },
@@ -141,6 +142,11 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
         "report" => Some(report()),
         _ => None,
     }
+}
+
+fn deeper(depth: u64) -> u64 {
+    let frame = std::hint::black_box([depth; 512]);
+    deeper(std::hint::black_box(depth + 1)) + frame[1]
 }
 
 fn fail(layout: std::alloc::Layout) -> bool {

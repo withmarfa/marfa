@@ -11,7 +11,7 @@ use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitSta
 use std::time::{Duration, Instant};
 
 use super::wire::{self, Answer, MAX_REQUEST_BYTES, OcrRequest, Request};
-use super::{CHILD_ARG, EXIT_DEADLINE, EXIT_OVER_MEMORY, footprint};
+use super::{CHILD_ARG, EXIT_BY_SIGNAL, EXIT_DEADLINE, EXIT_OVER_MEMORY, footprint};
 use crate::kind::Kind;
 use crate::{NATIVE, Options, Reading, Refusal};
 
@@ -507,7 +507,11 @@ fn conclude(
     let Some(status) = status else {
         return Err(Refusal::Crashed("the reader's end cannot be known".into()));
     };
-    if let Some(signal) = status.signal() {
+    let by_exit_code = status
+        .code()
+        .and_then(|code| code.checked_sub(EXIT_BY_SIGNAL))
+        .filter(|signal| *signal > 0);
+    if let Some(signal) = status.signal().or(by_exit_code) {
         return Err(match signal {
             libc::SIGXCPU => Refusal::TimedOut,
             libc::SIGABRT if said.ran_out_of_memory_in_rust() => over_memory(options, None),
