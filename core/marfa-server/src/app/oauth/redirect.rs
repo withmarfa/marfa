@@ -56,8 +56,7 @@ pub(super) fn is_plain(text: &str) -> bool {
             .all(|byte| byte > 0x20 && byte != 0x7f && byte != b'\\')
 }
 
-/// Whether `text` is a loopback IP address (RFC 8252 section 7.3). The name
-/// `localhost` is not: section 8.3 advises against trusting its resolution.
+/// A loopback IP address, as RFC 8252 section 7.3 means it.
 pub fn is_loopback_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(v4) => v4.is_loopback(),
@@ -163,8 +162,8 @@ pub fn check_registered(kind: AppKind, uri: &str) -> Result<(), Refused> {
 }
 
 /// Whether a request's `redirect_uri` is one the client registered: the same
-/// text, or for a registered loopback IP address the same URI on any port
-/// (RFC 8252 section 7.3), since a native app binds an ephemeral one.
+/// text, or for a registered loopback host the same URI on any port, since a
+/// native app binds an ephemeral one.
 pub fn is_registered(registered: &[String], requested: &str) -> bool {
     registered.iter().any(|entry| entry == requested) || {
         let parsed = (is_plain(requested) && !requested.contains('#'))
@@ -180,8 +179,18 @@ pub fn is_registered(registered: &[String], requested: &str) -> bool {
     }
 }
 
+/// RFC 8252 section 7.3 names only IP addresses, but real clients redirect to
+/// the name: Claude Code's metadata document lists `http://localhost/callback`
+/// and it listens at `http://localhost:<ephemeral port>/callback`. The port
+/// adds no exposure the registered name did not already have, and only a
+/// native client can register that name. Only the name exactly: not a
+/// subdomain and not a trailing dot.
+fn takes_any_port(registered: &Url) -> bool {
+    registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
+}
+
 fn same_but_for_the_port(registered: &Url, requested: &Url) -> bool {
-    ip_of(registered).is_some_and(is_loopback_ip)
+    takes_any_port(registered)
         && registered.scheme() == requested.scheme()
         && registered.host() == requested.host()
         && registered.path() == requested.path()
@@ -320,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn a_request_matches_exactly_or_on_another_port_of_a_loopback_address() {
+    fn a_request_matches_exactly_or_on_another_port_of_the_loopback() {
         let registered = list(&[
             "https://app.example/callback",
             "http://127.0.0.1/callback",
@@ -336,6 +345,7 @@ mod tests {
             "http://127.0.0.1:2000/other?keep=1",
             "http://[::1]:53682/callback",
             "http://localhost:3118/callback",
+            "http://localhost:53682/callback",
             "com.example.app:/callback",
         ] {
             assert!(is_registered(&registered, requested), "{requested}");
@@ -355,7 +365,8 @@ mod tests {
             "http://127.0.0.2:53682/callback",
             "http://user@127.0.0.1:53682/callback",
             "http://127.0.0.1:53682\\@evil.example/callback",
-            "http://localhost:53682/callback",
+            "http://localhost:53682/other",
+            "https://localhost:53682/callback",
             "http://evil.example:53682/callback",
             "com.example.app:/other",
             "com.example.app://callback",
@@ -367,12 +378,35 @@ mod tests {
     }
 
     #[test]
-    fn the_port_rule_is_for_an_address_and_never_a_name() {
-        let names = list(&["http://localhost/callback", "https://app.example/callback"]);
-        assert!(!is_registered(&names, "http://localhost:9/callback"));
-        assert!(!is_registered(&names, "https://app.example:9/callback"));
+    fn the_port_rule_is_for_the_loopback_and_stays_on_the_host_that_was_registered() {
+        let claude_code = list(&["http://localhost/callback", "http://127.0.0.1/callback"]);
+        assert!(is_registered(
+            &claude_code,
+            "http://localhost:49152/callback"
+        ));
+        assert!(is_registered(
+            &claude_code,
+            "http://127.0.0.1:49152/callback"
+        ));
+
         let address = list(&["http://127.0.0.1/callback"]);
-        assert!(is_registered(&address, "http://127.0.0.1:9/callback"));
+        assert!(!is_registered(&address, "http://localhost:9/callback"));
+        let name = list(&["http://localhost/callback"]);
+        assert!(!is_registered(&name, "http://127.0.0.1:9/callback"));
+        assert!(!is_registered(&name, "http://localhost.:9/callback"));
+        assert!(!is_registered(&name, "http://a.localhost:9/callback"));
+
+        for elsewhere in [
+            "http://a.localhost/callback",
+            "http://localhost./callback",
+            "https://app.example/callback",
+        ] {
+            let requested = elsewhere.replace("/callback", ":9/callback");
+            assert!(
+                !is_registered(&list(&[elsewhere]), &requested),
+                "{elsewhere}"
+            );
+        }
     }
 
     #[test]
@@ -475,7 +509,7 @@ mod tests {
         }
 
         #[test]
-        fn a_match_is_exact_unless_the_registered_uri_is_a_loopback_address(
+        fn a_match_is_exact_unless_the_registered_uri_is_on_the_loopback(
             registered in uriish(),
             requested in uriish(),
         ) {
@@ -483,7 +517,7 @@ mod tests {
             if registered != requested && is_registered(entries, &requested) {
                 let entry = Url::parse(&registered).expect("a port match parsed");
                 let asked = Url::parse(&requested).expect("a port match parsed");
-                prop_assert!(ip_of(&entry).is_some_and(is_loopback_ip));
+                prop_assert!(takes_any_port(&entry));
                 prop_assert_eq!(entry.host(), asked.host());
                 prop_assert_eq!(entry.path(), asked.path());
             }

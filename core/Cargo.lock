@@ -1654,6 +1654,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "flate2",
  "getrandom 0.4.3",
  "hex",
  "hmac",

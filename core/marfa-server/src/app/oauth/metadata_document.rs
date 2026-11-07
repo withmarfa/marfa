@@ -6,7 +6,7 @@
 //! This blocks. The door runs it off the async threads, and holds the rate
 //! limits, the cache and the state of a client whose document has gone.
 
-use std::io;
+use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -268,25 +268,23 @@ impl Fetcher {
                 "The client's metadata document is not JSON.",
             ));
         }
-        // ureq's limit counts the bytes before it decompresses them, and this
-        // asked for none: a small compressed body could hold far more.
-        if response.headers().contains_key(header::CONTENT_ENCODING) {
-            return Err(Failure::Refused(
-                "The client's metadata document is compressed.",
-            ));
-        }
+        // ureq's own limit counts bytes before it decompresses them, and hides
+        // that it has, so the limit goes on what comes out.
+        let mut document = Vec::new();
         response
             .body_mut()
-            .with_config()
-            // ureq refuses a body that reaches its limit.
-            .limit(MAX_DOCUMENT_BYTES + 1)
-            .read_to_vec()
-            .map_err(|error| match error {
-                ureq::Error::BodyExceedsLimit(_) => {
-                    Failure::Refused("The client's metadata document is too large.")
-                }
-                other => failed_transport(other),
-            })
+            .as_reader()
+            .take(MAX_DOCUMENT_BYTES + 1)
+            .read_to_end(&mut document)
+            .map_err(|_| {
+                Failure::Unavailable("The client's metadata document could not be read.")
+            })?;
+        if document.len() as u64 > MAX_DOCUMENT_BYTES {
+            return Err(Failure::Refused(
+                "The client's metadata document is too large.",
+            ));
+        }
+        Ok(document)
     }
 
     /// Resolve once, and judge every answer: a name that also answers an
@@ -421,11 +419,13 @@ pub fn parse_document(
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use proptest::prelude::*;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use serde_json::json;
@@ -769,13 +769,30 @@ mod tests {
         );
     }
 
+    fn gzipped(body: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(body).expect("compressed");
+        let compressed = encoder.finish().expect("compressed");
+        let mut out = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            compressed.len()
+        )
+        .into_bytes();
+        out.extend_from_slice(&compressed);
+        out
+    }
+
     #[test]
-    fn a_compressed_document_is_refused_before_it_can_grow() {
-        let compressed = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_vec();
+    fn the_limit_is_on_a_document_after_it_is_decompressed() {
+        let small = listen(NAME, gzipped(b"{}"));
+        assert_eq!(at(&small).fetch(ID).expect("a document"), b"{}");
+
+        let bomb = gzipped(&vec![b' '; 1024 * 1024]);
+        assert!((bomb.len() as u64) < MAX_DOCUMENT_BYTES);
         assert_eq!(
-            at(&listen(NAME, compressed)).fetch(ID),
+            at(&listen(NAME, bomb)).fetch(ID),
             Err(Failure::Refused(
-                "The client's metadata document is compressed."
+                "The client's metadata document is too large."
             ))
         );
     }
