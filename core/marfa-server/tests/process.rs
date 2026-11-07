@@ -250,6 +250,22 @@ fn a_request_still_open_at_the_end_of_a_stop_exits_with_status_1() {
 }
 
 #[test]
+fn a_stop_does_not_wait_for_a_connection_that_never_finished_its_head() {
+    let dir = TempDir::new().unwrap();
+    let mut server = Server::start(dir.path());
+    let mut stalled = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+    stalled
+        .write_all(b"GET /health HTTP/1.1\r\nHost: x")
+        .unwrap();
+    thread::sleep(Duration::from_millis(200));
+
+    let stopped = Instant::now();
+    server.signal("-TERM");
+    assert_eq!(server.wait().code(), Some(0));
+    assert!(stopped.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
 fn an_interrupt_stops_it_as_a_terminate_does() {
     let dir = TempDir::new().unwrap();
     let mut server = Server::start(dir.path());

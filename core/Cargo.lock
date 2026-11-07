@@ -1688,6 +1688,8 @@ dependencies = [
  "hmac",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "ipnet",
  "libc",
  "marfa-rules",

@@ -146,6 +146,12 @@ impl Reader<'_> {
     fn trust(&mut self) -> Trust {
         let ranges = self.take("TRUSTED_PROXY_CIDRS", listener::proxy_ranges);
         let header = self.take("TRUSTED_PROXY_HEADER", listener::header_name);
+        if header.is_some() && ranges.is_some() {
+            tracing::warn!(
+                "TRUSTED_PROXY_HEADER and TRUSTED_PROXY_CIDRS are both set; the header takes \
+                 precedence and is believed from any peer, and TRUSTED_PROXY_CIDRS is ignored"
+            );
+        }
         match (header, ranges) {
             (Some(header), _) => Trust::EdgeHeader(header),
             (None, Some(ranges)) => Trust::Proxies(ranges),
