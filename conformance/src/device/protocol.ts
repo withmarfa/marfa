@@ -49,6 +49,8 @@ export interface Item {
   capture_longitude?: number | null;
   /** When the item went to the bin; null outside it or where none was kept. */
   trashed_at: string | null;
+  /** Whether a connector holds it read only, as the server last answered. */
+  read_only: boolean;
   tags: string[];
 }
 
@@ -110,6 +112,9 @@ export interface HydrateReport {
 export interface CatchUpReport {
   applied: number;
   skipped: number;
+  /** Rows a read of `read_only` changed, which no event brought
+   *  (`device/read-only-report`). */
+  read_only_held: number;
   cursor: string;
   /** Whether the catch-up changed the catalog the copy holds
    *  (`device/catch-up-catalog-told`). */
@@ -138,6 +143,9 @@ export interface Change {
 export interface FollowReport {
   applied: number;
   skipped: number;
+  /** Rows a read of `read_only` changed, which no event brought
+   *  (`device/read-only-report`). */
+  read_only_held: number;
   cursor: string;
   /** Streams asked for after the first. */
   reconnects: number;

@@ -2005,7 +2005,13 @@ describe("catch-up replays from the cursor", () => {
     expect(
       complete.ok ? Object.keys(complete.value).sort() : undefined,
       "the report carried a field beyond the counts, the cursor and the catalog flag, which a caller would read as a promise the contract does not make",
-    ).toEqual(["applied", "catalog_changed", "cursor", "skipped"]);
+    ).toEqual([
+      "applied",
+      "catalog_changed",
+      "cursor",
+      "read_only_held",
+      "skipped",
+    ]);
   });
 });
 

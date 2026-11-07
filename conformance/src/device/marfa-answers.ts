@@ -24,6 +24,8 @@ export interface WireItemOptions {
   updated_at?: string;
   /** When the row went to the bin; null where the fixture names none. */
   trashed_at?: string | null;
+  /** Null leaves the field out, as a server from before it does. */
+  read_only?: boolean | null;
   /** The edges the server hydrates onto the row, keyed by edge type. */
   edges?: Record<string, unknown>;
 }
@@ -56,8 +58,11 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
     trashed_at: options.trashed_at ?? null,
-    // No connector registration holds a scripted row read only.
-    read_only: false,
+    // No connector registration holds a scripted row read only unless a
+    // fixture says so, and null stands for a server that leaves the field out.
+    ...(options.read_only === null
+      ? {}
+      : { read_only: options.read_only ?? false }),
     // Present and empty, which is what the server answers for a row with no
     // edges. Absent would be a different thing to a device, and this is the
     // shape every door that returns an item returns.

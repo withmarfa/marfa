@@ -1172,6 +1172,7 @@ impl Task for ProbeCatchUp {
                 caught_up: report.caught_up.map(|report| crate::CatchUpReport {
                     applied: count(report.applied),
                     skipped: count(report.skipped),
+                    read_only_held: count(report.read_only_held),
                     cursor: report.cursor,
                     catalog_changed: report.catalog_changed,
                 }),

@@ -739,6 +739,7 @@ fn attempt(
             }
             store::attachments_whole(&tx)?;
             store::mark_synced(&tx)?;
+            store::mark_read_only_read(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts
@@ -3334,6 +3335,19 @@ mod tests {
     fn bulk_of(ids: &[String]) -> Answer {
         let rows: Vec<(&str, bool)> = ids.iter().map(|id| (id.as_str(), true)).collect();
         bulk(&rows)
+    }
+
+    #[test]
+    fn a_finished_hydration_has_nothing_to_ask_of_read_only() {
+        let server = Scripted::start();
+        let (core, _) = pinned_copy(&server, 0);
+        let every = std::time::Duration::from_secs(60);
+        store::meta_delete(&core.conn().unwrap(), store::META_READ_ONLY_READ).unwrap();
+        assert!(store::read_only_owed(&core.conn().unwrap(), every).unwrap());
+
+        hydrate(&core).unwrap();
+
+        assert!(!store::read_only_owed(&core.conn().unwrap(), every).unwrap());
     }
 
     #[test]

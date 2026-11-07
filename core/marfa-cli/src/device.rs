@@ -1205,8 +1205,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     format!("cursor {}", report.cursor)
                 };
                 format!(
-                    "applied {} event(s), skipped {}; {cursor}; {} reconnect(s){failed}",
-                    report.applied, report.skipped, report.reconnects
+                    "applied {} event(s), skipped {}{}; {cursor}; {} reconnect(s){failed}",
+                    report.applied,
+                    report.skipped,
+                    read_only_said(report.read_only_held),
+                    report.reconnects
                 )
             })
         }
@@ -1269,9 +1272,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
-                    "applied {} event(s), skipped {}; cursor {}{}",
+                    "applied {} event(s), skipped {}{}; cursor {}{}",
                     report.applied,
                     report.skipped,
+                    read_only_said(report.read_only_held),
                     report.cursor,
                     if report.catalog_changed {
                         "; the catalog changed"
@@ -2013,6 +2017,15 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
     }
     .map(|()| Exit::Done)
+}
+
+/// Said only where a read of `read_only` moved rows, which no event counted.
+fn read_only_said(held: u64) -> String {
+    if held == 0 {
+        String::new()
+    } else {
+        format!("; {held} row(s) took a new read_only")
+    }
 }
 
 fn view_line(row: &marfa_core::ViewRow) -> String {

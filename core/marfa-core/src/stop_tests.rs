@@ -45,6 +45,7 @@ fn scripted_copy(server: &Scripted, core: Core) -> Arc<Core> {
         store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        store::mark_read_only_read(&conn).unwrap();
     }
     server.on(
         "/types",

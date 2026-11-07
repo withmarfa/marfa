@@ -86,6 +86,7 @@ fn following_typed(
         ] {
             store::meta_set(&conn, key, value).unwrap();
         }
+        store::mark_read_only_read(&conn).unwrap();
         if let Some(query) = query {
             store::meta_set(
                 &conn,
