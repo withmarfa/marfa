@@ -3034,17 +3034,28 @@ describe("a local read answers the listing grammar as the server does", () => {
     // or never (`t`), and floats in a container JavaScript spells in full.
     // A part of root, for the `part` term.
     const five = await seed(
-      { title: "five", s: "5" },
+      { title: "five", s: "5", note: "webby back\\slash" },
       [],
       { "comments-on": [root] },
       "1.0",
     );
-    const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
+    const ten = await seed(
+      { title: "ten", s: "10", note: "web_gallery" },
+      [],
+      undefined,
+      "1",
+    );
     const letters = await seed(
-      { title: "letters", s: "abc", list: [1e20] },
+      { title: "letters", s: "abc", list: [1e20], note: "100% done" },
       [],
     );
-    const blank = await seed({ title: "blank", s: "", list: [0.0000015] }, []);
+    const blank = await seed(
+      { title: "blank", s: "", list: [0.0000015], note: "Éclair" },
+      [],
+    );
+    // Differs from `blank` in the case of one non-ASCII letter only, which
+    // neither side folds.
+    const accent = await seed({ title: "accent", s: "x", note: "éclair" }, []);
     const names = new Map([
       [root, "root"],
       [child, "child"],
@@ -3054,6 +3065,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       [ten, "ten"],
       [letters, "letters"],
       [blank, "blank"],
+      [accent, "accent"],
     ]);
     const named = (ids: string[]): string[] =>
       ids.map((id) => names.get(id) ?? id).sort();
@@ -3074,7 +3086,12 @@ describe("a local read answers the listing grammar as the server does", () => {
       'properties.status eq "open"',
       'properties.note contains "HERON"',
       'properties.status starts_with "clo"',
+      'properties.note contains "%"',
+      'properties.note starts_with "web_"',
+      'properties.note contains "\\\\"',
+      'properties.note contains "ÉCLAIR"',
       "properties.rating gt 4",
+      "properties.rating eq 5.",
       "properties.rating lte 5",
       "properties.rating not_exists",
       "properties.flag eq true",
@@ -3164,6 +3181,10 @@ describe("a local read answers the listing grammar as the server does", () => {
       ["properties.t eq true", ["root"]],
       ['properties.list contains "100000000000000000000"', ["letters"]],
       ['properties.list contains "0.0000015"', ["blank"]],
+      ['properties.note contains "%"', ["letters"]],
+      ['properties.note starts_with "web_"', ["ten"]],
+      ['properties.note contains "\\\\"', ["five"]],
+      ['properties.note contains "ÉCLAIR"', ["blank"]],
     ] as const) {
       const served = await client.listItems({ type, filter, limit: 100 });
       expect(

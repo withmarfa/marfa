@@ -7,6 +7,7 @@ import {
   trackEdgeType,
   trackItem,
   trackKey,
+  trackView,
   cleanup,
 } from "../../utils/setup.js";
 
@@ -52,7 +53,7 @@ beforeAll(async () => {
   hiddenWriter = await mintKey("hidden-writer", hiddenSource);
   unfiltered = await mintKey("unfiltered", `${ctx.source}-unfiltered`);
   filtered = await mintKey("filtered", `${ctx.source}-filtered`, {
-    types: ["core.note"],
+    types: ["core.note", "system.view"],
     sources: [shownSource],
   });
   filteredTwo = await mintKey("filtered-two", `${ctx.source}-filtered-two`, {
@@ -655,6 +656,27 @@ describe("the source filter on backref filter terms", () => {
         return r.data.ids ?? [];
       },
     ],
+    [
+      "GET /views/{id}/items",
+      async (reader, term) => {
+        // Written by the key whose source the filtered reader shows, so the
+        // reader reaches the view as well as the notes.
+        const made = await shownWriter.createView({
+          title: `backref source filter ${ctx.runId}`,
+          query: {
+            types: ["core.note"],
+            filter: `source eq "${shownSource}" AND ${term}`,
+          },
+        });
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        trackView(ctx, made.data.item.id);
+        const r = await reader.listViewItems(made.data.item.id, {
+          limit: 100,
+        });
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        return r.data.data.map((row) => row.id);
+      },
+    ],
   ];
 
   /** `GET /items/stats` answers a count, so it is asked for one. */
@@ -666,7 +688,7 @@ describe("the source filter on backref filter terms", () => {
     return r.data["core.note"] ?? 0;
   }
 
-  it("counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats and POST /items/bulk-actions", async () => {
+  it("counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items", async () => {
     const hiddenPointer = await note(hiddenWriter);
     const shownPointer = await note(shownWriter);
     const pointedByHidden = await note(shownWriter);

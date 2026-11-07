@@ -462,9 +462,237 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 **Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`, `compliance/views.test.ts › creates a view as a system.view with its query, sort and group, read back through the item doors`.
 
-## The filter expression
+## Filter grammar
 
-`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, and `POST /items/bulk-actions` takes one inside its filter. An edge term in an expression is `edges.md`'s (`edges/filter-edge`, `edges/filter-edge-full`).
+`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
+
+### `search-and-filters/filter-doors`
+
+The server MUST hold the `filter` of `GET /items`, `GET /items/stats` and `GET /search`, the `filter` inside the filter of `POST /items/bulk-actions`, and a view's and a folder's `query.filter` to one grammar, except that a folder's `query.filter` refuses every `backref` condition (`items/folder-setting-followable`).
+
+**Reason:** an expression a client learned at one door then selects the same rows, or draws the same refusal, at every other.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects the same rows by one expression at each door`, `› refuses %s at each door with validation_error`, `› answers an edge term the same on the doors beyond the listing`, `› takes a backref term in a view and refuses it in a folder`.
+
+### `search-and-filters/filter-unknown-field`
+
+If a `filter` names a field the server does not define, such as `author` where `properties.author` is meant, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-unknown-operator`
+
+If a `filter` names an operator other than `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `starts_with`, `exists` and `not_exists`, each in lower case, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-malformed`
+
+If a `filter` holds a field with no operator, an operator that takes a value with none, a value after `exists` or `not_exists`, a value in a form `search-and-filters/filter-value-forms` does not name, a string with no closing quote, two conditions with no join, a join other than upper-case `AND` or `OR`, a join with no condition after it, a parenthesis outside a string, or a line break outside a string, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-blank-query`
+
+If a view's or a folder's `query.filter` holds no value or only blanks, then the server MUST answer `400 validation_error`, naming `query.filter` in `details.errors[0].path`.
+
+**Reason:** `search-and-filters/empty-narrowing` and `search-and-filters/empty-narrowing-bulk` say the same of the other doors.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses a filter of only blanks, naming it at each door`.
+
+### `search-and-filters/filter-value-forms`
+
+When the value of a condition in a `filter` is a double-quoted string, `true`, `false`, or a number written as digits with an optional leading `-` and an optional `.` that may have no digits after it, the server MUST read it as that string, boolean or number.
+
+**Reason:** this says how a value may be written and leaves to each field whether it takes that kind of value, so `5.` reads as `5`. `1e5`, `.5` and `+5` are not numbers here, and a bare word is not a string (`search-and-filters/filter-malformed`).
+
+**Tests:** `compliance/filter-grammar.test.ts › takes a quoted string, a number and a boolean`, `› refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-join-and`
+
+When a `filter` joins conditions with `AND`, the server MUST select the rows every condition selects.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by AND the rows every condition selects, and by OR the rows any selects`.
+
+### `search-and-filters/filter-join-or`
+
+When a `filter` joins conditions with `OR`, the server MUST select the rows at least one condition selects.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by AND the rows every condition selects, and by OR the rows any selects`.
+
+### `search-and-filters/filter-or-narrows`
+
+When `GET /items`, `GET /items/stats` or `GET /search` names a `filter` joined with `OR` beside another key that narrows, other than an `edge[<edge type>]` or `backref[<edge type>]` key (`search-and-filters/filter-or-shorthand`), the server MUST select only the rows both the key and the `filter` select.
+
+**Tests:** `compliance/filter-grammar.test.ts › narrows by the request's other keys what OR selects, on the listing, the stats and the search`.
+
+### `search-and-filters/filter-text-compare`
+
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` with a double-quoted string using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare the whole value by code point, with regard to case.
+
+**Reason:** `type eq "core.entity"` therefore selects that identifier alone, where the `type` key takes the types under it too (`types/listing-subtree`).
+
+**Tests:** `compliance/filter-grammar.test.ts › compares the whole value, with regard to case, in code point order`, `› compares a system field's whole value, with regard to case`, `› compares a type term with the identifier alone, not the types under it`.
+
+### `search-and-filters/filter-version-compare`
+
+When a `filter` compares `version` with a number using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare them as numbers.
+
+**Tests:** `compliance/filter-grammar.test.ts › compares version as a number`.
+
+### `search-and-filters/filter-absent-unselected`
+
+When a `filter` compares a property using an operator that takes a value, the server MUST NOT select a row whose property is absent or null.
+
+**Reason:** `neq` on a property therefore passes by a row without the property, where `neq` on an edge term selects a row without the edge (`search-and-filters/filter-edge-neq`). `not_exists` finds such a row (`search-and-filters/filter-not-exists`).
+
+**Tests:** `compliance/filter-grammar.test.ts › selects no row whose property is absent or null, with any operator that takes a value`.
+
+### `search-and-filters/filter-contains`
+
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `contains`, the server MUST select the rows whose value holds the text.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
+
+### `search-and-filters/filter-starts-with`
+
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `starts_with`, the server MUST select the rows whose value begins with the text.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
+
+### `search-and-filters/filter-text-case`
+
+When a `filter` compares text using `contains` or `starts_with`, the server MUST match an ASCII letter in either case and every other character exactly.
+
+**Reason:** a device folds case the same way (`device/filter-case-ascii`).
+
+**Tests:** `compliance/filter-grammar.test.ts › folds ASCII case and no other`.
+
+### `search-and-filters/filter-text-literal`
+
+When the value of a `contains` or `starts_with` condition holds `%`, `_` or `\`, the server MUST match each as that character.
+
+**Reason:** a `filter` has no wildcard, so a value such as `web_gallery` finds what it spells. A `\` in the value is written as `search-and-filters/filter-string-escapes` says.
+
+**Tests:** `compliance/filter-grammar.test.ts › matches a percent sign, an underscore and a backslash as themselves`.
+
+### `search-and-filters/filter-property-name`
+
+If a `filter` names `properties.<name>` where `<name>` is empty, does not start with an ASCII letter or `_`, or holds anything but ASCII letters, digits and `_`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a name reaches one level into `properties`, and a second name after a `.` is a member of a list's entries (`search-and-filters/filter-entry-member`).
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-system-presence`
+
+If a `filter` applies `exists` or `not_exists` to `id`, `type`, `state`, `source`, `source_id`, `version`, `created_at`, `updated_at` or `occurred_at`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-tags-contains`
+
+When a `filter` holds `tags contains "<tag>"`, the server MUST select the rows that carry a tag equal to the whole of the value, with regard to case.
+
+**Reason:** unlike `contains` on a property, this names one tag rather than a fragment.
+
+**Tests:** `compliance/filter-grammar.test.ts › takes a whole tag, with regard to case`.
+
+### `search-and-filters/filter-tags-exists`
+
+When a `filter` applies `exists` to `tags`, the server MUST select the rows that carry at least one tag.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by exists the rows with a tag, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-tags-not-exists`
+
+When a `filter` applies `not_exists` to `tags`, the server MUST select the rows that carry no tag.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by exists the rows with a tag, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-tags-refused`
+
+If a `filter` applies to `tags` an operator other than `contains`, `exists` and `not_exists`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-edge-neq`
+
+When a `filter` holds `edge[<edge type>] neq "<id>"`, the server MUST select every row that holds no outbound edge of that type to that id, a row with no edge of that type included.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge neq every row without that edge, a row with no edge of the type among them`.
+
+### `search-and-filters/filter-edge-exists`
+
+When a `filter` applies `exists` to `edge[<edge type>]`, the server MUST select the rows that hold at least one outbound edge of that type.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the rows with an outbound edge of the type, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-edge-not-exists`
+
+When a `filter` applies `not_exists` to `edge[<edge type>]`, the server MUST select the rows that hold no outbound edge of that type.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the rows with an outbound edge of the type, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-backref-eq`
+
+When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the rows that are the target of an edge of that type whose source is that id.
+
+**Reason:** which inbound edges count is `edges/filter-backref`.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the rows that an edge of the type from that item points at`, `› selects by an edge eq term and a backref eq term on every door as the listing does`.
+
+### `search-and-filters/filter-backref-neq`
+
+When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select every row that is not the target of an edge of that type from that id, a row with no inbound edge of that type included.
+
+**Reason:** which inbound edges count is `edges/filter-backref`.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref neq every row without that inbound edge, a row with no inbound edge of the type among them`.
+
+### `search-and-filters/filter-backref-exists`
+
+When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST select the rows that are the target of at least one edge of that type.
+
+**Reason:** which inbound edges count is `edges/filter-backref`.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the rows with an inbound edge of the type, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-backref-not-exists`
+
+When a `filter` applies `not_exists` to `backref[<edge type>]`, the server MUST select the rows that are the target of no edge of that type.
+
+**Reason:** which inbound edges count is `edges/filter-backref`.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the rows with an inbound edge of the type, and by not_exists the rows with none`.
+
+### `search-and-filters/filter-edge-refused`
+
+If a `filter` applies to `edge[<edge type>]` or `backref[<edge type>]` an operator other than `eq`, `neq`, `exists` and `not_exists`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
+
+### `search-and-filters/filter-state-default`
+
+When `GET /items`, `GET /search` or `POST /items/bulk-actions` names no `state` and its `filter` holds a `state` term, the server MUST select only the rows in the `active` state that the term selects.
+
+**Reason:** the term narrows the default and does not replace it, so `filter=state eq "archived"` alone selects nothing. Naming `state=archived` reaches those rows, as does `state=any` on `GET /items` and `GET /search`.
+
+**Tests:** `compliance/filter-grammar.test.ts › meets the default state when no state is named, so state eq archived alone selects nothing`.
+
+### `search-and-filters/filter-state-named`
+
+When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names a `state` and its `filter` holds a `state` term, the server MUST select only the rows the named `state` reaches that the term also selects.
+
+**Tests:** `compliance/filter-grammar.test.ts › meets a named state, so the two must agree to select a row`.
+
+### `search-and-filters/filter-state-stats`
+
+When `GET /items/stats` names no `state` and its `filter` holds a `state` term, the server MUST count the rows of every state that the term selects.
+
+**Reason:** the door's default is every state (`search-and-filters/stats-every-state`), so the same `filter=state eq "archived"` that selects nothing on `GET /items` counts the archived rows here.
+
+**Tests:** `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
 ### `search-and-filters/filter-question-mark`
 
@@ -480,27 +708,39 @@ When a tag holds a `?`, the server MUST count it under its own name on `GET /met
 
 ### `search-and-filters/filter-max-length`
 
-The server MUST take a `filter` of 2,048 UTF-16 code units on `GET /items` and `GET /search`.
+The server MUST take a `filter` of 2,048 UTF-16 code units on `GET /items`, `GET /items/stats` and `GET /search`, inside the filter of `POST /items/bulk-actions`, and as a view's or a folder's `query.filter`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 code units and refuses 2,049, at each door`.
 
 ### `search-and-filters/filter-over-length`
 
-If a `filter` on `GET /items` or `GET /search` is longer than 2,048 UTF-16 code units, then the server MUST answer `400 validation_error`.
+If a `filter` on `GET /items`, `GET /items/stats` or `GET /search`, inside the filter of `POST /items/bulk-actions`, or as a view's or a folder's `query.filter` is longer than 2,048 UTF-16 code units, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 code units and refuses 2,049, at each door`.
 
 ### `search-and-filters/filter-max-conditions`
 
-The server MUST take a `filter` of 10 conditions joined by `AND`, or joined by `OR`, on `GET /items` and `GET /search`.
+The server MUST take a `filter` of 10 conditions joined by `AND`, or joined by `OR`, on `GET /items`, `GET /items/stats` and `GET /search`, inside the filter of `POST /items/bulk-actions`, and as a view's or a folder's `query.filter`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 10 conditions and refuses 11, at each door`.
 
 ### `search-and-filters/filter-over-conditions`
 
-If a `filter` on `GET /items` or `GET /search` holds more than 10 conditions, then the server MUST answer `400 validation_error`.
+If a `filter` on `GET /items`, `GET /items/stats` or `GET /search`, inside the filter of `POST /items/bulk-actions`, or as a view's or a folder's `query.filter` holds more than 10 conditions, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 10 conditions and refuses 11, at each door`.
+
+### `search-and-filters/filter-shorthand-conditions`
+
+When `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count each such key as one condition of the `filter` toward `search-and-filters/filter-over-conditions`.
+
+**Tests:** `compliance/filter-grammar.test.ts › counts an edge key as one of the 10 conditions`.
+
+### `search-and-filters/filter-shorthand-length`
+
+When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count the length of ` AND <key> eq "<value>"`, with a space either side of `AND`, for each such key toward the 2,048 UTF-16 code units of `search-and-filters/filter-over-length`.
+
+**Tests:** `compliance/filter-grammar.test.ts › counts an edge key's clause and its AND toward the 2,048 code units`.
 
 ### `search-and-filters/filter-mixed-logic`
 
@@ -510,11 +750,11 @@ If a `filter` on `GET /items` or `GET /search` joins conditions with both `AND` 
 
 ### `search-and-filters/filter-or-shorthand`
 
-If `GET /items` carries an `edge[<edge type>]` or `backref[<edge type>]` key and a `filter` that uses `OR`, then the server MUST answer `400 validation_error`.
+If `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backref[<edge type>]` key and a `filter` that uses `OR`, then the server MUST answer `400 validation_error`.
 
-**Reason:** the server joins a shorthand to the `filter` with `AND`, so the two cannot form one expression.
+**Reason:** the shorthand is joined to the `filter` with `AND`, so the two cannot form one expression.
 
-**Tests:** `compliance/validation.test.ts › refuses a filter that uses OR beside an edge shorthand, which joins it with AND`.
+**Tests:** `compliance/validation.test.ts › refuses a filter that uses OR beside an edge shorthand, which joins it with AND`, `compliance/filter-grammar.test.ts › refuses OR beside an edge key and a backref key, and takes them beside AND`.
 
 ### `search-and-filters/shorthand-backslash`
 
@@ -1217,6 +1457,12 @@ When `GET /items/stats` names no `state`, the server MUST count the rows of ever
 **Reason:** the default answer is the breakdown across the states, so the listing's own default of `active` does not apply.
 
 **Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `› answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`, `compliance/state-default.test.ts › a named state and the sentinel still reach every row`.
+
+### `search-and-filters/stats-empty-group`
+
+When no row that `GET /items/stats` counts falls in a state or a type, the server MUST leave that state or type out of the counts, and not answer it as `0`.
+
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
 ### `search-and-filters/stats-equals-listing`
 
