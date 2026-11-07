@@ -278,3 +278,139 @@ pub fn provenance_json(held: Option<&Provenance>) -> Value {
         None => json!({ "origin": "unknown", "created_by": null }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::app::access::Caller;
+    use crate::app::types;
+    use crate::settings::{Environment, Settings};
+
+    async fn started() -> (TempDir, Arc<App>) {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("SQLITE_PATH", database.to_str().unwrap()),
+            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    fn definition(id: &str, parent: Option<&str>) -> Obj {
+        let mut body = json!({ "id": id, "fields": { "note": { "type": "string" } } });
+        if let Some(parent) = parent {
+            body["parent"] = json!(parent);
+        }
+        match body {
+            Value::Object(body) => body,
+            _ => unreachable!(),
+        }
+    }
+
+    async fn register(app: &App, id: &str, parent: Option<&str>) {
+        types::register(app, &Caller::Local, definition(id, parent))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reader_in_an_old_snapshot_keeps_its_catalog_and_does_not_replace_the_newer_one() {
+        let (_dir, app) = started().await;
+        let cache = app.catalog_handle();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let reader = {
+            let cache = cache.clone();
+            let app = app.clone();
+            tokio::spawn(async move {
+                app.db
+                    .read(move |tx| {
+                        let before = generation(tx)?;
+                        started_tx.send(()).ok();
+                        go_rx.recv().ok();
+                        let seen = current(&cache, tx, Snapshot::Committed)?;
+                        Ok((
+                            before,
+                            seen.generation,
+                            seen.types.get("acme.alpha").is_some(),
+                        ))
+                    })
+                    .await
+            })
+        };
+        tokio::task::spawn_blocking(move || started_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        register(&app, "acme.alpha", None).await;
+        let published = cache.load().generation;
+        go_tx.send(()).unwrap();
+        let (before, saw, has_alpha) = reader.await.unwrap().unwrap();
+
+        assert_eq!(saw, before);
+        assert!(!has_alpha);
+        assert_eq!(published, before + 1);
+        assert_eq!(cache.load().generation, published);
+        assert!(cache.load().types.get("acme.alpha").is_some());
+    }
+
+    #[tokio::test]
+    async fn two_types_registered_in_a_row_are_both_in_the_catalog() {
+        let (_dir, app) = started().await;
+        let start = app.catalog_handle().load().generation;
+        register(&app, "acme.alpha", None).await;
+        register(&app, "acme.beta", Some("acme.alpha")).await;
+        let held = app.catalog_handle().load_full();
+
+        assert_eq!(held.generation, start + 2);
+        assert!(held.types.get("acme.alpha").is_some() && held.types.get("acme.beta").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_rolled_back_registration_leaves_the_shared_catalog_and_the_next_generation_right() {
+        let (_dir, app) = started().await;
+        register(&app, "acme.alpha", None).await;
+        let cache = app.catalog_handle();
+        let published = cache.load().generation;
+
+        let inner = cache.clone();
+        let seen_inside = app
+            .write(&Caller::Local, "type.register", move |unit| {
+                let at = unit.at.as_str();
+                unit.tx().execute(
+                    "INSERT INTO types (id, origin, definition, created_at, updated_at) \
+                     VALUES ('acme.ghost', 'user', ?1, ?2, ?2)",
+                    params![
+                        Value::Object(definition("acme.ghost", None)).to_string(),
+                        at
+                    ],
+                )?;
+                raise(unit.tx())?;
+                let pending = current(&inner, unit.tx(), Snapshot::Pending)?;
+                assert!(pending.types.get("acme.ghost").is_some());
+                Err::<(), _>(Refusal::validation("not this time"))
+            })
+            .await;
+        assert!(seen_inside.is_err());
+        assert_eq!(cache.load().generation, published);
+        assert!(cache.load().types.get("acme.ghost").is_none());
+
+        register(&app, "acme.beta", None).await;
+        let held = cache.load_full();
+        assert_eq!(held.generation, published + 1);
+        assert!(held.types.get("acme.beta").is_some() && held.types.get("acme.ghost").is_none());
+        assert!(matches!(
+            types::get(&app, "acme.ghost".into()).await,
+            Err(refusal) if refusal.code == crate::app::refusal::Code::TypeNotFound
+        ));
+    }
+}
