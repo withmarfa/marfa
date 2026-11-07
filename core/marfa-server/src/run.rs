@@ -1,5 +1,6 @@
 //! A server's life, from settings to exit.
 
+use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -26,10 +27,12 @@ const FLUSH_AFTER_WAIT: Duration = Duration::from_millis(500);
 async fn bind_public(app: &App) -> Result<TcpListener, Failure> {
     let start = &app.settings.start;
     let refused = |error: std::io::Error| {
-        Failure::start(format!(
-            "The port {} could not be bound: {error}",
-            start.port
-        ))
+        let port = start.port;
+        Failure::start(if error.kind() == ErrorKind::AddrInUse {
+            format!("The port {port} is already taken (EADDRINUSE)")
+        } else {
+            format!("The port {port} could not be bound: {error}")
+        })
     };
     match &start.listen_host {
         Some(host) => TcpListener::bind((host.as_str(), start.port))
@@ -37,6 +40,7 @@ async fn bind_public(app: &App) -> Result<TcpListener, Failure> {
             .map_err(refused),
         None => match TcpListener::bind(("::", start.port)).await {
             Ok(listener) => Ok(listener),
+            Err(error) if error.kind() == ErrorKind::AddrInUse => Err(refused(error)),
             Err(_) => TcpListener::bind(("0.0.0.0", start.port))
                 .await
                 .map_err(refused),
