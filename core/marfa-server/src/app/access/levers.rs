@@ -1,6 +1,6 @@
 //! A key's own enforcement levers.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -38,17 +38,24 @@ impl Levers {
     }
 
     pub fn from_body(value: &Value) -> Result<Levers> {
-        let refused =
-            |path: &str| Refusal::validation(format!("{path} is not a valid lever setting."));
-        let block = value
-            .as_object()
-            .ok_or_else(|| refused("enforcement_override"))?;
+        Levers::from_body_at(value, "enforcement_override")
+    }
+
+    /// Reads the levers a body holds under `at`, which is the path a refusal
+    /// names them by.
+    pub fn from_body_at(value: &Value, at: &str) -> Result<Levers> {
+        let refused = |path: &str| {
+            let message = format!("{path} is not a valid lever setting.");
+            Refusal::validation(message.clone())
+                .with_detail("errors", json!([{ "path": path, "message": message }]))
+        };
+        let block = value.as_object().ok_or_else(|| refused(at))?;
         let mut levers = serde_json::Map::new();
         for (lever, members) in LEVERS {
             let Some(named) = block.get(lever) else {
                 continue;
             };
-            let path = format!("enforcement_override.{lever}");
+            let path = format!("{at}.{lever}");
             let named = named.as_object().ok_or_else(|| refused(&path))?;
             let mut kept = serde_json::Map::new();
             for member in members {
@@ -62,5 +69,25 @@ impl Levers {
             levers.insert(lever.into(), Value::Object(kept));
         }
         Ok(Levers(levers))
+    }
+
+    /// The paths under `at` that name no lever, or no member of one.
+    pub fn unknown_names(value: &Value, at: &str) -> Vec<String> {
+        let Some(block) = value.as_object() else {
+            return Vec::new();
+        };
+        let mut unknown = Vec::new();
+        for (name, named) in block {
+            let Some((lever, members)) = LEVERS.iter().find(|(lever, _)| lever == name) else {
+                unknown.push(format!("{at}.{name}"));
+                continue;
+            };
+            for member in named.as_object().into_iter().flat_map(|named| named.keys()) {
+                if !members.contains(&member.as_str()) {
+                    unknown.push(format!("{at}.{lever}.{member}"));
+                }
+            }
+        }
+        unknown
     }
 }

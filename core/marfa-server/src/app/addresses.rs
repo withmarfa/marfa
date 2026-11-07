@@ -133,9 +133,18 @@ pub struct Addresses {
 impl Addresses {
     /// `bound_port` is the port the server really bound, once it has.
     pub fn read(settings: &Settings, bound_port: Option<u16>) -> Addresses {
+        Addresses::in_snapshot(settings, settings.live(), bound_port)
+    }
+
+    /// The addresses the settings in `snapshot` would give.
+    pub fn in_snapshot(
+        settings: &Settings,
+        snapshot: Arc<Snapshot>,
+        bound_port: Option<u16>,
+    ) -> Addresses {
         let start = &settings.start;
         Addresses {
-            live: settings.live(),
+            live: snapshot,
             loopback_host: match start.listen_host.as_deref() {
                 Some(LOOPBACK_IP) => LOOPBACK_IP,
                 _ => "localhost",

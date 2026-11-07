@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use serde_json::Value as Json;
+
 use super::Environment;
 use super::rule;
 use crate::app::addresses::{self, Address};
@@ -32,6 +34,8 @@ pub struct Entry {
     pub test_name: Option<&'static str>,
     pub rule: Rule,
     pub default: &'static str,
+    /// One sentence for the person who reads it on screen.
+    pub description: &'static str,
 }
 
 impl Entry {
@@ -50,6 +54,49 @@ impl Entry {
     /// means nothing, and otherwise normalized.
     pub fn row_text(&self, text: &str) -> Result<String, String> {
         self.parse(text).map(|value| value.row_text())
+    }
+
+    /// What a person reads of the rule, as a phrase: "a whole number, 1 or more".
+    fn phrase(&self) -> String {
+        match self.rule {
+            Rule::Whole { min, max } if max >= rule::SAFE_INTEGER => {
+                format!("a whole number, {min} or more")
+            }
+            Rule::Whole { min, max } => format!("a whole number, from {min} to {max}"),
+            Rule::Boolean => "true or false".to_string(),
+            Rule::Text => "text".to_string(),
+            Rule::Address => "an address such as https://marfa.example, or nothing".to_string(),
+            Rule::Addresses => "a list of addresses such as https://marfa.example".to_string(),
+        }
+    }
+
+    /// The rule as a sentence without its full stop.
+    pub fn words(&self) -> String {
+        let phrase = self.phrase();
+        let mut letters = phrase.chars();
+        let first = letters.next().map(|c| c.to_ascii_uppercase());
+        first.into_iter().chain(letters).collect()
+    }
+
+    /// The text a row holds for a JSON value sent for this setting. A value of
+    /// another JSON type than the rule's is refused as the rule would be.
+    pub fn row_text_of_json(&self, value: &Json) -> Result<String, String> {
+        let wrong_type = || format!("must be {}", self.phrase());
+        let text = match (self.rule, value) {
+            (Rule::Whole { .. }, Json::Number(number)) => whole_text(number),
+            (Rule::Boolean, Json::Bool(flag)) => flag.to_string(),
+            (Rule::Text | Rule::Address, Json::String(text)) => text.clone(),
+            (Rule::Addresses, Json::Array(items)) if items.iter().all(Json::is_string) => {
+                value.to_string()
+            }
+            _ => return Err(wrong_type()),
+        };
+        self.row_text(&text)
+    }
+
+    /// The default as JSON, as `/config` answers a value.
+    pub fn default_json(&self) -> Json {
+        self.default_value().to_json()
     }
 
     fn default_value(&self) -> Value {
@@ -81,7 +128,36 @@ pub enum Value {
     Addresses(Vec<Address>),
 }
 
+/// The digits of a JSON number, so that the rule judges a fraction or a
+/// negative as it judges any text.
+fn whole_text(number: &serde_json::Number) -> String {
+    if let Some(whole) = number.as_u64() {
+        return whole.to_string();
+    }
+    match number.as_f64() {
+        Some(float) if float.fract() == 0.0 && float.abs() <= rule::SAFE_INTEGER as f64 => {
+            format!("{float:.0}")
+        }
+        _ => number.to_string(),
+    }
+}
+
 impl Value {
+    /// The value as `/config` answers it.
+    pub fn to_json(&self) -> Json {
+        match self {
+            Value::Whole(number) => Json::from(*number),
+            Value::Boolean(flag) => Json::from(*flag),
+            Value::Text(text) => Json::from(text.as_str()),
+            Value::Address(address) => address
+                .as_ref()
+                .map_or(Json::Null, |address| Json::from(address.origin())),
+            Value::Addresses(list) => {
+                Json::from(list.iter().map(Address::origin).collect::<Vec<_>>())
+            }
+        }
+    }
+
     fn row_text(&self) -> String {
         match self {
             Value::Whole(number) => number.to_string(),
@@ -149,9 +225,15 @@ impl Kind for Vec<Address> {
 }
 
 macro_rules! registry {
-    ($($constant:ident: $kind:ty = $key:literal, $test_name:expr, $rule:expr, $default:literal;)*) => {
+    ($($constant:ident: $kind:ty = $key:literal, $test_name:expr, $rule:expr, $default:literal, $description:literal;)*) => {
         $(pub const $constant: Setting<$kind> = Setting {
-            entry: &Entry { key: $key, test_name: $test_name, rule: $rule, default: $default },
+            entry: &Entry {
+                key: $key,
+                test_name: $test_name,
+                rule: $rule,
+                default: $default,
+                description: $description,
+            },
             kind: PhantomData,
         };)*
         pub const ENTRIES: &[&Entry] = &[$($constant.entry),*];
@@ -167,22 +249,22 @@ macro_rules! registry {
 }
 
 registry! {
-    MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: u64::MAX }, "1048576";
-    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: u64::MAX }, "134217728";
-    RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true";
-    RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: u64::MAX }, "200";
-    RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: u64::MAX }, "60000";
-    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true";
-    AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Some("AUDIT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
-    TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Some("TRASH_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "60";
-    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Some("MARFA_EVENT_LOG_RETENTION_HOURS"), Rule::Whole { min: 0, max: 876_000 }, "720";
-    VERSION_RECENT_DAYS: u64 = "version_recent_days", Some("VERSION_RECENT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "30";
-    VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Some("VERSION_DAILY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
-    VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365";
-    VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: u64::MAX }, "500";
-    HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true";
-    ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]";
-    SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "";
+    MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1048576", "The largest request body the server accepts, in bytes.";
+    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space kept back, in bytes. Writes that would use it are refused.";
+    RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true", "Whether requests made with a key are limited.";
+    RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "200", "How many requests one key may make in each window.";
+    RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "60000", "How long one rate-limit window lasts, in milliseconds.";
+    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true", "Whether the server reports its own errors to the receiver set where it runs.";
+    AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Some("AUDIT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
+    TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Some("TRASH_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
+    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Some("MARFA_EVENT_LOG_RETENTION_HOURS"), Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log is kept. 0 keeps it for ever.";
+    VERSION_RECENT_DAYS: u64 = "version_recent_days", Some("VERSION_RECENT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
+    VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Some("VERSION_DAILY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";
+    VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";
+    VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "500", "The most versions kept for one item.";
+    HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
+    ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
+    SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
 }
 
 /// The entry a key names.
@@ -217,6 +299,8 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
 #[derive(Debug)]
 pub struct Snapshot {
     values: HashMap<&'static str, Value>,
+    /// The rows that read, by key.
+    stored: HashMap<&'static str, Value>,
     unreadable: Vec<&'static str>,
     generation: u64,
 }
@@ -229,13 +313,17 @@ impl Snapshot {
     pub fn resolve(seeds: &Seeds, stored: &[(String, String)], generation: u64) -> Snapshot {
         let mut values = HashMap::with_capacity(ENTRIES.len());
         let mut unreadable = Vec::new();
+        let mut rows = HashMap::new();
         for entry in ENTRIES {
             let row = stored
                 .iter()
                 .find(|(key, text)| key == entry.key && !text.is_empty())
                 .map(|(_, text)| entry.parse(text));
             let value = match row {
-                Some(Ok(value)) => value,
+                Some(Ok(value)) => {
+                    rows.insert(entry.key, value.clone());
+                    value
+                }
                 absent => {
                     if matches!(absent, Some(Err(_))) {
                         unreadable.push(entry.key);
@@ -250,6 +338,7 @@ impl Snapshot {
         }
         Snapshot {
             values,
+            stored: rows,
             unreadable,
             generation,
         }
@@ -261,6 +350,16 @@ impl Snapshot {
 
     pub fn get<T: Kind>(&self, setting: Setting<T>) -> T {
         T::from_value(&self.values[setting.entry.key]).expect("a setting reads as its rule's kind")
+    }
+
+    /// What a setting's stored row holds, when it has one that reads.
+    pub fn stored(&self, entry: &Entry) -> Option<&Value> {
+        self.stored.get(entry.key)
+    }
+
+    /// A setting's value, whatever it came from.
+    pub fn value(&self, entry: &Entry) -> &Value {
+        &self.values[entry.key]
     }
 
     /// The keys whose stored row does not read.
@@ -324,6 +423,7 @@ mod tests {
             test_name: None,
             rule: Rule::Text,
             default: "",
+            description: "",
         };
         assert_eq!(
             entry
