@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 
-use calamine::{DataRef, ExcelDateTime, Reader, Xls, Xlsb, Xlsx};
+use calamine::{DataRef, ExcelDateTime, Reader, SheetType, Xls, Xlsb, Xlsx};
 use quick_xml::events::Event;
 
 use crate::kind::Sheet;
@@ -100,6 +100,18 @@ fn start_sheet(sink: &mut Sink, name: &str) -> Rows {
     Rows { row: None }
 }
 
+/// The names of the sheets of an Open XML or binary 2007 workbook that hold
+/// cells. Reading a chart sheet as cells fails the whole workbook. A legacy
+/// workbook reads one without a fault, and its cells are the chart's data.
+fn cell_sheets<RS: std::io::Read + std::io::Seek, R: Reader<RS>>(workbook: &R) -> Vec<String> {
+    workbook
+        .sheets_metadata()
+        .iter()
+        .filter(|sheet| !matches!(sheet.typ, SheetType::ChartSheet | SheetType::Vba))
+        .map(|sheet| sheet.name.clone())
+        .collect()
+}
+
 fn refusal<E: std::fmt::Display>(error: &E) -> Refusal {
     Refusal::Malformed(error.to_string())
 }
@@ -114,7 +126,7 @@ fn read_xlsx(bytes: &[u8], options: &Options, sink: &mut Sink) -> Result<(), Ref
         calamine::XlsxError::Io(error) => from_io(&error),
         other => refusal(&other),
     })?;
-    for name in workbook.sheet_names() {
+    for name in cell_sheets(&workbook) {
         if sink.is_full() {
             break;
         }
@@ -150,7 +162,7 @@ fn read_xlsb(bytes: &[u8], options: &Options, sink: &mut Sink) -> Result<(), Ref
         calamine::XlsbError::Io(error) => from_io(&error),
         other => refusal(&other),
     })?;
-    for name in workbook.sheet_names() {
+    for name in cell_sheets(&workbook) {
         if sink.is_full() {
             break;
         }

@@ -219,6 +219,34 @@ fn a_workbook_gives_its_cells_dates_and_print_headers() {
 }
 
 #[test]
+fn a_chart_sheet_among_the_sheets_does_not_fail_the_workbook() {
+    let workbook = format!(
+        r#"<workbook xmlns="m" xmlns:r="{REL}"><sheets><sheet name="Sales" sheetId="1" r:id="rId1"/><sheet name="Graph" sheetId="2" r:id="rId2"/><sheet name="After" sheetId="3" r:id="rId3"/></sheets></workbook>"#
+    );
+    let root = rels(&[("rId1", "officeDocument", "xl/workbook.xml")]);
+    let book = rels(&[
+        ("rId1", "worksheet", "worksheets/sheet1.xml"),
+        ("rId2", "chartsheet", "chartsheets/sheet1.xml"),
+        ("rId3", "worksheet", "worksheets/sheet2.xml"),
+    ]);
+    let cells = |value: &str| {
+        format!(
+            r#"<worksheet xmlns="m"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>{value}</t></is></c></row></sheetData></worksheet>"#
+        )
+    };
+    let (first, second) = (cells("quokkafirst"), cells("quokkasecond"));
+    let file = zip(&[
+        ("_rels/.rels", root.as_bytes()),
+        ("xl/workbook.xml", workbook.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", book.as_bytes()),
+        ("xl/worksheets/sheet1.xml", first.as_bytes()),
+        ("xl/worksheets/sheet2.xml", second.as_bytes()),
+        ("xl/chartsheets/sheet1.xml", br#"<chartsheet xmlns="m"/>"#),
+    ]);
+    assert_eq!(text(&file, XLSX), "Sales\nquokkafirst\nAfter\nquokkasecond");
+}
+
+#[test]
 fn a_book_gives_its_chapters_in_the_order_of_its_spine() {
     let container = r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#;
     let package = r#"<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/><item id="b" href="two.xhtml" media-type="application/xhtml+xml"/><item id="c" href="cover.png" media-type="image/png"/></manifest><spine><itemref idref="b"/><itemref idref="a"/></spine></package>"#;
