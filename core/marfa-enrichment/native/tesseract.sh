@@ -34,7 +34,7 @@ case "$CMAKE_SYSTEM" in
     ;;
   Linux)
     toolchain="$WORK/$MUSL_TOOLCHAIN"
-    [ -x "$toolchain/bin/${MUSL_PREFIX}g++" ] || musl_into "$MUSL_TOOLCHAIN" "$toolchain"
+    [ -x "$toolchain/bin/${MUSL_PREFIX}g++" ] || tool_into "$MUSL_TOOLCHAIN" "$toolchain"
     common+=(
       -DCMAKE_SYSTEM_NAME=Linux
       -DCMAKE_SYSTEM_PROCESSOR="$CMAKE_PROCESSOR"

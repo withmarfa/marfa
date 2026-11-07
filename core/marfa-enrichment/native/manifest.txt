@@ -7,6 +7,8 @@
 #   model   <language> <url> <sha256>            a tessdata_fast model, carried inside the program
 #   git     <name> <url> <ref> <commit>          a git checkout that must resolve to exactly <commit>
 #   tool    <name> <url> <sha256>                a build tool fetched as an archive
+#   image   <name> <reference>                   a container image, by digest
+#   apt-snapshot <name> <timestamp>              the date of the Ubuntu package archive the image installs from
 #
 # To move a pin, change the URL and the hash together: the build stops at the
 # first hash that does not match.
@@ -28,7 +30,10 @@ git depot_tools https://chromium.googlesource.com/chromium/tools/depot_tools.git
 git pdfium https://pdfium.googlesource.com/pdfium chromium/8138 5f092b52993bfd98f94f04deff391918fe0fdcfd
 
 # The musl cross compilers bblanchon's build.sh would otherwise fetch unchecked.
-# They run on x86_64 Linux and build for both Linux targets.
+# They run on x86_64 Linux and build for both Linux targets. PDFium, Leptonica,
+# Tesseract, the C++ shim and the program are all built with the compiler of the
+# target's cross compiler (GCC 11.2.1) and linked with its libstdc++ and musl, so
+# the program holds one C++ library.
 tool x86_64-linux-musl-cross https://musl.cc/x86_64-linux-musl-cross.tgz c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea
 tool aarch64-linux-musl-cross https://musl.cc/aarch64-linux-musl-cross.tgz c909817856d6ceda86aa510894fa3527eac7989f0ef6e87b5721c58737a06c38
 
@@ -41,3 +46,13 @@ model fra https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418
 model spa https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/spa.traineddata 6f2e04d02774a18f01bed44b1111f2cd7f3ba7ac9dc4373cd3f898a40ea6b464
 model jpn https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/jpn.traineddata 1f5de9236d2e85f5fdf4b3c500f2d4926f8d9449f28f5394472d9e8d83b91b4d
 model chi_sim https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/chi_sim.traineddata a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730
+
+# The Linux build image: Ubuntu 24.04 (the multi-architecture index; the image is
+# built for linux/amd64, since Google's build tools and the cross compilers are
+# x86_64 programs), its packages from the Ubuntu archive as it stood at the
+# snapshot, and Rust installed from the standalone installers below.
+image build ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+apt-snapshot ubuntu 20261101T000000Z
+tool rust-1.98.1-x86_64-unknown-linux-gnu https://static.rust-lang.org/dist/rust-1.98.1-x86_64-unknown-linux-gnu.tar.xz 5326b36c53de11d148c8f8dab6553a3d1006c2cfd32123683073fad3c302605b
+tool rust-std-1.98.1-aarch64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-aarch64-unknown-linux-musl.tar.xz 7e0ad2e67817f224b7a6331e48d6397303fc050edaccf81784ed786ffddc884a
+tool rust-std-1.98.1-x86_64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-x86_64-unknown-linux-musl.tar.xz bd9f35880de21dab0e387e84009c00001ae7836a4ba565cb16823f13f75f325f

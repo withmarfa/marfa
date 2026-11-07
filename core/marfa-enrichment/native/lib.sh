@@ -38,15 +38,21 @@ select_target() {
 }
 
 # Where everything goes: downloads shared by all targets, a work folder and a
-# prefix for each. The root is named by the caller, never guessed.
+# prefix for each, and the archives that keep a finished PDFium. The root is named
+# by the caller, never guessed. The work folders may live elsewhere, named by
+# MARFA_NATIVE_WORK: a PDFium checkout needs a file system that tells `A` from
+# `a` and holds many small files, which a Mac's shared folder into a container
+# does not.
 select_root() {
   [ -n "${MARFA_NATIVE_ROOT:-}" ] || die "set MARFA_NATIVE_ROOT to the folder for downloads, work and the prefix"
   mkdir -p "$MARFA_NATIVE_ROOT"
   ROOT=$(cd "$MARFA_NATIVE_ROOT" && pwd)
   DOWNLOADS="$ROOT/downloads"
-  WORK="$ROOT/work/$TARGET"
+  ARCHIVES="$ROOT/archives"
+  WORK_ROOT=${MARFA_NATIVE_WORK:-$ROOT/work}
+  WORK="$WORK_ROOT/$TARGET"
   PREFIX="$ROOT/prefix/$TARGET"
-  mkdir -p "$DOWNLOADS" "$WORK" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/tessdata"
+  mkdir -p "$DOWNLOADS" "$ARCHIVES" "$WORK" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/tessdata"
 }
 
 sha256_of() {
@@ -141,15 +147,34 @@ need() {
   done
 }
 
-# musl_into <toolchain> <folder>: the musl cross compiler pinned for a Linux
-# target, unpacked into a new <folder>. It runs on x86_64 Linux only.
-musl_into() {
+# tool_into <name> <folder>: the tool pinned as `tool <name>`, unpacked, with its top
+# folder removed, into a new empty <folder>. The musl cross compilers run on x86_64
+# Linux only.
+tool_into() {
   local name=$1 folder=$2
   local _kind _name url sha
   read -r _kind _name url sha <<<"$(manifest_line tool "$name")"
-  local file="$DOWNLOADS/$name.tgz"
+  local file="$DOWNLOADS/$name.tar"
   download "$url" "$sha" "$file"
   rm -rf "$folder"
   mkdir -p "$folder"
-  tar -xzf "$file" -C "$folder" --strip-components=1
+  tar -xf "$file" -C "$folder" --strip-components=1
+}
+
+# recipe_hash <kind:name>...: a short hash of the manifest lines and files that decide
+# what a saved build holds. A saved archive made from another recipe is not used.
+# Each argument is `line:<kind>:<name>` (a manifest line) or `file:<path>`.
+recipe_hash() {
+  local item
+  {
+    for item in "$@"; do
+      case "$item" in
+        line:*)
+          local rest=${item#line:}
+          manifest_line "${rest%%:*}" "${rest#*:}"
+          ;;
+        file:*) cat "${item#file:}" ;;
+      esac
+    done
+  } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16
 }
