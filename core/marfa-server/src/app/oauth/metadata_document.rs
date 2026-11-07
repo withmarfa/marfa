@@ -550,7 +550,7 @@ mod tests {
                     Certificate::from_der(trusted).to_owned()
                 ]))
                 .build(),
-            limit: Duration::from_millis(1500),
+            limit: TIME_LIMIT,
         }
     }
 
@@ -803,12 +803,13 @@ mod tests {
         let address = listener.local_addr().expect("an address");
         let certificate = listen(NAME, Vec::new()).certificate;
         let (script, _) = Script::new(vec![vec![address]]);
+        let impatient = Fetcher {
+            limit: Duration::from_millis(300),
+            ..fetcher(script, &certificate)
+        };
         let started = std::time::Instant::now();
-        assert!(matches!(
-            fetcher(script, &certificate).fetch(ID),
-            Err(Failure::Unavailable(_))
-        ));
-        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(matches!(impatient.fetch(ID), Err(Failure::Unavailable(_))));
+        assert!(started.elapsed() < TIME_LIMIT);
         drop(listener);
     }
 

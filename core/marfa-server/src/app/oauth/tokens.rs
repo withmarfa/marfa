@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn a_digest_is_keyed_and_matches_the_key_hash() {
+    fn a_digest_is_keyed_hmac_sha256() {
         let a = digest("salt", "secret").expect("a digest");
         assert_eq!(a, digest("salt", "secret").expect("a digest"));
         assert_ne!(a, digest("other", "secret").expect("a digest"));
