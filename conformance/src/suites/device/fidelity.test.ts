@@ -3053,6 +3053,9 @@ describe("a local read answers the listing grammar as the server does", () => {
       { title: "blank", s: "", list: [0.0000015], note: "Éclair" },
       [],
     );
+    // Differs from `blank` in the case of one non-ASCII letter only, which
+    // neither side folds.
+    const accent = await seed({ title: "accent", s: "x", note: "éclair" }, []);
     const names = new Map([
       [root, "root"],
       [child, "child"],
@@ -3062,6 +3065,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       [ten, "ten"],
       [letters, "letters"],
       [blank, "blank"],
+      [accent, "accent"],
     ]);
     const named = (ids: string[]): string[] =>
       ids.map((id) => names.get(id) ?? id).sort();
@@ -3087,6 +3091,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       'properties.note contains "\\\\"',
       'properties.note contains "ÉCLAIR"',
       "properties.rating gt 4",
+      "properties.rating eq 5.",
       "properties.rating lte 5",
       "properties.rating not_exists",
       "properties.flag eq true",
