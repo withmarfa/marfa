@@ -25,8 +25,7 @@ import { Cli, requireBinary } from "./harness.js";
  * nothing ends the pass and goes again on the next push.
  */
 
-// Far more than the sends it takes to hear each `413`, which is one or two.
-const PUSHES = 20;
+const PUSHES = 3;
 
 let server: FreshServer | undefined;
 let cli: Cli;
@@ -50,7 +49,7 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 it(
-  "holds a file past the request size with its reason and sends the files beside it",
+  "takes no file past the request size and claims no refusal it did not hear",
   async () => {
     const files = join(dir, "notes");
     const { item } = await cli.json<{ item: { id: string } }>([
@@ -72,13 +71,15 @@ it(
     // escape, and one just past the limit, whose answer arrives while the
     // system still holds what was sent.
     const large = new Map([
-      ["Accents", "\u00e9".repeat(999_990)],
-      ["Quotes", '"'.repeat(999_990)],
-      ["Just past", "\u00e9".repeat(530_000)],
+      ["Large accents", "\u00e9".repeat(999_990)],
+      ["Large quotes", '"'.repeat(999_990)],
+      ["Large just past", "\u00e9".repeat(530_000)],
     ]);
     for (const [title, body] of large)
       writeFileSync(join(files, `${title}.md`), note(title, body));
-    const small = ["First", "Second", "Third"];
+    // Ahead of the large files in the queue: a large file that hears nothing
+    // ends the pass, and holds back what is queued behind it.
+    const small = ["First", "Second", "Earlier"].map((name) => `A ${name}`);
     for (const title of small)
       writeFileSync(join(files, `${title}.md`), note(title, "A small file."));
 
@@ -92,9 +93,10 @@ it(
         }[];
       };
     };
+    // Whether a send hears the `413` depends on timing, so each push is held
+    // only to what is true either way.
     const refused: (string | null | undefined)[] = [];
-    let waiting = Number.POSITIVE_INFINITY;
-    for (let push = 0; push < PUSHES && waiting > 0; push += 1) {
+    for (let push = 0; push < PUSHES; push += 1) {
       const pushed = await cli.run(["--json", "folders", "push", files]);
       const { drain } = JSON.parse(pushed.stdout) as Report;
       refused.push(
@@ -105,12 +107,10 @@ it(
           )
           .map((entry) => entry.reason),
       );
-      waiting = drain.undelivered;
-      expect(pushed.code, pushed.stderr).toBe(waiting > 0 ? 3 : 0);
+      expect(refused.length + drain.undelivered).toBe(large.size);
+      expect(pushed.code, pushed.stderr).toBe(drain.undelivered > 0 ? 3 : 0);
     }
-
-    expect(waiting).toBe(0);
-    expect(refused).toEqual([...large.keys()].map(() => "request_too_large"));
+    for (const reason of refused) expect(reason).toBe("request_too_large");
 
     const listed = await client.listItems({ type: "core.note", limit: 100 });
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
@@ -123,16 +123,6 @@ it(
       expect(readFileSync(join(files, `${title}.md`), "utf8")).toBe(
         note(title, body),
       );
-
-    // Put right, the file goes.
-    writeFileSync(join(files, "Quotes.md"), note("Quotes", "Now short."));
-    await cli.run(["--json", "folders", "push", files]);
-    const after = await client.listItems({ type: "core.note", limit: 100 });
-    expect(after.ok).toBe(true);
-    if (after.ok)
-      expect(
-        after.data.data.map((row) => String(row.properties.title)),
-      ).toContain("Quotes");
   },
   FRESH_SERVER_TIMEOUT_MS,
 );

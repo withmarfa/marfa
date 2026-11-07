@@ -1168,7 +1168,7 @@ When a device sends a body larger than 1048576 bytes, whether a write, a page of
 
 **Reason:** the server closes the connection just after it answers a body over its cap, and a next request sent on that connection meets the reset as a failure to reach the server, stopping the drain. It covers keeping the connection out of the pool, and nothing about whether the body arrives.
 
-**Tests:** `device/pages.test.ts › asks to close the connection of a body past the limit and no other`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
+**Tests:** `device/pages.test.ts › asks to close the connection of a body past the limit and no other`, `cli/request-size.test.ts › takes no file past the request size and claims no refusal it did not hear`.
 
 ## Refusals that park a write
 
