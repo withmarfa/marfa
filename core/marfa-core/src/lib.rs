@@ -101,6 +101,26 @@ use std::time::Duration;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
+/// Rules the server holds requests to, each the one the engine holds a write to.
+pub mod rules {
+    use crate::Result;
+
+    /// A type identifier, or a namespace under `.*`.
+    pub fn type_pattern(name: &str) -> Result<bool> {
+        crate::hydrate::type_pattern(name)
+    }
+
+    /// Refuses what is not a lowercase UUIDv7, with the code `invalid_id`.
+    pub fn id(field: &str, id: &str) -> Result<()> {
+        crate::validation::id(field, id)
+    }
+
+    /// `value` as UTC to the millisecond, or a refusal naming `field`.
+    pub fn instant(value: &str, field: &str) -> Result<String> {
+        crate::time::normalize(value, field)
+    }
+}
+
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{
     BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkPart, LinkParts, LinkState, link_parts,

@@ -1500,6 +1500,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "libc",
+ "marfa-core",
  "rusqlite",
  "ryu",
  "serde",

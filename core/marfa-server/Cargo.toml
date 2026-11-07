@@ -23,6 +23,7 @@ hex.workspace = true
 hmac = "0.13"
 http-body-util = "0.1"
 libc = "0.2"
+marfa-core.workspace = true
 rusqlite.workspace = true
 ryu = "1"
 serde.workspace = true
