@@ -127,10 +127,3 @@ pub fn asks_for_html(accept: Option<&str>) -> bool {
         _ => false,
     }
 }
-
-pub fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}

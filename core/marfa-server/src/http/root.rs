@@ -5,25 +5,25 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
-use serde_json::json;
+use serde_json::{Value, json};
 
-use super::answer::{Answer, asks_for_html, escape_html, json_answer};
-use super::query;
+use super::answer::{Answer, asks_for_html, json_answer};
+use super::{page, query};
+use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 
 const DOCUMENT: &str = include_str!("../../../../openapi.json");
 
-/// `GET /openapi.json`: the published document, whole.
-pub async fn document() -> Response {
-    ([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response()
-}
-
-fn page(name: &str) -> String {
-    let name = escape_html(name);
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{name}</title>\
-         </head><body><h1>{name}</h1><p>This Marfa instance is running.</p></body></html>"
-    )
+/// `GET /openapi.json`: the published document, whole, naming the contract
+/// this server answers to.
+pub async fn document(State(app): State<Arc<App>>) -> Answer {
+    if app.settings.start.contract_version.is_none() {
+        return Ok(([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response());
+    }
+    let mut document: Value = serde_json::from_str(DOCUMENT)
+        .map_err(|_| Refusal::internal("the published document did not parse"))?;
+    document["info"]["version"] = app.contract().to_string().into();
+    Ok(json_answer(StatusCode::OK, &document))
 }
 
 async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
@@ -33,7 +33,9 @@ async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     if asks_for_html(accept) {
-        return Ok(Html(page(&name)).into_response());
+        let page = page::render(&name, "This Marfa instance is running.")?;
+        let policy = [(header::CONTENT_SECURITY_POLICY, page.policy)];
+        return Ok((policy, Html(page.html)).into_response());
     }
     Ok(json_answer(
         StatusCode::OK,

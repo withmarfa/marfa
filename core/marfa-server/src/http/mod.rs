@@ -7,6 +7,7 @@ mod control;
 mod health;
 pub mod json;
 pub mod observe;
+mod page;
 mod query;
 mod root;
 mod test_hooks;

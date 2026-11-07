@@ -11,7 +11,8 @@ use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-use super::answer::{Page, asks_for_html, escape_html};
+use super::answer::{Page, asks_for_html};
+use super::page;
 use crate::app::App;
 use crate::app::refusal::Code;
 use crate::log;
@@ -65,14 +66,6 @@ fn keeps_its_envelope(code: Code) -> bool {
     matches!(code, Code::VersionConflict | Code::AncestorUnavailable)
 }
 
-fn refusal_page(page: &Page, status: u16) -> String {
-    let message = escape_html(&page.message);
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{status}</title>\
-         </head><body><h1>{status}</h1><p>{message}</p></body></html>"
-    )
-}
-
 fn offer_page(response: &mut Response) {
     let Some(page) = response.extensions().get::<Page>().cloned() else {
         return;
@@ -80,10 +73,14 @@ fn offer_page(response: &mut Response) {
     if keeps_its_envelope(page.code) {
         return;
     }
-    let html = refusal_page(&page, response.status().as_u16());
-    *response.body_mut() = Body::from(html);
+    let status = response.status().as_u16().to_string();
+    let Ok(rendered) = page::render(&status, &page.message) else {
+        return;
+    };
+    *response.body_mut() = Body::from(rendered.html);
     let headers = response.headers_mut();
     headers.remove(header::CONTENT_LENGTH);
+    headers.insert(header::CONTENT_SECURITY_POLICY, rendered.policy);
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),
