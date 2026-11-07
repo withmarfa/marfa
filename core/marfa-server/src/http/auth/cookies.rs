@@ -5,8 +5,8 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use crate::app::addresses::Address;
 use crate::app::refusal::{Refusal, Result};
 
-const SESSION_ON_HTTPS: &str = "__Host-marfa.session_token";
-const SESSION: &str = "marfa.session_token";
+const SESSION_ON_HTTPS: &str = "__Host-marfa.auth.session_token";
+const SESSION: &str = "marfa.auth.session_token";
 const SETUP: &str = "marfa.setup";
 const SESSION_MAX_AGE: i64 = 400 * 24 * 3600;
 const SETUP_MAX_AGE: i64 = 15 * 60;
