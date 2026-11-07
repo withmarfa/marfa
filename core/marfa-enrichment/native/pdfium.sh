@@ -126,6 +126,12 @@ for attempt in 1 2 3 4; do
   die "build.sh failed (attempt $attempt); the full log is $log"
 done
 tail -n 5 "$log"
+# The gate in step 2 says so once it has passed; a build that did not run it has no
+# such line and does not go on. The patches that built this are named with their hashes.
+for patch in "$NATIVE_DIR"/patches/pdfium-*.patch; do
+  [ -e "$patch" ] && echo "pdfium: built with $(basename "$patch") $(sha256_of "$patch")"
+done
+grep '^pdfium-gate: ' "$log" || die "the build did not run the PDFium pin and dependency gate; the full log is $log"
 
 [ -f staging/lib/libpdfium.a ] || die "build.sh did not make staging/lib/libpdfium.a"
 STAGE_OUT="$WORK/pdfium-out"

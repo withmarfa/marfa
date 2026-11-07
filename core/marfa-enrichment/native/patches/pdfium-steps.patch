@@ -10,7 +10,7 @@
 +# PDFium's example (step 9) nor packs (step 10).
 --- a/steps/02-checkout.sh
 +++ b/steps/02-checkout.sh
-@@ -21,4 +21,13 @@
+@@ -21,4 +21,14 @@
    find pdfium -name .git -prune -execdir sh -xc 'git reset --hard && git clean -df' \;
  fi
  
@@ -25,6 +25,7 @@
 +gclient revinfo --actual --ignore-dep-type cipd --ignore-dep-type gcs >revinfo-actual
 +test -n "$(sed 1d revinfo-pinned)"
 +diff <(sed 1d revinfo-pinned) <(sed 1d revinfo-actual)
++echo "pdfium-gate: PDFium is at $PDFium_COMMIT and $(sed 1d revinfo-actual | wc -l | tr -d ' ') git dependencies are at the commits DEPS names"
 --- a/steps/04-install-extras.sh
 +++ b/steps/04-install-extras.sh
 @@ -11,9 +11,9 @@
