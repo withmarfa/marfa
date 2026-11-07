@@ -48,6 +48,8 @@ mod reach;
 #[cfg(test)]
 mod read_bench_tests;
 mod read_only;
+#[cfg(test)]
+mod read_only_tests;
 mod reads;
 #[cfg(test)]
 mod reads_tests;

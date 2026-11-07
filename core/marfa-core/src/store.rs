@@ -2496,11 +2496,12 @@ pub(crate) fn read_only_owed(
     conn: &Connection,
     every: std::time::Duration,
 ) -> Result<bool, CoreError> {
-    let Some(at) = meta_get(conn, META_READ_ONLY_READ)?.and_then(|at| at.parse::<u64>().ok())
-    else {
+    let at = meta_get(conn, META_READ_ONLY_READ)?
+        .and_then(|at| at.parse().ok())
+        .and_then(|at| std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(at)));
+    let Some(at) = at else {
         return Ok(true);
     };
-    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(at);
     Ok(crate::clock::system_time()
         .duration_since(at)
         .map_or(true, |since| since >= every))
@@ -2552,8 +2553,8 @@ pub(crate) fn hold_read_only(
         .prepare_cached("SELECT id, row FROM beneath WHERE subject = 'item'")?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut row = conn
-        .prepare_cached("UPDATE items SET read_only = ?1 WHERE id = ?2 AND read_only <> ?1")?;
+    let mut row =
+        conn.prepare_cached("UPDATE items SET read_only = ?1 WHERE id = ?2 AND read_only <> ?1")?;
     for (id, kept) in beneath {
         // What reads this row reports one it cannot read.
         let Ok(mut held) = serde_json::from_str::<Item>(&kept) else {
@@ -10499,8 +10500,10 @@ mod tests {
         let path = dir.path().join("core.sqlite");
         {
             let conn = open(&path).unwrap();
-            conn.execute_batch("DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only")
-                .unwrap();
+            conn.execute_batch(
+                "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only",
+            )
+            .unwrap();
         }
         let first = Connection::open(&path).unwrap();
         let second = Connection::open(&path).unwrap();
