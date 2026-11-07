@@ -14,6 +14,7 @@ pub mod idempotency;
 pub mod instance;
 pub mod items;
 pub mod keys;
+pub mod oauth;
 pub mod refusal;
 pub mod sources;
 pub mod stored;
