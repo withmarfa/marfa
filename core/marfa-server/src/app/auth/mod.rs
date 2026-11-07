@@ -84,7 +84,7 @@ fn note(
         Entry {
             action: note.action,
             resource_type: note.resource_type,
-            resource_id: note.resource_id,
+            resource_id: Some(note.resource_id),
             details: note.details,
         },
     )
