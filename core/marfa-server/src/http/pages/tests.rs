@@ -71,6 +71,7 @@ fn the_answer_carries_the_headers_a_page_needs() {
     let headers = response.headers();
     assert_eq!(headers[header::CONTENT_TYPE], "text/html; charset=utf-8");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::REFERRER_POLICY], "same-origin");
     let policy = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
     assert_eq!(directive(policy, "default-src"), Some("'none'"));
     assert_eq!(directive(policy, "script-src"), Some(nonce.as_str()));
@@ -306,4 +307,42 @@ fn a_page_the_caller_gives_a_status_answers_with_it() {
             .headers()
             .contains_key(header::CONTENT_SECURITY_POLICY)
     );
+}
+
+#[tokio::test]
+async fn a_page_over_a_refusal_keeps_its_status_and_drops_its_length() {
+    let page = notice(&Notice::refusal(
+        "Marfa",
+        StatusCode::FORBIDDEN,
+        "That is not allowed.",
+    ))
+    .unwrap();
+    let mut response = Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, "2")
+        .body(Body::from("{}"))
+        .unwrap();
+    page.write_over(&mut response);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let headers = response.headers();
+    assert_eq!(headers[header::CONTENT_TYPE], "text/html; charset=utf-8");
+    assert!(!headers.contains_key(header::CONTENT_LENGTH));
+    assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY));
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("That is not allowed."));
+}
+
+#[test]
+fn a_sign_in_refusal_links_to_sign_in_and_the_setup_notices_link_to_setup() {
+    let refused = notice(&Notice::refusal("Marfa", StatusCode::UNAUTHORIZED, "No."))
+        .unwrap()
+        .html;
+    assert!(refused.contains("/auth/sign-in"));
+    let waiting = notice(&Notice::no_owner_yet("Marfa")).unwrap().html;
+    assert!(waiting.contains("/setup"));
+    let claimed = notice(&Notice::already_claimed("Marfa")).unwrap().html;
+    assert!(!claimed.contains("href=\"/setup\""));
 }
