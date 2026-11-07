@@ -23,6 +23,9 @@ thiserror.workspace = true
 # build.rs links the static libraries from the prefix.
 pdfium-render = { version = "0.9.5", optional = true, default-features = false, features = ["static", "pdfium_8125", "thread_safe"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 cc = { version = "1", optional = true }
 

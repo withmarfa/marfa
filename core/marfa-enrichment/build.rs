@@ -131,10 +131,10 @@ mod native {
                     .ok()
                     .and_then(|output| String::from_utf8(output.stdout).ok())
                     .map(|path| PathBuf::from(path.trim()));
-                if let Some(dir) = found.as_deref().and_then(Path::parent) {
-                    if dir.is_dir() {
-                        println!("cargo:rustc-link-search=native={}", dir.display());
-                    }
+                if let Some(dir) = found.as_deref().and_then(Path::parent)
+                    && dir.is_dir()
+                {
+                    println!("cargo:rustc-link-search=native={}", dir.display());
                 }
                 println!("cargo:rustc-link-lib=static=stdc++");
             }

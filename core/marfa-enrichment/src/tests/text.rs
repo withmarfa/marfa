@@ -53,9 +53,19 @@ fn text_is_cut_between_characters_and_says_so() {
     );
 }
 
+/// Without the `native` feature the program has no PDF reader.
+#[cfg(not(feature = "native"))]
+#[test]
+fn a_pdf_is_unsupported_without_the_native_feature() {
+    assert_eq!(
+        refusal(b"%PDF-1.4", "application/pdf", &options()),
+        Refusal::Unsupported
+    );
+}
+
 #[test]
 fn a_type_with_no_reader_is_unsupported() {
-    for mime in ["application/octet-stream", "audio/mpeg", "application/pdf"] {
+    for mime in ["application/octet-stream", "audio/mpeg"] {
         assert_eq!(
             refusal(b"MZ", mime, &options()),
             Refusal::Unsupported,

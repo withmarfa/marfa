@@ -4,6 +4,8 @@
 mod formats;
 mod html;
 mod limits;
+#[cfg(feature = "native")]
+mod native;
 mod text;
 
 use std::io::{Cursor, Write};

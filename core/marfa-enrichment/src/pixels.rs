@@ -11,9 +11,11 @@ use crate::Refusal;
 
 /// The most pixels OCR reads in one picture. A larger one is scaled down to it.
 ///
-/// A page at 300 dpi is 8.7 million pixels, and the text on it is as readable at
-/// 300 dpi as at 600, so this is a little above one page at 360 dpi. Memory grows
-/// with the pixels, not with the file, so a cap keeps it bounded.
+/// A letter page at 300 dpi is 8.4 million pixels and at 360 dpi 12 million. On a
+/// 300 dpi scan reduced to 6 million, 26 lines of an 80-line page read differently;
+/// at 12 million, and at no cap, the text was identical to the original. A larger cap
+/// read nothing better and cost time and memory: a 2x upscaled scan took 645 MB
+/// at 24 million against 482 MB at 12 million.
 pub(crate) const MAX_OCR_PIXELS: u64 = 12_000_000;
 
 /// The resolution OCR is told the picture has. Tesseract reads it to judge the

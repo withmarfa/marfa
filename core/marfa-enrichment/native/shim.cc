@@ -173,6 +173,8 @@ marfa_ocr *marfa_ocr_open(const char *languages, const char *data_dir,
                           int *status, char *message, size_t message_len) {
   marfa_ocr *ocr = nullptr;
   try {
+    // Leptonica prints to stderr about codecs this build leaves out; nothing reads it.
+    setMsgSeverity(L_SEVERITY_NONE);
     Loader loader;
     loader.data_dir = data_dir != nullptr ? data_dir : "";
     loader.models = models;
@@ -265,12 +267,15 @@ int marfa_ocr_read(marfa_ocr *ocr, const uint8_t *pixels, int width, int height,
       monitor.set_deadline_msecs(deadline_ms);
     }
     int rc = ocr->api.Recognize(&monitor);
-    if (rc != 0) {
+    // A deadline makes Recognize return -1 with the words after it left empty, so
+    // the lines read before it are still there to take.
+    bool late = deadline_ms > 0 && monitor.deadline_exceeded();
+    if (rc != 0 && !late) {
       ocr->api.Clear();
       write_message(message, message_len, "Tesseract could not recognize the image");
       return MARFA_FAILED;
     }
-    *cut_short = monitor.deadline_exceeded() ? 1 : 0;
+    *cut_short = late ? 1 : 0;
     *text = ocr->api.GetUTF8Text();
     ocr->api.Clear();
     return MARFA_OK;
