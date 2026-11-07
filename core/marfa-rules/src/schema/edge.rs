@@ -39,19 +39,21 @@ fn invalid(message: impl Into<String>, field: Option<&'static str>) -> EdgeIssue
     }
 }
 
-/// Whether the edge-type grammar takes `name`: lowercase letters and digits
-/// in hyphen-separated runs, beginning with a letter.
+/// Whether the edge-type grammar takes `name`: a single kebab-case word, or
+/// anything the type grammar takes.
 pub fn edge_id(name: &str) -> bool {
-    let mut runs = name.split('-');
-    let run = |part: &str| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-    };
-    runs.next().is_some_and(|first| {
-        first.chars().next().is_some_and(|c| c.is_ascii_lowercase()) && run(first)
-    }) && runs.all(run)
+    if name.contains('.') {
+        return crate::grammar::type_id(name).unwrap_or(false);
+    }
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase())
+        && name
+            .chars()
+            .last()
+            .is_some_and(|last| last.is_ascii_lowercase() || last.is_ascii_digit())
+        && characters.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// The shape a request body must have, before anything is read from it.
@@ -182,9 +184,8 @@ pub fn request_shape(body: &Obj) -> Result<(), EdgeIssues> {
 }
 
 fn shipped_holder(name: &str, except: &str) -> Option<String> {
-    let shipped = builtin::catalog().ok()?;
-    shipped
-        .edge_types
+    builtin::shipped_edge_types()
+        .ok()?
         .iter()
         .filter_map(Value::as_object)
         .find_map(|edge| {
@@ -389,4 +390,26 @@ pub fn constraint_evolution_changes(stored: &Obj, next: &Obj) -> Vec<&'static st
         }
     }
     changes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_id;
+
+    #[test]
+    fn an_edge_type_is_one_kebab_word_or_a_namespaced_type_identifier() {
+        for name in [
+            "related-to",
+            "a",
+            "snake_case",
+            "acme.related-to",
+            "user.cites",
+        ] {
+            assert!(edge_id(name), "{name}");
+        }
+        for name in ["-", "MY-EDGE", "a b-c", "../-", "a-", "1a", ""] {
+            assert!(!edge_id(name), "{name}");
+        }
+        assert!(!edge_id("acme."));
+    }
 }

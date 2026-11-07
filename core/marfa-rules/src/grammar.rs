@@ -43,3 +43,14 @@ pub fn type_pattern(name: &str) -> Result<bool, RuleError> {
 pub fn type_id(name: &str) -> Result<bool, RuleError> {
     Ok(!name.ends_with(".*") && type_pattern(name)?)
 }
+
+/// The root of a type identifier that only Marfa's own build may create, where
+/// `name` begins with one.
+pub fn platform_root(name: &str) -> Option<&'static str> {
+    match name.split('.').next() {
+        Some("core") => Some("core"),
+        Some("system") => Some("system"),
+        Some("marfa") => Some("marfa"),
+        _ => None,
+    }
+}

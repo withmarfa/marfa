@@ -2,6 +2,7 @@
 //! registration is held to, how a type resolves down its chain, and what an
 //! evolution changes. A refusal is a list of [`Issue`]s.
 
+mod chain;
 mod compat;
 mod edge;
 mod evolution;
@@ -14,6 +15,10 @@ mod unread;
 
 use serde_json::{Map, Value, json};
 
+pub use chain::{
+    MAX_REGISTRATION_CHAIN_DEPTH, broken_compatible_dependents, descendant_depth,
+    parent_chain_fault,
+};
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{
     EdgeIssues, constraint_evolution_changes, edge_id, edge_type_from_request, request_shape,

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::error::RuleError;
 use crate::wire::{WireCatalog, WireType};
@@ -104,6 +104,42 @@ pub fn searched_field_names() -> Result<Vec<String>, RuleError> {
 /// Whether Marfa ships a type by this id.
 pub fn ships(id: &str) -> Result<bool, RuleError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
+}
+
+/// The types Marfa ships, each as its definition is stored, by id.
+pub fn shipped_types() -> Result<&'static [Map<String, Value>], RuleError> {
+    static PARSED: OnceLock<Result<Vec<Map<String, Value>>, String>> = OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let mut document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
+            let mut types: Vec<Map<String, Value>> =
+                serde_json::from_value(document["types"].take()).map_err(|e| e.to_string())?;
+            types.sort_by(|a, b| {
+                a.get("id")
+                    .and_then(Value::as_str)
+                    .cmp(&b.get("id").and_then(Value::as_str))
+            });
+            Ok(types)
+        })
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(|error| RuleError::decoding(format!("the shipped catalog: {error}")))
+}
+
+/// The edge types Marfa ships, each as the list answers it, by id.
+pub fn shipped_edge_types() -> Result<&'static [Value], RuleError> {
+    static PARSED: OnceLock<Result<Vec<Value>, String>> = OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let mut document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
+            match document["edge_types"].take() {
+                Value::Array(rows) => Ok(rows),
+                _ => Err("the shipped catalog has no edge types".into()),
+            }
+        })
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(|error| RuleError::decoding(format!("the shipped catalog: {error}")))
 }
 
 #[cfg(test)]

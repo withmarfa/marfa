@@ -64,6 +64,17 @@ impl Registry {
         self
     }
 
+    /// This registry with `icon` as the owner's choice for `id`, or with none
+    /// where `icon` is `None`.
+    pub fn with_icon(&self, id: &str, icon: Option<&str>) -> Registry {
+        let mut next = self.clone();
+        match icon {
+            Some(icon) => next.icons.insert(id.to_string(), icon.to_string()),
+            None => next.icons.remove(id),
+        };
+        next
+    }
+
     pub fn icon_of(&self, id: &str) -> Option<&str> {
         self.icons.get(id).map(String::as_str)
     }
