@@ -217,10 +217,10 @@ A whole run of `marfa-enrichment-read` on a small text file, parent and child to
 | `Encrypted` | A password-protected file. | Skipped, final. |
 | `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes`, or a child over its memory limit, including a failed Rust allocation and a failed C++ `new`. | Skipped until a limit is raised (`housekeeping/enrichment-document-memory`, `enrichment-document-inflated`, `enrichment-document-left`, `enrichment-document-limit-raised`). |
 | `Malformed` | A file that does not parse. | Failed, counted against its attempts (`housekeeping/enrichment-failure-counted`). |
-| `TimedOut` | A child ended at the deadline, or by its watchdog or `SIGXCPU` once the deadline had passed. | Failed, counted against its attempts. A quieter machine may read it. |
+| `TimedOut` | A child that had sent its first frame ended at the deadline, or by its watchdog or `SIGXCPU` once the deadline had passed. | Failed, counted against its attempts. A quieter machine may read it. |
 | `Crashed` | A child that had sent its first frame ended by any other signal, by an unknown exit code, by a timeout's exit code before the deadline, by a code that says it could not start, or with an answer that is over the cap, not one JSON document, or not one that file can earn. | Failed, counted against its attempts, so a file that kills every reader stops being offered. |
 | `OcrUnavailable` | A language or model that does not load. | Not counted: the fault is the setting's. Left unread until the setting changes. |
-| `ReaderUnavailable` | No child could start, or a child ended before its first frame or sent a bad one. The file was not sent to it. | Not counted, and the run stops: otherwise a fault of the machine would use up the attempts of a whole library. |
+| `ReaderUnavailable` | No child could start, or a child ended before its first frame, by the deadline, over its memory limit or in any other way, or sent a bad first frame. The file was not sent to it. | Not counted, and the run stops: otherwise a fault of the machine would use up the attempts of a whole library. |
 
 A picture whose text is refused still gives a `Reading`, so the sweep can keep its size and treat `Reading::text_refused` as the table says.
 

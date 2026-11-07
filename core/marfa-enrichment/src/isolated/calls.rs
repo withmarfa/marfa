@@ -36,6 +36,8 @@ const ALWAYS: &[libc::c_long] = &[
     libc::SYS_clock_gettime,
     libc::SYS_clock_nanosleep,
     libc::SYS_nanosleep,
+    // A sleep that a stop and continue interrupts resumes through this call.
+    libc::SYS_restart_syscall,
     libc::SYS_gettimeofday,
     libc::SYS_getpid,
     libc::SYS_gettid,

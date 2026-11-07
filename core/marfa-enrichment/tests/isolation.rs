@@ -139,16 +139,18 @@ fn the_text_limit_holds_across_the_pipe() -> Result<(), Failed> {
     })
 }
 
-/// A time limit of zero would end any child, so an answer other than `TimedOut` shows
-/// that none was started.
+/// A time limit of zero would end any child before it took the file, which is
+/// `ReaderUnavailable`, so any other answer shows that none was started.
 fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
     let no_time = Options {
         time_limit: Duration::ZERO,
         ..options()
     };
-    check(read(b"x", TEXT, &no_time) == Err(Refusal::TimedOut), || {
-        "the witness: a child that is started runs out of time".into()
-    })?;
+    let witness = read(b"x", TEXT, &no_time);
+    check(
+        matches!(witness, Err(Refusal::ReaderUnavailable(_))),
+        || format!("the witness: a child that is started runs out of time: {witness:?}"),
+    )?;
     for mime in ["application/x-unknown", "", "not a type", "text/rtf"] {
         let outcome = read(b"x", mime, &no_time);
         check(outcome == Err(Refusal::Unsupported), || {
@@ -1111,6 +1113,18 @@ mod faults {
 
     /// A parent that dies does not leave a reader running.
     pub(super) fn a_child_ends_when_its_parent_dies() -> Result<(), Failed> {
+        ends_after_its_parent_dies(false)
+    }
+
+    /// A stop and continue interrupts the watchdog's sleep, which the kernel then
+    /// resumes through `restart_syscall`. A filter that refuses that call leaves the
+    /// watchdog without a clock, and the reader with nothing to end it.
+    pub(super) fn a_child_stopped_and_continued_still_ends_when_its_parent_dies()
+    -> Result<(), Failed> {
+        ends_after_its_parent_dies(true)
+    }
+
+    fn ends_after_its_parent_dies(stop_and_continue: bool) -> Result<(), Failed> {
         let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
         let file = folder.path().join("hang.txt");
         std::fs::write(&file, fault("hang")).map_err(|error| error.to_string())?;
@@ -1134,14 +1148,29 @@ mod faults {
         // It has to be past its setup, or stdin's close says nothing of the watchdog.
         std::thread::sleep(Duration::from_millis(200));
         check(is_running(child), || "the witness: it runs".into())?;
+        if stop_and_continue {
+            for signal in [libc::SIGSTOP, libc::SIGCONT] {
+                // SAFETY: a signal to the reader this test started.
+                check(unsafe { libc::kill(child, signal) } == 0, || {
+                    format!("could not send signal {signal} to the reader")
+                })?;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            check(is_running(child), || {
+                "the reader did not survive a stop and continue".into()
+            })?;
+        }
         parent.kill().map_err(|error| error.to_string())?;
         parent.wait().map_err(|error| error.to_string())?;
 
         let killed = Instant::now();
         while is_running(child) {
-            check(killed.elapsed() < Duration::from_secs(2), || {
-                "the reader outlived its parent".into()
-            })?;
+            if killed.elapsed() >= Duration::from_secs(2) {
+                // SAFETY: ends the reader this test started, which would otherwise run
+                // for the rest of its 60 seconds.
+                unsafe { libc::kill(child, libc::SIGKILL) };
+                return Err("the reader outlived its parent".into());
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
         println!("ended {:?} after its parent", killed.elapsed());
@@ -1407,6 +1436,10 @@ fn main() {
         (
             "a_child_ends_when_its_parent_dies",
             faults::a_child_ends_when_its_parent_dies,
+        ),
+        (
+            "a_child_stopped_and_continued_still_ends_when_its_parent_dies",
+            faults::a_child_stopped_and_continued_still_ends_when_its_parent_dies,
         ),
     ]);
     #[cfg(all(feature = "fault-injection", feature = "native"))]

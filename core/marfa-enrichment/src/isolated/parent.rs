@@ -549,6 +549,22 @@ fn conclude(
     options: &Options,
     past_deadline: bool,
 ) -> Result<Reading, Refusal> {
+    // Whatever ended it, a child that never said it was confined was never sent the
+    // file, so the file has no part in how it ended.
+    let FirstLine::Said(sandbox) = said.first_line else {
+        let how = match end {
+            End::Deadline => "at the deadline".to_owned(),
+            End::OverMemory(used) => format!("holding {used} bytes"),
+            End::TooMuchOutput => "after writing more than it may".to_owned(),
+            End::BadFrame | End::Exited => {
+                status.map_or_else(|| "with no status".to_owned(), |status| status.to_string())
+            }
+        };
+        return Err(Refusal::ReaderUnavailable(with_last_words(
+            format!("the reader ended before it took the file: {how}"),
+            said,
+        )));
+    };
     match end {
         End::Deadline => return Err(Refusal::TimedOut),
         End::OverMemory(used) => return Err(over_memory(options, Some(used))),
@@ -557,13 +573,6 @@ fn conclude(
         }
         End::BadFrame | End::Exited => {}
     }
-    let FirstLine::Said(sandbox) = said.first_line else {
-        let how = status.map_or_else(|| "with no status".to_owned(), |status| status.to_string());
-        return Err(Refusal::ReaderUnavailable(with_last_words(
-            format!("the reader ended before it took the file: {how}"),
-            said,
-        )));
-    };
     let Some(status) = status else {
         return Err(Refusal::Crashed("the reader's end cannot be known".into()));
     };
@@ -754,6 +763,41 @@ mod tests {
         }
     }
 
+    /// A deadline, a memory limit or a flood of output before the frame ends a reader
+    /// that never had the file, so none of them is a verdict on it.
+    #[test]
+    fn a_limit_reached_before_the_frame_is_no_reader_either() {
+        let said = Said::new(64 * 1024);
+        let confined = confined(Sandbox::Full);
+        for (end, after_the_frame) in [
+            (End::Deadline, Refusal::TimedOut),
+            (
+                End::OverMemory(2 << 30),
+                over_memory(&Options::default(), Some(2 << 30)),
+            ),
+            (
+                End::TooMuchOutput,
+                Refusal::Crashed("the reader wrote more than it may".into()),
+            ),
+        ] {
+            let before = |said| {
+                conclude(
+                    end,
+                    signaled(libc::SIGKILL),
+                    said,
+                    Kind::Text,
+                    &Options::default(),
+                    true,
+                )
+            };
+            assert!(
+                matches!(before(&said), Err(Refusal::ReaderUnavailable(_))),
+                "{end:?}"
+            );
+            assert_eq!(before(&confined), Err(after_the_frame), "{end:?}");
+        }
+    }
+
     /// `ReaderUnavailable` stops the run, so a hostile file must not be able to reach it.
     #[test]
     fn after_the_frame_no_exit_code_stops_the_run() {
@@ -814,7 +858,10 @@ mod tests {
         };
         let waits = script(folder.path(), "/bin/cat >/dev/null\nexit 9");
         let result = read(Some(&waits), b"the file", "text/plain", &options);
-        assert_eq!(result, Err(Refusal::TimedOut));
+        assert!(
+            matches!(&result, Err(Refusal::ReaderUnavailable(why)) if why.contains("deadline")),
+            "{result:?}"
+        );
 
         let frame = String::from_utf8(Frame::line(Sandbox::Off)).unwrap();
         let states = script(
