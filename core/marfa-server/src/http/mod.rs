@@ -6,6 +6,7 @@ pub mod body;
 mod bulk;
 mod caller;
 mod caller_address;
+mod config;
 mod control;
 mod edge_types;
 mod health;
@@ -179,6 +180,16 @@ fn owner_item_doors() -> Routes {
         .route("/trash/empty", post(trash::empty))
 }
 
+fn config_doors() -> Routes {
+    Router::new()
+        .route(
+            "/config",
+            get(config::read).put(config::put).patch(config::patch),
+        )
+        .route("/config/address-check", post(config::address_check))
+        .route("/config/settings", get(config::settings))
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Router::new()
         .route("/", get(root::describe))
@@ -191,6 +202,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(key_doors(app.clone()))
         .merge(item_doors(app))
         .merge(owner_item_doors())
+        .merge(config_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
