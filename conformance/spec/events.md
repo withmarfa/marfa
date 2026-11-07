@@ -1287,7 +1287,7 @@ When `limit` cuts the list of deliveries short, the server MUST answer a `next_c
 
 ### `events/record-limit-default`
 
-When `GET /webhooks/{id}/deliveries` names no `limit`, the server MUST answer a page of at most 50 deliveries.
+When `GET /webhooks/{id}/deliveries` names no `limit`, the server MUST answer the page that a `limit` of 50 answers.
 
 **Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
 
@@ -1809,7 +1809,7 @@ When `limit` cuts the audit listing short, the server MUST answer a `next_cursor
 
 ### `events/audit-limit-default`
 
-When `GET /audit` names no `limit`, the server MUST answer a page of at most 50 entries.
+When `GET /audit` names no `limit`, the server MUST answer the page that a `limit` of 50 answers.
 
 **Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
 

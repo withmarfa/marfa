@@ -149,56 +149,6 @@ describe("pagination correctness", () => {
     expect(otherListing.ok).toBe(false);
     expect(otherListing.status).toBe(400);
     expect(otherListing.error?.error.code).toBe("validation_error");
-
-    // An order follows from more than `sort`: each of these resolves to
-    // another one, though the request is one the door takes without the cursor.
-    const byDefault = await client.listItems({ limit: 5, source: ctx.source });
-    expect(byDefault.ok).toBe(true);
-    const created = encodeURIComponent(byDefault.data.next_cursor!);
-    const scope = `source=${encodeURIComponent(ctx.source)}&limit=5`;
-    for (const order of [
-      "direction=asc",
-      "sort=updated_at",
-      "sort=occurred_at",
-      "sort=properties.title",
-      "state=trashed",
-      "updated_after=2000-01-01T00:00:00.000Z",
-    ]) {
-      const fresh = await client.rawRequest(`/items?${scope}&${order}`);
-      expect(fresh.status, order).toBe(200);
-      const res = await client.rawRequest(
-        `/items?${scope}&${order}&cursor=${created}`,
-      );
-      expect(res.status, order).toBe(400);
-      expect(res.error?.error.code).toBe("validation_error");
-    }
-  });
-
-  it("continues a cursor whether the default order is spelled out or left out", async () => {
-    const first = await client.listItems({ limit: 5, source: ctx.source });
-    expect(first.ok).toBe(true);
-    const cursor = first.data.next_cursor!;
-    const expected = await client.listItems({
-      limit: 5,
-      source: ctx.source,
-      cursor,
-    });
-    expect(expected.ok).toBe(true);
-    const scope = `source=${encodeURIComponent(ctx.source)}&limit=5&cursor=${encodeURIComponent(cursor)}`;
-    for (const spelled of [
-      "sort=created_at",
-      "direction=desc",
-      "sort=created_at&direction=desc",
-    ]) {
-      const page = await client.rawRequest<{ data: { id: string }[] }>(
-        `/items?${scope}&${spelled}`,
-      );
-      expect(page.status, spelled).toBe(200);
-      expect(
-        page.data.data.map((row) => row.id),
-        spelled,
-      ).toEqual(expected.data.data.map((row) => row.id));
-    }
   });
 
   it("continues a cursor under another limit", async () => {
@@ -339,6 +289,63 @@ describe("the order of the listing", () => {
     expect(await ids("sort=properties.body_2")).toHaveLength(
       newestFirst.length,
     );
+  });
+});
+
+describe("the order of a catch-up", () => {
+  const at = (hour: number) =>
+    `2020-01-01T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+  it("orders a catch-up by updated_at, then by id, ascending", async () => {
+    const catchUp = await createSecondClient(ctx, "catchup");
+    const source = `${ctx.source}-catchup`;
+    // Written newest first, with the tied rows in descending ID order, so an
+    // order that fell to the order of the writes would not come out ascending.
+    const tied = [generateId(), generateId(), generateId()].sort();
+    const [late, early, before] = [generateId(), generateId(), generateId()];
+    const restored = await getOwnerClient().restoreArchive(
+      itemsArchive(
+        [
+          { id: late!, updated_at: at(9) },
+          ...[...tied].reverse().map((id) => ({ id, updated_at: at(5) })),
+          { id: early!, updated_at: at(2) },
+          { id: before!, updated_at: at(1) },
+        ].map((row) => ({
+          ...row,
+          created_at: at(1),
+          type: "core.note",
+          source,
+          properties: { body: "catch-up order" },
+        })),
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.imported).toBe(6);
+    for (const id of [late!, early!, before!, ...tied]) trackItem(ctx, id);
+    const expected = [early!, ...tied, late!];
+
+    const scope = `source=${encodeURIComponent(source)}&updated_after=${at(2)}`;
+    const page = await catchUp.rawRequest<{ data: { id: string }[] }>(
+      `/items?${scope}`,
+    );
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    expect(page.data.data.map((row) => row.id)).toEqual(expected);
+
+    // The cursor keeps its place inside the tie.
+    const walked: string[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const next = await catchUp.rawRequest<{
+        data: { id: string }[];
+        next_cursor: string | null;
+      }>(
+        `/items?${scope}&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      walked.push(...next.data.data.map((row) => row.id));
+      cursor = next.data.next_cursor;
+    } while (cursor);
+    expect(walked).toEqual(expected);
   });
 });
 

@@ -2536,7 +2536,7 @@ When `GET /trash` lists items, the server MUST select only trashed non-system it
 
 ### `items/owner-trash-limit-default`
 
-When `GET /trash` names no `limit`, the server MUST answer a page of at most 25 summaries.
+When `GET /trash` names no `limit`, the server MUST answer the page that a `limit` of 25 answers.
 
 **Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
 

@@ -232,7 +232,7 @@ When a key pages `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backr
 
 ### `edges/list-limit-default`
 
-When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names no `limit`, the server MUST answer a page of at most 50 edges.
+When `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` names no `limit`, the server MUST answer the page that a `limit` of 50 answers.
 
 **Tests:** `compliance/page-limits.test.ts › $door answers its default page where it names no limit`.
 
