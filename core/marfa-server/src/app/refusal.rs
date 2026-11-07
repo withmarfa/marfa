@@ -134,6 +134,8 @@ pub struct Refusal {
     pub cause: Option<&'static str>,
     /// The commit itself failed, so the write may have landed.
     pub commit_failed: bool,
+    /// The row refused, once its own gates let the caller be told of it.
+    pub row: Option<String>,
 }
 
 impl Refusal {
@@ -145,6 +147,7 @@ impl Refusal {
             members: None,
             cause: None,
             commit_failed: false,
+            row: None,
         }
     }
 
@@ -162,6 +165,11 @@ impl Refusal {
         self.members
             .get_or_insert_default()
             .insert(name.to_string(), value.into());
+        self
+    }
+
+    pub fn naming_row(mut self, id: &str) -> Refusal {
+        self.row = Some(id.to_string());
         self
     }
 

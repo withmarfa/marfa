@@ -114,6 +114,27 @@ pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), R
     if found.is_empty() {
         return Ok(());
     }
+    Err(inexact_refusal(&found))
+}
+
+/// The first entry of the array `list` of `text`, a JSON object, whose member
+/// `bag` holds a whole number a float would change, and its refusal. A path is
+/// named from inside the bag.
+pub fn inexact_entry(text: &str, list: &str, bag: &str) -> Option<(usize, RuleError)> {
+    inexact_integers(text, None, false)
+        .into_iter()
+        .find_map(|(path, source)| match path.as_slice() {
+            [named, index, member, inside @ ..]
+                if named == list && member == bag && !inside.is_empty() =>
+            {
+                let index = index.parse().ok()?;
+                Some((index, inexact_refusal(&[(inside.to_vec(), source)])))
+            }
+            _ => None,
+        })
+}
+
+fn inexact_refusal(found: &[(Vec<String>, String)]) -> RuleError {
     let fields: Vec<FieldError> = found
         .iter()
         .map(|(path, source)| {
@@ -124,11 +145,11 @@ pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), R
         .iter()
         .map(|(path, source)| refusal_message(path, source))
         .collect();
-    Err(RuleError::new(
+    RuleError::new(
         Code::InvalidProperties,
         format!("Invalid properties: {}", listed.join("; ")),
     )
-    .with_fields(fields))
+    .with_fields(fields)
 }
 
 fn inexact_integers(text: &str, bag: Option<&str>, first: bool) -> Vec<(Vec<String>, String)> {
@@ -213,6 +234,17 @@ fn inexact_integers(text: &str, bag: Option<&str>, first: bool) -> Vec<(Vec<Stri
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn names_the_entry_and_the_path_inside_its_properties() {
+        let text = r#"{"items":[{"version":1,"properties":{"a":1}},
+            {"tag":9007199254740993,"properties":{"a":{"b":[9007199254740993]}}}]}"#;
+
+        let (index, refusal) = inexact_entry(text, "items", "properties").expect("refused");
+
+        assert_eq!(index, 1);
+        assert_eq!(refusal.fields[0].path, "a.b.0");
+    }
 
     #[test]
     fn a_whole_number_is_kept_when_its_digits_are_the_ones_javascript_prints() {

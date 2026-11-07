@@ -23,6 +23,8 @@ use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
+const BULK_PATH: &str = "/items/bulk";
+const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 
 /// A request's body, held on both sides of the routes.
 ///
@@ -94,13 +96,20 @@ impl FromRequest<Arc<App>> for JsonBody {
 
     async fn from_request(request: Request, app: &Arc<App>) -> Result<JsonBody, Stopped> {
         let (parts, body) = request.into_parts();
-        let limit = app.settings.live().get(MAX_REQUEST_BYTES);
+        let limit = cap_on(app, parts.uri.path());
         Ok(JsonBody {
             headers: parts.headers,
             body,
-            limit: usize::try_from(limit).unwrap_or(usize::MAX),
+            limit,
         })
     }
+}
+
+fn cap_on(app: &App, path: &str) -> usize {
+    if path == BULK_PATH {
+        return BULK_REQUEST_BYTES;
+    }
+    usize::try_from(app.settings.live().get(MAX_REQUEST_BYTES)).unwrap_or(usize::MAX)
 }
 
 fn is_json(content_type: &str) -> bool {
@@ -233,6 +242,8 @@ fn parsed_object(bytes: &[u8], bag: Option<Bag>) -> Result<Map<String, Value>, R
 #[derive(Clone, Copy, Debug)]
 pub enum Bag {
     Properties,
+    /// The properties of each entry of `items`.
+    Entries,
     Whole,
 }
 
@@ -241,6 +252,12 @@ impl Bag {
         let member = match self {
             Bag::Properties => Some("properties"),
             Bag::Whole => None,
+            Bag::Entries => {
+                return match integers::inexact_entry(text, "items", "properties") {
+                    Some((index, error)) => Err(ruled(error).with_detail("index", index)),
+                    None => Ok(()),
+                };
+            }
         };
         integers::refuse_inexact_integers_in(text, member).map_err(ruled)
     }
@@ -293,8 +310,7 @@ fn ill_formed(pointer: String) -> Refusal {
 /// sent it and under whatever `Content-Type`. A body declared over the cap is
 /// left to its operation, which answers the credential first.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let limit = app.settings.live().get(MAX_REQUEST_BYTES);
-    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let limit = cap_on(&app, request.uri().path());
     if request.body().is_end_stream() || declared_length(request.headers()) > Some(limit) {
         return next.run(request).await;
     }

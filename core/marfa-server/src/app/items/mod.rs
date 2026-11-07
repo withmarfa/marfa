@@ -4,6 +4,7 @@
 //! the item tables, so no other part of the crate can change an item without
 //! the checks, the version step, the audit entry and the event.
 
+pub mod bulk;
 mod plan;
 mod read;
 mod rows;

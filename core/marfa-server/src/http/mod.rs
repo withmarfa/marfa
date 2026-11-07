@@ -3,6 +3,7 @@
 pub mod answer;
 mod audit;
 pub mod body;
+mod bulk;
 mod caller;
 mod control;
 mod edge_types;
@@ -132,6 +133,7 @@ async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next)
 fn item_doors(app: Arc<App>) -> Routes {
     Router::new()
         .route("/items", post(items::create))
+        .route("/items/bulk", post(bulk::write))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))

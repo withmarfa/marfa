@@ -3,7 +3,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rusqlite::ffi;
@@ -31,9 +31,37 @@ enum Message {
     Stop(oneshot::Sender<()>),
 }
 
+/// When a long job last got something done. A write queued behind that job
+/// goes on waiting for as long as it hears from it.
+#[derive(Clone)]
+pub struct Pulse {
+    origin: Instant,
+    beat: Arc<AtomicU64>,
+}
+
+impl Pulse {
+    fn new() -> Pulse {
+        Pulse {
+            origin: Instant::now(),
+            beat: Arc::default(),
+        }
+    }
+
+    pub fn tick(&self) {
+        let beat = self.origin.elapsed().as_millis();
+        self.beat
+            .store(u64::try_from(beat).unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
+
+    fn last(&self) -> Instant {
+        self.origin + Duration::from_millis(self.beat.load(Ordering::Relaxed))
+    }
+}
+
 pub struct Writer {
     queue: mpsc::Sender<Message>,
     faults: Arc<Faults>,
+    pulse: Pulse,
 }
 
 fn contention() -> Refusal {
@@ -137,13 +165,22 @@ impl Writer {
         std::thread::Builder::new()
             .name("marfa-writer".into())
             .spawn(move || run_thread(conn, receiver))?;
-        Ok(Writer { queue, faults })
+        Ok(Writer {
+            queue,
+            faults,
+            pulse: Pulse::new(),
+        })
+    }
+
+    pub fn pulse(&self) -> Pulse {
+        self.pulse.clone()
     }
 
     /// Queues a job and waits for its answer. A wait past `budget` before the
     /// job starts withdraws it, so a caller told to try again can be sure it
-    /// never ran. A job that has started always finishes, whether or not
-    /// anyone is left to read its answer.
+    /// never ran, unless the queue is held by a job whose [`Pulse`] beats
+    /// within the budget. A job that has started always finishes, whether or
+    /// not anyone is left to read its answer.
     pub async fn submit<T, F>(&self, write: Write, budget: Duration, job: F) -> Result<T>
     where
         T: Send + 'static,
@@ -151,7 +188,7 @@ impl Writer {
     {
         let started = Instant::now();
         let deadline = started + budget;
-        let queue_deadline = (started + budget.max(QUEUE_FLOOR)).into();
+        let mut wait = started + budget.max(QUEUE_FLOOR);
         let ticket = Arc::new(AtomicU8::new(QUEUED));
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
@@ -164,25 +201,45 @@ impl Writer {
                 let _ = answer.send(run_transaction(conn, write, deadline, &faults, job));
             }
         });
-        match tokio::time::timeout_at(queue_deadline, self.queue.send(Message::Run(run))).await {
-            Err(_) => return Err(contention()),
-            Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped")),
-            Ok(Ok(())) => {}
+        let send = self.queue.send(Message::Run(run));
+        tokio::pin!(send);
+        loop {
+            match tokio::time::timeout_at(wait.into(), &mut send).await {
+                Ok(Ok(())) => break,
+                Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped")),
+                Err(_) => match self.waiting_on(budget) {
+                    Some(later) => wait = later,
+                    None => return Err(contention()),
+                },
+            }
         }
         let lost = |_| Refusal::internal("the writer has stopped");
-        match tokio::time::timeout_at(queue_deadline, &mut answered).await {
-            Ok(result) => result.map_err(lost)?,
-            Err(_) => {
-                let withdrawn = ticket
-                    .compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok();
-                if withdrawn {
-                    Err(contention())
-                } else {
-                    answered.await.map_err(lost)?
+        loop {
+            match tokio::time::timeout_at(wait.into(), &mut answered).await {
+                Ok(result) => return result.map_err(lost)?,
+                Err(_) => {
+                    if let Some(later) = self.waiting_on(budget) {
+                        wait = later;
+                        continue;
+                    }
+                    let withdrawn = ticket
+                        .compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok();
+                    return if withdrawn {
+                        Err(contention())
+                    } else {
+                        answered.await.map_err(lost)?
+                    };
                 }
             }
         }
+    }
+
+    /// How much longer a write out of `budget` goes on waiting, if a long job
+    /// has got something done within it.
+    fn waiting_on(&self, budget: Duration) -> Option<Instant> {
+        let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
+        (until > Instant::now()).then_some(until)
     }
 
     /// Runs what is queued, then checkpoints and closes the database.
