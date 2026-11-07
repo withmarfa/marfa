@@ -308,9 +308,10 @@ it(
         "--type",
         "core.note",
         "--properties",
-        JSON.stringify({ title: "Outside", body: "x".repeat(300_000) }),
+        JSON.stringify({ title: "Outside", body: "x".repeat(60_000) }),
       ]);
-    await restartAt(200_000);
+    // Linux takes one argument of at most 128 KiB, so the sizes stay under it.
+    await restartAt(40_000);
     const hydrated = await cli.run([
       ...device,
       "hydrate",
@@ -336,11 +337,11 @@ it(
 
     const refused = await create();
     expect(refused.code).not.toBe(0);
-    expect(refused.stderr).toContain("this server takes 200,000");
+    expect(refused.stderr).toContain("this server takes 40,000");
 
     await restartAt(DEFAULT_LIMIT);
     const stale = await create();
-    expect(stale.stderr).toContain("this server takes 200,000");
+    expect(stale.stderr).toContain("this server takes 40,000");
     const drained = await cli.run([...device, "drain"]);
     expect(drained.code, drained.stderr).toBe(0);
 
