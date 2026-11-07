@@ -20,8 +20,11 @@ pub fn caller_address(peer: IpAddr, trust: &Trust, headers: &HeaderMap) -> IpAdd
     match trust {
         Trust::Nothing => peer,
         Trust::EdgeHeader(name) => edge_address(name, headers).unwrap_or(peer),
+        Trust::EdgeHeaderFrom { header, ranges } if inside(ranges, peer) => {
+            edge_address(header, headers).unwrap_or(peer)
+        }
         Trust::Proxies(ranges) if inside(ranges, peer) => walked(peer, ranges, headers),
-        Trust::Proxies(_) => peer,
+        Trust::EdgeHeaderFrom { .. } | Trust::Proxies(_) => peer,
     }
 }
 
@@ -88,6 +91,13 @@ mod tests {
         Trust::EdgeHeader(EDGE.to_string())
     }
 
+    fn edge_from(text: &str) -> Trust {
+        Trust::EdgeHeaderFrom {
+            header: EDGE.to_string(),
+            ranges: crate::listener::proxy_ranges(text).unwrap(),
+        }
+    }
+
     fn headers<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> HeaderMap {
         let mut map = HeaderMap::new();
         for (name, value) in pairs {
@@ -124,6 +134,15 @@ mod tests {
             ("edge: brackets", "192.0.2.1", edge(), &[(EDGE, "[2001:db8::9]")], "192.0.2.1"),
             ("edge: stray whitespace", "192.0.2.1", edge(), &[(EDGE, " 203.0.113.9")], "192.0.2.1"),
             ("edge: ignores X-Forwarded-For", "192.0.2.1", edge(), &[(XFF, "203.0.113.9")], "192.0.2.1"),
+
+            ("both: a peer inside is believed", "10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("both: a mapped peer inside is believed", "::ffff:10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("both: a peer outside is not", "192.0.2.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("both: a mapped peer outside is not", "::ffff:192.0.2.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("both: missing from inside", "10.0.0.1", edge_from(inner), &[], "10.0.0.1"),
+            ("both: repeated from inside", "10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.10")], "10.0.0.1"),
+            ("both: malformed from inside", "10.0.0.1", edge_from(inner), &[(EDGE, "unknown")], "10.0.0.1"),
+            ("both: ignores X-Forwarded-For", "10.0.0.1", edge_from(inner), &[(XFF, "203.0.113.9")], "10.0.0.1"),
 
             ("peer outside the ranges is not believed", "192.0.2.1", proxies(inner), &[(XFF, "203.0.113.9")], "192.0.2.1"),
             ("the first untrusted from the right", "10.0.0.1", proxies(inner), &[(XFF, "203.0.113.9, 10.0.0.2, 10.0.0.3")], "203.0.113.9"),
@@ -230,8 +249,10 @@ mod tests {
             let peer_answer = peer.to_canonical();
             prop_assert_eq!(caller_address(peer, &Trust::Nothing, &sent), peer_answer);
 
-            let edge_answer = caller_address(peer, &edge(), &sent);
-            prop_assert!(edge_answer == peer_answer || held_in(&edged).contains(&edge_answer));
+            for trust in [edge(), edge_from("0.0.0.0/0, ::/0"), edge_from("10.0.0.0/8")] {
+                let answer = caller_address(peer, &trust, &sent);
+                prop_assert!(answer == peer_answer || held_in(&edged).contains(&answer));
+            }
 
             let held = held_in(&forwarded);
             for trust in [proxies("0.0.0.0/0, ::/0"), proxies("10.0.0.0/8")] {
