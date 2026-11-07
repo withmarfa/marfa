@@ -12,6 +12,7 @@ pub mod integers;
 pub mod js;
 pub mod names;
 pub mod query;
+pub mod schema;
 pub mod search;
 pub mod thumbnail;
 pub mod time;
