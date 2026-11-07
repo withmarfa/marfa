@@ -23,7 +23,8 @@
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.
-# MARFA_VERIFY_MEMORY   a memory limit in bytes added to every run that sets none. Needed
+# MARFA_VERIFY_MEMORY   a memory limit in bytes added to every run that sets none, and
+#                       the least for a run that sets a real one. Needed
 #                       to run linux/amd64 on an Apple silicon machine: Rosetta cannot
 #                       start a program whose address space is limited to the default
 #                       1 GiB (it stops with "rosetta error: mmap_anonymous_rw"), and
@@ -32,23 +33,31 @@
 #                       marfa-enrichment-verify). The script removes it at the end.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# The OCR text of every case, from every user of the second target, against the first
+# user's of the first (the user's name is not part of the comparison: a Mac has one).
 compare_targets() {
-  local a=$1 b=$2 differ=0 total=0 file
+  local a=$1 b=$2 differ=0 total=0 file other
+  select_target "$a"
   select_root
   local dir_a="$ROOT/out/$a/verify/results" dir_b="$ROOT/out/$b/verify/results"
   [ -d "$dir_a" ] && [ -d "$dir_b" ] || die "run verify.sh for both targets first"
-  for file in "$dir_a"/*/ocr-*.stdout "$dir_a"/*/corpus-*.stdout; do
+  local first_a
+  first_a=$(ls "$dir_a" | head -1)
+  for file in "$dir_a/$first_a"/ocr-*.stdout "$dir_a/$first_a"/corpus-*.stdout; do
     [ -e "$file" ] || continue
-    local rel=${file#"$dir_a"/}
-    total=$((total + 1))
-    if [ ! -e "$dir_b/$rel" ]; then
-      echo "compare: $rel is missing for $b"
-      differ=$((differ + 1))
-    elif ! cmp -s "$file" "$dir_b/$rel"; then
-      echo "compare: $rel differs between $a and $b"
-      diff <(cat "$file") <(cat "$dir_b/$rel") | head -10
-      differ=$((differ + 1))
-    fi
+    local name
+    name=$(basename "$file")
+    for other in "$dir_b"/*/"$name"; do
+      total=$((total + 1))
+      if [ ! -e "$other" ]; then
+        echo "compare: $name is missing for $b"
+        differ=$((differ + 1))
+      elif ! cmp -s "$file" "$other"; then
+        echo "compare: $name differs between $a and $b ($other)"
+        diff <(cat "$file") <(cat "$other") | head -10
+        differ=$((differ + 1))
+      fi
+    done
   done
   echo "compare: $total OCR outputs, $((total - differ)) the same byte for byte, $differ different"
   [ "$differ" -eq 0 ]
@@ -164,7 +173,18 @@ prog() {
   local bin=$1
   shift
   if [ -n "${MARFA_VERIFY_MEMORY:-}" ]; then
-    case " $* " in *" --max-memory "*) ;; *) set -- "$@" --max-memory "$MARFA_VERIFY_MEMORY" ;; esac
+    # A limit below this one (but not a token one, which is decided before a child
+    # starts) is raised to it, so the runs that set their own still start.
+    local args=() previous=
+    for arg in "$@"; do
+      if [ "$previous" = --max-memory ] && [ "$arg" -ge 100000000 ] && [ "$arg" -lt "$MARFA_VERIFY_MEMORY" ]; then
+        arg=$MARFA_VERIFY_MEMORY
+      fi
+      args+=("$arg")
+      previous=$arg
+    done
+    case " $* " in *" --max-memory "*) ;; *) args+=(--max-memory "$MARFA_VERIFY_MEMORY") ;; esac
+    set -- "${args[@]}"
   fi
   if [ "$KIND" = mac ]; then
     env -i "$OUT/$bin" "$@"

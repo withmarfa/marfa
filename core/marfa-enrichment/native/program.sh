@@ -99,9 +99,9 @@ case "$TARGET:$(uname -s)-$(uname -m)" in
   *) runs_here= ;;
 esac
 # Rosetta, which runs x86_64 programs in a container on an Apple silicon Mac, cannot
-# start a process whose address space is limited (RLIMIT_AS, which the reader sets on
-# Linux), and says so: that run proves nothing about the program, and verify.sh runs the
-# program under QEMU, which does not apply the limit.
+# start a process whose address space is limited to the reader's default (RLIMIT_AS,
+# which the reader sets on Linux), and says so: that run proves nothing about the
+# program. verify.sh runs it with a larger limit (MARFA_VERIFY_MEMORY).
 if [ -n "$runs_here" ]; then
   shipped_said=$("$shipped" read "$fault_file" 2>&1) && shipped_ok=1 || shipped_ok=
   case "$shipped_said" in
