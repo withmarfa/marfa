@@ -58,7 +58,7 @@ pub fn carry(get: &impl Fn(&str) -> Option<String>) -> Result<Carried, &'static 
     let mut names = Vec::new();
     let mut lines = String::new();
     for name in NAMES {
-        let Some(value) = super::settings::text(get, name) else {
+        let Some(value) = marfa_telemetry::environment::text(get, name) else {
             continue;
         };
         if value.chars().any(char::is_control) {
@@ -90,7 +90,7 @@ fn parse(text: &str) -> Vec<(&'static str, String)> {
 /// them.
 fn apply(text: &str, get: &impl Fn(&str) -> Option<String>, set: &mut impl FnMut(&str, &str)) {
     for (name, value) in parse(text) {
-        if super::settings::text(get, name).is_none() {
+        if marfa_telemetry::environment::text(get, name).is_none() {
             set(name, &value);
         }
     }

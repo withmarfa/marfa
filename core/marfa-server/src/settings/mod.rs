@@ -5,7 +5,7 @@
 
 mod environment;
 pub mod registry;
-mod rule;
+pub(crate) mod rule;
 mod secrets;
 pub mod start;
 

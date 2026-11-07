@@ -27,6 +27,7 @@ use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
 use crate::settings::{Accepted, Settings};
+use crate::telemetry::Telemetry;
 use addresses::Addresses;
 use catalog::Catalog;
 use clock::Clock;
@@ -46,6 +47,7 @@ pub struct App {
     pub health: Health,
     pub usage: Usage,
     pub key_limit: Limiter,
+    pub telemetry: Telemetry,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
 }
@@ -96,6 +98,7 @@ impl App {
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
+            telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
         }))

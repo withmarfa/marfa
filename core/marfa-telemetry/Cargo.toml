@@ -1,0 +1,11 @@
+[package]
+name = "marfa-telemetry"
+description = "What the command line and the server share about telemetry: how the standard settings read, where a PostHog host may be posted to, and the shape of an exception event. It sends nothing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+url = "2"

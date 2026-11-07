@@ -550,6 +550,9 @@ mod tests {
         let settings = [
             include_str!("telemetry/settings.rs"),
             include_str!("telemetry/posthog.rs"),
+            include_str!("../../marfa-telemetry/src/environment.rs"),
+            include_str!("../../marfa-telemetry/src/identity.rs"),
+            include_str!("../../marfa-telemetry/src/otlp.rs"),
         ];
         let readme = include_str!("../../README.md");
         let mut variables: Vec<&str> = settings
@@ -557,6 +560,8 @@ mod tests {
             .flat_map(|source| source.split('"'))
             .filter(|text| {
                 (text.starts_with("OTEL_") || text.starts_with("MARFA_POSTHOG_"))
+                    // The logs are the server's signal; the binary sends none.
+                    && !text.contains("_LOGS_")
                     && text.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
             })
             .collect();
