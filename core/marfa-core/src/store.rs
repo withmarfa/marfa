@@ -32,9 +32,15 @@ pub const META_INSTANCE_ID: &str = "instance_id";
 /// The largest request body the root last named, in bytes; absent where it
 /// has named none (`queue-and-verdicts/request-limit-unknown`).
 const META_REQUEST_LIMIT: &str = "request_limit";
-/// Set while a folder holds a file over that limit, so a pass reads the root
-/// before it judges the file again, even with nothing to send.
-pub(crate) const META_LIMIT_HOLDS: &str = "folder_limit_holds";
+/// Set where a write was refused for that limit, so a raised one is seen with
+/// nothing to send: a drain or a folder's pass reads the root. It holds
+/// `LIMIT_REFUSED` or `LIMIT_HELD`.
+const META_LIMIT_HOLDS: &str = "limit_holds";
+/// A write was refused for its size: the next read of the root ends it.
+const LIMIT_REFUSED: &str = "refused";
+/// A folder holds a file: it stays until a full pass finds none held, and the
+/// root is read before each scan.
+const LIMIT_HELD: &str = "held";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 /// Set by a hydration from the server's count of its slice when it started,
 /// and absent where the server did not answer one.
@@ -1288,7 +1294,11 @@ pub fn request_limit(conn: &Connection) -> Result<Option<usize>, CoreError> {
     Ok(meta_get(conn, META_REQUEST_LIMIT)?.and_then(|limit| limit.parse().ok()))
 }
 
+/// `limit` is what the root said just now, so a refusal waiting on a read has it.
 pub(crate) fn note_request_limit(conn: &Connection, limit: Option<usize>) -> Result<(), CoreError> {
+    if limit_refused(conn)? {
+        meta_delete(conn, META_LIMIT_HOLDS)?;
+    }
     if request_limit(conn)? == limit {
         return Ok(());
     }
@@ -1296,6 +1306,32 @@ pub(crate) fn note_request_limit(conn: &Connection, limit: Option<usize>) -> Res
         Some(limit) => meta_set(conn, META_REQUEST_LIMIT, &limit.to_string()),
         None => meta_delete(conn, META_REQUEST_LIMIT),
     }
+}
+
+/// A folder's hold outranks a refusal: its scan reads the root anyway.
+pub(crate) fn note_limit_refused(conn: &Connection) -> Result<(), CoreError> {
+    if meta_get(conn, META_LIMIT_HOLDS)?.is_none() {
+        meta_set(conn, META_LIMIT_HOLDS, LIMIT_REFUSED)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn limit_refused(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_LIMIT_HOLDS)?.as_deref() == Some(LIMIT_REFUSED))
+}
+
+pub(crate) fn limit_marked(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_LIMIT_HOLDS)?.is_some())
+}
+
+pub(crate) fn note_limit_held(conn: &Connection, held: bool) -> Result<(), CoreError> {
+    let now = meta_get(conn, META_LIMIT_HOLDS)?;
+    if held && now.as_deref() != Some(LIMIT_HELD) {
+        meta_set(conn, META_LIMIT_HOLDS, LIMIT_HELD)?;
+    } else if !held && now.as_deref() == Some(LIMIT_HELD) {
+        meta_delete(conn, META_LIMIT_HOLDS)?;
+    }
+    Ok(())
 }
 
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {

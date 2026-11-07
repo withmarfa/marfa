@@ -5636,6 +5636,10 @@ describe("large removals, status and size", () => {
       warned("large.md"),
       "the status did not name the text near the limit",
     ).toMatch(/\d/);
+    // With no limit named, it promises no hold.
+    expect(warned("large.md")).toContain(
+      "past that a server on its default size does not take it",
+    );
     expect(warned("small.md")).toBeUndefined();
     // A push says it in words for the file its own scan takes.
     put(

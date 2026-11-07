@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   answers,
   refusal,
@@ -1247,6 +1249,117 @@ describe("a folder's first sync", () => {
       ).items.map((entry) => entry.properties.title);
       expect(paged.sort()).toEqual([...titles].sort());
       expect(creates(held, "Large")).toHaveLength(0);
+    });
+
+    it("sends no page where a create past the limit leaves fewer than 50", async () => {
+      const held = await sized("request-limit-floor");
+      naming(held, () => 1_000);
+      const titles = Array.from({ length: 49 }, (_, at) => `Small ${at}`);
+      for (const title of titles) put(held, `${title}.md`, note(title, 1));
+      put(held, "Large.md", note("Large", 2_000));
+
+      expect((await held.folder.push()).ok).toBe(true);
+
+      expect(
+        held.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/items/bulk",
+        ),
+      ).toHaveLength(0);
+      for (const title of titles) expect(creates(held, title)).toHaveLength(1);
+      expect(creates(held, "Large")).toHaveLength(0);
+    });
+
+    /** The file with `length` characters under the lines a pull wrote. */
+    function saved(held: FolderHarness, name: string, length: number) {
+      const text = readFileSync(join(held.dir, name), "utf8");
+      put(
+        held,
+        name,
+        `${text.slice(0, text.indexOf("\n---\n", 4) + 5)}${"\u00e9".repeat(length)}\n`,
+      );
+    }
+
+    async function statusOf(held: FolderHarness, path: string) {
+      const told = await held.folder.status();
+      expect(told.ok).toBe(true);
+      return told.ok
+        ? told.value.files.find((file) => file.path === path)
+        : undefined;
+    }
+
+    const edits = (held: FolderHarness) =>
+      held.server.requests.filter((request) => request.method === "PATCH");
+
+    it("ends a hold for size once a later save of the file is answered", async () => {
+      const held = await sized("request-limit-later-save");
+      let limit = 1_000_000;
+      naming(held, () => limit);
+      put(held, "Note.md", note("Note", 1));
+      expect((await held.folder.push()).ok).toBe(true);
+      expect((await held.folder.pull()).ok).toBe(true);
+
+      saved(held, "Note.md", 2_000);
+      expect((await held.folder.scan()).ok).toBe(true);
+      saved(held, "Note.md", 3);
+      expect((await held.folder.scan()).ok).toBe(true);
+      limit = 1_000;
+
+      const pushed = await held.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed).slice(0, 400)).toBe(true);
+      expect(
+        pushed.ok &&
+          pushed.value.drain.verdicts
+            .filter((entry) => entry.kind === "update_item")
+            .map((entry) => entry.verdict),
+      ).toEqual(["refused", "accepted"]);
+      expect(edits(held)).toHaveLength(1);
+      const status = await statusOf(held, "Note.md");
+      expect(status?.flag, JSON.stringify(status)).toBeUndefined();
+      expect(status?.status).toBe("in_step");
+    });
+
+    it("keeps a hold for size where an earlier save is what was answered", async () => {
+      const held = await sized("request-limit-earlier-save");
+      naming(held, () => 1_000);
+      put(held, "Note.md", note("Note", 1));
+      expect((await held.folder.push()).ok).toBe(true);
+      expect((await held.folder.pull()).ok).toBe(true);
+
+      saved(held, "Note.md", 3);
+      expect((await held.folder.scan()).ok).toBe(true);
+      saved(held, "Note.md", 2_000);
+      expect((await held.folder.scan()).ok).toBe(true);
+
+      expect((await held.folder.push()).ok).toBe(true);
+      expect(edits(held)).toHaveLength(1);
+      const status = await statusOf(held, "Note.md");
+      expect(status?.status).toBe("held");
+      expect(status?.reason).toContain("this server takes 1,000.");
+      expect((await held.folder.pull()).ok).toBe(true);
+      expect(readFileSync(join(held.dir, "Note.md"), "utf8")).toContain(
+        "\u00e9".repeat(2_000),
+      );
+    });
+
+    it("warns of a text near a limit the root names, not the default", async () => {
+      const held = await sized("request-limit-warning");
+      naming(held, () => 10_000);
+      put(held, "First.md", note("First", 1));
+      expect((await held.folder.push()).ok).toBe(true);
+
+      put(held, "Near.md", note("Near", 4_600));
+      put(held, "Under.md", note("Under", 4_000));
+      const scanned = await held.folder.scan();
+      expect(scanned.ok).toBe(true);
+      if (!scanned.ok) return;
+      expect(scanned.value.warnings.map((file) => file.path)).toEqual([
+        "Near.md",
+      ]);
+      expect(scanned.value.warnings[0]?.flag).toBe("size");
+      expect(scanned.value.warnings[0]?.reason).toContain(
+        "of the 10000 a request may carry; a file past that stays here and is not sent",
+      );
     });
 
     it("takes a 413 whose body cannot be read as the refusal it is", async () => {

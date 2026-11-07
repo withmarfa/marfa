@@ -6850,7 +6850,7 @@ While a paused folder removal remains unchanged, the CLI MUST say its watch noti
 
 When a folder scan admits a new or edited document whose JSON-encoded text reaches nine tenths of the server's limit, or 943718 bytes where the root has named none, a device MUST include a `size` warning naming that path and size.
 
-**Tests:** `device/folders.test.ts › warns of a text near the limit`, `device/folders-contract-b.test.ts › warns at the exact JSON-encoded size boundary including escaped text`.
+**Tests:** `device/folders.test.ts › warns of a text near the limit`, `device/folders-contract-b.test.ts › warns at the exact JSON-encoded size boundary including escaped text`, `device/pages.test.ts › warns of a text near a limit the root names, not the default`.
 
 ### `folders/size-warning-said`
 
@@ -6905,6 +6905,14 @@ While a folder holds a file under `folders/over-limit-held`, a device MUST read 
 When the server's limit rises to fit a file held under `folders/over-limit-held`, a device MUST send the file with no change to it.
 
 **Tests:** `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
+
+### `folders/over-limit-later-save`
+
+When the server answers a later save of a file held under `folders/over-limit-held`, a device MUST NOT report the file as held for its size.
+
+**Reason:** the later save carries the whole file, so the bytes the hold was for are no longer the file's. An answer to an earlier save says nothing of the bytes the file holds now, and the hold stands.
+
+**Tests:** `device/pages.test.ts › ends a hold for size once a later save of the file is answered`, `› keeps a hold for size where an earlier save is what was answered`.
 
 ### `folders/request-too-large-bytes-kept`
 

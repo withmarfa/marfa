@@ -1889,14 +1889,14 @@ impl Core {
     /// own, after it.
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_create(draft, Body::Read)
+        self.noting_limit_refusal(self.write_create(draft, Body::Read))
     }
 
     /// What the edit changes of the item's body's links and embeds is
     /// queued as edge writes of their own, after it.
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_update(id, edit, Based::OnHeld, Body::Read)
+        self.noting_limit_refusal(self.write_update(id, edit, Based::OnHeld, Body::Read))
     }
 
     /// The base may be a version earlier than the one held, which the server
@@ -1904,7 +1904,18 @@ impl Core {
     /// rather than overwritten.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_update(id, edit, Based::AsRead, Body::Read)
+        self.noting_limit_refusal(self.write_update(id, edit, Based::AsRead, Body::Read))
+    }
+
+    /// Outside the write's transaction, which the refusal rolled back. A
+    /// folder's scan keeps a mark of its own for the file it holds.
+    fn noting_limit_refusal(&self, written: Result<QueuedWrite>) -> Result<QueuedWrite> {
+        if matches!(&written, Err(CoreError::Validation { code, .. })
+            if code == crate::model::OVER_REQUEST_LIMIT)
+        {
+            store::note_limit_refused(&*self.conn()?)?;
+        }
+        written
     }
 
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {

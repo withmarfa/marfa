@@ -304,12 +304,10 @@ impl Folder {
     /// limit raised since lets the file go in this pass, with nothing else
     /// waiting to send. A root that does not answer leaves the limit as it was.
     fn read_limit_if_holding(&self) {
-        let holding = self.core.conn().is_ok_and(|conn| {
-            matches!(
-                crate::store::meta_get(&conn, crate::store::META_LIMIT_HOLDS),
-                Ok(Some(_))
-            )
-        });
+        let holding = self
+            .core
+            .conn()
+            .is_ok_and(|conn| matches!(crate::store::limit_marked(&conn), Ok(true)));
         if holding && let Ok(http) = self.core.http() {
             let _ = crate::catch_up::refuse_another_instance(&self.core, http);
         }
@@ -317,14 +315,9 @@ impl Folder {
 
     /// Only a full pass reads every file, so only it can say none is held.
     fn note_limit_holds(&self, report: &ScanReport, full: bool) -> Result<()> {
-        let conn = self.core.conn()?;
-        let key = crate::store::META_LIMIT_HOLDS;
-        if report.flagged.iter().any(Flagged::over_limit) {
-            if crate::store::meta_get(&conn, key)?.is_none() {
-                crate::store::meta_set(&conn, key, "1")?;
-            }
-        } else if full {
-            crate::store::meta_delete(&conn, key)?;
+        let held = report.flagged.iter().any(Flagged::over_limit);
+        if held || full {
+            crate::store::note_limit_held(&*self.core.conn()?, held)?;
         }
         Ok(())
     }

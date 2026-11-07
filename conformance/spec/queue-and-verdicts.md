@@ -154,7 +154,7 @@ A first sync of a folder, or an import, queues thousands of creates. Sent one at
 
 ### `queue-and-verdicts/create-pages`
 
-When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same row or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the server takes in a single request, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
+When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same row or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the lower of 1048576 bytes and the server's limit, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
 
 **Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one behind a write that is not a create would jump that write; one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same row, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. A device holds every create in a page to 1048576 bytes, the default, and to the limit the root names where that is lower (`queue-and-verdicts/request-over-limit-page`).
 
@@ -1170,6 +1170,14 @@ When a device reads the root to confirm its instance, a device MUST take the des
 
 **Tests:** `device/pages.test.ts › follows the limit the root names at each drain, raised or lowered`, `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
 
+### `queue-and-verdicts/request-limit-refused-read`
+
+When a drain finds nothing to send and a write was refused for its size since a device last read the root, a device MUST read the root.
+
+**Reason:** a limit raised on the server would otherwise go unseen, because a refused write leaves nothing to send and a drain with nothing to send reads nothing. A root that does not answer fails no such drain, and the next one reads it.
+
+**Tests:** `cli/request-size.test.ts › reads the root at a drain with nothing to send, after a write was refused for its size`.
+
 ### `queue-and-verdicts/request-limit-unknown`
 
 While the root names no `max_request_bytes`, a device MUST send a write whatever its size.
@@ -1214,7 +1222,7 @@ If the body of a create is larger in bytes than the server's limit, then a devic
 
 **Reason:** a page has a cap of its own, so a create the server would refuse on its own door would otherwise succeed or fail by what else waits.
 
-**Tests:** `device/pages.test.ts › keeps out of a page a create past the limit, and pages the rest`.
+**Tests:** `device/pages.test.ts › keeps out of a page a create past the limit, and pages the rest`, `› sends no page where a create past the limit leaves fewer than 50`.
 
 ## Refusals that park a write
 

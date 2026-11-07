@@ -288,3 +288,64 @@ it(
   },
   2 * FRESH_SERVER_TIMEOUT_MS,
 );
+
+it(
+  "reads the root at a drain with nothing to send, after a write was refused for its size",
+  async () => {
+    const device = ["--json", "device", "--db", join(dir, "outside")];
+    const restartAt = async (cap: number) =>
+      server?.restart({
+        env: {
+          PORT: new URL(server.apiUrl).port,
+          MARFA_MAX_REQUEST_BYTES: String(cap),
+        },
+      });
+    const create = () =>
+      cli.run([
+        ...device,
+        "items",
+        "create",
+        "--type",
+        "core.note",
+        "--properties",
+        JSON.stringify({ title: "Outside", body: "x".repeat(300_000) }),
+      ]);
+    await restartAt(200_000);
+    const hydrated = await cli.run([
+      ...device,
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    expect(hydrated.code, hydrated.stderr).toBe(0);
+    // A drain with work is what tells the copy the limit.
+    const first = await cli.run([
+      ...device,
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: "First", body: "small" }),
+    ]);
+    expect(first.code, first.stderr).toBe(0);
+    const told = await cli.run([...device, "drain"]);
+    expect(told.code, told.stderr).toBe(0);
+
+    const refused = await create();
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toContain("this server takes 200,000");
+
+    await restartAt(DEFAULT_LIMIT);
+    const stale = await create();
+    expect(stale.stderr).toContain("this server takes 200,000");
+    const drained = await cli.run([...device, "drain"]);
+    expect(drained.code, drained.stderr).toBe(0);
+
+    const taken = await create();
+    expect(taken.code, taken.stderr).toBe(0);
+  },
+  3 * FRESH_SERVER_TIMEOUT_MS,
+);

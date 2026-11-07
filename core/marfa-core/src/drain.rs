@@ -1012,6 +1012,22 @@ fn expire_for_another_instance(core: &Core, generation: u64) -> Result<()> {
     Ok(())
 }
 
+/// Reads the root where a write was refused for its size, so a limit raised
+/// since is seen with nothing to send. Nothing waits on this read, so a server
+/// that does not answer fails nothing, and the next drain asks again.
+fn read_limit_refused(core: &Core, http: &Http, stop: &AtomicBool) -> Result<()> {
+    if !store::limit_refused(&*core.conn()?)? {
+        return Ok(());
+    }
+    match crate::catch_up::refuse_another_instance_until(core, http, stop) {
+        Err(error) if error.is_environmental() => {
+            telemetry::degraded!(&error);
+            Ok(())
+        }
+        other => other,
+    }
+}
+
 fn send_queue(
     core: &Core,
     http: &Http,
@@ -1028,7 +1044,7 @@ fn send_queue(
     if waiting.is_empty() && !owed && !names_wait && !body_answers {
         // This pass has no work. Return before later reads could observe a
         // concurrent edit and apply its deferred work without admission.
-        return Ok(());
+        return read_limit_refused(core, http, stop);
     }
     {
         // A relocation must be admitted before this pass changes local queue
@@ -1376,7 +1392,7 @@ fn send_queue(
             && store::unsent(&*core.conn()?, &row.id)?
         {
             let reason = format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_REASON);
-            store::meta_set(&*core.conn()?, store::META_LIMIT_HOLDS, "1")?;
+            store::note_limit_refused(&*core.conn()?)?;
             refuse_unsent(core, row, reason, replacing, pass, report)?;
             answers.insert(row.id.clone(), Some(Verdict::Refused));
             continue;

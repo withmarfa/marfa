@@ -175,6 +175,9 @@ pub(super) fn send(
         // so whether it goes does not depend on what else waits.
         if let Some(limit) = store::request_limit(&*sender.core.conn()?)? {
             waiting.retain(|(_, size)| *size <= limit);
+            if waiting.len() < FLOOR {
+                continue;
+            }
         }
         for page in pages(&waiting) {
             crate::catch_up::refuse_if_stopped(sender.stop)?;

@@ -205,3 +205,68 @@ fn the_limit_stays_what_the_root_last_said_and_follows_it_either_way() {
     read(scripted::root(INSTANCE));
     assert_eq!(limit(), None);
 }
+
+#[test]
+fn a_write_refused_as_it_was_queued_has_the_next_drain_read_the_root_once() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    holding_a_catalog(&core);
+    store::note_request_limit(&core.conn().unwrap(), Some(100)).unwrap();
+    // The witness: with nothing refused, an empty drain asks nothing.
+    core.drain().unwrap();
+    assert!(server.seen("/").is_empty());
+
+    let draft = long_note(2_000);
+    core.create_item(&draft).unwrap_err();
+    server.on("/", vec![root_naming("1000000")]);
+    core.drain().unwrap();
+    assert_eq!(server.seen("/").len(), 1);
+    core.drain().unwrap();
+    assert_eq!(server.seen("/").len(), 1, "the mark outlived its read");
+    core.create_item(&draft).unwrap();
+}
+
+#[test]
+fn an_edit_refused_as_it_was_queued_leaves_the_same_mark() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    holding_a_catalog(&core);
+    let item = store::testing::note("a", "a", "short", "2026-01-01T00:00:00Z");
+    store::upsert_item(&core.conn().unwrap(), &item, None, &Default::default()).unwrap();
+    store::note_request_limit(&core.conn().unwrap(), Some(100)).unwrap();
+    let mut edit = crate::Edit {
+        base_version: Some(item.version),
+        ..Default::default()
+    };
+    edit.properties
+        .insert("body".into(), "é".repeat(2_000).into());
+    core.update_item("a", &edit).unwrap_err();
+    server.on("/", vec![root_naming("1000000")]);
+    core.drain().unwrap();
+    assert_eq!(server.seen("/").len(), 1);
+    assert_eq!(
+        store::request_limit(&core.conn().unwrap()).unwrap(),
+        Some(1_000_000)
+    );
+}
+
+#[test]
+fn a_root_that_does_not_answer_fails_no_empty_drain_and_is_asked_again() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    holding_a_catalog(&core);
+    store::note_request_limit(&core.conn().unwrap(), Some(100)).unwrap();
+    core.create_item(&long_note(2_000)).unwrap_err();
+    server.on("/", vec![scripted::refusal(503, "unavailable")]);
+    let report = core.drain().unwrap();
+    assert_eq!(server.seen("/").len(), 1);
+    assert_eq!(report.unavailable, None);
+
+    server.on("/", vec![root_naming("1000000")]);
+    core.drain().unwrap();
+    assert_eq!(server.seen("/").len(), 2);
+    assert_eq!(
+        store::request_limit(&core.conn().unwrap()).unwrap(),
+        Some(1_000_000)
+    );
+}
