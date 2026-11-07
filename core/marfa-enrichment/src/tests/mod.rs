@@ -28,6 +28,8 @@ pub(super) fn options() -> Options {
     Options {
         max_text_chars: 100_000,
         max_inflated_bytes: 256 * MIB,
+        ocr: None,
+        time_budget: None,
     }
 }
 

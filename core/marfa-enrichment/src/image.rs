@@ -4,7 +4,7 @@ use std::io::Cursor;
 
 use image::ImageReader;
 
-use crate::Dimensions;
+use crate::{Clock, Dimensions, Options, Refusal, sink::Sink};
 
 /// The size an image's header states, or none when the bytes are not an image
 /// this reads or the header is broken. A size read from a broken header would
@@ -22,6 +22,39 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<Dimensions> {
             .ok()?
     };
     (width > 0 && height > 0).then_some(Dimensions { width, height })
+}
+
+/// Reads the text in an image with OCR, if it is on, into `sink`. Returns whether
+/// the time budget cut the reading short. An image that cannot be decoded is
+/// refused, because an image that is no image is not a file to leave unread.
+#[cfg(feature = "native")]
+pub(crate) fn read_text(
+    bytes: &[u8],
+    options: &Options,
+    clock: &Clock,
+    sink: &mut Sink,
+) -> Result<bool, Refusal> {
+    use crate::{ocr, pixels};
+
+    let Some(ocr_options) = &options.ocr else {
+        return Ok(false);
+    };
+    let gray = pixels::decode(bytes, options.max_inflated_bytes)?;
+    let mut session = ocr::Session::new(ocr_options);
+    let read = session.read(&gray, pixels::OCR_DPI, clock)?;
+    sink.push_words(&read.text, true);
+    Ok(read.cut_short)
+}
+
+/// Without the `native` feature an image gives its size only.
+#[cfg(not(feature = "native"))]
+pub(crate) fn read_text(
+    _bytes: &[u8],
+    _options: &Options,
+    _clock: &Clock,
+    _sink: &mut Sink,
+) -> Result<bool, Refusal> {
+    Ok(false)
 }
 
 /// Whether a GIF's screen descriptor and global color table are whole and are

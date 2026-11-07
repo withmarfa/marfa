@@ -18,3 +18,17 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Reads an Office file's compound container, to tell an encrypted one.
 cfb = "0.16"
 thiserror.workspace = true
+
+# Only the native feature uses these. pdfium-render links nothing itself here:
+# build.rs links the static libraries from the prefix.
+pdfium-render = { version = "0.9.5", optional = true, default-features = false, features = ["static", "pdfium_8125", "thread_safe"] }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
+
+[features]
+default = []
+# OCR and PDF: Tesseract, Leptonica and PDFium linked in from the prefix named by
+# MARFA_NATIVE_PREFIX (see the README, "Building the native readers"). Without it nothing native is built,
+# images give their size only and a PDF is refused as unsupported.
+native = ["dep:pdfium-render", "dep:cc"]

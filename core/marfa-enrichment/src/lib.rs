@@ -8,15 +8,23 @@ mod epub;
 mod html;
 mod image;
 mod kind;
+#[cfg(feature = "native")]
+mod ocr;
 mod odf;
 mod ooxml;
 mod package;
+mod pdf;
+#[cfg(feature = "native")]
+mod pixels;
 mod sheet;
 mod sink;
 mod xml;
 
 #[cfg(test)]
 mod tests;
+
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use kind::{Document, Kind};
 use sink::Sink;
@@ -27,8 +35,45 @@ pub struct Options {
     /// The text kept, in UTF-16 code units, as the contract counts it. A reader
     /// stops once it holds enough, so a file with far more text costs no more.
     pub max_text_chars: usize,
-    /// The most bytes a document may inflate to, all of its parts together.
+    /// The most bytes a document may inflate to, all of its parts together, and the
+    /// most memory a picture may take once decoded.
     pub max_inflated_bytes: u64,
+    /// Reads text from pictures: images, and pages of a PDF that hold no text.
+    /// `None` leaves OCR off, and an image then gives its size only. Without the
+    /// `native` feature OCR is not built and this has no effect.
+    pub ocr: Option<OcrOptions>,
+    /// How long a reading may spend before it stops reading pictures and returns
+    /// what it has, marked `cut_short`. It is soft: the caller still ends a reader
+    /// that does not return. `None` sets no budget.
+    pub time_budget: Option<Duration>,
+}
+
+/// The languages OCR reads when the owner names none: the four Latin-script
+/// models the program carries that most files need.
+pub const DEFAULT_OCR_LANGUAGES: &str = "eng+deu+fra+spa";
+
+/// Whether this build can read text from pictures and PDFs.
+pub const NATIVE: bool = cfg!(feature = "native");
+
+/// How OCR reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OcrOptions {
+    /// The languages to read, as Tesseract names them, joined by `+`. A model for
+    /// each is in `data_dir` or in the program.
+    pub languages: String,
+    /// A folder of `<language>.traineddata` files. A model in it is used in place
+    /// of the program's own for that language, so an owner can add a language or
+    /// a larger model. The folder is only read, and may be absent.
+    pub data_dir: Option<PathBuf>,
+}
+
+impl Default for OcrOptions {
+    fn default() -> Self {
+        Self {
+            languages: DEFAULT_OCR_LANGUAGES.to_owned(),
+            data_dir: None,
+        }
+    }
 }
 
 /// What a file held.
@@ -39,6 +84,9 @@ pub struct Reading {
     pub text: String,
     /// Whether the file held more text than `text` does.
     pub truncated: bool,
+    /// Whether `Options::time_budget` ran out before every picture was read, so
+    /// that more text may be in the file than `text` holds.
+    pub cut_short: bool,
     /// The size of an image.
     pub dimensions: Option<Dimensions>,
 }
@@ -67,6 +115,12 @@ pub enum Refusal {
     /// may let it read. The reason is for a log.
     #[error("the file is past a limit: {0}")]
     OverLimit(String),
+    /// OCR is on, and cannot start: a language that neither the data folder nor the
+    /// program holds, or a model that does not load. The file may be fine, and
+    /// fixing the setting lets it read. The reason is for the person who sets OCR
+    /// up.
+    #[error("OCR cannot start: {0}")]
+    OcrUnavailable(String),
     /// The reading did not finish in time.
     #[error("reading the file took too long")]
     TimedOut,
@@ -85,14 +139,41 @@ pub enum Refusal {
 // process of its own is added.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn read_here(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
-    std::panic::catch_unwind(|| read_kind(bytes, mime, options))
+    let clock = Clock::start(options.time_budget);
+    std::panic::catch_unwind(|| read_kind(bytes, mime, options, &clock))
         .unwrap_or_else(|_| Err(Refusal::Malformed("the reader failed on this file".into())))
 }
 
-fn read_kind(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
+/// The time budget of one reading.
+pub(crate) struct Clock {
+    end: Option<Instant>,
+}
+
+impl Clock {
+    fn start(budget: Option<Duration>) -> Self {
+        Self {
+            end: budget.map(|budget| Instant::now() + budget),
+        }
+    }
+
+    /// The time left, or none when there is no budget. Zero when it has run out.
+    #[cfg_attr(not(feature = "native"), allow(dead_code))]
+    pub(crate) fn remaining(&self) -> Option<Duration> {
+        self.end
+            .map(|end| end.saturating_duration_since(Instant::now()))
+    }
+}
+
+fn read_kind(
+    bytes: &[u8],
+    mime: &str,
+    options: &Options,
+    clock: &Clock,
+) -> Result<Reading, Refusal> {
     let kind = Kind::of(mime).ok_or(Refusal::Unsupported)?;
     let mut sink = Sink::new(options.max_text_chars);
     let mut dimensions = None;
+    let mut cut_short = false;
     match kind {
         Kind::Text => {
             let declared = decode::declared_charset(mime);
@@ -102,12 +183,19 @@ fn read_kind(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Ref
         Kind::Html { xhtml } => html::read(bytes, mime, xhtml, &mut sink),
         Kind::Document(document) => read_document(document, bytes, options, &mut sink)?,
         Kind::Sheet(sheet) => sheet::read(sheet, bytes, options, &mut sink)?,
-        Kind::Image => dimensions = image::dimensions(bytes),
+        Kind::Image { ocr } => {
+            dimensions = image::dimensions(bytes);
+            if ocr {
+                cut_short = image::read_text(bytes, options, clock, &mut sink)?;
+            }
+        }
+        Kind::Pdf => cut_short = pdf::read(bytes, options, clock, &mut sink)?,
     }
     let (text, truncated) = sink.finish(options.max_text_chars);
     Ok(Reading {
         text,
         truncated,
+        cut_short,
         dimensions,
     })
 }

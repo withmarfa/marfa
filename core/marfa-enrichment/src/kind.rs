@@ -27,8 +27,12 @@ pub(crate) enum Kind {
     },
     Document(Document),
     Sheet(Sheet),
-    /// Any `image/*` type: the bytes, not the label, say which image it is.
-    Image,
+    /// Any `image/*` type: the bytes, not the label, say which image it is. `ocr`
+    /// is whether OCR reads this type, which it does for the types `image` decodes.
+    Image {
+        ocr: bool,
+    },
+    Pdf,
 }
 
 impl Kind {
@@ -64,6 +68,7 @@ impl Kind {
                 Self::Document(Document::Odp)
             }
             "application/epub+zip" => Self::Document(Document::Epub),
+            "application/pdf" => Self::Pdf,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             | "application/vnd.openxmlformats-officedocument.spreadsheetml.template"
             | "application/vnd.ms-excel.sheet.macroenabled.12"
@@ -72,7 +77,9 @@ impl Kind {
             "application/vnd.ms-excel" => Self::Sheet(Sheet::Xls),
             "application/vnd.oasis.opendocument.spreadsheet"
             | "application/vnd.oasis.opendocument.spreadsheet-template" => Self::Sheet(Sheet::Ods),
-            _ if bare.starts_with("image/") => Self::Image,
+            "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/tiff"
+            | "image/gif" => Self::Image { ocr: true },
+            _ if bare.starts_with("image/") => Self::Image { ocr: false },
             // Anything else that is text to read: a person searches a source
             // file, a log or a data file by the words in it.
             "application/json"
