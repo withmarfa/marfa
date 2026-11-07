@@ -4,24 +4,36 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use libtest_mimic::{Arguments, Failed, Trial};
 use marfa_enrichment::{Options, read};
 
-fn main() {
+fn read_stops_and_starts_nothing() -> Result<(), Failed> {
     let options = Options::default();
     let outcome = catch_unwind(AssertUnwindSafe(|| read(b"words", "text/plain", &options)));
-    let panic = outcome.expect_err("read went ahead without serve_child_if_asked");
+    let Err(panic) = outcome else {
+        return Err("read went ahead without serve_child_if_asked".into());
+    };
     let message = panic
         .downcast_ref::<String>()
         .map(String::as_str)
         .or_else(|| panic.downcast_ref::<&str>().copied())
         .unwrap_or_default();
-    assert!(
-        message.contains("serve_child_if_asked"),
-        "the panic does not say what to do: {message}"
-    );
+    if !message.contains("serve_child_if_asked") {
+        return Err(format!("the panic does not say what to do: {message}").into());
+    }
 
     // SAFETY: a plain query of this process's children.
     let children = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
-    assert_eq!(children, -1, "a child was started");
-    println!("read stopped and started nothing");
+    if children != -1 {
+        return Err("a child was started".into());
+    }
+    Ok(())
+}
+
+fn main() {
+    let trial = Trial::test(
+        "read_stops_and_starts_nothing",
+        read_stops_and_starts_nothing,
+    );
+    libtest_mimic::run(&Arguments::from_args(), vec![trial]).exit();
 }

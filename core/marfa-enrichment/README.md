@@ -2,7 +2,19 @@
 
 Reads the text and the size out of a file's bytes, so that search can find the file. The crate takes bytes and a MIME type. It knows nothing about items, a database, or HTTP.
 
-The crate reads text, Office, OpenDocument, spreadsheet, HTML, and EPUB files, and the size of an image, all in pure Rust. With the `native` feature it also reads PDFs, and text from pictures with OCR, through PDFium and Tesseract linked into the program. A process of its own for each file comes in a later step. Until then the reader is `pub(crate)`.
+The crate reads text, Office, OpenDocument, spreadsheet, HTML, and EPUB files, and the size of an image, all in pure Rust. With the `native` feature it also reads PDFs, and text from pictures with OCR, through PDFium and Tesseract linked into the program.
+
+Every file is read in a process of its own, because PDFium and Tesseract are C and C++ reading untrusted bytes beside an owner's database. A program that uses the crate calls `serve_child_if_asked()` as the first line of `main`, then calls `read`:
+
+```rust
+fn main() {
+    marfa_enrichment::serve_child_if_asked();
+    // ...
+    let reading = marfa_enrichment::read(&bytes, "application/pdf", &options);
+}
+```
+
+`read` blocks until the child answers, so an async caller runs it on a blocking thread. Several threads can call it at once. A program that forgets `serve_child_if_asked` panics at its first `read`, and nothing is started or read.
 
 ## What it reads
 
@@ -59,7 +71,7 @@ Pictures are decoded through the `image` crate with limits, turned upright by th
 
 A PDF page is read from its text layer. A page with fewer than 50 visible characters is drawn at 200 dpi and read by OCR when it holds an image that covers a quarter of the page, or when it has no text and something else is drawn. Chosen on scans, 200 dpi read the same words as 300, and below that accuracy fell. A few words over a blank page are not read as a picture. The drawn page is capped at the same 12 million pixels. Where OCR reads a page, its text replaces the text layer's few characters. PDFium's `U+0002` mark at a hyphenated line end is removed and the word joined. A password-protected PDF is `Refusal::Encrypted`, and one PDFium cannot open is `Refusal::Malformed`.
 
-`Options::time_budget` is soft. When it runs out, Tesseract stops inside the page, the lines read so far are kept, and `Reading::cut_short` is true. No later page is read by OCR. The caller still ends a reader that does not return.
+`Options::time_budget` is soft. When it runs out, Tesseract stops inside the page, the lines read so far are kept, and `Reading::cut_short` is true. No later page is read by OCR. Unless set, the budget is three quarters of `Options::time_limit`, so a long scan returns the pages it reached instead of being ended. On a 12-page scan with a limit of 4 seconds, the reading came back with its first pages at 3.06 seconds.
 
 ## Limits
 
@@ -71,11 +83,92 @@ A page of HTML is read up to 8 MiB and 512 open elements.
 
 A file the reader cannot take apart is `Refusal::Malformed`. A parser that panics is also `Malformed`: `calamine` panics on some damaged `.xls` files.
 
+## Isolation
+
+`read` decides what it can without a process: an unknown or overlong type, a PDF in a build without `native`, and a file larger than the memory limit. Anything else goes to a child, which is the same program started again:
+
+1. The parent starts the program, from `/proc/self/exe` on Linux so that a new file installed over it changes nothing, with an empty environment, the working directory `/`, and a process group of its own. The limits are on the command line, so the child sets them before it reads a byte.
+2. The child closes every inherited descriptor above 2, sets its limits, reads the request from stdin, turns on the sandbox, starts its watchdog, and then reads the file's bytes from stdin. No file path crosses from a caller to the child except the OCR data folder.
+3. The child answers with one JSON document on stdout and ends. A child can only claim a reading or one of the refusals that a file earns; it cannot claim to have timed out or crashed.
+4. The parent runs one `poll` loop on the calling thread, which feeds stdin and reads stdout and stderr, so no thread can be left behind. It kills the child's whole group at the deadline, when the child's memory passes the limit, and when stdout passes the size of the largest answer `max_text_chars` allows. It always reaps the child, and it does not wait for a pipe to close, so a descendant that holds one cannot hold up the caller.
+
+### What holds on each platform
+
+| Measure | Linux | macOS |
+| --- | --- | --- |
+| Hard deadline | Parent kills the group. The child's watchdog and `RLIMIT_CPU` stand behind it. | The same. |
+| Parent gone | The watchdog sees the parent's id change and ends the child, within 50 ms. | The same. |
+| No core file, no file written, few descriptors | `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`. | The same, and the child's exception ports are cleared, so a crash writes no report. |
+| Memory | Parent reads resident memory less shared pages from `/proc` every 10 ms. `RLIMIT_AS` stands behind it, at `max_memory_bytes` plus 256 MiB plus the program's size, and still holds when `/proc` is not mounted. | Parent reads the physical footprint every 10 ms. Nothing stands behind it: `setrlimit(RLIMIT_AS)` fails with `EINVAL`. |
+| Files | Landlock: read-only to the OCR data folder, nothing else. | `sandbox_init`: the same. |
+| Network | Landlock denies TCP from ABI 4. UDP stays open: Landlock has no rule for it. | `sandbox_init` denies all of it. |
+| New processes | `RLIMIT_NPROC` 0, which does not hold for root. | `sandbox_init` denies them. |
+| New privileges | `PR_SET_NO_NEW_PRIVS`. | No such setting. |
+| Program file replaced during a run | No effect while `/proc` is mounted. | The new file runs. An answer it cannot give is `Refusal::Crashed`. |
+
+The sandbox is best effort. A kernel without Landlock still reads the file, and `Reading::sandbox` says what held: `Full`, `Partial` (an older Landlock that enforced part of the rules), or `Off`. Links in the OCR data folder that lead outside it are not followed.
+
+A polled limit can be passed for the length of a poll. Memory written as fast as a process can write it reached 393 MB under a limit of 268 MB on macOS before the kill.
+
+### Default limits
+
+| Option | Default | Why |
+| --- | --- | --- |
+| `time_limit` | 60 seconds | The TypeScript server's item timeout. The densest page the decode limit allows took 11 seconds. |
+| `time_budget` | Three quarters of `time_limit` | Leaves room to answer with what was read. |
+| `max_memory_bytes` | 1 GiB | The densest page the decode limit allows peaked at 803 MB. The limit follows `max_inflated_bytes`: raise them together. |
+
+Measured on macOS with the release build:
+
+| Read | Peak footprint |
+| --- | --- |
+| Letter-size page, OCR with four languages | 108 MB |
+| One scanned page in a PDF | 134 MB |
+| 12-page scanned PDF | 142 MB |
+| 12 million pixels, RGB | 182 MB |
+| 21 million pixels, RGB, at the decode limit | 519 MB |
+| 64 million pixels, gray, at the decode limit, blank | 584 MB |
+| 64 million pixels, gray, at the decode limit, full of text | 803 MB |
+
+On Linux, address space peaked 4 to 7 MiB above resident memory for Tesseract and PDFium, so `RLIMIT_AS` does not bind before the footprint does. A child costs about 10 ms to start.
+
+### How the sweep treats a refusal
+
+| Kind | Comes from | Sweep |
+| --- | --- | --- |
+| `Unsupported` | An unknown type, or a PDF without `native`. No child is started. | Skipped, final. |
+| `Encrypted` | A password-protected file. | Skipped, final. |
+| `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes`, or a child over its memory limit, including a failed Rust allocation and a failed C++ `new`. | Skipped until a limit is raised (`housekeeping/enrichment-document-memory`, `enrichment-document-inflated`, `enrichment-document-left`, `enrichment-document-limit-raised`). |
+| `Malformed` | A file that does not parse. | Failed, counted against its attempts (`housekeeping/enrichment-failure-counted`). |
+| `TimedOut` | A child ended at the deadline, by its watchdog, or by `SIGXCPU`. | Failed, counted against its attempts. A quieter machine may read it. |
+| `Crashed` | A child ended by any other signal, by an unknown exit code, or with an answer that is over the cap, not one JSON document, or of the wrong shape. | Failed, counted against its attempts, so a file that kills every reader stops being offered. |
+| `OcrUnavailable` | A language or model that does not load. | Not counted: the fault is the setting's. Left unread until the setting changes. |
+| `ReaderUnavailable` | No child could start. The file was not tried. | Not counted, and the run stops: otherwise a fault of the machine would use up the attempts of a whole library. |
+
+Memory that C code fails to get may show as `Crashed`: PDFium and Leptonica can end by `SIGSEGV` or `SIGABRT` after a `malloc` returns nothing, and that cannot be told from any other crash. It only happens on Linux, where `RLIMIT_AS` makes `malloc` fail, and only if a read passes the watched footprint between two polls. The attempts count bounds it.
+
+## A program to try it
+
+`marfa-enrichment-read` reads one file through the same path the server uses, prints the text, and exits non-zero on a refusal. It guesses the type from the extension unless given one:
+
+```sh
+cargo run -p marfa-enrichment --features native -- read scan.pdf --languages eng+deu
+```
+
+Its options are `--type <mime>`, `--languages <a+b>`, `--data-dir <folder>`, `--no-ocr`, `--time-limit <seconds>`, and `--max-memory <bytes>`.
+
 ## Testing
 
 ```sh
 cargo test -p marfa-enrichment
+cargo test -p marfa-enrichment --features fault-injection
 ```
+
+`tests/isolation.rs` is a program of its own that calls `serve_child_if_asked` first, so every test starts the real child and can count this process's children, descriptors, and threads. `tests/forgotten.rs` is a program that does not call it.
+
+The `fault-injection` feature makes a child misbehave on marked bytes: `fault.rs` lists the faults. `build.rs` stops a release build that has it, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
+
+Start `cargo` from under `core/`, so that `scripts/test-limits.sh` is the runner.
 
 The tests read the fixtures of the TypeScript server in place (`packages/server/src/enrichment/fixtures/`), and build the rest in the test. The files in `fixtures/` are ones nothing else here can write: a binary workbook, a password-protected PDF from PDFium's own test files, and four generated pictures (a sentence in three languages, and an upright sentence as a CMYK JPEG, an EXIF-rotated JPEG, and a two-page TIFF). No test covers `.xlsb`.
 
