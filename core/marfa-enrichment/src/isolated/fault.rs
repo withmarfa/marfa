@@ -145,6 +145,9 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
 }
 
 fn deeper(depth: u64) -> u64 {
+    if depth == u64::MAX {
+        return 0;
+    }
     let frame = std::hint::black_box([depth; 512]);
     deeper(std::hint::black_box(depth + 1)) + frame[1]
 }
