@@ -900,16 +900,19 @@ async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() 
     let device = Device::new();
     instance.add(&device).await;
     let wrong = json!({ "email": EMAIL, "password": "not the password" });
-    for _ in 0..10 {
+    // The owner's first sign-in spent one of the ten.
+    for _ in 0..9 {
         let refused = instance.post("/auth/sign-in/email", "", &wrong).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     }
+    let right = json!({ "email": EMAIL, "password": PASSWORD });
+    let held = instance.post("/auth/sign-in/email", "", &right).await;
+    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
 
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
     assert!(signed.session_cookie().is_some());
 
-    let right = json!({ "email": EMAIL, "password": PASSWORD });
     let still = instance.post("/auth/sign-in/email", "", &right).await;
     assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
 }
