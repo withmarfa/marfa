@@ -6,6 +6,7 @@ import type { FolderHarness } from "./harness.js";
 import type { FolderSettings, HeldCommand } from "../../device/cli-adapter.js";
 import {
   edit,
+  lastReport,
   put,
   scriptFolderWrites,
   sentCreates,
@@ -111,6 +112,9 @@ describe("a large drop of new files", () => {
       expect(file.status).toBe("held");
       expect(file.flag).toBe("addition");
     }
+    expect(lastReport(harness).problems).toEqual([
+      { code: "held_file", count: 3 },
+    ]);
 
     const said = await harness.folder.pushText();
     expect(said.ok && said.value).toContain(
