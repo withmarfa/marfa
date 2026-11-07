@@ -1244,6 +1244,14 @@ impl Catalog {
         self.descends_from(actual, root)
     }
 
+    /// Every type under `root`, by its name or by declared parentage.
+    pub fn descendants<'a>(&'a self, root: &'a str) -> impl Iterator<Item = &'a str> {
+        self.entries
+            .keys()
+            .map(String::as_str)
+            .filter(move |id| *id != root && self.matches(root, id))
+    }
+
     /// Types that reach `root` only through declared parentage, so a SQL
     /// filter can name them alongside the `root.%` pattern.
     pub fn declared_descendants(&self, root: &str) -> Vec<String> {

@@ -554,8 +554,7 @@ pub async fn lookup(
             && !read
                 .catalog
                 .rules
-                .declared_descendants(&type_id)
-                .iter()
+                .descendants(&type_id)
                 .any(|below| read.caller.may_read_type(below))
         {
             read.caller.require_type(&type_id, Level::Read)?;
