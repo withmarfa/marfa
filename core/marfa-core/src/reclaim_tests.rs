@@ -495,13 +495,15 @@ fn a_log_a_reader_kept_from_the_file_is_truncated_once_the_reader_lets_go() {
 fn a_log_kept_by_a_reader_that_began_after_the_rewrite_is_truncated_after_a_reopen() {
     // The reader starts after VACUUM: the checkpoint may copy everything,
     // but the log cannot be reset, and the file is already as short as its
-    // pages. A reader through the fill grows the log past where a checkpoint
-    // of its own would have stopped it.
+    // pages. A checkpoint of SQLite's own at the end of the rewrite would
+    // start the reader clear of the log, and so leave the log free to reset.
     let dir = tempfile::tempdir().unwrap();
     let core = open(dir.path());
-    let filling = read_view(dir.path());
+    core.conn()
+        .unwrap()
+        .execute_batch("PRAGMA wal_autocheckpoint = 0")
+        .unwrap();
     fill_and_let_go(&core, 700, 9);
-    filling.execute_batch("COMMIT").unwrap();
     core.conn().unwrap().execute_batch("VACUUM").unwrap();
     let reader = read_view(dir.path());
     let first = core.reclaim_space(&go());
@@ -522,7 +524,6 @@ fn a_log_kept_by_a_reader_that_began_after_the_rewrite_is_truncated_after_a_reop
     );
     assert_eq!(rounds.last().unwrap(), "Nothing", "it settles: {rounds:?}");
     drop(reader);
-    drop(filling);
 }
 
 #[test]
