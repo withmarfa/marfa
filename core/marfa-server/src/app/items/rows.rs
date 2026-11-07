@@ -169,7 +169,7 @@ pub(super) struct NewRow<'a> {
     pub link: Option<&'a str>,
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
-    pub writer: &'a Writer,
+    pub writer: Option<&'a Writer>,
 }
 
 /// Inserts a row at version 1, and answers it as it was stored.
@@ -197,9 +197,9 @@ pub(super) fn insert(tx: &Transaction<'_>, row: &NewRow<'_>) -> Result<Item> {
         row.trashed_at,
         row.capture_latitude,
         row.capture_longitude,
-        row.writer.kind,
-        row.writer.id,
-        row.writer.name,
+        row.writer.map(|by| &by.kind),
+        row.writer.map(|by| &by.id),
+        row.writer.map(|by| &by.name),
         row.link,
         row.trashed_by.map(|by| &by.kind),
         row.trashed_by.map(|by| &by.id),
@@ -245,7 +245,7 @@ pub(super) struct Landed<'a> {
     pub schema_version: i64,
     pub occurred_at: &'a str,
     pub at: &'a str,
-    pub writer: &'a Writer,
+    pub writer: Option<&'a Writer>,
 }
 
 /// Keeps `item` as it stands under its version and moves it to the next.
@@ -278,9 +278,9 @@ pub(super) fn advance(
         next.schema_version,
         next.occurred_at,
         next.at,
-        next.writer.kind,
-        next.writer.id,
-        next.writer.name,
+        next.writer.map(|by| &by.kind),
+        next.writer.map(|by| &by.id),
+        next.writer.map(|by| &by.name),
         next.link,
     ])?;
     let same_link = next.link == item.link.as_deref() && next.type_id == item.type_id;

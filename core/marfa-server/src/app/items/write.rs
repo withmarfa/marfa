@@ -180,7 +180,7 @@ pub enum OwnerAct {
 }
 
 impl Change {
-    fn action(&self) -> &'static str {
+    pub(crate) fn action(&self) -> &'static str {
         match self {
             Change::View(ViewChange::Create { .. }) => "view.create",
             Change::View(ViewChange::Update { .. }) => "view.update",
@@ -510,7 +510,7 @@ pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec
                 &Moved {
                     state: moving.state,
                     trashed_at: Some(at),
-                    trashed_by: Some(&writer),
+                    trashed_by: writer.as_ref(),
                     at,
                     mark: moving.mark.as_ref(),
                 },
@@ -614,7 +614,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         rows::by_id(self.unit.tx(), &item.id)?.ok_or_else(not_found)
     }
 
-    fn writer(&self) -> Writer {
+    fn writer(&self) -> Option<Writer> {
         self.caller().writer()
     }
 
@@ -985,11 +985,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 occurred_at: put.occurred_at.as_deref().unwrap_or(at),
                 at,
                 trashed_at: (state == "trashed").then_some(at),
-                trashed_by: (state == "trashed").then_some(&writer),
+                trashed_by: writer.as_ref().filter(|_| state == "trashed"),
                 link: link.as_deref(),
                 capture_latitude: put.capture_latitude,
                 capture_longitude: put.capture_longitude,
-                writer: &writer,
+                writer: writer.as_ref(),
             },
         )?;
         if let Some(tags) = &put.tags {
@@ -1328,7 +1328,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 link: None,
                 capture_latitude: None,
                 capture_longitude: None,
-                writer: &writer,
+                writer: writer.as_ref(),
             },
         )?;
         let mut tags = rows::tags(tx, row.seq)?;
@@ -1444,7 +1444,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 schema_version: self.schema_version(resulting),
                 occurred_at: fields.occurred_at.as_deref().unwrap_or(&row.occurred_at),
                 at,
-                writer: &writer,
+                writer: writer.as_ref(),
             },
         )
     }

@@ -35,18 +35,15 @@ impl Caller {
         self.level_on(Axis::Type, name) >= Level::Read
     }
 
-    /// Who a version written by this caller names.
-    pub fn writer(&self) -> Writer {
-        match self {
+    /// Who a version written by this caller names. The server's own work names
+    /// no one, since no request asked for it.
+    pub fn writer(&self) -> Option<Writer> {
+        let writer = match self {
+            Caller::Server => return None,
             Caller::Local => Writer {
                 kind: "local".to_string(),
                 id: "local".to_string(),
                 name: "Local command".to_string(),
-            },
-            Caller::Server => Writer {
-                kind: "server".to_string(),
-                id: "server".to_string(),
-                name: "Marfa".to_string(),
             },
             Caller::Key(key) => Writer {
                 kind: "key".to_string(),
@@ -63,7 +60,8 @@ impl Caller {
                 id: grant.grant_id.clone(),
                 name: printable(&key.label),
             },
-        }
+        };
+        Some(writer)
     }
 
     /// What an `Idempotency-Key` is held under: tokens of one app and person
