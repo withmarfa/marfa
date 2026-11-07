@@ -139,6 +139,12 @@ While a run of one housekeeping job is in progress, the server MUST run another 
 
 The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`: the bytes of a plain-text file, the text of a page or document, or the words read from an image. Enrichment is on unless a setting switches it off. OCR, which reads text from images, has a switch of its own.
 
+### `housekeeping/enrichment-announced`
+
+Where enrichment is on, when the `enrichment-sweep` job writes what it finds onto an item, the server MUST announce `item.updated` for the item.
+
+**Tests:** `compliance/enrichment-announced.test.ts › announces item.updated for the file item whose text it writes`.
+
 ### `housekeeping/enrichment-failure-counted`
 
 Where enrichment and OCR are on, if an image file item's bytes are not an image, then the server MUST count the item as `failed` in the result of each `enrichment-sweep` run that offers it, until its attempts run out.

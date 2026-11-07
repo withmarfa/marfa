@@ -990,9 +990,15 @@ A type's identifier never changes. Renaming a type is registering the new one an
 
 When a key whose type map grants write on both types sends `POST /types/{id}/move` naming a registered `to`, the server MUST queue a bulk-action job that gives every item of exactly that type that the key's source filter shows, in any state, the type `to`, and leaves each item in its state.
 
-**Reason:** an item in the trash or the archive still names the type it was written against, and a move that left it behind would keep the old type in use. An item the source filter hides is one the key may not reach.
+**Reason:** an item in the trash or the archive still names the type it was written against, and a move that left it behind would keep the old type in use. An item the source filter hides is one the key may not reach. The items the job moves reach a stream (`types/move-announced`) and no webhook (`items/bulk-fanout`).
 
 **Tests:** `compliance/type-move.test.ts › moves every item of the type in any state, keeping a binned one in the bin`, `› moves only the items the key's source filter shows, and says others remain without counting them`.
+
+### `types/move-announced`
+
+When a type move gives an item the type `to`, the server MUST announce `item.updated` for it, carrying `to` as its `type`.
+
+**Tests:** `compliance/type-move.test.ts › announces each moved item to a stream and delivers it to no webhook, while the same webhook delivers a later write`.
 
 ### `types/move-subtypes`
 
@@ -1039,6 +1045,14 @@ When no item of the type remains once a type move's job has run, the server MUST
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`, `› writes nothing on a dry run, and the same move run for real writes`.
+
+### `types/move-settings-delivered`
+
+When a type move rewrites a folder or a view, the server MUST deliver its `item.updated` to the outbound webhooks it matches.
+
+**Reason:** a folder or a view is one row a person made, not one of the thousands of rows `items/bulk-fanout` holds back.
+
+**Tests:** `compliance/type-move.test.ts › delivers the rewrite of a folder and of a view to a webhook`.
 
 ### `types/move-webhook-pattern`
 
