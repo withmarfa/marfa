@@ -443,8 +443,7 @@ fn collision(
     .with_member("current", row.state_named()?)
     .with_member("ancestor", ancestor.state_named()?)
     .with_member("conflicting_fields", conflicting)
-    .with_member("merge_policy", policy.to_json())
-    .with_member("requested_version", named))
+    .with_member("merge_policy", policy.to_json()))
 }
 
 /// What a write to a row it resolved asks for.

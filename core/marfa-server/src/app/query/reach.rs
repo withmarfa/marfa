@@ -28,6 +28,11 @@ impl Reach {
     /// Refuses a caller that reaches no type.
     pub fn of(read: &Reader<'_, '_>) -> Result<Reach> {
         read.caller.require_reach()?;
+        Reach::held(read)
+    }
+
+    /// What a caller reaches, which may be nothing.
+    pub fn held(read: &Reader<'_, '_>) -> Result<Reach> {
         let present: Vec<String> = read
             .tx
             .prepare_cached(PRESENT_TYPES)?
