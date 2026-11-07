@@ -179,12 +179,13 @@ pub fn is_registered(registered: &[String], requested: &str) -> bool {
     }
 }
 
-/// RFC 8252 section 7.3 names only IP addresses, but real clients redirect to
-/// the name: Claude Code's metadata document lists `http://localhost/callback`
-/// and it listens at `http://localhost:<ephemeral port>/callback`. The port
-/// adds no exposure the registered name did not already have, and only a
-/// native client can register that name. Only the name exactly: not a
-/// subdomain and not a trailing dot.
+/// RFC 9700 section 4.1.3 lets the port vary for "native apps using a
+/// localhost URI". RFC 8252 section 7.3, which it points to, names only IP
+/// addresses, but real clients redirect to the name: Claude Code's metadata
+/// document lists `http://localhost/callback` and it listens at
+/// `http://localhost:<ephemeral port>/callback`. The port adds no exposure the
+/// registered name did not already have, and only a native client can register
+/// that name. Only the name exactly: not a subdomain and not a trailing dot.
 fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
 }

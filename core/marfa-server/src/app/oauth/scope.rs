@@ -557,7 +557,8 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
 /// Access is compared as it resolves, not by literal, because removing an
 /// overriding entry can widen a wildcard (`keys-and-oauth/grant-narrow-ceiling`).
 /// `offline_access` and a literal that does not parse carry no access to
-/// compare, so only naming them covers them.
+/// compare, so only naming them covers them. A set need not cover itself:
+/// `*:write core.*:read` leaves `core.note` at read, so `*:write` is uncovered.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
     wanted.literals().iter().find_map(|literal| {
@@ -1108,8 +1109,10 @@ mod tests {
             );
         }
 
+        // The range stops short of the write wildcards, which a narrower read
+        // beside them keeps from covering themselves.
         #[test]
-        fn a_set_covers_each_of_its_own_literals(
+        fn a_set_without_a_write_wildcard_covers_each_of_its_own_literals(
             picks in proptest::collection::vec(0usize..40, 1..6),
         ) {
             let allowed = registries().allowed();
