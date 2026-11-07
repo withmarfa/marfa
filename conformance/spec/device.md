@@ -378,7 +378,7 @@ While no hydration has started and not completed, and its copy holds a slice and
 
 ### `device/reading-handle-reads`
 
-While another process holds the writer role for a store it opens, a device MUST answer reads from the store.
+While another process holds the writer role for a store it opens, a device MUST answer reads from the store, unless the store lacks a column this build adds (`device/reader-missing-column`).
 
 **Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
 
@@ -4218,13 +4218,15 @@ When a device opens to write a store made before a table this build adds, a devi
 
 ### `device/reader-missing-column`
 
-If a device opens to read a store made before a column this build adds to a table, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
+If a device opens to read a store made before a column this build adds to a table, or opens one to write and gets a reading handle, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
 
-**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`.
+**Reason:** a device reads every column it knows, so a reading handle cannot answer from a table without one, and only the writer may add it: another build's writer may hold the store, and its next open would refuse a table it did not make (`device/wrong-schema`).
+
+**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`, `› refuses a reading handle on a store made before a column this build adds, and leaves the table to the writer`.
 
 ### `device/added-column`
 
-When a device opens to write a store made before a column this build adds to a table, a device MUST add the column and open the store.
+When a device takes the writer role on a store made before a column this build adds to a table, a device MUST add the column and open the store.
 
 **Reason:** a column added to the end of a table leaves every other column as it was, so the store's writes the server has not taken can still be sent, and refusing the store would strand them after an update of the app.
 

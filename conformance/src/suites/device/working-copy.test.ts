@@ -2084,6 +2084,58 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
+  it("refuses a reading handle on a store made before a column this build adds, and leaves the table to the writer", async () => {
+    harness = await hydratedHarness("store-older-column-held", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const { store } = harness.device;
+    const holdsEmbeds = (): boolean => {
+      const held = new DatabaseSync(store);
+      try {
+        return (
+          held
+            .prepare(
+              "SELECT 1 FROM pragma_table_info('folder_files') WHERE name = 'embeds'",
+            )
+            .get() !== undefined
+        );
+      } finally {
+        held.close();
+      }
+    };
+    const older = new DatabaseSync(store);
+    try {
+      older.exec("ALTER TABLE folder_files DROP COLUMN embeds");
+    } finally {
+      older.close();
+    }
+    expect(holdsEmbeds()).toBe(false);
+
+    // A writer of the build before the column holds the store.
+    const lock = new DatabaseSync(`${store}.writer-lock`);
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+      const held = await harness.device.get("n1");
+      expect(
+        held.ok,
+        "a reading handle read a store that lacks a column it reads",
+      ).toBe(false);
+      if (!held.ok) {
+        expect(held.refusal.code).toBe("invalid");
+        expect(held.refusal.raw).toContain("writer");
+      }
+      expect(
+        holdsEmbeds(),
+        "a reading handle changed a table under the writer",
+      ).toBe(false);
+    } finally {
+      lock.close();
+    }
+
+    expect((await harness.device.get("n1")).ok).toBe(true);
+    expect(holdsEmbeds()).toBe(true);
+  });
+
   it("gives a second opener a reading handle that refuses writes", async () => {
     harness = await hydratedHarness("one-writer", {
       rows: { "core.note": [{ item: { id: "n1" } }] },

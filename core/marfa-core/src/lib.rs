@@ -404,7 +404,7 @@ impl Core {
         let writer = lock.handle() == Handle::Writer;
         let cache = blob::Cache::anchored(state, store_label, writer)?;
         Self::from_connection(
-            store::open_directory(&vfs, store_label)?,
+            store::open_directory(&vfs, store_label, lock.handle())?,
             server,
             lock,
             Some(cache),
@@ -463,8 +463,8 @@ impl Core {
         if lock.handle() == Handle::Writer {
             owner_only(path)?;
         }
-        Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
-            .map(Core::swept)
+        let conn = store::open_as(path, lock.handle())?;
+        Self::from_connection(conn, server, Arc::new(lock), Some(cache)).map(Core::swept)
     }
 
     /// For a writer, lets go of old changes of removed edges and takes what

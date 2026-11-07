@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::js;
+use crate::lock::Handle;
 use crate::model::{
     BlockedReason, Completeness, Edge, EdgeDraft, Item, ItemState, QueuedWrite, SliceTier, Subject,
     Tier, Verdict, WriteKind,
@@ -98,10 +99,16 @@ const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
+    open_as(path, Handle::Writer)
+}
+
+/// Opens the store at `path` for a holder of `handle`, which leaves any
+/// column this build adds to the writer.
+pub(crate) fn open_as(path: &Path, handle: Handle) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
-    prepare(&conn).map_err(|error| at_path(error, path))?;
+    prepare(&conn, handle).map_err(|error| at_path(error, path))?;
     Ok(conn)
 }
 
@@ -109,6 +116,7 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
 pub(crate) fn open_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
+    handle: Handle,
 ) -> Result<Connection, CoreError> {
     let conn = vfs.open(
         FOLDER_STORE,
@@ -116,7 +124,7 @@ pub(crate) fn open_directory(
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| in_folder(error, label, &conn))?;
+    prepare(&conn, handle).map_err(|error| in_folder(error, label, &conn))?;
     Ok(conn)
 }
 
@@ -577,7 +585,7 @@ pub(crate) fn replace_folder_store(
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        prepare(&conn)?;
+        prepare(&conn, Handle::Writer)?;
         let tx = conn.unchecked_transaction()?;
         for (key, value) in &kept {
             meta_set(&tx, key, value)?;
@@ -741,11 +749,11 @@ pub fn data_version(conn: &Connection) -> Result<i64, CoreError> {
 
 pub fn open_in_memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
-    prepare(&conn)?;
+    prepare(&conn, Handle::Writer)?;
     Ok(conn)
 }
 
-fn prepare(conn: &Connection) -> Result<(), CoreError> {
+fn prepare(conn: &Connection, handle: Handle) -> Result<(), CoreError> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
@@ -759,7 +767,12 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     // is refused, never discarded, because it may hold writes the server has
     // never seen.
     let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
-    add_columns(conn, &behind)?;
+    match handle {
+        Handle::Writer => add_columns(conn, &behind)?,
+        // Another build's writer may hold the store, and its next open would
+        // refuse a table it did not make (`device/reader-missing-column`).
+        Handle::Reader => refuse_behind(&behind)?,
+    }
     conn.execute_batch(SCHEMA)?;
     // Only when absent: writing it on every open would make a reading command
     // take a write lock.
@@ -1031,13 +1044,21 @@ fn refuse_misshapen(
             "this store has no table {name} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it"
         )));
     }
-    if reading && let Some((table, columns)) = behind.first() {
-        return Err(CoreError::Invalid(format!(
-            "this store's table {table} has no column {} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it",
-            columns.join(", ")
-        )));
+    if reading {
+        refuse_behind(&behind)?;
     }
     Ok(behind)
+}
+
+/// Refuses a store that lacks a column only its writer adds.
+fn refuse_behind(behind: &[(String, Vec<&'static str>)]) -> Result<(), CoreError> {
+    match behind.first() {
+        Some((table, columns)) => Err(CoreError::Invalid(format!(
+            "this store's table {table} has no column {} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it",
+            columns.join(", ")
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// The writes the server has not taken whose kind this build does not send,
@@ -10354,6 +10375,49 @@ mod tests {
             drop(conn);
             assert!(open_to_read(&path).is_ok());
         }
+    }
+
+    /// Another build's writer may hold the store, and its next open would
+    /// refuse a table it did not make.
+    #[test]
+    fn a_handle_that_is_not_the_writer_leaves_a_column_to_the_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE folder_files DROP COLUMN embeds")
+            .unwrap();
+        let shape = || {
+            let conn = Connection::open(&path).unwrap();
+            held_shape(&conn).unwrap()["folder_files"].clone()
+        };
+        let made_by_the_earlier_build = shape();
+        assert_ne!(
+            made_by_the_earlier_build,
+            built_shape().unwrap()["folder_files"]
+        );
+
+        let running = crate::lock::WriterLock::claim(Some(&path)).unwrap();
+        assert_eq!(running.handle(), crate::Handle::Writer);
+        assert!(
+            matches!(
+                crate::Core::open(&path, None).map(|_| ()),
+                Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("embeds")
+            ),
+            "a reading handle opened a store that lacks a column it reads"
+        );
+        assert_eq!(
+            shape(),
+            made_by_the_earlier_build,
+            "a reading handle changed a table under the writer"
+        );
+        drop(running);
+
+        let writer = crate::Core::open(&path, None).unwrap();
+        assert_eq!(writer.handle(), crate::Handle::Writer);
+        assert_eq!(shape(), built_shape().unwrap()["folder_files"]);
+        let reader = crate::Core::open(&path, None).unwrap();
+        assert_eq!(reader.handle(), crate::Handle::Reader);
     }
 
     /// A table made `WITHOUT ROWID` gains a column at its end as one made
