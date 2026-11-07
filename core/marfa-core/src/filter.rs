@@ -11,8 +11,8 @@ use serde_json::{Number, Value};
 
 use crate::Result;
 use crate::error::CoreError;
-use crate::query::escape_like;
 use marfa_rules::catalog::Catalog;
+use marfa_rules::query::escape_like;
 
 pub(crate) use marfa_rules::filter::reads;
 pub use marfa_rules::filter::{
