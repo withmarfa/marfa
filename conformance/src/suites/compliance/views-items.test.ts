@@ -363,7 +363,7 @@ describe("the view's items door", () => {
     ).toEqual([bee.id, ay.id, none.id]);
   });
 
-  it("sorts by each item's first tag in binary order in either direction, with an untagged item last", async () => {
+  it("sorts by each item's smallest tag in binary order in either direction, with an untagged item last", async () => {
     const source = await freshSource();
     const tagged = (tags: string[]) => note(source, "Tagged", {}, { tags });
     const accented = await tagged(["é", "f"]);

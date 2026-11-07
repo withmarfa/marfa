@@ -53,6 +53,8 @@ beforeAll(async () => {
     ['a"b'],
     ["z"],
     ["é", "é"],
+    ["\uFFFD"],
+    ["\u{1F600}"],
   ];
   for (const values of equivalentValues) {
     const group: MarfaItem[] = [];

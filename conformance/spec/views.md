@@ -220,11 +220,11 @@ Where a view sorts by `title`, the server MUST order each item by the field its 
 
 ### `views/items-order-tags`
 
-Where a view sorts by `tags`, the server MUST order each item by the first of its tags in binary lexical order, in either direction.
+Where a view sorts by `tags`, the server MUST order each item by the smallest of its tags in binary lexical order of their UTF-8 bytes, in either direction.
 
 **Reason:** `device/view-sort-own` holds a working copy to the same tag, so an app lists a view in one order with a copy or without one.
 
-**Tests:** `compliance/views-items.test.ts › sorts by each item's first tag in binary order in either direction, with an untagged item last`.
+**Tests:** `compliance/views-items.test.ts › sorts by each item's smallest tag in binary order in either direction, with an untagged item last`.
 
 ### `views/items-order-property`
 
@@ -236,7 +236,7 @@ Where a view sorts by a property, the server MUST order the items as `search-and
 
 Where a view sorts by a field an item does not hold, the server MUST list that item after every item that holds it, in either direction.
 
-**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a property, numbers by value and an item without the property last in either direction`, `› sorts by type, state, tier and tags`.
+**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a property, numbers by value and an item without the property last in either direction`, `› sorts by type, state, tier and tags`, `› sorts by each item's smallest tag in binary order in either direction, with an untagged item last`.
 
 ### `views/items-order-ties`
 

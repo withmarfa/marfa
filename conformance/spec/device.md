@@ -5328,7 +5328,7 @@ When a caller reads a view sorted by a property, a device MUST order its rows as
 
 ### `device/view-sort-own`
 
-When a caller reads a view sorted by an own field, a device MUST order the rows by that field's value, using the type's title field for `title` and the lexically first tag for `tags`, with untagged items last.
+When a caller reads a view sorted by an own field, a device MUST order the rows by that field's value, using the type's title field for `title` and the smallest tag in binary lexical order of its UTF-8 bytes for `tags`, with untagged items last.
 
 **Tests:** `device/views.test.ts › sorts the own field %s`, `device/views-items-live.test.ts › lists a view's items in the order the server does, for each sort and query`.
 

@@ -736,7 +736,7 @@ When `GET /items` names `sort=properties.<field>`, the server MUST order the row
 
 ### `search-and-filters/sort-property-ascending`
 
-When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order, an empty string being a value and numeric text remaining text.
+When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text.
 
 **Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
 
