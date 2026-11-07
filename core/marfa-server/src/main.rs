@@ -11,13 +11,13 @@ use marfa_server::{log, run};
 struct Cli {}
 
 fn start() -> Result<u8, Failure> {
-    let settings = Settings::read(Environment::of_process())
+    let accepted = Settings::read(Environment::of_process())
         .map_err(|refused| Failure::start(refused.to_string()))?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| Failure::start(format!("The runtime did not start: {error}")))?
-        .block_on(run::run(settings))
+        .block_on(run::run(accepted))
 }
 
 fn main() -> ExitCode {

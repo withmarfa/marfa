@@ -2,6 +2,7 @@
 //! version, a page for a browser in place of a refusal's body, and one record
 //! on stdout.
 
+use std::net::IpAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -44,6 +45,7 @@ pub struct Notes {
 pub struct RequestContext {
     pub transport: Transport,
     pub notes: Arc<Notes>,
+    pub caller_address: Option<IpAddr>,
 }
 
 /// Left on the answer to a request no route serves.
@@ -112,6 +114,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     request.extensions_mut().insert(RequestContext {
         transport: observed.transport,
         notes: notes.clone(),
+        caller_address: None,
     });
 
     let mut response = next.run(request).await;
