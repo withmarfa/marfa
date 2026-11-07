@@ -16,10 +16,16 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/0001_baseline.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("migrations/0001_baseline.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/0002_housekeeping.sql"),
+    },
+];
 
 const RETIRED_TABLES: [&str; 2] = ["custom_types", "custom_edge_types"];
 const RETIRED_SETTING: &str = "space_config";

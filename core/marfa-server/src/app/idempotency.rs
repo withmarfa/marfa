@@ -7,6 +7,8 @@
 //! commit's outcome is unknown: a commit that landed has already completed the
 //! claim, and the release matches only one still in flight.
 
+mod expiry;
+
 use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::DateTime;
@@ -21,6 +23,8 @@ use super::items;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use crate::db::Write;
+
+pub use expiry::expire;
 
 pub const MAX_KEY_CHARACTERS: usize = 255;
 const LEASE_MS: i64 = 60_000;

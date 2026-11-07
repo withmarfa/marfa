@@ -2,6 +2,8 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use url::Url;
+
 use super::Environment;
 use super::rule;
 use super::secrets::Given;
@@ -76,6 +78,8 @@ pub struct Fixed {
     pub free_disk_bytes: Option<u64>,
     pub busy_budget: Duration,
     pub blob_path: PathBuf,
+    /// Never stored and never logged: its address can hold a credential.
+    pub heartbeat_url: Option<String>,
 }
 
 /// Everything fixed when the process starts. Reaching one means its secrets
@@ -153,6 +157,17 @@ impl Reader<'_> {
         }
     }
 
+    /// An absolute `http` or `https` address, whose value never reaches a refusal.
+    fn url_kept_private(&mut self, name: &str) -> Option<String> {
+        let text = self.environment.get(name)?;
+        let usable = Url::parse(text).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+        if usable {
+            return Some(text.to_string());
+        }
+        self.refuse(format!("{name} must be an absolute http or https URL"));
+        None
+    }
+
     /// A secret is used as written, so whitespace around it would be part of
     /// it, and its value never reaches a refusal.
     fn secret(&mut self, name: &str, min_length: usize) -> Option<String> {
@@ -219,6 +234,7 @@ impl Fixed {
             auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),
         };
 
+        let heartbeat_url = reader.url_kept_private("MARFA_HEARTBEAT_URL");
         let database =
             DatabasePath::read(environment.get("SQLITE_PATH").unwrap_or("./data/marfa.db"));
         let control_socket = environment
@@ -240,6 +256,7 @@ impl Fixed {
             free_disk_bytes,
             busy_budget: Duration::from_millis(busy_budget),
             blob_path: PathBuf::from(environment.get("BLOB_PATH").unwrap_or("./data/blobs")),
+            heartbeat_url,
         };
         (!failed).then_some((fixed, given))
     }

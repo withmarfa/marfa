@@ -5,9 +5,12 @@
 //! the checks, the version step, the audit entry and the event.
 
 pub mod bulk;
+pub mod expiry;
 mod plan;
 mod read;
 mod rows;
+pub mod sweep;
+pub mod thinning;
 pub mod write;
 
 use marfa_rules::catalog::Catalog as Rules;

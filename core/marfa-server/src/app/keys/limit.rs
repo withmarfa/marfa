@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
+mod sweep;
+
 const SWEEP_ABOVE: usize = 1024;
 
 #[derive(Debug)]

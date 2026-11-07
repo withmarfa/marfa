@@ -2,9 +2,13 @@
 //! of, and holds what a later stream sends without reading a row that may
 //! have changed since.
 
+mod expiry;
+
 use rusqlite::{Transaction, params};
 
 use super::refusal::Result;
+
+pub use expiry::expire;
 
 /// One entry. `payload` is the JSON a frame carries, as text, so the numbers
 /// in an item's properties stay as they were stored.

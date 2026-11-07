@@ -166,6 +166,12 @@ macro_rules! registry {
     };
 }
 
+/// How often a housekeeping job may run.
+const INTERVAL: Rule = Rule::Whole {
+    min: 1,
+    max: 3_153_600_000_000,
+};
+
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: u64::MAX }, "1048576";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: u64::MAX }, "134217728";
@@ -181,6 +187,15 @@ registry! {
     VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365";
     VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: u64::MAX }, "500";
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true";
+    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", Some("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "1000";
+    AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", Some("AUDIT_CLEANUP_INTERVAL_MS"), INTERVAL, "86400000";
+    EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000";
+    FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000";
+    HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", Some("MARFA_HEARTBEAT_INTERVAL_MS"), INTERVAL, "60000";
+    RATE_LIMIT_CLEANUP_INTERVAL_MS: u64 = "rate_limit_cleanup_interval_ms", Some("MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000";
+    REVOKED_KEY_REAP_INTERVAL_MS: u64 = "revoked_key_reap_interval_ms", None, INTERVAL, "3600000";
+    TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", Some("TRASH_PURGE_INTERVAL_MS"), INTERVAL, "86400000";
+    VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", Some("VERSION_THINNING_INTERVAL_MS"), INTERVAL, "3600000";
     ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "";
 }

@@ -9,6 +9,7 @@ mod caller_address;
 mod control;
 mod edge_types;
 mod health;
+mod housekeeping;
 mod items;
 mod keys;
 pub mod listening;
@@ -185,6 +186,8 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/health", get(health::answer))
         .route("/openapi.json", get(root::document))
         .route("/audit", get(audit::list))
+        .route("/housekeeping", get(housekeeping::list))
+        .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())

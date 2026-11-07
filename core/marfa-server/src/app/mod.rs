@@ -9,6 +9,7 @@ pub mod edge_types;
 pub mod events;
 pub mod faults;
 pub mod health;
+pub mod housekeeping;
 pub mod idempotency;
 pub mod instance;
 pub mod items;
@@ -33,6 +34,7 @@ use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
 use health::Health;
+use housekeeping::Housekeeping;
 use keys::{Limiter, Usage};
 
 const READERS: usize = 4;
@@ -47,6 +49,7 @@ pub struct App {
     pub health: Health,
     pub usage: Usage,
     pub key_limit: Limiter,
+    pub housekeeping: Housekeeping,
     pub telemetry: Telemetry,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
@@ -89,7 +92,7 @@ impl App {
         for id in &loaded.unreadable {
             tracing::error!(type_id = %id, "A stored type does not read, and is kept as it is");
         }
-        Ok(Arc::new(App {
+        let app = Arc::new(App {
             db,
             clock,
             faults,
@@ -98,10 +101,15 @@ impl App {
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
+            housekeeping: Housekeeping::default(),
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
-        }))
+        });
+        housekeeping::prepare(&app)
+            .await
+            .map_err(|refused| Failure::start(refused.to_string()))?;
+        Ok(app)
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
