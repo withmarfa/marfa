@@ -2090,17 +2090,17 @@ If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /item
 
 ### `edges/filter-backref`
 
-When a `backref` filter term of `GET /items`, `GET /search` or `POST /items/bulk-actions` is counted, the server MUST count only edges whose source the credential may read.
+When a `backref` filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists is counted, the server MUST count only edges whose source the credential may read.
 
-**Tests:** `compliance/unreadable-items.test.ts › a filter term anchored on an item it cannot read matches as one anchored on no item`.
+**Tests:** `compliance/unreadable-items.test.ts › a filter term anchored on an item it cannot read matches as one anchored on no item`, `› counts only edges from a source it can read, on GET /items/stats and on a view's items`.
 
 ### `edges/filter-backref-source-filter`
 
-Where a source filter applies to the key, when a `backref` filter term of `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` is counted, the server MUST NOT count an edge whose source item the filter leaves out.
+Where a source filter applies to the key, when a `backref` filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists is counted, the server MUST NOT count an edge whose source item the filter leaves out.
 
 **Reason:** `GET /items/{id}/backrefs` leaves the edge out (`edges/read-source-filter`), and a filter term that counted it would answer what that listing does not.
 
-**Tests:** `compliance/edge-source-filter.test.ts › counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats and POST /items/bulk-actions`, `› matches a backref not_exists term on an item whose every inbound edge the filter hides`.
+**Tests:** `compliance/edge-source-filter.test.ts › counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items`, `› matches a backref not_exists term on an item whose every inbound edge the filter hides`.
 
 ### `edges/filter-backref-anchor`
 

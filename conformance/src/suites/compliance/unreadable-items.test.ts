@@ -5,6 +5,7 @@ import {
   trackEdge,
   trackItem,
   trackKey,
+  trackView,
   cleanup,
 } from "../../utils/setup.js";
 import {
@@ -747,6 +748,67 @@ describe("an item the key cannot read answers as a missing one", () => {
     expect(
       (back.body as { data: { id: string }[] }).data.map((row) => row.id),
     ).toContain(target);
+  });
+
+  it("counts only edges from a source it can read, on GET /items/stats and on a view's items", async () => {
+    const viewer = await client.createKey({
+      label: "unreadable-items-viewer",
+      source: `${ctx.source}-unreadable-items-viewer`,
+      permissions: [],
+      type_permissions: { "core.note": "read", "system.view": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(viewer.ok, JSON.stringify(viewer.error)).toBe(true);
+    trackKey(ctx, viewer.data.id);
+
+    const fromHidden = await ownerItem(createBookmark);
+    const pointedByHidden = await ownerItem(createNote);
+    await edge(fromHidden, pointedByHidden);
+    const fromReadable = await ownerItem(createNote);
+    const pointedByReadable = await ownerItem(createNote);
+    await edge(fromReadable, pointedByReadable);
+
+    const hiddenTerm = `backref[about] eq "${fromHidden}"`;
+    const readableTerm = `backref[about] eq "${fromReadable}"`;
+    const stats = async (reader: string, term: string): Promise<unknown> => {
+      const r = await ask(
+        reader,
+        "GET",
+        `/items/stats?filter=${encodeURIComponent(term)}`,
+      );
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return r.body;
+    };
+    const viewItems = async (
+      reader: string,
+      term: string,
+    ): Promise<string[]> => {
+      const made = await client.createView({
+        title: `unreadable-items ${ctx.runId}`,
+        query: { filter: term },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackView(ctx, made.data.item.id);
+      const r = await ask(
+        reader,
+        "GET",
+        `/views/${made.data.item.id}/items?limit=100`,
+      );
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return (r.body as { data: { id: string }[] }).data.map((row) => row.id);
+    };
+
+    // The witnesses: the owner reads the edge from the row the key cannot
+    // read, so the key's lack of an answer is its own.
+    expect(await stats(apiKey, hiddenTerm)).toEqual({ active: 1 });
+    expect(await viewItems(apiKey, hiddenTerm)).toEqual([pointedByHidden]);
+
+    expect(await stats(viewer.data.key, hiddenTerm)).toEqual({});
+    expect(await viewItems(viewer.data.key, hiddenTerm)).toEqual([]);
+    expect(await stats(viewer.data.key, readableTerm)).toEqual({ active: 1 });
+    expect(await viewItems(viewer.data.key, readableTerm)).toEqual([
+      pointedByReadable,
+    ]);
   });
 
   it("an outbound term naming an item it cannot read matches the readable edges to it", async () => {
