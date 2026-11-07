@@ -210,6 +210,41 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
 }
 
 #[tokio::test]
+async fn a_form_sign_in_sends_a_browser_only_to_a_path_on_the_instance() {
+    let instance = Instance::claimed().await;
+    let own = format!("{ORIGIN}//foreign.example");
+    for (asked, wanted) in [
+        ("/\t/foreign.example", "/"),
+        ("/.//foreign.example", "/"),
+        ("/a/..//foreign.example", "/"),
+        ("/%2e//foreign.example", "/"),
+        ("/.\\/foreign.example", "/"),
+        ("//foreign.example", "/"),
+        (own.as_str(), "/"),
+        (
+            "/auth/device?from=sign-in#entry",
+            "/auth/device?from=sign-in#entry",
+        ),
+    ] {
+        let fields = form_urlencoded::Serializer::new(String::new())
+            .append_pair("email", EMAIL)
+            .append_pair("password", PASSWORD)
+            .append_pair("return_to", asked)
+            .finish();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/auth/sign-in")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ORIGIN, ORIGIN)
+            .body(Body::from(fields))
+            .unwrap();
+        let reply = send(instance.public.clone(), request).await;
+        assert_eq!(reply.status, StatusCode::FOUND, "{asked:?}");
+        assert_eq!(reply.headers[header::LOCATION], wanted, "{asked:?}");
+    }
+}
+
+#[tokio::test]
 async fn the_table_keeps_a_digest_and_never_the_token() {
     let instance = Instance::claimed().await;
     let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
