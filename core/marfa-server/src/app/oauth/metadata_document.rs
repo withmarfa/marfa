@@ -268,6 +268,13 @@ impl Fetcher {
                 "The client's metadata document is not JSON.",
             ));
         }
+        // ureq's limit counts the bytes before it decompresses them, and this
+        // asked for none: a small compressed body could hold far more.
+        if response.headers().contains_key(header::CONTENT_ENCODING) {
+            return Err(Failure::Refused(
+                "The client's metadata document is compressed.",
+            ));
+        }
         response
             .body_mut()
             .with_config()
@@ -758,6 +765,17 @@ mod tests {
             at(&listener).fetch(ID),
             Err(Failure::Refused(
                 "The client's metadata document is too large."
+            ))
+        );
+    }
+
+    #[test]
+    fn a_compressed_document_is_refused_before_it_can_grow() {
+        let compressed = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_vec();
+        assert_eq!(
+            at(&listen(NAME, compressed)).fetch(ID),
+            Err(Failure::Refused(
+                "The client's metadata document is compressed."
             ))
         );
     }
