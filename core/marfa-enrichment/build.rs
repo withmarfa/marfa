@@ -5,8 +5,25 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    refuse_faults_in_a_release();
     #[cfg(feature = "native")]
     native::link();
+}
+
+/// A shipped program must not crash on demand. A release build has to say that it
+/// means it, as the proof binary of a release does.
+fn refuse_faults_in_a_release() {
+    println!("cargo:rerun-if-env-changed=MARFA_ENRICHMENT_ALLOW_FAULTS");
+    let faults = std::env::var_os("CARGO_FEATURE_FAULT_INJECTION").is_some();
+    let release = std::env::var("PROFILE").is_ok_and(|profile| profile == "release");
+    if faults && release && std::env::var_os("MARFA_ENRICHMENT_ALLOW_FAULTS").is_none() {
+        eprintln!(
+            "\nmarfa-enrichment: the `fault-injection` feature makes a reader crash on marked \
+             bytes,\nand this is a release build. To build a proof program on purpose, set \
+             MARFA_ENRICHMENT_ALLOW_FAULTS=1.\n"
+        );
+        std::process::exit(1);
+    }
 }
 
 #[cfg(feature = "native")]
@@ -103,6 +120,9 @@ mod native {
             .warnings(true)
             .extra_warnings(true)
             .flag_if_supported("-fvisibility=hidden");
+        if env::var_os("CARGO_FEATURE_FAULT_INJECTION").is_some() {
+            shim.define("MARFA_FAULT_INJECTION", None);
+        }
         shim.compile("marfa_shim");
 
         println!(

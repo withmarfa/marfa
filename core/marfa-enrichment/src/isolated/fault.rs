@@ -1,0 +1,213 @@
+//! Faults on demand, for proving that the parent survives them. A file that starts
+//! with `MARK`, then a fault's name, makes the child misbehave in that way. The feature
+//! is never on in a shipped program; `build.rs` stops a release build that has it.
+
+use std::fs::File;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
+
+const MARK: &[u8] = b"MARFA-ENRICHMENT-FAULT:";
+
+/// The longest fault, in bytes. What follows a name on its first line is its argument.
+const OPENING: usize = 256;
+
+#[cfg(feature = "native")]
+unsafe extern "C" {
+    fn marfa_fault_new_fails();
+}
+
+fn parse(bytes: &[u8]) -> Option<(&str, &str)> {
+    let rest = bytes.strip_prefix(MARK)?;
+    let line = rest.split(|byte| *byte == b'\n').next()?;
+    let line = std::str::from_utf8(line).ok()?;
+    Some(line.split_once(' ').unwrap_or((line, "")))
+}
+
+/// Reads the start of the file. The one fault that cannot wait for the rest of it
+/// happens here. Returns how much was read.
+pub(super) fn read_opening(stdin: &mut File, bytes: &mut [u8]) -> usize {
+    let len = bytes.len().min(OPENING);
+    if stdin.read_exact(&mut bytes[..len]).is_err() {
+        // SAFETY: ends the process.
+        unsafe { libc::_exit(super::EXIT_PARENT_GONE) };
+    }
+    if let Some(("close-stdin", _)) = parse(&bytes[..len]) {
+        // SAFETY: descriptor 0 is the pipe from the parent, and nothing reads it now.
+        unsafe { libc::close(0) };
+        std::thread::sleep(Duration::from_millis(200));
+        // SAFETY: ends the process.
+        unsafe { libc::_exit(0) };
+    }
+    len
+}
+
+/// Does what the marked bytes ask. A probe gives back the text to answer with.
+pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
+    let (fault, argument) = parse(bytes.as_ref().ok()?)?;
+    match fault {
+        "segfault" => {
+            // SAFETY: not safe at all. Writing to address 1 is the fault.
+            unsafe { std::ptr::write_volatile(std::ptr::dangling_mut::<u8>(), 1) };
+            None
+        }
+        "abort" => std::process::abort(),
+        "hang" => loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        },
+        "spin" => loop {
+            std::hint::spin_loop();
+        },
+        "eat-memory" => eat_memory(),
+        "rust-alloc-fails" => {
+            let size = 1usize << 62;
+            let layout = std::alloc::Layout::from_size_align(size, 1).expect("a valid layout");
+            // SAFETY: the layout has a size. The allocation is meant to fail.
+            let pointer = unsafe { std::alloc::alloc(layout) };
+            assert!(!pointer.is_null() || fail(layout));
+            None
+        }
+        #[cfg(feature = "native")]
+        "cpp-new-fails" => {
+            // SAFETY: takes nothing, and ends the process through the `new` handler.
+            unsafe { marfa_fault_new_fails() };
+            None
+        }
+        "flood-stdout" => flood(&mut std::io::stdout()),
+        "flood-stderr" => flood(&mut std::io::stderr()),
+        "garbage" => {
+            let _ = std::io::stdout().write_all(b"{\"reading\": not json at all\xff\xfe");
+            let _ = std::io::stdout().flush();
+            // SAFETY: ends the process.
+            unsafe { libc::_exit(0) }
+        }
+        "silent" => {
+            // SAFETY: ends the process.
+            unsafe { libc::_exit(0) }
+        }
+        "too-much-text" => {
+            let text = "x".repeat(argument.parse().unwrap_or(1_000));
+            let answer = serde_json::json!({"reading": {"text": text, "truncated": false,
+                "cut_short": false, "size": null, "sandbox": "off"}});
+            let _ = std::io::stdout().write_all(answer.to_string().as_bytes());
+            let _ = std::io::stdout().flush();
+            // SAFETY: ends the process.
+            unsafe { libc::_exit(0) }
+        }
+        "write-file" => {
+            let outcome = std::fs::write(argument, b"x");
+            Some(format!("{outcome:?}"))
+        }
+        "open" => Some(match File::open(argument) {
+            Ok(_) => "opened".to_owned(),
+            Err(error) => format!("refused: {error}"),
+        }),
+        "connect" => Some(match argument.parse::<SocketAddr>() {
+            Ok(address) => match TcpStream::connect_timeout(&address, Duration::from_secs(2)) {
+                Ok(_) => "connected".to_owned(),
+                Err(error) => format!("refused: {error}"),
+            },
+            Err(error) => format!("bad address: {error}"),
+        }),
+        "fork" => {
+            // SAFETY: the child side only ends itself.
+            let pid = unsafe { libc::fork() };
+            match pid {
+                0 => {
+                    // SAFETY: ends the process.
+                    unsafe { libc::_exit(0) }
+                }
+                pid if pid > 0 => Some("forked".to_owned()),
+                _ => Some(format!("refused: {}", std::io::Error::last_os_error())),
+            }
+        }
+        "orphan" => {
+            // SAFETY: the new process holds stdout and sleeps, and does nothing else.
+            if unsafe { libc::fork() } == 0 {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+            // SAFETY: ends the process, and the other one keeps the pipes open.
+            unsafe { libc::_exit(0) }
+        }
+        "report" => Some(report()),
+        _ => None,
+    }
+}
+
+fn fail(layout: std::alloc::Layout) -> bool {
+    std::alloc::handle_alloc_error(layout)
+}
+
+/// Fills memory for as long as it is given.
+fn eat_memory() -> ! {
+    const CHUNK: usize = 16 * 1024 * 1024;
+    let mut held: Vec<Vec<u8>> = Vec::new();
+    loop {
+        held.push(vec![1u8; CHUNK]);
+    }
+}
+
+fn flood(out: &mut impl Write) -> ! {
+    let chunk = [b'x'; 64 * 1024];
+    loop {
+        if out.write_all(&chunk).is_err() {
+            // SAFETY: ends the process.
+            unsafe { libc::_exit(0) };
+        }
+    }
+}
+
+/// What the child holds, for the tests to judge: `name=value` words.
+fn report() -> String {
+    let mut words = Vec::new();
+    for (name, resource) in limits() {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `limit` is a valid buffer.
+        unsafe { libc::getrlimit(resource, &raw mut limit) };
+        words.push(format!("{name}={}/{}", limit.rlim_cur, limit.rlim_max));
+    }
+    let open: Vec<String> = (0..1024)
+        // SAFETY: F_GETFD only reads a descriptor's flags.
+        .filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0)
+        .map(|fd: libc::c_int| fd.to_string())
+        .collect();
+    words.push(format!("descriptors={}", open.join(",")));
+    let variables: Vec<String> = std::env::vars_os()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    words.push(format!("environment={}", variables.join(",")));
+    let directory = std::env::current_dir()
+        .map_or_else(|error| error.to_string(), |dir| dir.display().to_string());
+    words.push(format!("directory={directory}"));
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: this prctl takes no pointer.
+        let flag = unsafe { libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) };
+        words.push(format!("no_new_privs={flag}"));
+    }
+    words.join(" ")
+}
+
+#[cfg(target_os = "linux")]
+fn limits() -> [(&'static str, libc::__rlimit_resource_t); 5] {
+    [
+        ("core", libc::RLIMIT_CORE),
+        ("cpu", libc::RLIMIT_CPU),
+        ("fsize", libc::RLIMIT_FSIZE),
+        ("nofile", libc::RLIMIT_NOFILE),
+        ("as", libc::RLIMIT_AS),
+    ]
+}
+
+#[cfg(not(target_os = "linux"))]
+fn limits() -> [(&'static str, libc::c_int); 4] {
+    [
+        ("core", libc::RLIMIT_CORE),
+        ("cpu", libc::RLIMIT_CPU),
+        ("fsize", libc::RLIMIT_FSIZE),
+        ("nofile", libc::RLIMIT_NOFILE),
+    ]
+}

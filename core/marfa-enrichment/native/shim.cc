@@ -3,6 +3,7 @@
 #include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
 #include <tesseract/ocrclass.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <cstring>
@@ -166,7 +167,31 @@ struct marfa_ocr {
   tesseract::TessBaseAPI api;
 };
 
+namespace {
+
+int exit_code_when_new_fails = 1;
+
+// Thrown, `bad_alloc` would reach a catch below and read as a file that failed, when
+// the file only needs more memory than the process has.
+void new_failed() { _exit(exit_code_when_new_fails); }
+
+}  // namespace
+
 extern "C" {
+
+void marfa_exit_when_new_fails(int code) {
+  exit_code_when_new_fails = code;
+  std::set_new_handler(new_failed);
+}
+
+#ifdef MARFA_FAULT_INJECTION
+void marfa_fault_new_fails(void) {
+  volatile size_t size = static_cast<size_t>(1) << 62;
+  char *bytes = new char[size];
+  bytes[0] = 1;
+  delete[] bytes;
+}
+#endif
 
 marfa_ocr *marfa_ocr_open(const char *languages, const char *data_dir,
                           const marfa_model *models, size_t model_count,

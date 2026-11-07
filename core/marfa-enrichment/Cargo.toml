@@ -18,13 +18,23 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Reads an Office file's compound container, to tell an encrypted one.
 cfb = "0.16"
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
 
 # Only the native feature uses these. pdfium-render links nothing itself here:
 # build.rs links the static libraries from the prefix.
 pdfium-render = { version = "0.9.5", optional = true, default-features = false, features = ["static", "pdfium_8125", "thread_safe"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
+libc = "0.2"
+# The isolation tests are a program of their own: `read` starts the program it
+# runs in, so that program's `main` has to serve the child.
+libtest-mimic = "0.8"
 
 [build-dependencies]
 cc = { version = "1", optional = true }
@@ -35,3 +45,14 @@ default = []
 # MARFA_NATIVE_PREFIX (see the README, "Building the native readers"). Without it nothing native is built,
 # images give their size only and a PDF is refused as unsupported.
 native = ["dep:pdfium-render", "dep:cc"]
+# Makes a child crash, hang or misbehave on marked bytes, so tests can prove that the
+# parent survives. build.rs refuses it in a release build unless told otherwise.
+fault-injection = []
+
+[[test]]
+name = "isolation"
+harness = false
+
+[[test]]
+name = "forgotten"
+harness = false

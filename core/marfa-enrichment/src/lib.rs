@@ -1,12 +1,16 @@
 //! Reads the text and the size out of a file's bytes, so search can find the
 //! file. It knows nothing of items, a database or HTTP: bytes and a MIME type
 //! go in, and text, a size or the reason it could not read come out.
+//!
+//! Every file is read in a process of its own. A program that uses this crate calls
+//! [`serve_child_if_asked`] as the first line of `main`, and then [`read`].
 
 mod decode;
 mod encrypted;
 mod epub;
 mod html;
 mod image;
+mod isolated;
 mod kind;
 #[cfg(feature = "native")]
 mod ocr;
@@ -27,7 +31,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use kind::{Document, Kind};
+use serde::{Deserialize, Serialize};
 use sink::Sink;
+
+pub use isolated::{read, serve_child_if_asked};
 
 /// What one reading may use.
 #[derive(Clone, Debug)]
@@ -38,14 +45,38 @@ pub struct Options {
     /// The most bytes a document may inflate to, all of its parts together, and the
     /// most memory a picture may take once decoded.
     pub max_inflated_bytes: u64,
+    /// The most memory the process that reads may hold. A reading that needs more is
+    /// `OverLimit`. It has to leave room for the picture `max_inflated_bytes` allows
+    /// and for OCR on top of that.
+    pub max_memory_bytes: u64,
     /// Reads text from pictures: images, and pages of a PDF that hold no text.
     /// `None` leaves OCR off, and an image then gives its size only. Without the
     /// `native` feature OCR is not built and this has no effect.
     pub ocr: Option<OcrOptions>,
+    /// How long a reading may take. At this time its process is killed, whatever it
+    /// was doing, and the reading is `TimedOut`.
+    pub time_limit: Duration,
     /// How long a reading may spend before it stops reading pictures and returns
-    /// what it has, marked `cut_short`. It is soft: the caller still ends a reader
-    /// that does not return. `None` sets no budget.
+    /// what it has, marked `cut_short`. `None` sets it inside `time_limit`, with time
+    /// left over for a long scan to answer instead of timing out with nothing.
     pub time_budget: Option<Duration>,
+}
+
+/// The share of `Options::time_limit` a reading spends before it stops reading
+/// pictures, when `Options::time_budget` does not say.
+const SOFT_SHARE_OF_LIMIT: f64 = 0.75;
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            max_text_chars: 1_000_000,
+            max_inflated_bytes: 64 * 1024 * 1024,
+            max_memory_bytes: 1024 * 1024 * 1024,
+            ocr: None,
+            time_limit: Duration::from_mins(1),
+            time_budget: None,
+        }
+    }
 }
 
 /// The languages OCR reads when the owner names none: the four Latin-script
@@ -89,6 +120,23 @@ pub struct Reading {
     pub cut_short: bool,
     /// The size of an image.
     pub dimensions: Option<Dimensions>,
+    /// How far the process that read the file was shut off from the system.
+    pub sandbox: Sandbox,
+}
+
+/// How far a reading's process was shut off from files and the network. The reading
+/// is good either way: a system that cannot confine a process still reads, and this is
+/// how its owner can learn that.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Sandbox {
+    /// It could open only the OCR data folder, and connect nowhere.
+    Full,
+    /// The kernel enforced some of that. On Linux this is a kernel with an older
+    /// Landlock: from 5.13 it holds files, and before 6.7 it does not hold TCP.
+    Partial,
+    /// Nothing held it but its resource limits.
+    Off,
 }
 
 /// An image's size in pixels, as its header states it.
@@ -99,7 +147,7 @@ pub struct Dimensions {
 }
 
 /// Why a file was not read. The kinds are told apart because the sweep treats
-/// them differently.
+/// them differently. The README says how, in "How the sweep treats a refusal".
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Refusal {
     /// No reader takes this type of file.
@@ -121,12 +169,17 @@ pub enum Refusal {
     /// up.
     #[error("OCR cannot start: {0}")]
     OcrUnavailable(String),
-    /// The reading did not finish in time.
+    /// The reading did not finish in time, so its process was ended.
     #[error("reading the file took too long")]
     TimedOut,
-    /// The reader failed, and ended its process.
-    #[error("the reader failed")]
-    Crashed,
+    /// The process that read the file ended by a signal or gave an answer that cannot
+    /// be believed. The reason, which names the signal, is for a log.
+    #[error("the reader failed: {0}")]
+    Crashed(String),
+    /// No reader could start: the system is short of something, or the program's file
+    /// has gone. The file was not tried, so this says nothing about it.
+    #[error("no reader could start: {0}")]
+    ReaderUnavailable(String),
 }
 
 /// Reads `bytes` in this process, by the MIME type `mime`; its parameters and
@@ -135,9 +188,6 @@ pub enum Refusal {
 ///
 /// A parser that panics on a file it was not built for is a malformed file, not
 /// a reason to end the caller.
-// Nothing outside the tests calls this until the entry point that reads in a
-// process of its own is added.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn read_here(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
     let clock = Clock::start(options.time_budget);
     std::panic::catch_unwind(|| read_kind(bytes, mime, options, &clock))
@@ -197,6 +247,7 @@ fn read_kind(
         truncated,
         cut_short,
         dimensions,
+        sandbox: Sandbox::Off,
     })
 }
 

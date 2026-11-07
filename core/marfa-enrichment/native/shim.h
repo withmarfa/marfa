@@ -10,6 +10,15 @@
 extern "C" {
 #endif
 
+/* Makes a failed C++ `new` end the process with `code`. Called once, in the process
+ * that reads, before any reading. */
+void marfa_exit_when_new_fails(int code);
+
+#ifdef MARFA_FAULT_INJECTION
+/* Asks `new` for more than can exist. */
+void marfa_fault_new_fails(void);
+#endif
+
 /* A model carried inside the program. */
 typedef struct marfa_model {
   const char *language;
