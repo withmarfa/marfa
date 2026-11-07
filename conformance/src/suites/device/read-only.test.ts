@@ -18,7 +18,7 @@ import {
   type WireItemOptions,
   wireItem,
 } from "../../device/marfa-answers.js";
-import { type Answer, BUILT_FOR } from "../../device/scripted-server.js";
+import { BUILT_FOR, type Responder } from "../../device/scripted-server.js";
 
 /**
  * An item's `read_only` as a working copy holds it. The server's answer for a
@@ -68,7 +68,7 @@ function fromBeforeTheField(device: Harness["device"]): void {
 async function followedBy(
   label: string,
   items: WireItemOptions[],
-  ...events: Answer[]
+  ...events: Responder[]
 ): Promise<Harness> {
   const started = await startHarness(label);
   scriptHydration(started.server, {
@@ -252,9 +252,10 @@ describe("an item's read_only in a working copy", () => {
 
     const asked = looks(server);
     expect(asked).toHaveLength(1);
-    expect(asked[0], "a read asked for more than one row of a pair").toHaveLength(
-      2,
-    );
+    expect(
+      asked[0],
+      "a read asked for more than one row of a pair",
+    ).toHaveLength(2);
     for (const id of ["n1", "n2", "n3"]) {
       const row = await device.get(id);
       expect(row.ok && row.value.read_only, id).toBe(true);

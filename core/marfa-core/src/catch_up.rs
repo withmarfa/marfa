@@ -2365,7 +2365,7 @@ mod tests {
             "the look ended the stream"
         );
         assert!(
-            store::read_only_owed(&*core.conn().unwrap(), QUICK.read_only_every).unwrap(),
+            store::read_only_owed(&core.conn().unwrap(), QUICK.read_only_every).unwrap(),
             "a failed look was counted as made"
         );
         assert!(!core.get("a").unwrap().unwrap().read_only);
@@ -2377,7 +2377,7 @@ mod tests {
     fn a_follow_within_the_interval_asks_nothing() {
         let server = Scripted::start();
         let (_dir, core) = owing_a_look(&server, Some(MS(5)), vec![a_look(true)]);
-        store::mark_read_only_read(&*core.conn().unwrap()).unwrap();
+        store::mark_read_only_read(&core.conn().unwrap()).unwrap();
 
         let run = follow_on(&core, STILL, None);
         server.wait_for("/events", 1, Duration::from_secs(5));
@@ -2409,7 +2409,7 @@ mod tests {
 
         assert!(ended.is_ok(), "{ended:?}");
         assert!(!core.get("a").unwrap().unwrap().read_only);
-        assert!(store::read_only_owed(&*core.conn().unwrap(), QUICK.read_only_every).unwrap());
+        assert!(store::read_only_owed(&core.conn().unwrap(), QUICK.read_only_every).unwrap());
     }
 
     /// Queues a create of a note and answers the read-back its answer
