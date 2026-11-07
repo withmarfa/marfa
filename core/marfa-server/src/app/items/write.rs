@@ -1872,6 +1872,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.caller().require_direct()?;
         let row = rows::by_id(self.unit.tx(), &id)?
             .filter(|row| !super::is_system(&row.type_id))
+            .filter(|row| {
+                self.caller()
+                    .lists(&self.catalog.rules, &row.type_id, &row.source)
+            })
             .ok_or_else(not_found)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {

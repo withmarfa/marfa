@@ -10,7 +10,7 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use super::access::{Caller, Levers};
+use super::access::{Caller, Levers, Standing};
 use super::addresses;
 use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
@@ -105,17 +105,7 @@ fn checked_name(text: &str) -> std::result::Result<String, String> {
 /// whole, by the path of the member.
 fn lever_errors(refusal: Refusal) -> Result<Vec<(String, String)>> {
     if refusal.code == Code::MissingRequiredField {
-        let field = refusal
-            .details
-            .as_ref()
-            .and_then(|details| details.get("field"))
-            .and_then(Value::as_str)
-            .unwrap_or("enforcement")
-            .to_string();
-        return Err(
-            Refusal::new(Code::MissingRequiredField, format!("{field} is required"))
-                .with_detail("field", field),
-        );
+        return Err(refusal);
     }
     let listed = refusal
         .details
@@ -412,19 +402,23 @@ impl Moved {
 }
 
 fn levers_of(rows: &Rows) -> Option<Levers> {
-    let stored = rows.get(ENFORCEMENT_ROW)?;
-    match serde_json::from_str::<Value>(stored) {
-        Ok(Value::Object(map)) => Some(Levers::from_stored(map)),
-        _ => None,
-    }
+    Levers::from_row(rows.get(ENFORCEMENT_ROW)?)
 }
 
-/// The instance's enforcement levers, or none when none are set.
-pub fn levers(tx: &Transaction<'_>) -> Result<Option<Levers>> {
-    Ok(stored::get(tx, ENFORCEMENT_ROW)?.and_then(|text| {
-        let rows = Rows::from([(ENFORCEMENT_ROW.to_string(), text)]);
-        levers_of(&rows)
-    }))
+/// What a caller setting the levers `own` is held to, as `tx` holds the
+/// instance's. A row that does not read closes the levers it should have set
+/// and leaves `/config` open to replace it.
+pub fn standing(tx: &Transaction<'_>, own: Option<&Levers>) -> Result<Standing> {
+    let Some(text) = stored::get(tx, ENFORCEMENT_ROW)? else {
+        return Ok(Standing::of(own, None));
+    };
+    Ok(match Levers::from_row(&text) {
+        Some(instance) => Standing::of(own, Some(&instance)),
+        None => {
+            tracing::error!("The stored enforcement levers do not read, so they hold everything");
+            Standing::closed()
+        }
+    })
 }
 
 /// The configuration as `/config` answers it: each field that has been set.

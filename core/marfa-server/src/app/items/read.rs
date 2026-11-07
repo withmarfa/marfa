@@ -555,10 +555,13 @@ impl Reader<'_, '_> {
                 .last()
                 .map(|row| (row.created_at.clone(), row.id.clone()));
             for row in batch {
-                if q.is_empty()
-                    || name_of(self.tx, &self.catalog, &row)?
-                        .to_lowercase()
-                        .contains(&q)
+                if self
+                    .caller
+                    .lists(&self.catalog.rules, &row.type_id, &row.source)
+                    && (q.is_empty()
+                        || name_of(self.tx, &self.catalog, &row)?
+                            .to_lowercase()
+                            .contains(&q))
                 {
                     page.push(row);
                     if page.len() as i64 > listing.limit {

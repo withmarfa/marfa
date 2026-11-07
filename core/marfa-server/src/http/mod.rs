@@ -131,7 +131,7 @@ fn schema_doors() -> Routes {
 /// answers within one.
 async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
-    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local))) {
+    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {
         return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await

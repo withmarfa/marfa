@@ -269,7 +269,7 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
         .await;
     assert_eq!(before_claim.status, StatusCode::OK, "{}", before_claim.text);
     assert_eq!(before_claim.body["addresses"], json!(["https://a.example"]));
-    instance::claim(&instance.app, &Caller::Local)
+    instance::claim(&instance.app, &Caller::local())
         .await
         .unwrap();
 
@@ -323,7 +323,7 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
 #[tokio::test]
 async fn the_first_stored_sign_in_address_of_a_claimed_instance_asks_first() {
     let instance = Instance::start(&[]).await;
-    instance::claim(&instance.app, &Caller::Local)
+    instance::claim(&instance.app, &Caller::local())
         .await
         .unwrap();
     let body = json!({ "sign_in_address": "https://a.example" });
@@ -442,7 +442,7 @@ async fn an_address_check_says_what_would_happen_and_writes_nothing() {
     instance
         .patch(json!({ "sign_in_address": "https://a.example" }))
         .await;
-    instance::claim(&instance.app, &Caller::Local)
+    instance::claim(&instance.app, &Caller::local())
         .await
         .unwrap();
     let held = instance.config().await;

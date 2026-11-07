@@ -43,7 +43,7 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     let context = parts.extensions.get::<RequestContext>();
     let local = context.is_some_and(|context| context.transport == Transport::LocalSocket);
     let key = match presented(&parts.headers) {
-        Presented::Nothing => return Ok(local.then_some(Caller::Local)),
+        Presented::Nothing => return Ok(local.then(Caller::local)),
         Presented::Unreadable => return Ok(None),
         Presented::Token(token) => keys::authenticate(app, token).await?,
     };

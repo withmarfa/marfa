@@ -13,7 +13,7 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
 use super::App;
-use super::access::{Axis, Caller, Change, Grants, Levers, Permission};
+use super::access::{Axis, Caller, Change, Grants, Levers, Permission, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 pub use limit::Limiter;
@@ -34,6 +34,9 @@ pub struct Key {
     pub oauth_client_id: Option<String>,
     pub grants: Grants,
     pub levers: Option<Levers>,
+    /// What this key is held to, as a transaction read it as a caller. It is
+    /// not part of the key, and is never stored or answered.
+    pub standing: Standing,
     pub created_at: String,
     pub expires_at: Option<String>,
     pub last_used_at: Option<String>,
@@ -117,6 +120,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
             .is_some()
             .then(|| stored_object(row, "enforcement_override").map(Levers::from_stored))
             .transpose()?,
+        standing: Standing::default(),
         created_at: row.get("created_at")?,
         expires_at: row.get("expires_at")?,
         last_used_at: row.get("last_used_at")?,
@@ -324,6 +328,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 oauth_client_id: caller.key().and_then(|maker| maker.oauth_client_id.clone()),
                 grants,
                 levers: request.levers.flatten(),
+                standing: Standing::default(),
                 created_at: unit.at.clone(),
                 expires_at,
                 last_used_at: None,

@@ -12,9 +12,10 @@ mod schema;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use super::config;
 use super::keys::{self, Key};
 use super::refusal::{Code, Refusal, Result};
-pub use levers::Levers;
+pub use levers::{Levers, Standing};
 pub use maps::{Axis, Level, Map};
 pub use schema::{Door, SchemaKind};
 
@@ -193,7 +194,8 @@ pub struct Change<'a> {
 #[derive(Clone, Debug)]
 pub enum Caller {
     /// The private local command, on the control socket with no credential.
-    Local,
+    /// It carries no levers of its own, so the instance's hold for it.
+    Local(Standing),
     Key(Box<Key>),
     /// The server, in the work it does on itself. It outlives any request
     /// that started the work, so what a job does stands on no credential.
@@ -201,33 +203,41 @@ pub enum Caller {
 }
 
 impl Caller {
+    /// The private local command, before a transaction has read it.
+    pub fn local() -> Caller {
+        Caller::Local(Standing::default())
+    }
+
     /// The caller as `tx` holds it at `at`, for a decision that state must
-    /// bear out. Asked of a key that has since ended, it refuses as a request
-    /// bearing that key would be refused.
+    /// bear out, the levers that hold for it among them. Asked of a key that
+    /// has since ended, it refuses as a request bearing that key would be
+    /// refused.
     pub fn current(&self, tx: &Transaction<'_>, at: &str) -> Result<Caller> {
         match self {
-            Caller::Local => Ok(Caller::Local),
+            Caller::Local(_) => Ok(Caller::Local(config::standing(tx, None)?)),
             Caller::Server => Ok(Caller::Server),
-            Caller::Key(key) => keys::live_by_id(tx, &key.id, at)?
-                .map(|key| Caller::Key(Box::new(key)))
-                .ok_or_else(unauthorized),
+            Caller::Key(key) => {
+                let mut key = keys::live_by_id(tx, &key.id, at)?.ok_or_else(unauthorized)?;
+                key.standing = config::standing(tx, key.levers.as_ref())?;
+                Ok(Caller::Key(Box::new(key)))
+            }
         }
     }
 
     pub fn is_direct(&self) -> bool {
-        matches!(self, Caller::Local)
+        matches!(self, Caller::Local(_))
     }
 
     pub fn key(&self) -> Option<&Key> {
         match self {
-            Caller::Local | Caller::Server => None,
+            Caller::Local(_) | Caller::Server => None,
             Caller::Key(key) => Some(key),
         }
     }
 
     pub fn holds(&self, permission: Permission) -> bool {
         match self {
-            Caller::Local | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
             Caller::Key(key) => key.grants.holds(permission),
         }
     }
@@ -267,7 +277,7 @@ impl Caller {
     /// one decision behind every such door.
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
-            Caller::Local | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
             Caller::Key(key) => {
                 key.id == target.id
                     || key.grants.holds(Permission::KeysManage)
@@ -282,7 +292,7 @@ impl Caller {
     /// What a mint naming no family gives.
     pub fn whole_set(&self) -> Grants {
         match self {
-            Caller::Local | Caller::Server => Grants::everything(),
+            Caller::Local(_) | Caller::Server => Grants::everything(),
             Caller::Key(key) => key.grants.clone(),
         }
     }
@@ -311,7 +321,7 @@ impl Caller {
     /// Whether this caller could give a key `source`.
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
-            Caller::Local | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
             Caller::Key(key) => key.grants.may_grant(&key.source, source),
         }
     }
@@ -379,7 +389,7 @@ impl Caller {
     /// The `key_id` of an audit entry this caller's write leaves.
     pub fn audit_id(&self) -> String {
         match self {
-            Caller::Local => "local:process".to_string(),
+            Caller::Local(_) => "local:process".to_string(),
             Caller::Server => "server".to_string(),
             Caller::Key(key) => key.id.clone(),
         }
@@ -388,7 +398,7 @@ impl Caller {
     /// The `actor` of an audit entry, as the caller stands when it acts.
     pub fn actor(&self) -> Value {
         match self {
-            Caller::Local => json!({ "kind": "local", "id": "local", "name": "Local command" }),
+            Caller::Local(_) => json!({ "kind": "local", "id": "local", "name": "Local command" }),
             Caller::Server => json!({ "kind": "server", "id": "server", "name": "Marfa" }),
             Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
         }
@@ -422,6 +432,7 @@ mod tests {
                 sources: sources.iter().map(ToString::to_string).collect(),
             },
             levers: None,
+            standing: Standing::default(),
             created_at: String::new(),
             expires_at: None,
             last_used_at: None,
@@ -556,7 +567,7 @@ mod tests {
                 "{name}"
             );
         }
-        assert!(Caller::Local.reaches(&wide_types(key("t", "t", &[KeysManage], &["x"]))));
+        assert!(Caller::local().reaches(&wide_types(key("t", "t", &[KeysManage], &["x"]))));
     }
 
     #[test]
@@ -573,12 +584,12 @@ mod tests {
         let manager = Caller::Key(Box::new(key("m", "m", &[KeysManage, KeysMint], &[])));
         let minter = Caller::Key(Box::new(key("n", "n", &[KeysMint, AuditRead], &[])));
         assert!(
-            Caller::Local
+            Caller::local()
                 .check_update(&target, &change(&wider, false))
                 .is_ok()
         );
         assert!(
-            Caller::Local
+            Caller::local()
                 .check_update(&target, &change(&wider, true))
                 .is_err()
         );
@@ -598,7 +609,7 @@ mod tests {
         let mut app_key = target.clone();
         app_key.oauth_client_id = Some("client".into());
         assert!(
-            Caller::Local
+            Caller::local()
                 .check_update(&app_key, &change(&wider, false))
                 .is_err()
         );

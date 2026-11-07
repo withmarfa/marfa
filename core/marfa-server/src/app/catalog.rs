@@ -386,7 +386,7 @@ mod tests {
     }
 
     async fn register(app: &App, id: &str, parent: Option<&str>) {
-        types::register(app, &Caller::Local, definition(id, parent))
+        types::register(app, &Caller::local(), definition(id, parent))
             .await
             .unwrap();
     }
@@ -453,7 +453,7 @@ mod tests {
 
         let inner = cache.clone();
         let seen_inside = app
-            .write(&Caller::Local, "type.register", move |unit| {
+            .write(&Caller::local(), "type.register", move |unit| {
                 let at = unit.at.as_str();
                 unit.tx().execute(
                     "INSERT INTO types (id, origin, definition, created_at, updated_at) \

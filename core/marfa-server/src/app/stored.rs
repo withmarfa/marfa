@@ -46,9 +46,8 @@ pub fn put(tx: &Transaction<'_>, key: &str, value: &str) -> Result<()> {
 /// What a row holds, whether a setting's or a note's.
 pub fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
     Ok(tx
-        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
-            row.get(0)
-        })
+        .prepare_cached("SELECT value FROM settings WHERE key = ?1")?
+        .query_row([key], |row| row.get(0))
         .optional()?)
 }
 
