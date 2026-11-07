@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -11,6 +9,13 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  quiet,
+  runJob,
+} from "../../utils/moved-clock.js";
 import { openEventStream, parseSse, type SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -25,7 +30,7 @@ beforeAll(async () => {
     "compliance",
     "catchup-too-old",
   ));
-  server = await bootFreshServer("catchup-too-old");
+  server = await bootFreshServer("catchup-too-old", QUIET_SCHEDULE);
 }, FRESH_SERVER_TIMEOUT_MS + 60_000);
 
 afterAll(async () => {
@@ -152,22 +157,22 @@ describe("the cursor a catch-up resumes from", () => {
   });
 });
 
-const runSqlite = promisify(execFile);
-
 describe("a cursor behind the oldest event the log keeps", () => {
   it(
     "answers 200 and a terminal catchup_too_old frame naming the oldest retained id and the cursor, and delivers a cursor still in the log",
     async ({ signal }) => {
       // A request cannot age an event, and retention keeps at least an hour, so
-      // the log is cut in the stored file while the server is stopped: the
-      // state a retention sweep leaves and nothing else a client can do does.
+      // the server's clock moves past the window between the third note and
+      // the fourth, and the sweep retires the first three.
       const fresh = server!;
+      await quiet(fresh, ["event-log-cleanup"]);
       const writer = new MarfaClient({
         baseUrl: fresh.apiUrl,
         apiKey: fresh.workingKey,
       });
       const written: string[] = [];
       for (let n = 1; n <= 6; n += 1) {
+        if (n === 4) await movedClock(fresh).advance(31 * DAY_MS);
         const created = await writer.createItem({
           type: "core.note",
           properties: { body: `retired-${String(n)}` },
@@ -198,14 +203,7 @@ describe("a cursor behind the oldest event the log keeps", () => {
       );
       // The log keeps the fourth note's event and everything after it.
       const oldest = ids[3]!;
-      await fresh.restart({
-        whileStopped: async () => {
-          await runSqlite("sqlite3", [
-            fresh.sqlitePath,
-            `DELETE FROM event_log WHERE id < ${String(oldest)};`,
-          ]);
-        },
-      });
+      expect((await runJob(fresh, "event-log-cleanup")).outcome).toBe("ok");
 
       interface Answer {
         events: SseEvent[];
