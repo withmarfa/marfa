@@ -7,12 +7,12 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-use crate::error::CoreError;
+use crate::error::RuleError;
 use crate::wire::{WireCatalog, WireType};
 
 const CATALOG: &str = include_str!("builtin_catalog.json");
 
-pub(crate) fn catalog() -> Result<WireCatalog, CoreError> {
+pub fn catalog() -> Result<WireCatalog, RuleError> {
     static PARSED: OnceLock<Result<WireCatalog, String>> = OnceLock::new();
     PARSED
         .get_or_init(|| {
@@ -26,11 +26,11 @@ pub(crate) fn catalog() -> Result<WireCatalog, CoreError> {
             Ok(WireCatalog { types, edge_types })
         })
         .clone()
-        .map_err(|error| CoreError::Decoding(format!("the shipped catalog: {error}")))
+        .map_err(|error| RuleError::decoding(format!("the shipped catalog: {error}")))
 }
 
 /// The lists the catalog carries beside its types, each read once.
-fn list(key: &str) -> Result<Vec<String>, CoreError> {
+fn list(key: &str) -> Result<Vec<String>, RuleError> {
     static PARSED: OnceLock<Result<HashMap<String, Vec<String>>, String>> = OnceLock::new();
     PARSED
         .get_or_init(|| {
@@ -51,29 +51,29 @@ fn list(key: &str) -> Result<Vec<String>, CoreError> {
             .collect()
         })
         .clone()
-        .map_err(|error| CoreError::Decoding(format!("the shipped catalog's lists: {error}")))
+        .map_err(|error| RuleError::decoding(format!("the shipped catalog's lists: {error}")))
         .and_then(|lists| {
             lists
                 .get(key)
                 .cloned()
-                .ok_or_else(|| CoreError::Decoding(format!("the shipped catalog has no {key}")))
+                .ok_or_else(|| RuleError::decoding(format!("the shipped catalog has no {key}")))
         })
 }
 
 /// The field types a type may declare, as the registry takes them.
-pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
+pub fn field_types() -> Result<Vec<String>, RuleError> {
     list("field_types")
 }
 
 /// The kinds a member of a list's entries may take, as the registry takes them.
-pub(crate) fn entry_member_types() -> Result<Vec<String>, CoreError> {
+pub fn entry_member_types() -> Result<Vec<String>, RuleError> {
     list("entry_member_types")
 }
 
 /// The kind each format of a string turns into, as the registry folds a
 /// definition (`normalizeFieldDefinition`). A format absent from it annotates
 /// the string and leaves it one.
-pub(crate) fn format_field_types() -> Result<&'static HashMap<String, String>, CoreError> {
+pub fn format_field_types() -> Result<&'static HashMap<String, String>, RuleError> {
     static PARSED: OnceLock<Result<HashMap<String, String>, String>> = OnceLock::new();
     PARSED
         .get_or_init(|| {
@@ -82,27 +82,27 @@ pub(crate) fn format_field_types() -> Result<&'static HashMap<String, String>, C
                 .map_err(|e| e.to_string())
         })
         .as_ref()
-        .map_err(|error| CoreError::Decoding(format!("the shipped catalog's formats: {error}")))
+        .map_err(|error| RuleError::decoding(format!("the shipped catalog's formats: {error}")))
 }
 
 /// The roots the type grammar reserves, which no publisher may take as its own.
-pub(crate) fn reserved_type_roots() -> Result<Vec<String>, CoreError> {
+pub fn reserved_type_roots() -> Result<Vec<String>, RuleError> {
     list("reserved_type_roots")
 }
 
 /// The names an item has of its own, which a type cannot declare as a field.
-pub(crate) fn reserved_field_names() -> Result<Vec<String>, CoreError> {
+pub fn reserved_field_names() -> Result<Vec<String>, RuleError> {
     list("reserved_field_names")
 }
 
 /// The field names search reads whatever their type, which a thumbnail
 /// cannot take.
-pub(crate) fn searched_field_names() -> Result<Vec<String>, CoreError> {
+pub fn searched_field_names() -> Result<Vec<String>, RuleError> {
     list("searched_field_names")
 }
 
 /// Whether Marfa ships a type by this id.
-pub(crate) fn ships(id: &str) -> Result<bool, CoreError> {
+pub fn ships(id: &str) -> Result<bool, RuleError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
 }
 

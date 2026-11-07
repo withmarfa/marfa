@@ -1488,6 +1488,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "marfa-rules"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "ryu",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "marfa-server"
 version = "0.0.0"
 dependencies = [

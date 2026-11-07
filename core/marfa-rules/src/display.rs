@@ -7,6 +7,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::js::is_space;
+
 const NAME_POINTS: usize = 120;
 const PREVIEW_POINTS: usize = 240;
 const BODY_PROPERTY: &str = "body";
@@ -21,7 +23,7 @@ pub struct ItemDisplay {
     pub preview: Option<String>,
 }
 
-pub(crate) fn display(
+pub fn display(
     properties: &Map<String, Value>,
     title_field: Option<&str>,
     body_field: Option<&str>,
@@ -47,7 +49,7 @@ pub(crate) fn display(
 
 /// The name an item takes from its effective `display_hints.title_field`,
 /// `title` or `name` alone, or none where none of them holds text.
-pub(crate) fn title_name(
+pub fn title_name(
     properties: &Map<String, Value>,
     title_field: Option<&str>,
 ) -> Option<String> {
@@ -67,7 +69,7 @@ pub(crate) fn title_name(
 /// A part named after its host by `types/item-name-part`: the edge type's
 /// label, a space and the host's name, bounded as every name is. Its name
 /// comes from no line of its body, so the preview keeps every line.
-pub(crate) fn part_display(
+pub fn part_display(
     properties: &Map<String, Value>,
     body_field: Option<&str>,
     label: &str,
@@ -153,26 +155,6 @@ fn markdown_name(value: &str) -> Option<(usize, String)> {
         }
     }
     None
-}
-
-/// The whitespace ECMAScript's `trim` and `\s` match, which the server's
-/// name is computed with. It differs from Rust's `char::is_whitespace` in
-/// U+0085 and U+FEFF.
-fn is_space(c: char) -> bool {
-    matches!(
-        c,
-        '\u{9}'..='\u{d}'
-            | ' '
-            | '\u{a0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200a}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202f}'
-            | '\u{205f}'
-            | '\u{3000}'
-            | '\u{feff}'
-    )
 }
 
 const LINE_BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
@@ -619,8 +601,7 @@ mod tests {
 
     use super::*;
     use crate::catalog::Catalog;
-    use crate::store;
-    use crate::wire::{WireCatalog, WireType};
+    use crate::wire::WireType;
 
     /// The cases the server's summaries are held to as well, so the two
     /// implementations of the name cannot drift apart.
@@ -642,7 +623,7 @@ mod tests {
     }
 
     fn catalog(types: &[Value]) -> Catalog {
-        let mut listed: WireCatalog = crate::builtin::catalog().unwrap();
+        let mut listed = crate::builtin::catalog().unwrap();
         for registered in types {
             let mut row = registered.clone();
             row["version"] = Value::from(0);
@@ -650,9 +631,7 @@ mod tests {
                 .types
                 .push(serde_json::from_value::<WireType>(row).unwrap());
         }
-        let conn = store::open_in_memory().unwrap();
-        store::replace_catalog(&conn, &listed).unwrap();
-        Catalog::load(&conn).unwrap()
+        Catalog::from_wire(&listed.types, None)
     }
 
     #[test]

@@ -3,21 +3,21 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-pub(crate) fn folded(name: &str) -> String {
+pub fn folded(name: &str) -> String {
     // Normalized again after lowercasing, since a lowercase mapping can
     // leave a sequence that composes differently.
     name.nfc().flat_map(char::to_lowercase).nfc().collect()
 }
 
-pub(crate) fn same(one: &str, other: &str) -> bool {
+pub fn same(one: &str, other: &str) -> bool {
     folded(one) == folded(other)
 }
 
-pub(crate) fn name_of(path: &str) -> &str {
+pub fn name_of(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-pub(crate) fn title_of(path: &str) -> String {
+pub fn title_of(path: &str) -> String {
     let name = name_of(path);
     match name.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_string(),

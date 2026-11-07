@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::error::CoreError;
+use crate::error::{Code, FieldError, RuleError, field_code};
 use crate::js;
 
 /// Fewest digits a whole number can have and still be beyond a float's exact
@@ -27,7 +27,7 @@ fn served_as(source: &str) -> Option<String> {
 /// Whether the whole number written as `source` is served back with the
 /// digits it was written with. Every safe integer is but `-0`, which is served
 /// as `0`.
-pub(crate) fn kept(source: &str) -> bool {
+pub fn kept(source: &str) -> bool {
     if source == "-0" {
         return false;
     }
@@ -47,23 +47,21 @@ fn message(source: &str) -> String {
 }
 
 /// What a write is told of the whole number `source` at `path`.
-pub(crate) fn refusal_message(path: &[String], source: &str) -> String {
+pub fn refusal_message(path: &[String], source: &str) -> String {
     format!("{}: {}", path.join("."), message(source))
 }
 
-fn refusal(path: &[String], source: &str) -> CoreError {
-    CoreError::Validation {
-        code: "invalid_properties".into(),
-        message: refusal_message(path, source),
-        details: None,
-    }
+fn refusal(path: &[String], source: &str) -> RuleError {
+    RuleError::new(Code::InvalidProperties, refusal_message(path, source)).with_fields(vec![
+        FieldError::new(path.join("."), field_code::INEXACT_INTEGER, message(source)),
+    ])
 }
 
 /// Refuses the first whole number in the properties that a float would
 /// change, at any depth. A number the parse already rounded (one beyond 64
 /// bits, from text) cannot be told here; the text is read by
 /// [`refuse_inexact_integers`].
-pub(crate) fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), CoreError> {
+pub fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), RuleError> {
     let mut stack: Vec<(Vec<String>, &Value)> = properties
         .iter()
         .rev()
@@ -101,7 +99,7 @@ pub(crate) fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), Cor
 /// that a float would change, read as written: a number beyond 64 bits is
 /// already a float once parsed. Text that is not JSON is left to the caller's
 /// own parse.
-pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
+pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
     let bytes = text.as_bytes();
     if !bytes
         .windows(MIN_DIGITS)
@@ -246,12 +244,23 @@ mod tests {
             "ok": 9_007_199_254_740_991_i64,
             "list": [1, { "deep": -9_007_199_254_740_993_i64 }],
         });
-        let Err(CoreError::Validation { code, message, .. }) =
-            refuse_in_value(properties.as_object().unwrap())
+        let Err(RuleError {
+            code,
+            message,
+            fields,
+        }) = refuse_in_value(properties.as_object().unwrap())
         else {
             panic!("expected a refusal");
         };
-        assert_eq!(code, "invalid_properties");
+        assert_eq!(code, Code::InvalidProperties);
+        assert_eq!(
+            fields,
+            [FieldError::new(
+                "list.1.deep",
+                field_code::INEXACT_INTEGER,
+                "Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
+            )]
+        );
         assert_eq!(
             message,
             "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
@@ -270,7 +279,7 @@ mod tests {
     fn text_names_where_the_number_sits() {
         let text =
             r#"{"ok": 1, "list": [1, {"deep": -9007199254740993}], "id64": 1500000000000000001}"#;
-        let Err(CoreError::Validation { message, .. }) = refuse_inexact_integers(text) else {
+        let Err(RuleError { message, .. }) = refuse_inexact_integers(text) else {
             panic!("expected a refusal");
         };
         assert_eq!(
@@ -291,7 +300,7 @@ mod tests {
             (r#"{"a": [1, {"b": -0}]}"#, "a.1.b"),
             (r#"{ "a" : -0 , "b": 0}"#, "a"),
         ] {
-            let Err(CoreError::Validation { message, .. }) = refuse_inexact_integers(text) else {
+            let Err(RuleError { message, .. }) = refuse_inexact_integers(text) else {
                 panic!("expected a refusal of {text}");
             };
             assert_eq!(
@@ -330,7 +339,7 @@ mod tests {
 
     #[test]
     fn text_names_a_member_whose_name_needs_unescaping() {
-        let Err(CoreError::Validation { message, .. }) =
+        let Err(RuleError { message, .. }) =
             refuse_inexact_integers(r#"{"a\"b": 1500000000000000001}"#)
         else {
             panic!("expected a refusal");

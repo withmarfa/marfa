@@ -12,7 +12,7 @@ const SPECIAL: [&str; 5] = ["http", "https", "ftp", "ws", "wss"];
 /// Whether `text`, which `url::Url::parse` refuses, is refused only because of
 /// an ASCII host with an `xn--` label: the URL is judged again with that host
 /// replaced by a plain one.
-pub(crate) fn ascii_host_is_taken(text: &str) -> bool {
+pub fn ascii_host_is_taken(text: &str) -> bool {
     let text = text.trim_matches(|ch: char| ch <= ' ');
     let Some((span, host)) = host_span(text) else {
         return false;
@@ -149,7 +149,7 @@ fn ends_in_a_number(host: &str) -> bool {
 
 /// Whether `text`, which `url::Url::parse` takes, has an authority that the
 /// standard refuses.
-pub(crate) fn authority_is_refused(text: &str) -> bool {
+pub fn authority_is_refused(text: &str) -> bool {
     let text = text.trim_matches(|ch: char| ch <= ' ');
     let Some((scheme, rest)) = text.split_once(':') else {
         return false;

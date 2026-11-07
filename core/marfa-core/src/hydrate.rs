@@ -1253,47 +1253,6 @@ fn declare_on_instance(
     Ok(done)
 }
 
-/// What a type is, said where a name is refused for breaking the grammar.
-pub(crate) const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
-
-/// The server's type pattern grammar (`types/id-grammar` and
-/// `types/id-reserved-scope-root`): a type identifier, or a namespace under
-/// `.*`. The bare `*` is no pattern here; each caller says what it means.
-pub(crate) fn type_pattern(name: &str) -> Result<bool> {
-    let segment = |part: &str| {
-        let mut characters = part.chars();
-        characters
-            .next()
-            .is_some_and(|first| first.is_ascii_lowercase())
-            && characters.all(|rest| {
-                rest.is_ascii_lowercase() || rest.is_ascii_digit() || rest == '-' || rest == '_'
-            })
-    };
-    if name.len() > 128 {
-        return Ok(false);
-    }
-    // A wildcard's root is a namespace, held to the segments alone.
-    if let Some(root) = name.strip_suffix(".*") {
-        return Ok(!root.is_empty() && root.split('.').all(segment));
-    }
-    let segments: Vec<&str> = name.split('.').collect();
-    if segments.len() < 2 || !segments.iter().all(|part| segment(part)) {
-        return Ok(false);
-    }
-    Ok(match segments[0] {
-        "app" => segments.len() == 3,
-        "core" | "system" | "user" | "marfa" => true,
-        root => !crate::builtin::reserved_type_roots()?
-            .iter()
-            .any(|reserved| reserved == root),
-    })
-}
-
-/// A type identifier the server's grammar takes, and no namespace pattern.
-pub(crate) fn type_id(name: &str) -> Result<bool> {
-    Ok(!name.ends_with(".*") && type_pattern(name)?)
-}
-
 /// The server's count of the rows the slice takes, by type, read once as a
 /// hydration starts so a copy filling up can say how far it has come. `None`
 /// where the server does not answer, and where one count cannot say it: a
