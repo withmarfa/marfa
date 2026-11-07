@@ -10409,9 +10409,10 @@ mod tests {
     #[test]
     fn a_store_made_before_a_column_this_build_adds_opens_and_gains_it() {
         for dropped in [
-            "trashed_at",
-            "trashed_at, capture_longitude",
-            "trashed_at, capture_longitude, capture_latitude",
+            "read_only",
+            "read_only, trashed_at",
+            "read_only, trashed_at, capture_longitude",
+            "read_only, trashed_at, capture_longitude, capture_latitude",
         ] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("core.sqlite");
@@ -10425,6 +10426,7 @@ mod tests {
                     &Indexing::default(),
                 )
                 .unwrap();
+                conn.execute_batch("DROP INDEX items_read_only").unwrap();
                 for column in dropped.split(", ") {
                     conn.execute_batch(&format!("ALTER TABLE items DROP COLUMN {column}"))
                         .unwrap();
@@ -10434,7 +10436,7 @@ mod tests {
             assert!(
                 matches!(
                     open_to_read(&path),
-                    Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("trashed_at")
+                    Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("read_only")
                 ),
                 "a reader of a store without {dropped} did not send it to this build's writer"
             );
@@ -10452,6 +10454,12 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(trashed, None);
+            let read_only: bool = conn
+                .query_row("SELECT read_only FROM items WHERE id = 'n1'", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert!(!read_only);
             drop(conn);
             assert!(open_to_read(&path).is_ok());
         }
@@ -10491,7 +10499,7 @@ mod tests {
         let path = dir.path().join("core.sqlite");
         {
             let conn = open(&path).unwrap();
-            conn.execute_batch("ALTER TABLE items DROP COLUMN trashed_at")
+            conn.execute_batch("DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only")
                 .unwrap();
         }
         let first = Connection::open(&path).unwrap();
@@ -10520,7 +10528,7 @@ mod tests {
                 .unwrap();
             let earlier = made
                 .replace(
-                    ",\n  capture_latitude REAL,\n  capture_longitude REAL,\n  trashed_at TEXT\n",
+                    ",\n  capture_latitude REAL,\n  capture_longitude REAL,\n  trashed_at TEXT,\n  read_only INTEGER NOT NULL DEFAULT 0\n",
                     "\n  -- as an earlier build wrote it\n",
                 )
                 .replace("(\n", "(");
@@ -10588,7 +10596,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "08b58201f8fb96d3",
+            "4946e63433f91c9d",
             "the shape of a table changed, which refuses every store made before it"
         );
     }

@@ -44,6 +44,7 @@ fn following(server: &Scripted, dir: &Path) -> Arc<Core> {
         ] {
             store::meta_set(&conn, key, value).unwrap();
         }
+        store::mark_read_only_read(&conn).unwrap();
         store::replace_catalog(
             &conn,
             &WireCatalog {

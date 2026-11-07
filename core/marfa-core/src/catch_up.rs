@@ -2112,6 +2112,7 @@ mod tests {
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            store::mark_read_only_read(&conn).unwrap();
             store::replace_catalog(
                 &conn,
                 &WireCatalog {
