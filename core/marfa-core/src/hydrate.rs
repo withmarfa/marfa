@@ -3338,6 +3338,14 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_hydration_has_nothing_to_ask_of_read_only() {
+        let server = Scripted::start();
+        let core = hydrated_copy(&server);
+        let every = std::time::Duration::from_secs(60);
+        assert!(!store::read_only_owed(&core.conn().unwrap(), every).unwrap());
+    }
+
+    #[test]
     fn pinning_many_rows_reads_a_hundred_to_a_request() {
         let server = Scripted::start();
         let core = hydrated_copy(&server);

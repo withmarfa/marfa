@@ -2255,6 +2255,163 @@ mod tests {
         );
     }
 
+    /// A copy of one row at the head of a held stream, its last look at
+    /// `read_only` too long ago, whose server answers each look in turn.
+    fn owing_a_look(
+        server: &Scripted,
+        keepalive: Option<Duration>,
+        looks: Vec<Answer>,
+    ) -> (tempfile::TempDir, Arc<Core>) {
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                Then::Hold {
+                    keepalive,
+                    lasting: None,
+                },
+            )],
+        );
+        server.on("/items/bulk-get", looks);
+        let (dir, core) = hydrated(server);
+        let row = store::testing::wire_item(
+            "a",
+            NOTE,
+            "active",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!({ "title": "a" }),
+        );
+        {
+            let conn = core.conn().unwrap();
+            let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+            reach::set_listed(&conn, "a", true).unwrap();
+            store::put_server_item(&conn, &row, Some(&[]), &catalog).unwrap();
+            store::meta_set(&conn, store::META_READ_ONLY_READ, "0").unwrap();
+        }
+        (dir, core)
+    }
+
+    fn a_look(read_only: bool) -> Answer {
+        crate::scripted::certified(crate::scripted::json(
+            200,
+            &serde_json::json!({
+                "items": [{ "id": "a", "type": NOTE, "source": "test", "read_only": read_only }],
+                "metadata": [],
+            })
+            .to_string(),
+        ))
+    }
+
+    #[test]
+    fn a_follow_at_the_head_learns_a_flag_no_event_brought_and_tells_it() {
+        let server = Scripted::start();
+        let (_dir, core) = owing_a_look(&server, None, vec![a_look(true)]);
+
+        let run = follow_on(&core, STILL, None);
+
+        let change = run.change();
+        assert_eq!(change.event, ChangeEvent::Applied("item.updated".into()));
+        assert_eq!((change.item_id, change.edge_id), (None, None));
+        assert!(core.get("a").unwrap().unwrap().read_only);
+        run.stop();
+        assert_eq!(run.ended().unwrap().applied, 1);
+    }
+
+    #[test]
+    fn a_follow_that_stays_up_learns_a_later_flip_at_a_heartbeat() {
+        let server = Scripted::start();
+        let (_dir, core) = owing_a_look(
+            &server,
+            Some(MS(5)),
+            vec![a_look(false), a_look(false), a_look(true)],
+        );
+        let pace = Pace {
+            read_only_every: Duration::ZERO,
+            ..STILL
+        };
+
+        let run = follow_on(&core, pace, None);
+
+        run.change();
+        assert!(core.get("a").unwrap().unwrap().read_only);
+        assert!(server.seen("/items/bulk-get").len() >= 3);
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_follow_goes_on_past_a_failed_look_and_waits_out_the_interval_to_ask_again() {
+        let server = Scripted::start();
+        let (_dir, core) = owing_a_look(
+            &server,
+            Some(MS(5)),
+            vec![crate::scripted::json(500, "{}"), a_look(true)],
+        );
+
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items/bulk-get", 1, Duration::from_secs(5));
+        let before = server.seen("/events").len();
+        thread::sleep(MS(100));
+
+        assert_eq!(
+            server.seen("/items/bulk-get").len(),
+            1,
+            "a failing server was asked at every heartbeat"
+        );
+        assert_eq!(
+            server.seen("/events").len(),
+            before,
+            "the look ended the stream"
+        );
+        assert!(
+            store::read_only_owed(&*core.conn().unwrap(), QUICK.read_only_every).unwrap(),
+            "a failed look was counted as made"
+        );
+        assert!(!core.get("a").unwrap().unwrap().read_only);
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_follow_within_the_interval_asks_nothing() {
+        let server = Scripted::start();
+        let (_dir, core) = owing_a_look(&server, Some(MS(5)), vec![a_look(true)]);
+        store::mark_read_only_read(&*core.conn().unwrap()).unwrap();
+
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/events", 1, Duration::from_secs(5));
+        thread::sleep(MS(100));
+
+        assert!(server.seen("/items/bulk-get").is_empty());
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
+    fn a_follow_told_to_stop_during_a_look_keeps_the_copy_as_it_was() {
+        let server = Scripted::start();
+        let ready = Arc::new(AtomicBool::new(false));
+        let (_dir, core) = owing_a_look(
+            &server,
+            None,
+            vec![Answer::WaitFor {
+                ready: ready.clone(),
+                answer: Box::new(a_look(true)),
+            }],
+        );
+
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items/bulk-get", 1, Duration::from_secs(5));
+        run.stop();
+        let ended = run.ended();
+        ready.store(true, Ordering::Relaxed);
+
+        assert!(ended.is_ok(), "{ended:?}");
+        assert!(!core.get("a").unwrap().unwrap().read_only);
+        assert!(store::read_only_owed(&*core.conn().unwrap(), QUICK.read_only_every).unwrap());
+    }
+
     /// Queues a create of a note and answers the read-back its answer
     /// makes, giving the row's id and the receipt the server sends for it.
     fn queued_note(core: &Core, server: &Scripted, title: &str) -> (String, Answer) {

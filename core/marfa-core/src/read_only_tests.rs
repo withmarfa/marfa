@@ -491,7 +491,10 @@ fn an_edit_of_a_read_only_row_is_sent_and_lands_with_the_flag_kept() {
     server.on(
         "/items/a",
         vec![
-            scripted::json(200, "{\"ok\":true}"),
+            scripted::json(
+                200,
+                &json!({"item": landed, "acknowledged": false}).to_string(),
+            ),
             certified(scripted::json(
                 200,
                 &json!({"item": landed, "metadata": {"item_id": "a", "tags": []}, "listed": true})
