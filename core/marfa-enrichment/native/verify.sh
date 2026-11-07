@@ -30,6 +30,9 @@
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.
+# MARFA_VERIFY_CORPUS_TIME_LIMIT  seconds each corpus file may take (default: the reader's 60).
+#                       Full-system emulation runs a CPU about ten times slower, and OCR that
+#                       the time budget cuts short cannot be compared with another target's.
 # MARFA_VERIFY_MEMORY   (not with --vm) a memory limit in bytes added to every run that sets none, and
 #                       the least for a run that sets a real one. Needed
 #                       to run linux/amd64 on an Apple silicon machine: Rosetta cannot
@@ -315,7 +318,7 @@ read_cases() {
         ocrmypdf-multipage.pdf) needle="Miss Watson" ;;
         *) needle="" ;;
       esac
-      check "corpus-$name" 0 "$needle" $R read "$f/corpus/$name"
+      check "corpus-$name" 0 "$needle" $R read "$f/corpus/$name" ${MARFA_VERIFY_CORPUS_TIME_LIMIT:+--time-limit "$MARFA_VERIFY_CORPUS_TIME_LIMIT"}
     done
   fi
   # Files the reader must refuse, and say why.
