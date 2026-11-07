@@ -278,8 +278,11 @@ fn replaced() {
     if cfg!(target_os = "linux") {
         assert_eq!(after.expect("a read after the swap").text, "after");
     } else {
-        // The path is all macOS has, and what is there now gives no answer to believe.
-        assert!(matches!(after, Err(Refusal::Crashed(_))), "{after:?}");
+        // The path is all macOS has, and what is there now is no reader.
+        assert!(
+            matches!(after, Err(Refusal::ReaderUnavailable(_))),
+            "{after:?}"
+        );
     }
     assert_eq!(zombies_and_children(), -1);
 }
@@ -534,9 +537,12 @@ mod native {
 
 #[cfg(feature = "fault-injection")]
 mod faults {
+    use std::fs::Permissions;
     use std::io::Read as _;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, UdpSocket};
     use std::os::fd::AsRawFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
 
     use marfa_enrichment::Sandbox;
 
@@ -629,14 +635,15 @@ mod faults {
             .and_then(|rest| rest.split_ascii_whitespace().next())
             .and_then(|pid| pid.parse().ok())
             .ok_or_else(|| format!("no orphan named: {reason}"))?;
-        // The sandbox on macOS refuses the fork, and -1 is what that leaves.
+        // A sandbox refuses the fork, and -1 is what that leaves. Only a system that
+        // cannot confine a child gets a real orphan.
         if orphan > 0 {
             std::thread::sleep(Duration::from_millis(50));
             check(!is_running(orphan), || {
                 format!("process {orphan} outlived the reader")
             })?;
         } else {
-            check(cfg!(target_os = "macos"), || {
+            check(kernel_can_sandbox(), || {
                 "the fork failed where it should work".into()
             })?;
         }
@@ -781,7 +788,10 @@ mod faults {
             || format!("processor limit {cpu}"),
         )?;
         if cfg!(target_os = "linux") {
-            check(word(&report, "no_new_privs")? == "1", || report.clone())?;
+            // The call filter refuses the question, and the kernel takes no filter from
+            // a process without the flag.
+            let flag = word(&report, "no_new_privs")?;
+            check(flag == "1" || flag == "-1", || report.clone())?;
             let space = word(&report, "as")?;
             check(!space.contains("18446744073709551615"), || {
                 format!("no address space limit: {space}")
@@ -809,7 +819,9 @@ mod faults {
                     LANDLOCK_CREATE_RULESET_VERSION,
                 )
             };
-            version > 0
+            // SAFETY: this prctl takes plain integers and only reads.
+            let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
+            version > 0 && seccomp >= 0
         }
         #[cfg(not(target_os = "linux"))]
         true
@@ -820,8 +832,8 @@ mod faults {
     fn refused_when_sandboxed(what: &str, name: &str, unconfined: &str) -> Result<(), Failed> {
         let (text, sandbox) = sandbox_of(name)?;
         println!("{what}: {sandbox:?}: {text}");
-        check(sandbox != Sandbox::Off || !kernel_can_sandbox(), || {
-            "the kernel has a sandbox and the child ran without it".into()
+        check(sandbox == Sandbox::Full || !kernel_can_sandbox(), || {
+            format!("the kernel has a sandbox and the child reported {sandbox:?}")
         })?;
         match sandbox {
             Sandbox::Full => check(text.starts_with("refused") || text.contains("Err"), || {
@@ -904,6 +916,76 @@ mod faults {
         check(written.is_empty(), || "the child wrote a file".into())
     }
 
+    /// A child with a data folder is the one that may call `open`, so that is where
+    /// the filter has to tell reading from writing.
+    pub(super) fn a_child_cannot_write_into_the_data_folder() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let real = folder.path().canonicalize().map_err(|e| e.to_string())?;
+        let model = real.join("a.traineddata");
+        std::fs::write(&model, "x").map_err(|error| error.to_string())?;
+        let options = Options {
+            ocr: Some(marfa_enrichment::OcrOptions {
+                languages: "eng".into(),
+                data_dir: Some(real.clone()),
+            }),
+            ..short()
+        };
+        let name = format!("write-file {}", model.to_str().ok_or("a path")?);
+        let outcome = read(&fault(&name), TEXT, &options);
+        println!("write in the data folder: {outcome:?}");
+        let text = outcome.map_err(|refusal| refusal.to_string())?.text;
+        check(text.contains("Err"), || text.clone())?;
+        let left = std::fs::read(&model).map_err(|error| error.to_string())?;
+        check(left == b"x", || "the child changed a model".into())
+    }
+
+    fn says(frame_and_answer: &str) -> Result<Reading, Refusal> {
+        read(&fault(&format!("say {frame_and_answer}")), TEXT, &short())
+    }
+
+    /// What the child stated before it had the file is the one word on the matter:
+    /// a child taken over may claim any state afterward, in either place it could try.
+    pub(super) fn a_claim_of_a_sandbox_after_the_file_is_not_believed() -> Result<(), Failed> {
+        let answer = r#"{"reading":{"text":"hi","truncated":false,"cut_short":false,"size":null,"text_refused":null}}"#;
+        let claimed = says(&format!("{{\"sandbox\":\"full\"}}{answer}"));
+        check(matches!(claimed, Err(Refusal::Crashed(_))), || {
+            format!("{claimed:?}")
+        })?;
+        let claimed = says(&answer.replace(
+            "\"text_refused\":null",
+            "\"text_refused\":null,\"sandbox\":\"full\"",
+        ));
+        check(matches!(claimed, Err(Refusal::Crashed(_))), || {
+            format!("{claimed:?}")
+        })?;
+        // The witness: the same answer with no claim is believed.
+        let plain = says(answer).map_err(|refusal| refusal.to_string())?;
+        check(plain.text == "hi", || format!("{plain:?}"))
+    }
+
+    pub(super) fn a_reason_from_a_child_is_clean() -> Result<(), Failed> {
+        let outcome = says(r#"{"refusal":{"kind":"malformed","reason":"a\nb\u001b[31mc\u202ed"}}"#);
+        check(
+            outcome == Err(Refusal::Malformed("a b [31mc d".into())),
+            || format!("{outcome:?}"),
+        )
+    }
+
+    pub(super) fn an_exit_code_cannot_stop_the_run_or_claim_the_deadline() -> Result<(), Failed> {
+        for code in [72, 73, 74] {
+            let outcome = read(&fault(&format!("exit {code}")), TEXT, &short());
+            check(
+                matches!(&outcome, Err(Refusal::Crashed(why)) if why.contains(&code.to_string())),
+                || format!("{code}: {outcome:?}"),
+            )?;
+        }
+        let outcome = read(&fault(&format!("signal {}", libc::SIGXCPU)), TEXT, &short());
+        check(matches!(outcome, Err(Refusal::Crashed(_))), || {
+            format!("{outcome:?}")
+        })?;
+        parent_is_whole()
+    }
+
     pub(super) fn a_child_cannot_connect() -> Result<(), Failed> {
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
         let address = listener.local_addr().map_err(|error| error.to_string())?;
@@ -911,14 +993,113 @@ mod faults {
         refused_when_sandboxed("connect", &format!("connect {address}"), "connected")
     }
 
-    pub(super) fn a_child_that_is_not_root_cannot_fork() -> Result<(), Failed> {
+    /// A child must not make a socket at all: Landlock has no rule for UDP or for a
+    /// Unix socket with a path.
+    pub(super) fn a_child_cannot_send_on_udp() -> Result<(), Failed> {
+        let listener = UdpSocket::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+        let address = listener.local_addr().map_err(|error| error.to_string())?;
+        listener
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .map_err(|error| error.to_string())?;
+        let mut datagram = [0u8; 8];
+        let witness = UdpSocket::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+        witness
+            .send_to(b"x", address)
+            .map_err(|error| error.to_string())?;
+        listener
+            .recv(&mut datagram)
+            .map_err(|error| error.to_string())?;
+
+        refused_when_sandboxed("udp", &format!("udp {address}"), "sent")?;
+        check(listener.recv(&mut datagram).is_err(), || {
+            "a datagram arrived from the child".into()
+        })
+    }
+
+    pub(super) fn a_child_cannot_connect_to_a_unix_socket() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = folder.path().join("socket");
+        let listener = UnixListener::bind(&path).map_err(|error| error.to_string())?;
+        std::os::unix::net::UnixStream::connect(&path).map_err(|error| error.to_string())?;
+        listener.accept().map_err(|error| error.to_string())?;
+
+        let name = format!("unix {}", path.to_str().ok_or("a path")?);
+        refused_when_sandboxed("unix", &name, "connected")
+    }
+
+    pub(super) fn a_child_cannot_change_a_files_mode() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = folder.path().join("owner.db");
+        std::fs::write(&path, "the owner's data").map_err(|error| error.to_string())?;
+        let mode = |path: &Path| {
+            path.metadata()
+                .map(|file| file.permissions().mode() & 0o777)
+        };
+        std::fs::set_permissions(&path, Permissions::from_mode(0o640))
+            .map_err(|error| error.to_string())?;
+        check(mode(&path).is_ok_and(|mode| mode == 0o640), || {
+            "the witness did not change the mode".into()
+        })?;
+
+        let name = format!("chmod {}", path.to_str().ok_or("a path")?);
+        refused_when_sandboxed("chmod", &name, "changed")?;
+        check(mode(&path).is_ok_and(|mode| mode == 0o640), || {
+            "the child changed the mode".into()
+        })
+    }
+
+    /// Landlock has no rule for any of these.
+    pub(super) fn a_child_cannot_change_what_a_file_says_of_itself() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = folder.path().join("owner.db");
+        std::fs::write(&path, "the owner's data").map_err(|error| error.to_string())?;
+        let path = path.to_str().ok_or("a path")?;
+        let calls: &[&str] = if cfg!(target_os = "linux") {
+            &["chown", "utimes", "setxattr"]
+        } else {
+            &["chown", "utimes"]
+        };
+        for call in calls {
+            refused_when_sandboxed(call, &format!("{call} {path}"), "done")?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn a_child_cannot_start_a_program() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let marker = folder.path().join("ran");
+        let script = format!("echo ran > {}", marker.to_str().ok_or("a path")?);
+        let witness = Command::new("/bin/sh").args(["-c", &script]).status();
+        check(witness.is_ok_and(|status| status.success()), || {
+            "the witness did not run".into()
+        })?;
+        check(marker.exists(), || "the witness left nothing".into())?;
+        std::fs::remove_file(&marker).map_err(|error| error.to_string())?;
+
+        let name = format!("execve {}", marker.to_str().ok_or("a path")?);
+        let outcome = read(&fault(&name), TEXT, &short());
+        println!("execve: {outcome:?}");
+        check(!marker.exists(), || "the child started a program".into())?;
+        let reading = outcome.map_err(|refusal| refusal.to_string())?;
+        check(reading.text.starts_with("refused"), || reading.text.clone())
+    }
+
+    pub(super) fn a_child_cannot_signal_another_process() -> Result<(), Failed> {
+        let mut other = Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        let outcome = refused_when_sandboxed("kill", &format!("kill {}", other.id()), "done");
+        let alive = other.try_wait().is_ok_and(|ended| ended.is_none());
+        let _ = other.kill();
+        let _ = other.wait();
+        outcome?;
+        check(alive, || "the child ended another process".into())
+    }
+
+    pub(super) fn a_child_cannot_fork() -> Result<(), Failed> {
         let (text, _) = sandbox_of("fork")?;
         println!("fork: {text}");
-        // SAFETY: a plain query.
-        let root = unsafe { libc::getuid() } == 0;
-        if cfg!(target_os = "linux") && root {
-            return Ok(());
-        }
         check(text.starts_with("refused"), || text.clone())
     }
 
@@ -1177,8 +1358,45 @@ fn main() {
         ),
         ("a_child_cannot_connect", faults::a_child_cannot_connect),
         (
-            "a_child_that_is_not_root_cannot_fork",
-            faults::a_child_that_is_not_root_cannot_fork,
+            "a_child_cannot_send_on_udp",
+            faults::a_child_cannot_send_on_udp,
+        ),
+        (
+            "a_child_cannot_connect_to_a_unix_socket",
+            faults::a_child_cannot_connect_to_a_unix_socket,
+        ),
+        (
+            "a_child_cannot_change_a_files_mode",
+            faults::a_child_cannot_change_a_files_mode,
+        ),
+        (
+            "a_child_cannot_change_what_a_file_says_of_itself",
+            faults::a_child_cannot_change_what_a_file_says_of_itself,
+        ),
+        (
+            "a_child_cannot_start_a_program",
+            faults::a_child_cannot_start_a_program,
+        ),
+        (
+            "a_child_cannot_signal_another_process",
+            faults::a_child_cannot_signal_another_process,
+        ),
+        ("a_child_cannot_fork", faults::a_child_cannot_fork),
+        (
+            "a_child_cannot_write_into_the_data_folder",
+            faults::a_child_cannot_write_into_the_data_folder,
+        ),
+        (
+            "a_claim_of_a_sandbox_after_the_file_is_not_believed",
+            faults::a_claim_of_a_sandbox_after_the_file_is_not_believed,
+        ),
+        (
+            "a_reason_from_a_child_is_clean",
+            faults::a_reason_from_a_child_is_clean,
+        ),
+        (
+            "an_exit_code_cannot_stop_the_run_or_claim_the_deadline",
+            faults::an_exit_code_cannot_stop_the_run_or_claim_the_deadline,
         ),
         (
             "a_child_ends_when_its_parent_dies",

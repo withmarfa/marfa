@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use super::wire::{self, Answer, MAX_REQUEST_BYTES, OcrRequest, Request};
+use super::wire::{
+    self, Answer, Asked, Frame, MAX_FRAME_BYTES, MAX_REQUEST_BYTES, OcrRequest, Request,
+};
 use super::{CHILD_ARG, EXIT_BY_SIGNAL, EXIT_DEADLINE, EXIT_OVER_MEMORY, footprint};
 use crate::kind::Kind;
-use crate::{NATIVE, Options, Reading, Refusal};
+use crate::{NATIVE, Options, Reading, Refusal, Sandbox};
 
 /// How often a running child's memory is looked at, and the longest the loop sleeps.
 const TICK: Duration = Duration::from_millis(10);
@@ -52,12 +54,12 @@ pub(super) fn read(
     mime: &str,
     options: &Options,
 ) -> Result<Reading, Refusal> {
-    refuse_without_a_child(bytes, mime, options)?;
+    let kind = refuse_without_a_child(bytes, mime, options)?;
     let program = program
         .ok_or_else(|| Refusal::ReaderUnavailable("the program cannot find itself".into()))?;
     let time_limit = options.time_limit.min(LONGEST_TIME_LIMIT);
     let deadline = Instant::now() + time_limit;
-    let request = frame(bytes, mime, options, time_limit)?;
+    let request = request(bytes, mime, options, time_limit)?;
 
     let mut watched = Watched::start(program, time_limit, options.max_memory_bytes)?;
     let cap = options
@@ -72,18 +74,24 @@ pub(super) fn read(
         deadline,
     );
     let status = watched.reap();
-    conclude(end, status, &said, options)
+    conclude(
+        end,
+        status,
+        &said,
+        kind,
+        options,
+        Instant::now() >= deadline,
+    )
 }
 
 /// What can be decided from the call alone never starts a process.
-fn refuse_without_a_child(bytes: &[u8], mime: &str, options: &Options) -> Result<(), Refusal> {
+fn refuse_without_a_child(bytes: &[u8], mime: &str, options: &Options) -> Result<Kind, Refusal> {
     if mime.len() > MAX_MIME_BYTES {
         return Err(Refusal::Unsupported);
     }
-    match Kind::of(mime) {
-        None => return Err(Refusal::Unsupported),
-        Some(Kind::Pdf) if !NATIVE => return Err(Refusal::Unsupported),
-        Some(_) => {}
+    let kind = Kind::of(mime).ok_or(Refusal::Unsupported)?;
+    if kind == Kind::Pdf && !NATIVE {
+        return Err(Refusal::Unsupported);
     }
     if bytes.len() as u64 > options.max_memory_bytes {
         return Err(Refusal::OverLimit(format!(
@@ -92,7 +100,7 @@ fn refuse_without_a_child(bytes: &[u8], mime: &str, options: &Options) -> Result
             options.max_memory_bytes
         )));
     }
-    Ok(())
+    Ok(kind)
 }
 
 /// The soft budget stops OCR with time left to send what it read before the deadline.
@@ -104,7 +112,7 @@ fn soft_budget(options: &Options, time_limit: Duration) -> Duration {
 }
 
 /// The request, after the four bytes of its length.
-fn frame(
+fn request(
     bytes: &[u8],
     mime: &str,
     options: &Options,
@@ -151,12 +159,24 @@ enum End {
     Deadline,
     OverMemory(u64),
     TooMuchOutput,
+    /// What wrote the first line is no reader of this program's.
+    BadFrame,
     /// The child ended by itself.
     Exited,
 }
 
+/// The line a child writes before it is given the file.
+#[derive(Clone, Copy, Debug)]
+enum FirstLine {
+    Awaited,
+    Said(Sandbox),
+    Bad,
+}
+
 /// What a child wrote.
 struct Said {
+    first_line: FirstLine,
+    /// What came after the first line.
     stdout: Vec<u8>,
     cap: usize,
     stderr: Vec<u8>,
@@ -165,6 +185,7 @@ struct Said {
 impl Said {
     fn new(cap: usize) -> Self {
         Self {
+            first_line: FirstLine::Awaited,
             stdout: Vec::new(),
             cap,
             stderr: Vec::new(),
@@ -175,6 +196,28 @@ impl Said {
         self.stdout.len() > self.cap
     }
 
+    fn keep_stdout(&mut self, chunk: &[u8]) {
+        self.stdout.extend_from_slice(chunk);
+        if !matches!(self.first_line, FirstLine::Awaited) {
+            return;
+        }
+        let end = self.stdout.iter().position(|byte| *byte == b'\n');
+        match end {
+            Some(end) => {
+                self.first_line =
+                    Frame::read(&self.stdout[..end]).map_or(FirstLine::Bad, FirstLine::Said);
+                self.stdout.drain(..=end);
+            }
+            None if self.stdout.len() > MAX_FRAME_BYTES => self.first_line = FirstLine::Bad,
+            None => {}
+        }
+    }
+
+    /// Whether the child has said it is confined, which is when it may have the file.
+    fn is_confined(&self) -> bool {
+        matches!(self.first_line, FirstLine::Said(_))
+    }
+
     fn keep_stderr(&mut self, chunk: &[u8]) {
         self.stderr.extend_from_slice(chunk);
         if self.stderr.len() > STDERR_KEPT {
@@ -182,7 +225,7 @@ impl Said {
         }
     }
 
-    /// The end of stderr, fit for a log: a child chooses these bytes.
+    /// The end of stderr, fit for a log.
     fn stderr_for_a_log(&self) -> String {
         let text = String::from_utf8_lossy(&self.stderr);
         let start = text
@@ -190,12 +233,7 @@ impl Said {
             .rev()
             .nth(STDERR_REPORTED)
             .map_or(0, |(index, _)| index);
-        text[start..]
-            .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
-            .collect::<String>()
-            .trim()
-            .to_owned()
+        wire::for_a_log(&text[start..])
     }
 
     fn ran_out_of_memory_in_rust(&self) -> bool {
@@ -260,7 +298,9 @@ impl Watched {
         Ok(watched)
     }
 
-    /// Runs until the child ends or has to be ended.
+    /// Runs until the child ends or has to be ended. The second part of `feed` waits
+    /// for the child's first line, so a child that states its sandbox has not yet
+    /// held a byte of the file.
     fn run(
         &mut self,
         mut feed: [&[u8]; 2],
@@ -293,7 +333,7 @@ impl Watched {
                 };
             }
 
-            let feeding = feed.iter().any(|part| !part.is_empty());
+            let feeding = !feed[0].is_empty() || said.is_confined();
             let mut wanted: [Option<(RawFd, libc::c_short)>; 3] = [
                 self.stdin
                     .as_ref()
@@ -315,10 +355,13 @@ impl Watched {
             }
             let ready = wait_for(&mut wanted, wait);
             if ready[0] {
-                self.write_some(&mut feed);
+                self.write_some(&mut feed, said.is_confined());
             }
             if ready[1] || ready[2] {
                 self.drain(said);
+                if matches!(said.first_line, FirstLine::Bad) {
+                    return End::BadFrame;
+                }
                 if said.over_cap() {
                     return End::TooMuchOutput;
                 }
@@ -357,15 +400,16 @@ impl Watched {
             )
     }
 
-    fn write_some(&mut self, feed: &mut [&[u8]; 2]) {
+    /// Writes what the pipe takes, and closes it once the whole file is through.
+    fn write_some(&mut self, feed: &mut [&[u8]; 2], with_the_file: bool) {
         let Some(stdin) = self.stdin.as_mut() else {
             return;
         };
-        for part in feed.iter_mut() {
+        let parts = if with_the_file { 2 } else { 1 };
+        for part in &mut feed[..parts] {
             while !part.is_empty() {
                 match stdin.write(part) {
                     Ok(0) => {
-                        *feed = [&[], &[]];
                         self.stdin = None;
                         return;
                     }
@@ -375,14 +419,15 @@ impl Watched {
                     // A child that closed stdin wants no more. What it does next
                     // decides the result.
                     Err(_) => {
-                        *feed = [&[], &[]];
                         self.stdin = None;
                         return;
                     }
                 }
             }
         }
-        self.stdin = None;
+        if with_the_file {
+            self.stdin = None;
+        }
     }
 
     /// Reads what is there now, and notes each pipe that has closed.
@@ -390,7 +435,7 @@ impl Watched {
         let mut chunk = [0u8; 64 * 1024];
         if let Some(stdout) = self.stdout.as_mut() {
             let closed = drain_pipe(stdout, &mut chunk, |read| {
-                said.stdout.extend_from_slice(read);
+                said.keep_stdout(read);
                 !said.over_cap()
             });
             if closed {
@@ -490,11 +535,19 @@ fn wait_for(wanted: &mut [Option<(RawFd, libc::c_short)>; 3], wait: Duration) ->
 }
 
 /// The one result of a reading, from how it ended and what the child said.
+///
+/// Before its first line a child has not had the file, so whatever ends it is no fault
+/// of the file. After that the child may be running code the file chose, and everything
+/// it says, its exit code included, is a claim. `ReaderUnavailable` stops a whole run,
+/// so a child that has had the file cannot earn it, and it cannot claim the deadline
+/// the parent has not seen pass.
 fn conclude(
     end: End,
     status: Option<ExitStatus>,
     said: &Said,
+    kind: Kind,
     options: &Options,
+    past_deadline: bool,
 ) -> Result<Reading, Refusal> {
     match end {
         End::Deadline => return Err(Refusal::TimedOut),
@@ -502,8 +555,15 @@ fn conclude(
         End::TooMuchOutput => {
             return Err(Refusal::Crashed("the reader wrote more than it may".into()));
         }
-        End::Exited => {}
+        End::BadFrame | End::Exited => {}
     }
+    let FirstLine::Said(sandbox) = said.first_line else {
+        let how = status.map_or_else(|| "with no status".to_owned(), |status| status.to_string());
+        return Err(Refusal::ReaderUnavailable(with_last_words(
+            format!("the reader ended before it took the file: {how}"),
+            said,
+        )));
+    };
     let Some(status) = status else {
         return Err(Refusal::Crashed("the reader's end cannot be known".into()));
     };
@@ -513,20 +573,26 @@ fn conclude(
         .filter(|signal| *signal > 0);
     if let Some(signal) = status.signal().or(by_exit_code) {
         return Err(match signal {
-            libc::SIGXCPU => Refusal::TimedOut,
+            libc::SIGXCPU if past_deadline => Refusal::TimedOut,
             libc::SIGABRT if said.ran_out_of_memory_in_rust() => over_memory(options, None),
             signal => crashed(&format!("ended by {}", signal_name(signal)), said),
         });
     }
     match status.code() {
         Some(0) => {
-            Answer::judge(&said.stdout, options.max_text_chars).map_err(|refusal| match refusal {
-                Refusal::Crashed(why) => with_last_words(why, said),
+            let asked = Asked {
+                kind,
+                ocr: NATIVE && options.ocr.is_some(),
+                max_text_chars: options.max_text_chars,
+                sandbox,
+            };
+            Answer::judge(&said.stdout, &asked).map_err(|refusal| match refusal {
+                Refusal::Crashed(why) => Refusal::Crashed(with_last_words(why, said)),
                 refusal => refusal,
             })
         }
         Some(EXIT_OVER_MEMORY) => Err(over_memory(options, None)),
-        Some(EXIT_DEADLINE) => Err(Refusal::TimedOut),
+        Some(EXIT_DEADLINE) if past_deadline => Err(Refusal::TimedOut),
         Some(code) => Err(crashed(&format!("exited with code {code}"), said)),
         None => Err(crashed("ended in no way the system can name", said)),
     }
@@ -541,16 +607,16 @@ fn over_memory(options: &Options, used: Option<u64>) -> Refusal {
 }
 
 fn crashed(how: &str, said: &Said) -> Refusal {
-    with_last_words(format!("the reader {how}"), said)
+    Refusal::Crashed(with_last_words(format!("the reader {how}"), said))
 }
 
-fn with_last_words(why: String, said: &Said) -> Refusal {
+fn with_last_words(why: String, said: &Said) -> String {
     let last_words = said.stderr_for_a_log();
-    Refusal::Crashed(if last_words.is_empty() {
+    if last_words.is_empty() {
         why
     } else {
         format!("{why}: {last_words}")
-    })
+    }
 }
 
 fn signal_name(signal: i32) -> String {
@@ -573,4 +639,202 @@ fn signal_name(signal: i32) -> String {
         other => return format!("signal {other}"),
     };
     name.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ANSWER: &[u8] =
+        br#"{"reading":{"text":"hi","truncated":false,"cut_short":false,"size":null,"text_refused":null}}"#;
+
+    fn confined(sandbox: Sandbox) -> Said {
+        let mut said = Said::new(64 * 1024);
+        said.keep_stdout(&Frame::line(sandbox));
+        said
+    }
+
+    fn exited(code: i32) -> Option<ExitStatus> {
+        Some(ExitStatus::from_raw(code << 8))
+    }
+
+    fn signaled(signal: i32) -> Option<ExitStatus> {
+        Some(ExitStatus::from_raw(signal))
+    }
+
+    fn ended(
+        status: Option<ExitStatus>,
+        said: &Said,
+        past_deadline: bool,
+    ) -> Result<Reading, Refusal> {
+        conclude(
+            End::Exited,
+            status,
+            said,
+            Kind::Text,
+            &Options::default(),
+            past_deadline,
+        )
+    }
+
+    #[test]
+    fn the_frame_may_arrive_in_pieces() {
+        let line = Frame::line(Sandbox::Partial);
+        let mut said = Said::new(64 * 1024);
+        for byte in &line[..line.len() - 1] {
+            said.keep_stdout(&[*byte]);
+            assert!(!said.is_confined());
+        }
+        said.keep_stdout(b"\n");
+        assert!(said.is_confined());
+        said.keep_stdout(ANSWER);
+        assert_eq!(
+            ended(exited(0), &said, false).unwrap().sandbox,
+            Sandbox::Partial
+        );
+    }
+
+    #[test]
+    fn a_later_frame_changes_nothing() {
+        let mut said = confined(Sandbox::Partial);
+        said.keep_stdout(&Frame::line(Sandbox::Full));
+        said.keep_stdout(ANSWER);
+        assert!(matches!(
+            ended(exited(0), &said, false),
+            Err(Refusal::Crashed(_))
+        ));
+        assert!(matches!(said.first_line, FirstLine::Said(Sandbox::Partial)));
+    }
+
+    #[test]
+    fn a_bad_first_line_is_no_reader() {
+        for line in [
+            b"not the reader\n".to_vec(),
+            b"{\"sandbox\":\"maybe\"}\n".to_vec(),
+            vec![b'x'; MAX_FRAME_BYTES + 1],
+        ] {
+            let mut said = Said::new(64 * 1024);
+            said.keep_stdout(&line);
+            assert!(matches!(said.first_line, FirstLine::Bad), "{line:?}");
+            assert!(matches!(
+                conclude(
+                    End::BadFrame,
+                    exited(0),
+                    &said,
+                    Kind::Text,
+                    &Options::default(),
+                    false
+                ),
+                Err(Refusal::ReaderUnavailable(_))
+            ));
+        }
+    }
+
+    /// The child had no file, so no code of a file's chose how it ended.
+    #[test]
+    fn any_end_before_the_frame_is_no_reader() {
+        let said = Said::new(64 * 1024);
+        for status in [
+            exited(0),
+            exited(EXIT_OVER_MEMORY),
+            exited(EXIT_DEADLINE),
+            exited(super::super::EXIT_PARENT_GONE),
+            exited(super::super::EXIT_BAD_REQUEST),
+            signaled(libc::SIGSYS),
+            signaled(libc::SIGSEGV),
+            None,
+        ] {
+            assert!(
+                matches!(
+                    ended(status, &said, false),
+                    Err(Refusal::ReaderUnavailable(_))
+                ),
+                "{status:?}"
+            );
+        }
+    }
+
+    /// `ReaderUnavailable` stops the run, so a hostile file must not be able to reach it.
+    #[test]
+    fn after_the_frame_no_exit_code_stops_the_run() {
+        let said = confined(Sandbox::Full);
+        for code in 1..=255 {
+            assert!(
+                !matches!(
+                    ended(exited(code), &said, false),
+                    Err(Refusal::ReaderUnavailable(_))
+                ),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deadline_that_has_not_passed_is_a_false_claim() {
+        let said = confined(Sandbox::Full);
+        assert!(matches!(
+            ended(exited(EXIT_DEADLINE), &said, false),
+            Err(Refusal::Crashed(_))
+        ));
+        assert!(matches!(
+            ended(signaled(libc::SIGXCPU), &said, false),
+            Err(Refusal::Crashed(_))
+        ));
+        assert!(matches!(
+            ended(exited(EXIT_BY_SIGNAL + libc::SIGXCPU), &said, false),
+            Err(Refusal::Crashed(_))
+        ));
+        assert_eq!(
+            ended(exited(EXIT_DEADLINE), &said, true),
+            Err(Refusal::TimedOut)
+        );
+        assert_eq!(
+            ended(signaled(libc::SIGXCPU), &said, true),
+            Err(Refusal::TimedOut)
+        );
+    }
+
+    fn script(folder: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = folder.join("reader");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// Each stands in for a reader that takes all of stdin: the pipe closes only after
+    /// the file, so it ends only if the file reached it.
+    #[test]
+    fn the_file_waits_for_the_frame() {
+        let folder = tempfile::tempdir().unwrap();
+        let options = Options {
+            time_limit: Duration::from_millis(500),
+            ..Options::default()
+        };
+        let waits = script(folder.path(), "/bin/cat >/dev/null\nexit 9");
+        let result = read(Some(&waits), b"the file", "text/plain", &options);
+        assert_eq!(result, Err(Refusal::TimedOut));
+
+        let frame = String::from_utf8(Frame::line(Sandbox::Off)).unwrap();
+        let states = script(
+            folder.path(),
+            &format!(
+                "printf '%s\\n' '{}'\n/bin/cat >/dev/null\nexit 9",
+                frame.trim()
+            ),
+        );
+        let result = read(Some(&states), b"the file", "text/plain", &options);
+        assert!(
+            matches!(&result, Err(Refusal::Crashed(why)) if why.contains("code 9")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn last_words_go_through_the_same_cleaning_as_a_reason() {
+        let mut said = confined(Sandbox::Full);
+        said.keep_stderr("a\nb\u{202e}c\u{2028}d".as_bytes());
+        assert_eq!(said.stderr_for_a_log(), wire::for_a_log("a b c d"));
+    }
 }

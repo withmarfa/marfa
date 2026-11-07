@@ -273,17 +273,23 @@ struct Tally {
 }
 
 fn kind_of(result: &Result<marfa_enrichment::Reading, Refusal>) -> &'static str {
-    match result {
-        Ok(_) => "read",
-        Err(Refusal::Unsupported) => "unsupported",
-        Err(Refusal::Encrypted) => "encrypted",
-        Err(Refusal::Malformed(_)) => "malformed",
-        Err(Refusal::OverLimit(why)) if why.contains("memory") => "MEMORY",
-        Err(Refusal::OverLimit(_)) => "over-limit",
-        Err(Refusal::OcrUnavailable(_)) => "ocr-unavailable",
-        Err(Refusal::TimedOut) => "HANG",
-        Err(Refusal::Crashed(_)) => "CRASH",
-        Err(Refusal::ReaderUnavailable(_)) => "READER-UNAVAILABLE",
+    let refusal = match result {
+        Ok(reading) => match &reading.text_refused {
+            Some(refusal) => refusal,
+            None => return "read",
+        },
+        Err(refusal) => refusal,
+    };
+    match refusal {
+        Refusal::Unsupported => "unsupported",
+        Refusal::Encrypted => "encrypted",
+        Refusal::Malformed(_) => "malformed",
+        Refusal::OverLimit(why) if why.contains("memory") => "MEMORY",
+        Refusal::OverLimit(_) => "over-limit",
+        Refusal::OcrUnavailable(_) => "ocr-unavailable",
+        Refusal::TimedOut => "HANG",
+        Refusal::Crashed(_) => "CRASH",
+        Refusal::ReaderUnavailable(_) => "READER-UNAVAILABLE",
     }
 }
 

@@ -6,9 +6,10 @@ use std::io::{Read, Write};
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use super::wire::{Answer, MAX_REQUEST_BYTES, Request};
+use super::wire::{Answer, Frame, MAX_REQUEST_BYTES, Request};
 use super::{EXIT_BAD_REQUEST, EXIT_DEADLINE, EXIT_OVER_MEMORY, EXIT_PARENT_GONE, confine};
 use crate::{Refusal, read_here};
 
@@ -52,32 +53,33 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
     // number in use, so nothing the reader opens can land on it.
     let mut stdin = ManuallyDrop::new(unsafe { File::from_raw_fd(0) });
     let request = read_request(&mut stdin);
-    let options = request.options();
+    let options = request.options(memory);
     let data_dir: Option<PathBuf> = options.ocr.as_ref().and_then(|ocr| ocr.data_dir.clone());
 
     // Landlock binds only the calling thread and the threads it starts afterward, so
     // it comes before the watchdog: an unconfined thread beside code a file may have
-    // taken over would be no confinement at all.
-    let sandbox = confine::deny_files_and_network(data_dir.as_deref());
+    // taken over would be no confinement at all. The call filter is tried while there
+    // is one thread, and goes on last, because no thread can start under it.
+    let files = confine::deny_files_and_network(data_dir.as_deref());
+    let filter = confine::CallFilter::ready(data_dir.is_some());
     start_watchdog(started + time_limit, parent);
     confine::start_no_more_processes();
+    write_out(&Frame::line(filter.apply(files)));
 
     let bytes = read_bytes(&mut stdin, request.len);
     #[cfg(feature = "fault-injection")]
     if let Some(text) = super::fault::act(&bytes) {
-        answer(&Answer::of(
-            Ok(crate::Reading {
-                text,
-                truncated: false,
-                cut_short: false,
-                dimensions: None,
-                sandbox,
-            }),
-            sandbox,
-        ));
+        answer(&Answer::of(Ok(crate::Reading {
+            text,
+            truncated: false,
+            cut_short: false,
+            dimensions: None,
+            text_refused: None,
+            sandbox: crate::Sandbox::Off,
+        })));
     }
     let outcome = bytes.and_then(|bytes| read_here(&bytes, &request.mime, &options));
-    answer(&Answer::of(outcome, sandbox));
+    answer(&Answer::of(outcome));
 }
 
 fn read_request(stdin: &mut File) -> Request {
@@ -115,8 +117,13 @@ fn read_bytes(stdin: &mut File, len: u64) -> Result<Vec<u8>, Refusal> {
 /// Ends the process at the deadline, or soon after the parent has gone. A closed pipe
 /// cannot tell it: `poll` on macOS never reports the far end of a pipe closing unless
 /// asked for input, and input here belongs to the main thread.
+///
+/// Returns once the thread runs, because what a thread does to start is not what the
+/// call filter allows.
 fn start_watchdog(deadline: Instant, parent: libc::pid_t) {
+    let (running, is_running) = mpsc::channel();
     let watch = move || {
+        let _ = running.send(());
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -133,7 +140,7 @@ fn start_watchdog(deadline: Instant, parent: libc::pid_t) {
         .name("watchdog".into())
         .stack_size(64 * 1024)
         .spawn(watch);
-    if started.is_err() {
+    if started.is_err() || is_running.recv().is_err() {
         exit(EXIT_OVER_MEMORY);
     }
 }
@@ -143,10 +150,14 @@ fn answer(answer: &Answer) -> ! {
     let Ok(json) = serde_json::to_vec(answer) else {
         exit(EXIT_OVER_MEMORY);
     };
+    write_out(&json);
+    exit(0);
+}
+
+fn write_out(bytes: &[u8]) {
     // SAFETY: descriptor 1 is the pipe to the parent. ManuallyDrop keeps it open.
     let mut stdout = ManuallyDrop::new(unsafe { File::from_raw_fd(1) });
-    if stdout.write_all(&json).is_err() {
+    if stdout.write_all(bytes).is_err() {
         exit(EXIT_PARENT_GONE);
     }
-    exit(0);
 }

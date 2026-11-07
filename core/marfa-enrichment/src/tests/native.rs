@@ -181,7 +181,9 @@ fn several_languages_load_from_the_program_with_no_data_folder() {
 fn a_language_with_no_model_is_a_refusal_naming_it() {
     let mut options = with_ocr();
     options.ocr.as_mut().unwrap().languages = "eng+tlh".into();
-    let Refusal::OcrUnavailable(reason) = refusal(&fixture("sample.png"), PNG, &options) else {
+    let reading = read_here(&fixture("sample.png"), PNG, &options).unwrap();
+    assert!(reading.dimensions.is_some());
+    let Some(Refusal::OcrUnavailable(reason)) = reading.text_refused else {
         panic!("expected OcrUnavailable");
     };
     assert!(reason.contains("tlh"), "{reason}");
@@ -219,7 +221,9 @@ fn a_corrupt_model_in_the_data_folder_is_a_refusal_naming_the_file() {
     let ocr = options.ocr.as_mut().unwrap();
     ocr.data_dir = Some(folder.path().to_owned());
     ocr.languages = "eng".into();
-    let Refusal::OcrUnavailable(reason) = refusal(&fixture("sample.png"), PNG, &options) else {
+    let reading = read_here(&fixture("sample.png"), PNG, &options).unwrap();
+    assert!(reading.dimensions.is_some());
+    let Some(Refusal::OcrUnavailable(reason)) = reading.text_refused else {
         panic!("expected OcrUnavailable");
     };
     assert!(reason.contains("eng"), "{reason}");
@@ -238,18 +242,75 @@ fn a_missing_data_folder_leaves_the_program_models_in_use() {
 }
 
 #[test]
-fn a_picture_that_is_no_picture_is_refused_with_ocr_on_and_gives_nothing_with_it_off() {
-    let mut truncated = encode(
+fn a_truncated_picture_keeps_its_size_beside_the_refusal() {
+    let whole = encode(
         &DynamicImage::ImageLuma8(gray_of("languages.png")),
         ImageFormat::Png,
     );
-    truncated.truncate(truncated.len() / 2);
+    let size = read_ocr(&whole, PNG).dimensions;
+    assert!(size.is_some());
+    let truncated = &whole[..whole.len() / 2];
+    let reading = read_ocr(truncated, PNG);
+    assert_eq!(reading.dimensions, size);
+    assert_eq!(reading.text, "");
+    assert!(
+        matches!(reading.text_refused, Some(Refusal::Malformed(_))),
+        "{reading:?}"
+    );
+    let off = read_here(truncated, PNG, &options()).unwrap();
+    assert_eq!(off.dimensions, size);
+    assert_eq!(off.text_refused, None);
+}
+
+#[test]
+fn a_picture_with_no_header_to_read_is_a_plain_refusal() {
+    let bytes = b"\x89PNG\r\n\x1a\nnothing a decoder can use";
     assert!(matches!(
-        refusal(&truncated, PNG, &with_ocr()),
+        refusal(bytes, PNG, &with_ocr()),
         Refusal::Malformed(_)
     ));
-    let off = read_here(&truncated, PNG, &options()).unwrap();
-    assert!(off.text.is_empty());
+    let off = read_here(bytes, PNG, &options()).unwrap();
+    assert_eq!(off.dimensions, None);
+}
+
+#[test]
+fn a_photo_of_the_size_cameras_take_reads_under_the_default_limits() {
+    let photo = image::RgbImage::from_pixel(6000, 4000, image::Rgb([255, 255, 255]));
+    let bytes = encode(&DynamicImage::ImageRgb8(photo), ImageFormat::Png);
+    let options = Options {
+        max_inflated_bytes: Options::default().max_inflated_bytes,
+        max_memory_bytes: Options::default().max_memory_bytes,
+        ..with_ocr()
+    };
+    let reading = read_here(&bytes, PNG, &options).unwrap();
+    assert_eq!(reading.text_refused, None);
+    assert_eq!(reading.dimensions.map(|size| size.width), Some(6000));
+}
+
+/// `max_inflated_bytes` is about documents, and a picture does not answer to it.
+#[test]
+fn a_picture_answers_to_the_memory_limit() {
+    let picture = encode(
+        &DynamicImage::ImageLuma8(gray_of("languages.png")),
+        ImageFormat::Png,
+    );
+    let mut small_documents = with_ocr();
+    small_documents.max_inflated_bytes = 1;
+    assert_eq!(
+        read_here(&picture, PNG, &small_documents)
+            .unwrap()
+            .text_refused,
+        None
+    );
+
+    let mut small_memory = with_ocr();
+    small_memory.max_memory_bytes = 1024 * 1024;
+    let reading = read_here(&picture, PNG, &small_memory).unwrap();
+    assert!(reading.dimensions.is_some());
+    assert!(
+        matches!(reading.text_refused, Some(Refusal::OverLimit(_))),
+        "{reading:?}"
+    );
 }
 
 /// A PNG whose header says `width` by `height` and whose data is not there.
@@ -278,10 +339,12 @@ fn header_of(width: u32, height: u32) -> Vec<u8> {
 #[test]
 fn a_header_claiming_a_billion_pixels_is_over_the_limit_without_being_decoded() {
     let bomb = header_of(100_000, 100_000);
-    assert!(matches!(
-        refusal(&bomb, PNG, &with_ocr()),
-        Refusal::OverLimit(_)
-    ));
+    let reading = read_ocr(&bomb, PNG);
+    assert!(
+        matches!(reading.text_refused, Some(Refusal::OverLimit(_))),
+        "{reading:?}"
+    );
+    assert_eq!(reading.dimensions.map(|size| size.width), Some(100_000));
 }
 
 #[test]

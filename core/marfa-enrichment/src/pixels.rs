@@ -22,9 +22,32 @@ pub(crate) const MAX_OCR_PIXELS: u64 = 12_000_000;
 /// size of the text, and 300 is what it is trained for.
 pub(crate) const OCR_DPI: u32 = 300;
 
-/// Decodes `bytes` for OCR. A picture that would take more than `max_bytes` once
-/// decoded is `OverLimit` without being decoded; one that cannot be decoded is
-/// `Malformed`.
+/// What scaling a picture down holds for each pixel it has read: `imageops::resize`
+/// works through a buffer of four 32-bit floats a pixel, as wide as the picture and as
+/// tall as the result.
+const SCALING_BYTES_PER_PIXEL: f64 = 16.0;
+
+/// What a picture may take to decode and scale, out of the memory a reading has. The
+/// file itself stays held, and the rest of the limit is left to the allocator and the
+/// program.
+pub(crate) fn budget(max_memory: u64, file_bytes: usize) -> u64 {
+    max_memory.saturating_sub(file_bytes as u64) / 4 * 3
+}
+
+/// The most a picture holds at once on its way to OCR: the decoded picture beside its
+/// gray and alpha copy, or the gray picture beside the buffer that scales it.
+fn peak_bytes(decoded: u64, pixels: u64) -> u64 {
+    let converting = decoded.saturating_add(pixels.saturating_mul(2));
+    if pixels <= MAX_OCR_PIXELS {
+        return converting;
+    }
+    let rows_kept = (MAX_OCR_PIXELS as f64 * pixels as f64).sqrt();
+    let scaling = pixels.saturating_add((SCALING_BYTES_PER_PIXEL * rows_kept) as u64);
+    converting.max(scaling)
+}
+
+/// Decodes `bytes` for OCR. A picture that would take more than `max_bytes` on the way
+/// is `OverLimit` without being decoded; one that cannot be decoded is `Malformed`.
 pub(crate) fn decode(bytes: &[u8], max_bytes: u64) -> Result<GrayImage, Refusal> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
@@ -47,10 +70,11 @@ pub(crate) fn decode(bytes: &[u8], max_bytes: u64) -> Result<GrayImage, Refusal>
     let mut decoder = reader.into_decoder().map_err(refusal)?;
     // A decoder may ignore `max_alloc`, so the size its header implies is checked
     // here, before anything is allocated.
-    let needed = decoder.total_bytes();
+    let (width, height) = decoder.dimensions();
+    let needed = peak_bytes(decoder.total_bytes(), u64::from(width) * u64::from(height));
     if needed > max_bytes {
         return Err(Refusal::OverLimit(format!(
-            "the image needs {needed} bytes decoded, and the limit is {max_bytes}"
+            "the image needs {needed} bytes to decode and scale, and the limit is {max_bytes}"
         )));
     }
     let mut limits = Limits::default();

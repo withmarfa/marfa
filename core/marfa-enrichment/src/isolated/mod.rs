@@ -3,9 +3,12 @@
 //! that holds the owner's database.
 //!
 //! The program starts itself. The child takes its limits before it reads a byte,
-//! takes a request and the file's bytes on stdin, and answers with one JSON document
-//! on stdout. The parent trusts nothing it says.
+//! takes a request on stdin, confines itself and says how far on stdout, and only then
+//! is given the file's bytes. It answers with one JSON document. The parent trusts
+//! nothing it says after the file reached it.
 
+#[cfg(target_os = "linux")]
+mod calls;
 mod child;
 mod confine;
 #[cfg(feature = "fault-injection")]

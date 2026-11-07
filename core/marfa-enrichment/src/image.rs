@@ -26,7 +26,7 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<Dimensions> {
 
 /// Reads the text in an image with OCR, if it is on, into `sink`. Returns whether
 /// the time budget cut the reading short. An image that cannot be decoded is
-/// refused, because an image that is no image is not a file to leave unread.
+/// refused, so that the sweep counts it instead of leaving it unread.
 #[cfg(feature = "native")]
 pub(crate) fn read_text(
     bytes: &[u8],
@@ -39,7 +39,7 @@ pub(crate) fn read_text(
     let Some(ocr_options) = &options.ocr else {
         return Ok(false);
     };
-    let gray = pixels::decode(bytes, options.max_inflated_bytes)?;
+    let gray = pixels::decode(bytes, pixels::budget(options.max_memory_bytes, bytes.len()))?;
     let mut session = ocr::Session::new(ocr_options);
     let read = session.read(&gray, pixels::OCR_DPI, clock)?;
     sink.push_words(&read.text, true);

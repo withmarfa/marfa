@@ -4,7 +4,11 @@
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream, UdpSocket};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::Duration;
 
 use super::confine::LimitKind;
@@ -84,12 +88,7 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
         }
         "flood-stdout" => flood(&mut std::io::stdout()),
         "flood-stderr" => flood(&mut std::io::stderr()),
-        "garbage" => {
-            let _ = std::io::stdout().write_all(b"{\"reading\": not json at all\xff\xfe");
-            let _ = std::io::stdout().flush();
-            // SAFETY: ends the process.
-            unsafe { libc::_exit(0) }
-        }
+        "garbage" => say(b"{\"reading\": not json at all\xff\xfe"),
         "silent" => {
             // SAFETY: ends the process.
             unsafe { libc::_exit(0) }
@@ -97,11 +96,19 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
         "too-much-text" => {
             let text = "x".repeat(argument.parse().unwrap_or(1_000));
             let answer = serde_json::json!({"reading": {"text": text, "truncated": false,
-                "cut_short": false, "size": null, "sandbox": "off"}});
-            let _ = std::io::stdout().write_all(answer.to_string().as_bytes());
-            let _ = std::io::stdout().flush();
+                "cut_short": false, "size": null, "text_refused": null}});
+            say(answer.to_string().as_bytes())
+        }
+        "say" => say(argument.as_bytes()),
+        "exit" => {
             // SAFETY: ends the process.
-            unsafe { libc::_exit(0) }
+            unsafe { libc::_exit(argument.parse().unwrap_or(0)) }
+        }
+        "signal" => {
+            // SAFETY: sends a signal to this process.
+            unsafe { libc::raise(argument.parse().unwrap_or(0)) };
+            std::thread::sleep(Duration::from_secs(1));
+            None
         }
         "write-file" => {
             let outcome = std::fs::write(argument, b"x");
@@ -118,6 +125,68 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
             },
             Err(error) => format!("bad address: {error}"),
         }),
+        "udp" => Some(match UdpSocket::bind("127.0.0.1:0") {
+            Ok(socket) => match socket.send_to(b"x", argument) {
+                Ok(_) => "sent".to_owned(),
+                Err(error) => format!("refused: {error}"),
+            },
+            Err(error) => format!("refused: {error}"),
+        }),
+        "unix" => Some(match UnixStream::connect(argument) {
+            Ok(_) => "connected".to_owned(),
+            Err(error) => format!("refused: {error}"),
+        }),
+        "chmod" => Some(
+            match std::fs::set_permissions(argument, std::fs::Permissions::from_mode(0)) {
+                Ok(()) => "changed".to_owned(),
+                Err(error) => format!("refused: {error}"),
+            },
+        ),
+        "chown" => Some(said(
+            // SAFETY: the path is a NUL-terminated string for the length of the call.
+            unsafe { libc::chown(path(argument).as_ptr(), libc::getuid(), libc::getgid()) },
+        )),
+        "utimes" => Some(said(
+            // SAFETY: as above, and a null `times` means now.
+            unsafe { libc::utimes(path(argument).as_ptr(), std::ptr::null()) },
+        )),
+        #[cfg(target_os = "linux")]
+        "setxattr" => Some(said(
+            // SAFETY: the name and the value are valid for the length of the call.
+            unsafe {
+                libc::setxattr(
+                    path(argument).as_ptr(),
+                    c"user.marfa".as_ptr(),
+                    c"x".as_ptr().cast(),
+                    1,
+                    0,
+                )
+            },
+        )),
+        "execve" => {
+            let script = format!("echo ran > {argument}");
+            let script = std::ffi::CString::new(script).expect("a path without a NUL");
+            let arguments = [
+                c"sh".as_ptr(),
+                c"-c".as_ptr(),
+                script.as_ptr(),
+                std::ptr::null(),
+            ];
+            let environment = [std::ptr::null()];
+            // SAFETY: both lists end in a null, and the strings outlive the call.
+            unsafe {
+                libc::execve(
+                    c"/bin/sh".as_ptr(),
+                    arguments.as_ptr(),
+                    environment.as_ptr(),
+                )
+            };
+            Some(format!("refused: {}", std::io::Error::last_os_error()))
+        }
+        "kill" => Some(said(
+            // SAFETY: a signal to the process the test named.
+            unsafe { libc::kill(argument.parse().unwrap_or(0), libc::SIGTERM) },
+        )),
         "fork" => {
             // SAFETY: the child side only ends itself.
             let pid = unsafe { libc::fork() };
@@ -147,6 +216,27 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
         }
         "report" => Some(report()),
         _ => None,
+    }
+}
+
+/// Writes `bytes` as all the child has to say, and ends.
+fn say(bytes: &[u8]) -> ! {
+    let _ = std::io::stdout().write_all(bytes);
+    let _ = std::io::stdout().flush();
+    // SAFETY: ends the process.
+    unsafe { libc::_exit(0) }
+}
+
+fn path(argument: &str) -> std::ffi::CString {
+    std::ffi::CString::new(Path::new(argument).as_os_str().as_bytes()).expect("no NUL in a path")
+}
+
+/// What a libc call's result means, in the words the tests read.
+fn said(result: libc::c_int) -> String {
+    if result == 0 {
+        "done".to_owned()
+    } else {
+        format!("refused: {}", std::io::Error::last_os_error())
     }
 }
 

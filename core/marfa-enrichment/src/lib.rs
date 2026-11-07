@@ -27,6 +27,7 @@ mod xml;
 #[cfg(test)]
 mod tests;
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -42,12 +43,11 @@ pub struct Options {
     /// The text kept, in UTF-16 code units, as the contract counts it. A reader
     /// stops once it holds enough, so a file with far more text costs no more.
     pub max_text_chars: usize,
-    /// The most bytes a document may inflate to, all of its parts together, and the
-    /// most memory a picture may take once decoded.
+    /// The most bytes a document may inflate to, all of its parts together.
     pub max_inflated_bytes: u64,
     /// The most memory the process that reads may hold. A reading that needs more is
-    /// `OverLimit`. It has to leave room for the picture `max_inflated_bytes` allows
-    /// and for OCR on top of that.
+    /// `OverLimit`. A picture is read for text only if decoding and scaling it fit in
+    /// three quarters of what is left here once the file is held.
     pub max_memory_bytes: u64,
     /// Reads text from pictures: images, and pages of a PDF that hold no text.
     /// `None` leaves OCR off, and an image then gives its size only. Without the
@@ -120,20 +120,30 @@ pub struct Reading {
     pub cut_short: bool,
     /// The size of an image.
     pub dimensions: Option<Dimensions>,
-    /// How far the process that read the file was shut off from the system.
+    /// Why OCR read nothing from an image whose size is in `dimensions`. The size is
+    /// good and `text` is empty, and the file is to be treated as this refusal says.
+    /// An image with no readable size is a plain refusal instead.
+    pub text_refused: Option<Refusal>,
+    /// How far the process that read the file was shut off from the system, as it said
+    /// before it was given the file.
     pub sandbox: Sandbox,
 }
 
-/// How far a reading's process was shut off from files and the network. The reading
-/// is good either way: a system that cannot confine a process still reads, and this is
-/// how its owner can learn that.
+/// How far a reading's process was shut off from the system. The reading is good
+/// either way: a system that cannot confine a process still reads, and this is how its
+/// owner can learn that. The README says what holds in each state, in "What holds on
+/// each platform".
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sandbox {
-    /// It could open only the OCR data folder, and connect nowhere.
+    /// It could read only the OCR data folder, reach no socket, start no process and
+    /// change nothing on disk. On Linux this is the seccomp filter, with Landlock of
+    /// any version for a reading that has a data folder. On macOS it is `sandbox_init`.
     Full,
-    /// The kernel enforced some of that. On Linux this is a kernel with an older
-    /// Landlock: from 5.13 it holds files, and before 6.7 it does not hold TCP.
+    /// Linux only: one of the two held. Either Landlock held and the filter did not,
+    /// so files are closed but `chmod`, UDP and Unix sockets are open; or the filter
+    /// held without Landlock on a reading with a data folder, so it could read any
+    /// file.
     Partial,
     /// Nothing held it but its resource limits.
     Off,
@@ -190,8 +200,11 @@ pub enum Refusal {
 /// a reason to end the caller.
 pub(crate) fn read_here(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
     let clock = Clock::start(options.time_budget);
-    std::panic::catch_unwind(|| read_kind(bytes, mime, options, &clock))
-        .unwrap_or_else(|_| Err(Refusal::Malformed("the reader failed on this file".into())))
+    catch_unwind(|| read_kind(bytes, mime, options, &clock)).unwrap_or_else(|_| Err(panicked()))
+}
+
+fn panicked() -> Refusal {
+    Refusal::Malformed("the reader failed on this file".into())
 }
 
 /// The time budget of one reading.
@@ -224,6 +237,7 @@ fn read_kind(
     let mut sink = Sink::new(options.max_text_chars);
     let mut dimensions = None;
     let mut cut_short = false;
+    let mut text_refused = None;
     match kind {
         Kind::Text => {
             let declared = decode::declared_charset(mime);
@@ -236,7 +250,16 @@ fn read_kind(
         Kind::Image { ocr } => {
             dimensions = image::dimensions(bytes);
             if ocr {
-                cut_short = image::read_text(bytes, options, clock, &mut sink)?;
+                // A panic here is a refusal like any other, and leaves the size good.
+                let read = catch_unwind(AssertUnwindSafe(|| {
+                    image::read_text(bytes, options, clock, &mut sink)
+                }))
+                .unwrap_or_else(|_| Err(panicked()));
+                match read {
+                    Ok(short) => cut_short = short,
+                    Err(refusal) if dimensions.is_some() => text_refused = Some(refusal),
+                    Err(refusal) => return Err(refusal),
+                }
             }
         }
         Kind::Pdf => cut_short = pdf::read(bytes, options, clock, &mut sink)?,
@@ -247,6 +270,7 @@ fn read_kind(
         truncated,
         cut_short,
         dimensions,
+        text_refused,
         sandbox: Sandbox::Off,
     })
 }

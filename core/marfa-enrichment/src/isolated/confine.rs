@@ -6,6 +6,8 @@ use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use super::EXIT_BY_SIGNAL;
+#[cfg(target_os = "linux")]
+use super::calls;
 use crate::Sandbox;
 
 /// The descriptors a child may hold: three standard ones, the sandbox's while it is
@@ -162,11 +164,60 @@ fn no_crash_reports() {
 fn no_crash_reports() {}
 
 /// Stops this user starting any more processes or threads, which a file that takes
-/// over a reader might want to outlive it. Limits nothing for root, and macOS's
-/// sandbox stops `fork` by itself.
+/// over a reader might want to outlive it. This is what stands on Linux where the call
+/// filter cannot, and it limits nothing for root. macOS's sandbox stops `fork` by itself.
 pub(super) fn start_no_more_processes() {
     #[cfg(target_os = "linux")]
     lower(libc::RLIMIT_NPROC, 0, 0);
+}
+
+/// The calls a child will be held to, made and tried before its second thread exists.
+#[cfg(target_os = "linux")]
+pub(super) struct CallFilter {
+    program: Option<seccompiler::BpfProgram>,
+    opens_files: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl CallFilter {
+    pub(super) fn ready(opens_files: bool) -> Self {
+        Self {
+            program: calls::filter(opens_files).filter(calls::holds_here),
+            opens_files,
+        }
+    }
+
+    /// Holds every thread to the filter, and says what held in all. `files` is what
+    /// Landlock did. With the filter on, Landlock has one task left, which is to keep
+    /// a reading that may open files to its data folder, and any Landlock does that.
+    /// The calls a newer Landlock adds rules for are not allowed at all.
+    pub(super) fn apply(self, files: Sandbox) -> Sandbox {
+        let filtered = self
+            .program
+            .is_some_and(|program| calls::apply(&program).is_ok());
+        match (filtered, files) {
+            (true, Sandbox::Full | Sandbox::Partial) => Sandbox::Full,
+            (true, Sandbox::Off) if !self.opens_files => Sandbox::Full,
+            (true, Sandbox::Off) => Sandbox::Partial,
+            (false, Sandbox::Full | Sandbox::Partial) => Sandbox::Partial,
+            (false, Sandbox::Off) => Sandbox::Off,
+        }
+    }
+}
+
+/// macOS's sandbox holds everything a call filter would.
+#[cfg(not(target_os = "linux"))]
+pub(super) struct CallFilter;
+
+#[cfg(not(target_os = "linux"))]
+impl CallFilter {
+    pub(super) fn ready(_opens_files: bool) -> Self {
+        Self
+    }
+
+    pub(super) fn apply(self, files: Sandbox) -> Sandbox {
+        files
+    }
 }
 
 /// Allows only reading `data_dir`. Linux has this through Landlock.
