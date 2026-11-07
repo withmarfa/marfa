@@ -43,6 +43,11 @@ impl Caller {
                 id: "local".to_string(),
                 name: "Local command".to_string(),
             },
+            Caller::Server => Writer {
+                kind: "server".to_string(),
+                id: "server".to_string(),
+                name: "Marfa".to_string(),
+            },
             Caller::Key(key) => Writer {
                 kind: "key".to_string(),
                 id: key.id.clone(),
@@ -56,6 +61,7 @@ impl Caller {
     pub fn credential_handle(&self) -> String {
         match self {
             Caller::Local => "local".to_string(),
+            Caller::Server => "server".to_string(),
             Caller::Key(key) if key.oauth_client_id.is_some() => key.source.clone(),
             Caller::Key(key) => key.id.clone(),
         }
@@ -99,6 +105,7 @@ impl Caller {
     pub fn own_source(&self) -> &str {
         match self {
             Caller::Local => "unknown",
+            Caller::Server => "server",
             Caller::Key(key) => &key.source,
         }
     }

@@ -9,7 +9,9 @@ mod caller_address;
 mod config;
 mod control;
 mod edge_types;
+mod edges;
 mod health;
+mod housekeeping;
 mod items;
 mod keys;
 pub mod listening;
@@ -151,6 +153,8 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/{id}/restore", post(trash::restore))
         .route("/items/{id}/purge", post(trash::purge))
         .route("/items/{id}/versions", get(items::versions))
+        .route("/items/{id}/edges", get(edges::outbound))
+        .route("/items/{id}/backrefs", get(edges::backrefs))
         .route(
             "/items/{id}/metadata",
             get(items::metadata).put(items::set_metadata),
@@ -165,6 +169,12 @@ fn item_doors(app: Arc<App>) -> Routes {
                 .delete(items::clear_extension),
         )
         .route("/metadata/tags", get(items::tags))
+        .route("/edges", post(edges::create).get(edges::list))
+        .route("/edges/bulk", post(edges::write_page))
+        .route(
+            "/edges/{id}",
+            get(edges::read).patch(edges::update).delete(edges::delete),
+        )
         .route_layer(from_fn_with_state(app, within_a_map))
 }
 
@@ -196,6 +206,8 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/health", get(health::answer))
         .route("/openapi.json", get(root::document))
         .route("/audit", get(audit::list))
+        .route("/housekeeping", get(housekeeping::list))
+        .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())

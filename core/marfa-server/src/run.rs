@@ -8,7 +8,7 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
-use crate::app::App;
+use crate::app::{App, housekeeping};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -117,6 +117,9 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     }
     let mut servers = JoinSet::new();
     listen(&mut servers, &app, public, private, &stopping);
+    if !app.settings.start.control_only {
+        housekeeping::start(&app);
+    }
     tracing::info!("Private control socket listening");
     if let Some(port) = port {
         tracing::info!("Marfa server listening on port {port}");
@@ -128,9 +131,13 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     signals.next().await;
     let stopping_at = Instant::now();
     tracing::info!("Stopping");
+    app.housekeeping.stop();
     app.faults.clear(None);
     let _ = stop.send(true);
-    let closed = tokio::time::timeout(STOP_WAIT, servers.join_all()).await;
+    let (closed, ()) = tokio::join!(
+        tokio::time::timeout(STOP_WAIT, servers.join_all()),
+        app.housekeeping.settle(STOP_WAIT),
+    );
     if closed.is_err() {
         tracing::error!("A request was still open when the stop's wait ended");
     }

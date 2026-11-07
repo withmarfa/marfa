@@ -108,7 +108,7 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
         judged.names(entry.key) && judged.after.stored(entry) == Some(&Value::Boolean(true))
     };
     let mut breaches = Vec::new();
-    if on(HEARTBEAT_ENABLED.entry) && !judged.start.heartbeat_receiver {
+    if on(HEARTBEAT_ENABLED.entry) && judged.start.heartbeat_url.is_none() {
         breaches.push(Breach {
             path: "heartbeat_enabled",
             message: "needs a heartbeat receiver configured where Marfa runs".to_string(),
