@@ -113,14 +113,21 @@ CREATE TABLE IF NOT EXISTS items (
     capture_longitude REAL,
     writer_kind TEXT,
     writer_id TEXT,
-    writer_name TEXT
+    writer_name TEXT,
+    link TEXT CHECK (link IS NULL OR length(link) > 0),
+    trashed_by_kind TEXT,
+    trashed_by_id TEXT,
+    trashed_by_name TEXT
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS items_natural_key
     ON items (source, source_id) WHERE source_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS items_link ON items (type, link) WHERE link IS NOT NULL;
 CREATE INDEX IF NOT EXISTS items_title_key
     ON items (title_key, id) WHERE title_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS items_type_state ON items (type, state);
+CREATE INDEX IF NOT EXISTS items_newest ON items (created_at, id);
+CREATE INDEX IF NOT EXISTS items_bin ON items (created_at, id) WHERE state = 'trashed';
 
 CREATE TABLE IF NOT EXISTS item_tags (
     item_seq INTEGER NOT NULL REFERENCES items (seq),
@@ -151,6 +158,26 @@ CREATE TABLE IF NOT EXISTS item_versions (
     created_at TEXT NOT NULL,
     PRIMARY KEY (item_seq, version)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS link_tombstones (
+    type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    purged_at TEXT NOT NULL,
+    settled_at TEXT NOT NULL,
+    PRIMARY KEY (type, value)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS natural_key_tombstones (
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    purged_at TEXT NOT NULL,
+    settled_at TEXT NOT NULL,
+    PRIMARY KEY (type, source, source_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS natural_key_tombstones_key
+    ON natural_key_tombstones (source, source_id);
 
 CREATE TABLE IF NOT EXISTS idempotency_records (
     credential TEXT NOT NULL,

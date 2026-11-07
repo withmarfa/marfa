@@ -2,17 +2,25 @@
 //! every write to these tables goes through `write`.
 
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
+use serde::Serialize;
 
-use super::{Item, Snapshot, Writer};
+use super::{Item, Keys, Snapshot, Writer};
 use crate::app::refusal::Result;
 
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
      version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
-     capture_latitude, capture_longitude FROM items";
+     capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
+     trashed_by_name FROM items";
 
 const SNAPSHOT: &str = "SELECT v.id, i.id, v.version, json(v.properties), v.type, v.tier, \
      v.occurred_at, v.source_id, v.writer_kind, v.writer_id, v.writer_name, v.created_at \
      FROM item_versions v JOIN items i ON i.seq = v.item_seq";
+
+fn writer_of(kind: Option<String>, id: Option<String>, name: Option<String>) -> Option<Writer> {
+    kind.zip(id)
+        .zip(name)
+        .map(|((kind, id), name)| Writer { kind, id, name })
+}
 
 fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -32,13 +40,12 @@ fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
         trashed_at: row.get(13)?,
         capture_latitude: row.get(14)?,
         capture_longitude: row.get(15)?,
+        link: row.get(16)?,
+        trashed_by: writer_of(row.get(17)?, row.get(18)?, row.get(19)?),
     })
 }
 
 fn snapshot_of(row: &Row<'_>) -> rusqlite::Result<Snapshot> {
-    let kind: Option<String> = row.get(8)?;
-    let id: Option<String> = row.get(9)?;
-    let name: Option<String> = row.get(10)?;
     Ok(Snapshot {
         id: row.get(0)?,
         item_id: row.get(1)?,
@@ -48,18 +55,14 @@ fn snapshot_of(row: &Row<'_>) -> rusqlite::Result<Snapshot> {
         tier: row.get(5)?,
         occurred_at: row.get(6)?,
         source_id: row.get(7)?,
-        writer: kind
-            .zip(id)
-            .zip(name)
-            .map(|((kind, id), name)| Writer { kind, id, name }),
+        writer: writer_of(row.get(8)?, row.get(9)?, row.get(10)?),
         created_at: row.get(11)?,
     })
 }
 
 pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
-    Ok(tx
-        .query_row(&format!("{ITEM} WHERE id = ?1"), [id], item_of)
-        .optional()?)
+    let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE id = ?1"))?;
+    Ok(statement.query_row([id], item_of).optional()?)
 }
 
 pub(super) fn by_natural_key(
@@ -67,12 +70,28 @@ pub(super) fn by_natural_key(
     source: &str,
     source_id: &str,
 ) -> Result<Option<Item>> {
-    Ok(tx
-        .query_row(
-            &format!("{ITEM} WHERE source = ?1 AND source_id = ?2"),
-            [source, source_id],
-            item_of,
-        )
+    let mut statement =
+        tx.prepare_cached(&format!("{ITEM} WHERE source = ?1 AND source_id = ?2"))?;
+    Ok(statement
+        .query_row([source, source_id], item_of)
+        .optional()?)
+}
+
+/// The item of `type_id` holding `link`, in any state.
+pub(super) fn by_link(tx: &Transaction<'_>, type_id: &str, link: &str) -> Result<Option<Item>> {
+    let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE type = ?1 AND link = ?2"))?;
+    Ok(statement.query_row([type_id, link], item_of).optional()?)
+}
+
+/// The id of the item of `type_id` holding `link`, in any state.
+pub(super) fn link_holder(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    link: &str,
+) -> Result<Option<String>> {
+    let mut statement = tx.prepare_cached("SELECT id FROM items WHERE type = ?1 AND link = ?2")?;
+    Ok(statement
+        .query_row([type_id, link], |row| row.get(0))
         .optional()?)
 }
 
@@ -90,6 +109,8 @@ pub(super) struct NewRow<'a> {
     pub occurred_at: &'a str,
     pub at: &'a str,
     pub trashed_at: Option<&'a str>,
+    pub trashed_by: Option<&'a Writer>,
+    pub link: Option<&'a str>,
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
     pub writer: &'a Writer,
@@ -97,33 +118,60 @@ pub(super) struct NewRow<'a> {
 
 /// Inserts a row at version 1, and answers it as it was stored.
 pub(super) fn insert(tx: &Transaction<'_>, row: &NewRow<'_>) -> Result<Item> {
-    tx.execute(
+    let mut statement = tx.prepare_cached(
         "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
          version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
-         capture_latitude, capture_longitude, writer_kind, writer_id, writer_name) \
+         capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
+         trashed_by_kind, trashed_by_id, trashed_by_name) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, 1, ?9, ?10, ?11, ?11, ?12, ?13, ?14, \
-         ?15, ?16, ?17)",
-        params![
-            row.id,
-            row.type_id,
-            row.state,
-            row.tier,
-            row.source,
-            row.source_id,
-            row.properties,
-            row.title_key,
-            row.schema_version,
-            row.occurred_at,
-            row.at,
-            row.trashed_at,
-            row.capture_latitude,
-            row.capture_longitude,
-            row.writer.kind,
-            row.writer.id,
-            row.writer.name,
-        ],
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
     )?;
+    statement.execute(params![
+        row.id,
+        row.type_id,
+        row.state,
+        row.tier,
+        row.source,
+        row.source_id,
+        row.properties,
+        row.title_key,
+        row.schema_version,
+        row.occurred_at,
+        row.at,
+        row.trashed_at,
+        row.capture_latitude,
+        row.capture_longitude,
+        row.writer.kind,
+        row.writer.id,
+        row.writer.name,
+        row.link,
+        row.trashed_by.map(|by| &by.kind),
+        row.trashed_by.map(|by| &by.id),
+        row.trashed_by.map(|by| &by.name),
+    ])?;
+    clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
     stored(tx, row.id)
+}
+
+/// Removes what purges left for the keys a row has come to hold.
+fn clear_tombstones(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    link: Option<&str>,
+    source: &str,
+    source_id: Option<&str>,
+) -> Result<()> {
+    if let Some(link) = link {
+        tx.prepare_cached("DELETE FROM link_tombstones WHERE type = ?1 AND value = ?2")?
+            .execute([type_id, link])?;
+    }
+    if let Some(source_id) = source_id {
+        tx.prepare_cached(
+            "DELETE FROM natural_key_tombstones WHERE source = ?1 AND source_id = ?2",
+        )?
+        .execute([source, source_id])?;
+    }
+    Ok(())
 }
 
 fn stored(tx: &Transaction<'_>, id: &str) -> Result<Item> {
@@ -135,6 +183,7 @@ pub(super) struct Landed<'a> {
     pub type_id: &'a str,
     pub tier: Option<&'a str>,
     pub source_id: Option<&'a str>,
+    pub link: Option<&'a str>,
     pub properties: &'a str,
     pub title_key: Option<&'a str>,
     pub schema_version: i64,
@@ -150,33 +199,234 @@ pub(super) fn advance(
     snapshot_id: &str,
     next: &Landed<'_>,
 ) -> Result<Item> {
-    tx.execute(
+    tx.prepare_cached(
         "INSERT INTO item_versions (item_seq, version, id, properties, type, tier, occurred_at, \
          source_id, writer_kind, writer_id, writer_name, created_at) \
          SELECT seq, version, ?2, properties, type, tier, occurred_at, source_id, writer_kind, \
          writer_id, writer_name, ?3 FROM items WHERE seq = ?1",
-        params![item.seq, snapshot_id, next.at],
-    )?;
-    tx.execute(
+    )?
+    .execute(params![item.seq, snapshot_id, next.at])?;
+    tx.prepare_cached(
         "UPDATE items SET type = ?2, tier = ?3, source_id = ?4, properties = jsonb(?5), \
          title_key = ?6, version = version + 1, schema_version = ?7, occurred_at = ?8, \
-         updated_at = ?9, writer_kind = ?10, writer_id = ?11, writer_name = ?12 WHERE seq = ?1",
-        params![
-            item.seq,
-            next.type_id,
-            next.tier,
-            next.source_id,
-            next.properties,
-            next.title_key,
-            next.schema_version,
-            next.occurred_at,
-            next.at,
-            next.writer.kind,
-            next.writer.id,
-            next.writer.name,
-        ],
+         updated_at = ?9, writer_kind = ?10, writer_id = ?11, writer_name = ?12, link = ?13 \
+         WHERE seq = ?1",
+    )?
+    .execute(params![
+        item.seq,
+        next.type_id,
+        next.tier,
+        next.source_id,
+        next.properties,
+        next.title_key,
+        next.schema_version,
+        next.occurred_at,
+        next.at,
+        next.writer.kind,
+        next.writer.id,
+        next.writer.name,
+        next.link,
+    ])?;
+    let same_link = next.link == item.link.as_deref() && next.type_id == item.type_id;
+    let same_key = next.source_id == item.source_id.as_deref();
+    clear_tombstones(
+        tx,
+        next.type_id,
+        next.link.filter(|_| !same_link),
+        &item.source,
+        next.source_id.filter(|_| !same_key),
     )?;
     stored(tx, &item.id)
+}
+
+/// Where a row moves on a change of state.
+pub(super) struct Moved<'a> {
+    pub state: &'a str,
+    pub trashed_at: Option<&'a str>,
+    pub trashed_by: Option<&'a Writer>,
+    pub at: &'a str,
+}
+
+/// Moves a row to another state. Neither its version nor its history moves.
+pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> Result<Item> {
+    tx.prepare_cached(
+        "UPDATE items SET state = ?2, trashed_at = ?3, trashed_by_kind = ?4, trashed_by_id = ?5, \
+         trashed_by_name = ?6, updated_at = ?7 WHERE seq = ?1",
+    )?
+    .execute(params![
+        item.seq,
+        to.state,
+        to.trashed_at,
+        to.trashed_by.map(|by| &by.kind),
+        to.trashed_by.map(|by| &by.id),
+        to.trashed_by.map(|by| &by.name),
+        to.at,
+    ])?;
+    stored(tx, &item.id)
+}
+
+/// Deletes a row and all that hangs from it, leaving its tombstones.
+pub(super) fn purge(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<()> {
+    if let Some(link) = &item.link {
+        tx.execute(
+            "INSERT INTO link_tombstones (type, value, purged_at, settled_at) \
+             VALUES (?1, ?2, ?3, ?3) ON CONFLICT (type, value) \
+             DO UPDATE SET purged_at = ?3, settled_at = ?3",
+            params![item.type_id, link, at],
+        )?;
+    }
+    if let Some(source_id) = &item.source_id {
+        tx.execute(
+            "INSERT INTO natural_key_tombstones (type, source, source_id, purged_at, settled_at) \
+             VALUES (?1, ?2, ?3, ?4, ?4) ON CONFLICT (type, source, source_id) \
+             DO UPDATE SET purged_at = ?4, settled_at = ?4",
+            params![item.type_id, item.source, source_id, at],
+        )?;
+    }
+    tx.execute("DELETE FROM item_tags WHERE item_seq = ?1", [item.seq])?;
+    tx.execute(
+        "DELETE FROM item_extensions WHERE item_seq = ?1",
+        [item.seq],
+    )?;
+    tx.execute("DELETE FROM item_versions WHERE item_seq = ?1", [item.seq])?;
+    tx.execute("DELETE FROM items WHERE seq = ?1", [item.seq])?;
+    Ok(())
+}
+
+/// A key a purge left, as it stands.
+#[derive(Serialize)]
+pub(super) struct Tombstone {
+    pub key: String,
+    pub purged_at: String,
+    pub settled_at: String,
+}
+
+fn tombstone_of(row: &Row<'_>) -> rusqlite::Result<Tombstone> {
+    Ok(Tombstone {
+        key: row.get(0)?,
+        purged_at: row.get(1)?,
+        settled_at: row.get(2)?,
+    })
+}
+
+fn link_tombstone(tx: &Transaction<'_>, type_id: &str, value: &str) -> Result<Option<Tombstone>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT value, purged_at, settled_at FROM link_tombstones WHERE type = ?1 AND value = ?2",
+    )?;
+    Ok(statement
+        .query_row([type_id, value], tombstone_of)
+        .optional()?)
+}
+
+fn key_tombstone(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    source: &str,
+    source_id: &str,
+) -> Result<Option<Tombstone>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT source_id, purged_at, settled_at FROM natural_key_tombstones \
+         WHERE type = ?1 AND source = ?2 AND source_id = ?3",
+    )?;
+    Ok(statement
+        .query_row([type_id, source, source_id], tombstone_of)
+        .optional()?)
+}
+
+/// Moves a link's tombstone to `settled_at`, where that is later. Both times
+/// are canonical, so their text orders as they do.
+pub(super) fn settle_link(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    value: &str,
+    settled_at: &str,
+) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE link_tombstones SET settled_at = ?3 \
+         WHERE type = ?1 AND value = ?2 AND settled_at < ?3",
+    )?
+    .execute([type_id, value, settled_at])?;
+    Ok(())
+}
+
+/// Moves a natural key's tombstone to `settled_at`, where that is later.
+pub(super) fn settle_key(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    source: &str,
+    source_id: &str,
+    settled_at: &str,
+) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE natural_key_tombstones SET settled_at = ?4 \
+         WHERE type = ?1 AND source = ?2 AND source_id = ?3 AND settled_at < ?4",
+    )?
+    .execute([type_id, source, source_id, settled_at])?;
+    Ok(())
+}
+
+/// The tombstones `keys` name under `type_id`, in the order named.
+pub(super) fn tombstones(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    keys: &Keys,
+) -> Result<Vec<Tombstone>> {
+    let mut found = Vec::new();
+    match keys {
+        Keys::Links(links) => {
+            for link in links {
+                found.extend(link_tombstone(tx, type_id, link)?);
+            }
+        }
+        Keys::Natural { source, source_ids } => {
+            for source_id in source_ids {
+                found.extend(key_tombstone(tx, type_id, source, source_id)?);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Forgets every tombstone of a type's link.
+pub(super) fn drop_link_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
+    tx.execute("DELETE FROM link_tombstones WHERE type = ?1", [type_id])?;
+    Ok(())
+}
+
+/// Forgets every tombstone recorded under a type.
+pub(super) fn drop_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
+    drop_link_tombstones(tx, type_id)?;
+    tx.execute(
+        "DELETE FROM natural_key_tombstones WHERE type = ?1",
+        [type_id],
+    )?;
+    Ok(())
+}
+
+/// Clears every row's link under `type_id`, so a recount meets no old value.
+pub(super) fn clear_links(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE items SET link = NULL WHERE type = ?1 AND link IS NOT NULL",
+        [type_id],
+    )?;
+    Ok(())
+}
+
+/// Gives a row its link, answering whether another row of the type holds it.
+pub(super) fn set_link(tx: &Transaction<'_>, seq: i64, link: &str) -> Result<bool> {
+    let set = tx.execute(
+        "UPDATE items SET link = ?2 WHERE seq = ?1",
+        params![seq, link],
+    );
+    match set {
+        Ok(_) => Ok(false),
+        Err(error)
+            if error.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Moves `updated_at` alone, for a write beside the item's own fields.
@@ -186,6 +436,38 @@ pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item>
         params![item.seq, at],
     )?;
     stored(tx, &item.id)
+}
+
+/// A place in a listing, newest first.
+pub(super) type Position = (String, String);
+
+/// Up to `limit` rows past `after`, newest first, in the bin or out of it.
+pub(super) fn newest(
+    tx: &Transaction<'_>,
+    trashed: bool,
+    type_id: Option<&str>,
+    after: Option<&Position>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    let state = if trashed {
+        "state = 'trashed'"
+    } else {
+        "state <> 'trashed'"
+    };
+    let bound = if after.is_some() {
+        "(created_at, id) < (?2, ?3)"
+    } else {
+        "?2 IS NULL AND ?3 IS NULL"
+    };
+    let sql = format!(
+        "{ITEM} WHERE {state} AND type NOT GLOB 'system.*' AND (?1 IS NULL OR type = ?1) AND {bound}
+         ORDER BY created_at DESC, id DESC LIMIT ?4"
+    );
+    let (at, id) = after.map_or((None, None), |(at, id)| (Some(at), Some(id)));
+    Ok(tx
+        .prepare_cached(&sql)?
+        .query_map(params![type_id, at, id, limit], item_of)?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 pub(super) fn snapshot_at(

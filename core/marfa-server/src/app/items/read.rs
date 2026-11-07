@@ -5,19 +5,27 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
+use chrono::{DateTime, Days, SecondsFormat, Utc};
 use marfa_rules::names;
 use rusqlite::Transaction;
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::{Item, extensions_text, metadata_for, rows};
+use super::plan::{self, Act, Asked, Gate};
+use super::rows::Position;
+use super::{
+    Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
+};
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION};
-use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::refusal::{Refusal, Result};
 
 const TITLES_PER_NAME: i64 = 20;
 const FIRST_PAGE: i64 = 50;
+const NAME_SEARCH_BATCH: i64 = 200;
+/// How long the bin keeps an item until the instance's settings say.
+const RETENTION_DAYS: u64 = 60;
 
 /// One read: its transaction, and its caller as that transaction holds it.
 struct Reader<'a, 'c> {
@@ -48,10 +56,6 @@ where
             })
         })
         .await
-}
-
-fn not_found() -> Refusal {
-    Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
 impl Reader<'_, '_> {
@@ -332,6 +336,260 @@ pub async fn extension(
             "{{\"namespace\":{},\"data\":{}}}",
             Value::from(namespace),
             data.as_deref().unwrap_or("null")
+        ))
+    })
+    .await
+}
+
+/// What `POST /items/trash` would do, by the judgement that write makes.
+pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Result<String> {
+    reading(app, caller, move |read| {
+        let gate = Gate {
+            tx: read.tx,
+            caller: &read.caller,
+            claim: None,
+        };
+        let asked: Vec<Asked> = ids
+            .into_iter()
+            .map(|id| Asked { id, version: None })
+            .collect();
+        let plan = plan::plan(&gate, Act::Bin, &asked)?;
+        let items: Vec<Value> = plan
+            .items
+            .iter()
+            .map(|item| {
+                json!({
+                    "id": item.id,
+                    "type": item.type_id,
+                    "version": item.version,
+                    "takes": [],
+                    "count": 1,
+                })
+            })
+            .collect();
+        Ok(json!({ "items": items, "count": plan.items.len(), "digest": plan.digest }).to_string())
+    })
+    .await
+}
+
+/// A page of a listing by name, filtered before it is cut.
+#[derive(Clone, Debug)]
+pub struct Listing {
+    pub type_id: Option<String>,
+    pub q: String,
+    pub limit: i64,
+    pub cursor: Option<String>,
+}
+
+fn position_cursor(scope: &str, position: &Position) -> String {
+    hex::encode(format!("{scope}\0{}\0{}", position.0, position.1))
+}
+
+fn position_at(cursor: &str, scope: &str) -> Result<Position> {
+    let refused = || Refusal::validation("The cursor does not belong to this listing.");
+    let text = hex::decode(cursor)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(refused)?;
+    let (at, id) = text
+        .strip_prefix(scope)
+        .and_then(|rest| rest.strip_prefix('\0'))
+        .and_then(|rest| rest.split_once('\0'))
+        .ok_or_else(refused)?;
+    Ok((at.to_string(), id.to_string()))
+}
+
+impl Reader<'_, '_> {
+    /// A name exists only once worked out from the row, so a search walks the
+    /// rows, and its cost grows with what it passes over.
+    fn named_page(&self, listing: Listing, trashed: bool) -> Result<(Vec<Item>, Option<String>)> {
+        let q = listing.q.trim().to_lowercase();
+        let scope = json!(["summaries", listing.type_id, q, trashed]).to_string();
+        let mut after = listing
+            .cursor
+            .as_deref()
+            .map(|cursor| position_at(cursor, &scope))
+            .transpose()?;
+        let batch_size = if q.is_empty() {
+            listing.limit + 1
+        } else {
+            NAME_SEARCH_BATCH
+        };
+        let rules = &self.catalog.rules;
+        let mut page = Vec::new();
+        'filling: loop {
+            let batch = rows::newest(
+                self.tx,
+                trashed,
+                listing.type_id.as_deref(),
+                after.as_ref(),
+                batch_size,
+            )?;
+            let last = batch.len() < batch_size as usize;
+            after = batch
+                .last()
+                .map(|row| (row.created_at.clone(), row.id.clone()));
+            for row in batch {
+                if q.is_empty() || name_of(rules, &row)?.to_lowercase().contains(&q) {
+                    page.push(row);
+                    if page.len() as i64 > listing.limit {
+                        break 'filling;
+                    }
+                }
+            }
+            if last {
+                break;
+            }
+        }
+        let more = page.len() as i64 > listing.limit;
+        page.truncate(listing.limit as usize);
+        let next = page
+            .last()
+            .filter(|_| more)
+            .map(|row| position_cursor(&scope, &(row.created_at.clone(), row.id.clone())));
+        Ok((page, next))
+    }
+}
+
+pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
+    reading(app, caller, move |read| {
+        let (page, next) = read.named_page(listing, false)?;
+        let data = page
+            .iter()
+            .map(|row| summary_of(&read.catalog.rules, row))
+            .collect::<Result<Vec<Value>>>()?;
+        Ok(json!({ "data": data, "next_cursor": next }).to_string())
+    })
+    .await
+}
+
+/// When the bin may let `trashed_at` go, or none where that date is unknown or
+/// past what a date can say.
+fn eligible_at(trashed_at: Option<&str>) -> Option<String> {
+    let trashed_at = DateTime::parse_from_rfc3339(trashed_at?).ok()?;
+    let eligible = trashed_at
+        .with_timezone(&Utc)
+        .checked_add_days(Days::new(RETENTION_DAYS))?;
+    Some(eligible.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
+    reading(app, caller, move |read| {
+        let (page, next) = read.named_page(listing, true)?;
+        let data = page
+            .iter()
+            .map(|row| {
+                let mut summary = summary_of(&read.catalog.rules, row)?;
+                summary["trashed_at"] = json!(row.trashed_at);
+                summary["trashed_by"] = json!(row.trashed_by);
+                summary["eligible_for_deletion_at"] = json!(eligible_at(row.trashed_at.as_deref()));
+                Ok(summary)
+            })
+            .collect::<Result<Vec<Value>>>()?;
+        Ok(
+            json!({ "data": data, "next_cursor": next, "retention_days": RETENTION_DAYS })
+                .to_string(),
+        )
+    })
+    .await
+}
+
+/// A page of the bin as the rows and versions one snapshot holds.
+pub async fn bin_selection(
+    app: &App,
+    caller: &Caller,
+    listing: Listing,
+) -> Result<(Vec<(String, i64)>, Option<String>)> {
+    reading(app, caller, move |read| {
+        let (page, next) = read.named_page(listing, true)?;
+        let selected = page.into_iter().map(|row| (row.id, row.version)).collect();
+        Ok((selected, next))
+    })
+    .await
+}
+
+/// What `POST /items/lookup` finds rows by.
+#[derive(Clone, Debug)]
+pub enum Selector {
+    Keys(Keys),
+    Ids(Vec<String>),
+}
+
+impl Reader<'_, '_> {
+    fn found_by(&self, type_id: &str, selector: &Selector) -> Result<Vec<Item>> {
+        let mut found = Vec::new();
+        match selector {
+            Selector::Keys(Keys::Links(links)) => {
+                for link in links {
+                    found.extend(rows::by_link(self.tx, type_id, link)?);
+                }
+            }
+            Selector::Keys(Keys::Natural { source, source_ids }) => {
+                for source_id in source_ids {
+                    found.extend(rows::by_natural_key(self.tx, source, source_id)?);
+                }
+            }
+            Selector::Ids(ids) => {
+                for id in ids {
+                    found.extend(rows::by_id(self.tx, id)?);
+                }
+            }
+        }
+        Ok(found)
+    }
+}
+
+pub async fn lookup(
+    app: &App,
+    caller: &Caller,
+    type_id: String,
+    selector: Selector,
+    edges: bool,
+) -> Result<String> {
+    reading(app, caller, move |read| {
+        read.caller.require_reach()?;
+        let keys = match &selector {
+            Selector::Keys(keys) => Some(keys),
+            Selector::Ids(_) => None,
+        };
+        check_keys(&read.catalog, &type_id, keys)?;
+        let readable = read.caller.may_read_type(&type_id);
+        if !readable
+            && !read
+                .catalog
+                .rules
+                .declared_descendants(&type_id)
+                .iter()
+                .any(|below| read.caller.may_read_type(below))
+        {
+            read.caller.require_type(&type_id, Level::Read)?;
+        }
+        let found = read.found_by(&type_id, &selector)?;
+        read.hydrating();
+        let mut data = Vec::with_capacity(found.len());
+        let mut seen = HashSet::new();
+        for row in found {
+            if super::is_system(&row.type_id)
+                || !read.caller.may_read_type(&row.type_id)
+                || !seen.insert(row.id.clone())
+            {
+                continue;
+            }
+            let mut text = row.answered(read.tx)?;
+            if edges {
+                text.pop();
+                text.push_str(",\"edges\":{}}");
+            }
+            data.push(text);
+        }
+        let tombstones = match keys.filter(|_| readable) {
+            Some(keys) => rows::tombstones(read.tx, &type_id, keys)?,
+            None => Vec::new(),
+        };
+        Ok(format!(
+            "{{\"data\":[{}],\"tombstones\":{}}}",
+            data.join(","),
+            json!(tombstones)
         ))
     })
     .await

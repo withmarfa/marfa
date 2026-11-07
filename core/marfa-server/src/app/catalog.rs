@@ -73,6 +73,12 @@ impl Catalog {
     }
 
     /// Whether Marfa ships `id`.
+    /// The field `type_id` itself names as its link. A subtype inherits the
+    /// field, never the link.
+    pub fn link_field(&self, type_id: &str) -> Option<&str> {
+        self.types.get(type_id)?.get("link_field")?.as_str()
+    }
+
     pub fn ships(id: &str) -> bool {
         builtin::ships(id).unwrap_or(false)
     }

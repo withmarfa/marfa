@@ -16,7 +16,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::App;
-use super::access::{Caller, Level};
+use super::access::{Caller, Level, Permission};
 use super::items;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -32,6 +32,7 @@ const CONTENT_TYPE: &str = "application/json";
 #[serde(tag = "need", rename_all = "snake_case")]
 pub enum Need {
     Reach,
+    Purge,
     /// A row the answer names, whose type the answer does not record.
     ItemRef {
         id: String,
@@ -60,7 +61,7 @@ impl Need {
     /// hears only that, before anything that would name its source.
     fn rank(&self) -> u8 {
         match self {
-            Need::Reach => 0,
+            Need::Reach | Need::Purge => 0,
             Need::ItemRef { .. } => 1,
             Need::Item { .. } => 2,
             Need::Type { .. } => 3,
@@ -277,6 +278,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
     for need in needs {
         match need {
             Need::Reach => caller.require_reach()?,
+            Need::Purge => caller.require(Permission::ItemsPurge)?,
             Need::ItemRef { id } => {
                 let readable =
                     items::type_of(tx, &id)?.is_some_and(|type_id| caller.may_read_type(&type_id));
