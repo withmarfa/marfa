@@ -58,8 +58,8 @@ describe("job limits", () => {
         typeof limit === "number" ? [limit] : String(limit).match(/\d+/g);
       expect(numbers, `${file}: ${id}`).not.toBeNull();
       // The scale benchmark seeds a 250,000-item instance, measures it, then
-      // times a folder and a device against it: 45 to 60 minutes on a hosted
-      // runner, the seed alone 20 to 30.
+      // times a folder and a device against it: 45 to 75 minutes on a hosted
+      // runner, the seed alone 15 to 45.
       const ceiling = file === "benchmarks.yml" && id === "scale" ? 180 : 100;
       expect(
         Math.max(...(numbers ?? []).map(Number)),

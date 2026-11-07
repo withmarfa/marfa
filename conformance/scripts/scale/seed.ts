@@ -10,6 +10,7 @@
  * the seeding, since going on would only measure a smaller instance.
  */
 import { writeFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { edgePlan, scaleItem } from "../../src/utils/scale/generator.js";
 import { scalar } from "../../src/utils/scale/figures.js";
 import type { BulkEdgeResponse, BulkResponse } from "../../src/client/types.js";
@@ -141,6 +142,7 @@ export async function seed(): Promise<void> {
   writeFileSync(sampleFile(), JSON.stringify(sample));
 
   recorder.learnedItems(created);
+  recorder.add(scalar("items_target", "count", target));
   recorder.add(scalar("items_seeded", "count", created));
   recorder.add(
     scalar("seed_errors", "count", errors, {
@@ -151,7 +153,12 @@ export async function seed(): Promise<void> {
     }),
   );
   // Items a second over the whole seeding, edges included, as a drain sends them.
-  recorder.add(scalar("seed_rate", "per_s", created / seconds));
+  const hostCpus = cpus();
+  recorder.add(
+    scalar("seed_rate", "per_s", created / seconds, {
+      note: `${hostCpus[0]?.model ?? "unknown CPU"}, ${hostCpus.length} CPUs`,
+    }),
+  );
   recorder.add(scalar("parent_of_edges", "count", parentEdges));
   recorder.add(scalar("about_edges", "count", aboutEdges));
   recorder.finish();
