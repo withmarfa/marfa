@@ -5,6 +5,8 @@ pub mod addresses;
 pub mod audit;
 pub mod catalog;
 pub mod clock;
+pub mod config;
+pub mod consequences;
 pub mod edge_types;
 pub mod events;
 pub mod faults;
@@ -112,6 +114,11 @@ impl App {
     /// is the parsed sign-in address.
     pub fn addresses(&self) -> Addresses {
         Addresses::read(&self.settings, self.bound_port.get().copied())
+    }
+
+    /// The addresses `snapshot` would give, judged as the live ones are.
+    pub fn addresses_in(&self, snapshot: Arc<crate::settings::Snapshot>) -> Addresses {
+        Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
     /// Records the public port the server bound, which `PORT=0` leaves to the

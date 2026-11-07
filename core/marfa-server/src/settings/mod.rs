@@ -8,6 +8,8 @@ pub mod registry;
 pub(crate) mod rule;
 mod secrets;
 pub mod start;
+pub mod start_only;
+pub mod together;
 
 use std::fmt;
 use std::sync::Arc;
@@ -45,6 +47,7 @@ pub struct Accepted {
     fixed: Fixed,
     given: Given,
     seeds: Seeds,
+    start_only: Vec<start_only::Listed>,
 }
 
 impl Accepted {
@@ -64,6 +67,7 @@ impl Accepted {
                 filled.auth_secret,
             )),
             seeds: self.seeds,
+            start_only: self.start_only,
             live: ArcSwap::from_pointee(live),
             generation: AtomicU64::new(0),
         })
@@ -89,6 +93,7 @@ fn warn_of_ignored(environment: &Environment) {
 pub struct Settings {
     pub start: Arc<Start>,
     seeds: Seeds,
+    start_only: Vec<start_only::Listed>,
     live: ArcSwap<Snapshot>,
     generation: AtomicU64,
 }
@@ -116,10 +121,12 @@ impl Settings {
         if !fixed.test_hooks {
             warn_of_ignored(&environment);
         }
+        let start_only = start_only::listed(&environment, fixed.test_hooks);
         Ok(Accepted {
             fixed,
             given,
             seeds,
+            start_only,
         })
     }
 
@@ -153,6 +160,17 @@ impl Settings {
                 current.clone()
             }
         });
+    }
+
+    /// What these rows would make the settings, with nothing changed: how a
+    /// write judges a change before it commits.
+    pub fn candidate(&self, stored: &[(String, String)]) -> Snapshot {
+        Snapshot::resolve(&self.seeds, stored, 0)
+    }
+
+    /// The settings only the environment sets, and whether each is set.
+    pub fn start_only(&self) -> &[start_only::Listed] {
+        &self.start_only
     }
 
     pub fn live(&self) -> Arc<Snapshot> {

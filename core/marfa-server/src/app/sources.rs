@@ -44,7 +44,7 @@ pub fn check_code(code: &str) -> Result<()> {
     }
 }
 
-fn hidden(character: char) -> bool {
+pub(crate) fn hidden(character: char) -> bool {
     character.is_control()
         || matches!(
             character,

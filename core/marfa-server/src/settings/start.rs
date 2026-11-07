@@ -76,6 +76,10 @@ pub struct Fixed {
     pub free_disk_bytes: Option<u64>,
     pub busy_budget: Duration,
     pub blob_path: PathBuf,
+    /// Whether a place to send an error report is set. It is judged by the
+    /// presence of the settings that name it, not by whether it can be reached.
+    pub error_receiver: bool,
+    pub heartbeat_receiver: bool,
 }
 
 /// Everything fixed when the process starts. Reaching one means its secrets
@@ -246,6 +250,10 @@ impl Fixed {
             free_disk_bytes,
             busy_budget: Duration::from_millis(busy_budget),
             blob_path: PathBuf::from(environment.get("BLOB_PATH").unwrap_or("./data/blobs")),
+            error_receiver: environment.get("ERROR_WEBHOOK_URL").is_some()
+                || (environment.get("MARFA_POSTHOG_HOST").is_some()
+                    && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some()),
+            heartbeat_receiver: environment.get("MARFA_HEARTBEAT_URL").is_some(),
         };
         (!failed).then_some((fixed, given))
     }
