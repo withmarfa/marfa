@@ -174,6 +174,9 @@ registry! {
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: u64::MAX }, "60000";
     ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true";
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Some("AUDIT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
+    DCR_CLIENT_RETENTION_DAYS: u64 = "dcr_client_retention_days", Some("MARFA_DCR_CLIENT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "1";
+    REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Some("MARFA_REVOKED_GRANT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
+    GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Some("MARFA_GRANT_INACTIVITY_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365";
     TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Some("TRASH_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "60";
     EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Some("MARFA_EVENT_LOG_RETENTION_HOURS"), Rule::Whole { min: 0, max: 876_000 }, "720";
     VERSION_RECENT_DAYS: u64 = "version_recent_days", Some("VERSION_RECENT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "30";

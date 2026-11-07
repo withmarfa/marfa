@@ -1,6 +1,8 @@
 //! Signed links: an authorization's query, carried through the sign-in and
 //! consent pages so that none of it can be changed on the way.
 
+use std::collections::HashSet;
+
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use hmac::{Hmac, KeyInit, Mac};
@@ -8,12 +10,15 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use url::form_urlencoded;
 
-use super::scope::ScopeSet;
 use crate::app::refusal::{Refusal, Result};
 
 const SIG: &str = "sig";
 const EXP: &str = "exp";
-const SCOPE: &str = "scope";
+
+/// RFC 8707 lets a request name several audiences. RFC 6749 section 3.1 lets
+/// no other parameter repeat, and two readers of a repeat can each take a
+/// different value.
+const MAY_REPEAT: &str = "resource";
 
 /// The sign-in page adds where to go next beside a link it was given.
 const UNSIGNED: &str = "return_to";
@@ -22,7 +27,7 @@ const UNSIGNED: &str = "return_to";
 /// the instance's secret.
 const CONTEXT: &str = "marfa-signed-link\n";
 
-/// The parameters of a link, in order, repeats kept.
+/// The parameters of a link, in order.
 pub type Params = Vec<(String, String)>;
 
 /// Why a link is not honored. The pages say different things for each, so an
@@ -45,12 +50,34 @@ pub struct Verified {
 }
 
 impl Verified {
+    /// The one value of a parameter. A parameter with two has none.
     pub fn get(&self, name: &str) -> Option<&str> {
+        match self
+            .params
+            .iter()
+            .filter(|(key, _)| key == name)
+            .collect::<Vec<_>>()[..]
+        {
+            [(_, value)] => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Every value of a parameter a link may repeat.
+    pub fn values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
         self.params
             .iter()
-            .find(|(key, _)| key == name)
+            .filter(move |(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     }
+}
+
+/// Whether a parameter other than `resource` appears twice.
+pub fn has_repeat(params: &[(String, String)]) -> bool {
+    let mut seen = HashSet::new();
+    params
+        .iter()
+        .any(|(key, _)| key != MAY_REPEAT && !seen.insert(key.as_str()))
 }
 
 fn serialize<'a>(params: impl IntoIterator<Item = &'a (String, String)>) -> String {
@@ -80,6 +107,9 @@ pub fn sign(params: &[(String, String)], exp: i64, secret: &str) -> Result<Strin
         .filter(|(key, _)| ![SIG, EXP, UNSIGNED].contains(&key.as_str()))
         .cloned()
         .collect();
+    if has_repeat(&signed) {
+        return Err(Refusal::validation("A link names a parameter twice."));
+    }
     signed.push((EXP.to_string(), exp.to_string()));
     let sig = signature(&signed, secret)?;
     signed.push((SIG.to_string(), sig));
@@ -107,8 +137,10 @@ pub fn verify(query: &str, now: i64, secret: &str) -> std::result::Result<Verifi
     if !bool::from(expected.as_bytes().ct_eq(sig.as_bytes())) {
         return Err(Refused::Unverified);
     }
-    let mut exps = signed.iter().filter(|(key, _)| key == EXP);
-    let (Some((_, exp)), None) = (exps.next(), exps.next()) else {
+    if has_repeat(&signed) {
+        return Err(Refused::Unverified);
+    }
+    let Some((_, exp)) = signed.iter().find(|(key, _)| key == EXP) else {
         return Err(Refused::Unverified);
     };
     let exp: i64 = exp.parse().map_err(|_| Refused::Unverified)?;
@@ -120,20 +152,6 @@ pub fn verify(query: &str, now: i64, secret: &str) -> std::result::Result<Verifi
         params: signed,
         exp,
     })
-}
-
-/// The same link naming `scopes` in place of what it named, good until the
-/// same moment. The caller has already held `scopes` to what the link allows
-/// (`scope::chosen_within`): nothing here widens or checks them.
-pub fn with_scope(link: &Verified, scopes: &ScopeSet, secret: &str) -> Result<String> {
-    let mut params: Params = link
-        .params
-        .iter()
-        .filter(|(key, _)| key != SCOPE)
-        .cloned()
-        .collect();
-    params.push((SCOPE.to_string(), scopes.to_text()));
-    sign(&params, link.exp, secret)
 }
 
 #[cfg(test)]
@@ -270,6 +288,34 @@ mod tests {
     }
 
     #[test]
+    fn a_repeated_parameter_other_than_resource_is_refused_on_both_sides() {
+        let mut repeated = params();
+        repeated.push(("state".to_string(), "another".to_string()));
+        assert!(sign(&repeated, NOW + 600, SECRET).is_err());
+
+        let exp = (EXP.to_string(), (NOW + 600).to_string());
+        let mut signed = repeated.clone();
+        signed.push(exp);
+        let sig = signature(&signed, SECRET).expect("a signature");
+        signed.push((SIG.to_string(), sig));
+        assert_eq!(
+            verify(&serialize(&signed), NOW, SECRET),
+            Err(Refused::Unverified)
+        );
+
+        // The witness: the same forge with `resource` repeated verifies.
+        let mut resources = params();
+        resources.push((
+            "resource".to_string(),
+            "https://marfa.example/mcp/admin".to_string(),
+        ));
+        let query = sign(&resources, NOW + 600, SECRET).expect("a signature");
+        let verified = verify(&query, NOW, SECRET).expect("verified");
+        assert_eq!(verified.values("resource").count(), 3);
+        assert_eq!(verified.get("resource"), None);
+    }
+
+    #[test]
     fn another_secret_verifies_nothing() {
         assert_eq!(
             verify(&link(), NOW, "another-secret"),
@@ -302,25 +348,6 @@ mod tests {
         assert_eq!(verified.exp, NOW + 600);
     }
 
-    #[test]
-    fn a_narrowing_signs_again_with_the_same_end() {
-        let verified = verify(&link(), NOW, SECRET).expect("verified");
-        let narrowed =
-            with_scope(&verified, &ScopeSet::parse("core.note:read"), SECRET).expect("a signature");
-        let again = verify(&narrowed, NOW, SECRET).expect("verified");
-        assert_eq!(again.exp, verified.exp);
-        assert_eq!(again.get("scope"), Some("core.note:read"));
-        assert_eq!(again.get("client_id"), Some("abc"));
-        assert_eq!(
-            again
-                .params
-                .iter()
-                .filter(|(key, _)| key == "scope")
-                .count(),
-            1
-        );
-    }
-
     proptest! {
         #[test]
         fn nothing_panics_on_any_text(query in any::<String>()) {
@@ -329,7 +356,7 @@ mod tests {
 
         #[test]
         fn what_is_signed_comes_back_whatever_it_holds(
-            pairs in proptest::collection::vec(("[a-z_]{1,8}", any::<String>()), 0..6),
+            pairs in proptest::collection::btree_map("[a-z_]{1,8}", any::<String>(), 0..6),
         ) {
             let params: Params = pairs
                 .into_iter()

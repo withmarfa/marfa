@@ -1,8 +1,5 @@
 //! The secrets sign-in hands out. Each is stored only as its digest.
 
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
-
 use crate::app::refusal::{Refusal, Result};
 
 const ACCESS_PREFIX: &str = "marfa_at_";
@@ -78,14 +75,6 @@ pub fn normalize_user_code(typed: &str) -> String {
         .collect()
 }
 
-/// What is stored in place of a token, a code or a user code.
-pub fn digest(salt: &str, secret: &str) -> Result<String> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(salt.as_bytes())
-        .map_err(|_| Refusal::internal("the token digest refused its salt"))?;
-    mac.update(secret.as_bytes());
-    Ok(hex::encode(mac.finalize().into_bytes()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -155,17 +144,5 @@ mod tests {
             assert_eq!(normalize_user_code(typed), "ABCD2345");
         }
         assert_eq!(normalize_user_code("\u{e9}\u{4e2d}-"), "");
-    }
-
-    #[test]
-    fn a_digest_is_keyed_hmac_sha256() {
-        let a = digest("salt", "secret").expect("a digest");
-        assert_eq!(a, digest("salt", "secret").expect("a digest"));
-        assert_ne!(a, digest("other", "secret").expect("a digest"));
-        assert_ne!(a, digest("salt", "other").expect("a digest"));
-        assert_eq!(
-            digest("key", "The quick brown fox jumps over the lazy dog").expect("a digest"),
-            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-        );
     }
 }

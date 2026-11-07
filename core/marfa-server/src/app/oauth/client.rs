@@ -97,7 +97,10 @@ impl Registration {
     }
 
     pub fn names_grant(&self, grant: GrantType) -> bool {
-        self.grant_types.contains(&grant)
+        match grant {
+            GrantType::RefreshToken => self.can_refresh(),
+            other => self.grant_types.contains(&other),
+        }
     }
 
     /// The registered metadata as `POST /auth/oauth2/register` answers it. The

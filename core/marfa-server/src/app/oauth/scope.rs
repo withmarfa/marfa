@@ -22,6 +22,9 @@ const METADATA: &str = "metadata";
 const PROFILE: &str = "profile";
 const MOST_NAME_BYTES: usize = 128;
 
+/// The platform's own roots, which the content category never reaches.
+const NOT_CONTENT: [&str; 2] = ["system", "marfa"];
+
 /// The roots a permission lives under, and the one word no publisher may use.
 /// Anything under one of these that is not a permission is no scope, so
 /// `keys.note:read` can never come to mean a type.
@@ -79,13 +82,6 @@ impl Verb {
             "read" => Some(Verb::Read),
             "write" => Some(Verb::Write),
             _ => None,
-        }
-    }
-
-    const fn level(self) -> Level {
-        match self {
-            Verb::Read => Level::Read,
-            Verb::Write => Level::Write,
         }
     }
 }
@@ -455,7 +451,7 @@ impl Registries {
         self.types
             .iter()
             .map(String::as_str)
-            .filter(|id| !matches!(platform_root(id), Some("system" | "marfa")))
+            .filter(|id| !platform_root(id).is_some_and(|root| NOT_CONTENT.contains(&root)))
             .collect()
     }
 
@@ -501,8 +497,8 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
 /// same code as a key.
 ///
 /// The content category goes first and every other type scope over it: a
-/// type named beside `content:read` reaches that type, and a `system` type
-/// reached by nothing else stays out. So `*:read content:read` reaches less
+/// type named beside `content:read` reaches that type, and a `system` or
+/// `marfa` type reached by nothing else stays out. So `*:read content:read` reaches less
 /// than `*:read` alone.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
     let mut types = Entries::new();
@@ -515,7 +511,9 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
         .max()
     {
         types.insert(ALL.to_string(), Value::from(verb.word()));
-        types.insert("system.*".to_string(), Value::from(Level::None.word()));
+        for root in NOT_CONTENT {
+            types.insert(format!("{root}.*"), Value::from(Level::None.word()));
+        }
     }
     let mut edges = Entries::new();
     let mut metadata = Entries::new();
@@ -556,17 +554,22 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
 ///
 /// Access is compared as it resolves, not by literal, because removing an
 /// overriding entry can widen a wildcard (`keys-and-oauth/grant-narrow-ceiling`).
-/// `offline_access` and a literal that does not parse carry no access to
-/// compare, so only naming them covers them. A set need not cover itself:
-/// `*:write core.*:read` leaves `core.note` at read, so `*:write` is uncovered.
+/// `wanted` is judged whole first, so `*:write core.*:read` covers itself
+/// though its `*:write` alone reaches further than the set does. `offline_access`
+/// and a literal that does not parse carry no access to compare, so only
+/// naming them covers them.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
+    let whole = ceiling.first_beyond("", &to_grants(wanted)).is_none();
     wanted.literals().iter().find_map(|literal| {
         let covered = match Scope::parse(literal) {
             None | Some(Scope::OfflineAccess) => held.contains(literal),
-            Some(_) => ceiling
-                .first_beyond("", &to_grants(&[literal.as_str()].into_iter().collect()))
-                .is_none(),
+            Some(_) => {
+                whole
+                    || ceiling
+                        .first_beyond("", &to_grants(&[literal.as_str()].into_iter().collect()))
+                        .is_none()
+            }
         };
         (!covered).then(|| literal.clone())
     })
@@ -577,18 +580,56 @@ pub fn covers(held: &ScopeSet, required: &str) -> bool {
     first_uncovered(held, &[required].into_iter().collect()).is_none()
 }
 
+/// `held` with `added` as a person approved it, compared by what each reaches.
+/// A union would let `core.*:read` lower a held `*:write`, so a literal that
+/// takes away something held stays out, and a held literal that hides what
+/// `added` reaches goes. The result reaches nothing neither side reached.
+pub fn combined(held: &ScopeSet, added: &ScopeSet) -> ScopeSet {
+    let held_reach = to_grants(held);
+    let mut set = held.clone();
+    for literal in added.literals() {
+        let mut with = set.clone();
+        with.insert(literal);
+        if to_grants(&with).first_beyond("", &held_reach).is_none() {
+            set = with;
+        }
+    }
+    let added_reach = to_grants(added);
+    loop {
+        let reach = to_grants(&set);
+        if reach.first_beyond("", &added_reach).is_none() {
+            return set;
+        }
+        let hiding = set.literals().iter().find(|literal| {
+            let rest = set.without(literal);
+            let wider = to_grants(&rest);
+            wider.first_beyond("", &reach).is_none()
+                && reach.first_beyond("", &wider).is_some()
+                && rest
+                    .literals()
+                    .iter()
+                    .all(|kept| covers(held, kept) || covers(added, kept))
+        });
+        match hiding {
+            Some(literal) => set = set.without(literal),
+            None => return set,
+        }
+    }
+}
+
 /// `keys-and-oauth/consent-older-reads`: whether approving `approved` needs a
 /// recent sign-in, given what the app already holds.
 pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
-    approved.literals().iter().any(|literal| {
-        !Scope::parse(literal).is_some_and(|scope| scope.takes_an_older_sign_in())
-            && !covers(held, literal)
-    })
+    first_uncovered(held, &approved.without(OFFLINE_ACCESS)).is_some()
+        && approved.literals().iter().any(|literal| {
+            !Scope::parse(literal).is_some_and(|scope| scope.takes_an_older_sign_in())
+                && !covers(held, literal)
+        })
 }
 
 /// `keys-and-oauth/approval-types-beyond`: whether every literal of `chosen`
-/// is one `named` wrote, or a type the page offered that a named all-data
-/// scope covers.
+/// is a type the page offered that an all-data scope of `named` covers. Pass
+/// `named` narrowed: what a request named and could not have is not covered.
 pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> bool {
     let all_data: ScopeSet = named
         .literals()
@@ -597,26 +638,21 @@ pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> b
         .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.is_all_data()))
         .collect();
     chosen.literals().iter().all(|literal| {
-        named.contains(literal)
-            || matches!(
-                Scope::parse(literal),
-                Some(Scope::Type { pattern, .. })
-                    if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
-            )
+        matches!(
+            Scope::parse(literal),
+            Some(Scope::Type { pattern, .. })
+                if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
+        )
     })
 }
 
 /// `keys-and-oauth/approval-write-read`: `approved`, with the read of each
-/// type it writes where the request named that read.
+/// level it writes where the request named that read.
 pub fn with_named_reads(approved: &ScopeSet, named: &ScopeSet) -> ScopeSet {
     let mut issued = approved.clone();
-    for scope in approved.scopes() {
-        if let Scope::Type {
-            pattern,
-            verb: Verb::Write,
-        } = scope
-        {
-            let read = format!("{pattern}:{}", Verb::Read.word());
+    for literal in approved.literals() {
+        if let Some(level) = literal.strip_suffix(":write") {
+            let read = format!("{level}:read");
             if named.contains(&read) {
                 issued.insert(&read);
             }
@@ -912,6 +948,25 @@ mod tests {
     }
 
     #[test]
+    fn the_content_category_reaches_no_marfa_type_shipped_or_not() {
+        for id in ["marfa.never-shipped", "marfa.other.deeper"] {
+            assert!(!builtin::ships(id).unwrap_or(false), "{id}");
+            assert_eq!(level("content:read", Axis::Type, id), Level::None, "{id}");
+            assert_eq!(level("content:write", Axis::Type, id), Level::None, "{id}");
+            assert_eq!(
+                level(&format!("content:read {id}:read"), Axis::Type, id),
+                Level::Read,
+                "{id}"
+            );
+        }
+        // The witness: what `content:read` denies, `*:read` reaches.
+        assert_eq!(
+            level("*:read", Axis::Type, "marfa.never-shipped"),
+            Level::Read
+        );
+    }
+
+    #[test]
     fn coverage_is_of_effective_access_and_not_of_literals() {
         for (held, required, covered) in [
             ("core.*:read", "core.note:read", true),
@@ -970,6 +1025,102 @@ mod tests {
     }
 
     #[test]
+    fn a_set_with_a_narrower_read_beside_a_wildcard_covers_itself() {
+        let held = set("*:write core.*:read");
+        assert_eq!(first_uncovered(&held, &held), None);
+        assert!(!needs_recent_sign_in(&held, &held));
+        assert!(!needs_recent_sign_in(
+            &set("*:write core.*:read offline_access"),
+            &held
+        ));
+        assert_eq!(
+            first_uncovered(&held, &set("*:write")).as_deref(),
+            Some("*:write")
+        );
+        assert!(needs_recent_sign_in(&set("*:write"), &held));
+    }
+
+    #[test]
+    fn combining_is_by_effective_access_not_by_literal() {
+        for (held, added, name, expected) in [
+            ("*:write", "core.*:read", "core.note", Level::Write),
+            ("core.*:read", "*:write", "core.note", Level::Write),
+            (
+                "*:write core.*:read",
+                "*:write core.*:read",
+                "core.note",
+                Level::Read,
+            ),
+            (
+                "*:write core.*:read",
+                "core.note:write",
+                "core.task",
+                Level::Read,
+            ),
+            (
+                "core.note:write",
+                "*:write core.*:read",
+                "core.task",
+                Level::Read,
+            ),
+            ("*:read", "content:read", "system.connection", Level::Read),
+            ("content:read", "*:read", "system.connection", Level::Read),
+            ("*:read", "content:write", "system.connection", Level::Read),
+        ] {
+            let both = combined(&set(held), &set(added)).to_text();
+            assert_eq!(
+                level(&both, Axis::Type, name),
+                expected,
+                "{held} + {added} = {both}"
+            );
+        }
+        assert_eq!(
+            combined(
+                &set("core.note:read"),
+                &set("core.note:write offline_access")
+            )
+            .to_text(),
+            "core.note:read core.note:write offline_access"
+        );
+    }
+
+    #[test]
+    fn the_read_named_beside_a_write_stays_for_every_kind_of_level() {
+        for (approved, named, expected) in [
+            (
+                "core.note:write",
+                "core.note:read core.note:write",
+                "core.note:write core.note:read",
+            ),
+            (
+                "content:write",
+                "content:read content:write",
+                "content:write content:read",
+            ),
+            (
+                "edge.*:write",
+                "edge.*:read edge.*:write",
+                "edge.*:write edge.*:read",
+            ),
+            (
+                "metadata:write",
+                "metadata:read metadata:write",
+                "metadata:write metadata:read",
+            ),
+            (
+                "profile.name:write",
+                "profile.name:read profile.name:write",
+                "profile.name:write profile.name:read",
+            ),
+            ("core.note:write", "core.note:write", "core.note:write"),
+            ("keys.mint", "keys.mint core.note:read", "keys.mint"),
+        ] {
+            let issued = with_named_reads(&set(approved), &set(named));
+            assert_eq!(issued.to_text(), set(expected).to_text(), "{approved}");
+        }
+    }
+
+    #[test]
     fn only_a_new_write_or_permission_needs_a_recent_sign_in() {
         let none = ScopeSet::default();
         for literal in [
@@ -1005,7 +1156,6 @@ mod tests {
         let offered = ["core.note", "core.page"];
         let named = set("*:read schema.write");
         assert!(chosen_within(&named, &set("core.note:read"), &offered));
-        assert!(chosen_within(&named, &set("schema.write"), &offered));
         assert!(chosen_within(
             &set("*:write"),
             &set("core.note:write core.page:read"),
@@ -1109,20 +1259,45 @@ mod tests {
             );
         }
 
-        // The range stops short of the write wildcards, which a narrower read
-        // beside them keeps from covering themselves.
         #[test]
-        fn a_set_without_a_write_wildcard_covers_each_of_its_own_literals(
-            picks in proptest::collection::vec(0usize..40, 1..6),
+        fn any_set_covers_itself(
+            picks in proptest::collection::vec(0usize..200, 1..6),
         ) {
             let allowed = registries().allowed();
             let literals = allowed.literals();
             let held: ScopeSet = picks
                 .iter()
                 .map(|pick| literals[pick % literals.len()].as_str())
-                .filter(|literal| !literal.starts_with("content:"))
                 .collect();
             prop_assert_eq!(first_uncovered(&held, &held), None);
+            prop_assert!(!needs_recent_sign_in(&held, &held));
+        }
+
+        #[test]
+        fn combining_keeps_what_was_held_and_reaches_nothing_new(
+            first in proptest::collection::vec(0usize..200, 0..5),
+            second in proptest::collection::vec(0usize..200, 0..5),
+        ) {
+            let allowed = registries().allowed();
+            let literals = allowed.literals();
+            let pick = |picks: &[usize]| -> ScopeSet {
+                picks
+                    .iter()
+                    .map(|pick| literals[pick % literals.len()].as_str())
+                    .collect()
+            };
+            let (held, added) = (pick(&first), pick(&second));
+            let both = combined(&held, &added);
+            let (held_reach, added_reach, reach) =
+                (to_grants(&held), to_grants(&added), to_grants(&both));
+            prop_assert!(reach.first_beyond("", &held_reach).is_none());
+            for name in ["core.note", "core.task", "system.connection", "marfa.thing", "acme.x"] {
+                let level = reach.map(Axis::Type);
+                let most = Axis::Type
+                    .level(held_reach.map(Axis::Type), name)
+                    .max(Axis::Type.level(added_reach.map(Axis::Type), name));
+                prop_assert!(Axis::Type.level(level, name) <= most, "{name}");
+            }
         }
     }
 }

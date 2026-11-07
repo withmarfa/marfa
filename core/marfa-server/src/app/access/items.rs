@@ -9,9 +9,9 @@ use crate::app::refusal::{Code, Refusal, Result};
 
 const MAX_WRITER_NAME: usize = 200;
 
-/// A writer's name, held to what a history may show: text a client chose
+/// A name held to what a history or a page may show: text a client chose
 /// loses what would not print or would turn the line around it.
-fn printable(name: &str) -> String {
+pub fn printable(name: &str) -> String {
     name.chars()
         .filter(|at| {
             !at.is_control() && !matches!(at, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
@@ -53,6 +53,11 @@ impl Caller {
                 id: session.id.clone(),
                 name: printable(&session.name()),
             },
+            Caller::App { key, grant } => Writer {
+                kind: "app".to_string(),
+                id: grant.grant_id.clone(),
+                name: printable(&key.label),
+            },
         }
     }
 
@@ -63,6 +68,7 @@ impl Caller {
             Caller::Local => "local".to_string(),
             Caller::Key(key) if key.oauth_client_id.is_some() => key.source.clone(),
             Caller::Key(key) => key.id.clone(),
+            Caller::App { key, .. } => key.source.clone(),
             Caller::Owner(session) => format!("owner:{}", session.id),
         }
     }
@@ -71,11 +77,15 @@ impl Caller {
     /// nothing about what exists.
     pub fn require_reach(&self) -> Result<()> {
         match self {
-            Caller::Key(key) if !key.grants.map(Axis::Type).grants_any() => Err(Refusal::new(
-                Code::TypeNotPermitted,
-                "This credential's type permissions reach no type, so there is nothing on \
+            Caller::Key(key) | Caller::App { key, .. }
+                if !key.grants.map(Axis::Type).grants_any() =>
+            {
+                Err(Refusal::new(
+                    Code::TypeNotPermitted,
+                    "This credential's type permissions reach no type, so there is nothing on \
                      the data plane it may read.",
-            )),
+                ))
+            }
             _ => Ok(()),
         }
     }
@@ -105,7 +115,7 @@ impl Caller {
     pub fn own_source(&self) -> &str {
         match self {
             Caller::Local | Caller::Owner(_) => "unknown",
-            Caller::Key(key) => &key.source,
+            Caller::Key(key) | Caller::App { key, .. } => &key.source,
         }
     }
 

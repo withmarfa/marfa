@@ -13,6 +13,7 @@ use super::observe::RequestContext;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
 use crate::app::auth::{self, session};
+use crate::app::oauth::{self, tokens};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, keys};
 use crate::listener::Transport;
@@ -65,10 +66,19 @@ fn check_browser_request(parts: &Parts, address: &Address) -> Result<()> {
     ))
 }
 
+/// Whether a session's request is held to this instance's origin here, or
+/// the door judges where it came from itself.
+#[derive(Clone, Copy, PartialEq)]
+enum Origin {
+    Judged,
+    LeftToTheDoor,
+}
+
 async fn owner_by_cookie(
     parts: &Parts,
     app: &Arc<App>,
     context: Option<&RequestContext>,
+    origin: Origin,
 ) -> Result<Option<Caller>> {
     let address = app.addresses().sign_in();
     let Some(token) = cookies::session_token(&parts.headers, &address) else {
@@ -77,7 +87,9 @@ async fn owner_by_cookie(
     let Some(session) = session::find(app, token).await? else {
         return Ok(None);
     };
-    check_browser_request(parts, &address)?;
+    if origin == Origin::Judged {
+        check_browser_request(parts, &address)?;
+    }
     let Some(seen) = session::seen(app, session).await? else {
         return Ok(None);
     };
@@ -99,16 +111,32 @@ async fn owner_by_cookie(
 async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     let context = parts.extensions.get::<RequestContext>();
     let local = context.is_some_and(|context| context.transport == Transport::LocalSocket);
-    let key = match presented(&parts.headers) {
+    let caller = match presented(&parts.headers) {
         Presented::Nothing if local => return Ok(Some(Caller::Local)),
-        Presented::Nothing => return owner_by_cookie(parts, app, context).await,
+        Presented::Nothing => return owner_by_cookie(parts, app, context, Origin::Judged).await,
         Presented::Unreadable => return Ok(None),
-        Presented::Token(token) => keys::authenticate(app, token).await?,
+        Presented::Token(token) if tokens::looks_like_access_token(token) => {
+            oauth::authenticate(app, token).await?
+        }
+        Presented::Token(token) => keys::authenticate(app, token)
+            .await?
+            .map(|key| Caller::Key(Box::new(key))),
     };
-    if let (Some(key), Some(context)) = (&key, context) {
-        let _ = context.notes.key_id.set(key.id.clone());
+    if let (Some(caller), Some(context)) = (&caller, context) {
+        let _ = context.notes.key_id.set(caller.audit_id());
     }
-    Ok(key.map(|key| Caller::Key(Box::new(key))))
+    Ok(caller)
+}
+
+/// The owner a browser's own session names, for a door a form posts to, which
+/// judges the form's origin itself. A request presenting a credential is not
+/// a browser's, whatever cookie it also carries.
+pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
+    if !matches!(presented(&parts.headers), Presented::Nothing) {
+        return Ok(None);
+    }
+    let context = parts.extensions.get::<RequestContext>();
+    owner_by_cookie(parts, app, context, Origin::LeftToTheDoor).await
 }
 
 /// The request's caller, read once however many layers ask. A credential

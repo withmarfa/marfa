@@ -36,7 +36,7 @@ pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) 
         .flatten()
         .and_then(|caller| {
             app.key_limit.take(
-                &caller.audit_id(),
+                &caller.credential_handle(),
                 app.clock.now_ms(),
                 cap,
                 live.get(RATE_LIMIT_WINDOW_MS),

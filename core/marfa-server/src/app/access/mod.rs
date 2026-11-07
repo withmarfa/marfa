@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 
 use super::auth::session::{self, Session};
 use super::keys::{self, Key};
+use super::oauth;
 use super::refusal::{Code, Refusal, Result};
+pub use items::printable;
 pub use levers::Levers;
 pub use maps::{Axis, Level, Map};
 pub use schema::{Door, SchemaKind};
@@ -190,8 +192,7 @@ pub struct Change<'a> {
     pub narrow_only: bool,
 }
 
-/// What is asking. A signed-in app is another variant, answering these same
-/// questions from what it holds.
+/// What is asking.
 #[derive(Clone, Debug)]
 pub enum Caller {
     /// The private local command, on the control socket with no credential.
@@ -199,6 +200,12 @@ pub enum Caller {
     Key(Box<Key>),
     /// The owner, in a browser.
     Owner(Box<Session>),
+    /// A signed-in app, by an access token. `key` is what the token holds,
+    /// shaped as a key, so every question of reach is answered as for one.
+    App {
+        key: Box<Key>,
+        grant: Box<oauth::Granted>,
+    },
 }
 
 impl Caller {
@@ -214,6 +221,7 @@ impl Caller {
             Caller::Owner(session) => session::live_by_id(tx, &session.id, session::now_of(at)?)?
                 .map(|session| Caller::Owner(Box::new(session)))
                 .ok_or_else(unauthorized),
+            Caller::App { key, .. } => oauth::live_by_id(tx, &key.id, at)?.ok_or_else(unauthorized),
         }
     }
 
@@ -243,14 +251,14 @@ impl Caller {
     pub fn key(&self) -> Option<&Key> {
         match self {
             Caller::Local | Caller::Owner(_) => None,
-            Caller::Key(key) => Some(key),
+            Caller::Key(key) | Caller::App { key, .. } => Some(key),
         }
     }
 
     pub fn holds(&self, permission: Permission) -> bool {
         match self {
             Caller::Local | Caller::Owner(_) => true,
-            Caller::Key(key) => key.grants.holds(permission),
+            Caller::Key(key) | Caller::App { key, .. } => key.grants.holds(permission),
         }
     }
 
@@ -290,7 +298,7 @@ impl Caller {
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
             Caller::Local | Caller::Owner(_) => true,
-            Caller::Key(key) => {
+            Caller::Key(key) | Caller::App { key, .. } => {
                 key.id == target.id
                     || key.grants.holds(Permission::KeysManage)
                     || key
@@ -305,13 +313,13 @@ impl Caller {
     pub fn whole_set(&self) -> Grants {
         match self {
             Caller::Local | Caller::Owner(_) => Grants::everything(),
-            Caller::Key(key) => key.grants.clone(),
+            Caller::Key(key) | Caller::App { key, .. } => key.grants.clone(),
         }
     }
 
     /// Holds `wanted` to what this caller could give.
     pub fn check_ceiling(&self, wanted: &Grants) -> Result<()> {
-        let Caller::Key(key) = self else {
+        let Some(key) = self.key() else {
             return Ok(());
         };
         match key.grants.first_beyond(&key.source, wanted) {
@@ -334,7 +342,7 @@ impl Caller {
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
             Caller::Local | Caller::Owner(_) => true,
-            Caller::Key(key) => key.grants.may_grant(&key.source, source),
+            Caller::Key(key) | Caller::App { key, .. } => key.grants.may_grant(&key.source, source),
         }
     }
 
@@ -402,7 +410,7 @@ impl Caller {
     pub fn audit_id(&self) -> String {
         match self {
             Caller::Local => "local:process".to_string(),
-            Caller::Key(key) => key.id.clone(),
+            Caller::Key(key) | Caller::App { key, .. } => key.id.clone(),
             Caller::Owner(session) => format!("owner:{}", session.id),
         }
     }
@@ -414,6 +422,9 @@ impl Caller {
             Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
             Caller::Owner(session) => {
                 json!({ "kind": "browser", "id": session.id, "name": session.name() })
+            }
+            Caller::App { key, grant } => {
+                json!({ "kind": "app", "id": grant.grant_id, "name": key.label })
             }
         }
     }

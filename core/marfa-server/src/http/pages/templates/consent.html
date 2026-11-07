@@ -1,0 +1,28 @@
+<h1>Approve {{ view.offer.app.name }}</h1>
+{% for host in view.offer.app.destinations %}<p class="hint">Sends you back to {{ host }}</p>
+{% endfor %}{% if let Some(host) = view.offer.app.document_host %}<p class="hint">Described by {{ host }}</p>
+{% endif %}{% if !page_addresses.is_empty() %}<p class="hint">Approving also lets {{ page_addresses }} reach Marfa from your browser.</p>
+{% endif %}{% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 5 minutes.</p>
+{% endif %}{% if !view.offer.held.is_empty() %}<h2>Already allowed</h2>
+<ul>{% for literal in view.offer.held %}<li>{{ literal }}</li>{% endfor %}</ul>
+{% endif %}<form method="post" action="{{ action }}" class="stack">
+<input type="hidden" name="{{ link_field }}" value="{{ link_value }}">
+{% if view.offer.full_access_choice %}<label><input type="radio" name="access" value="{{ full_access }}" checked> Full access</label>
+<label><input type="radio" name="access" value="choose"> Choose access</label>
+{% endif %}{% for control in controls %}<div class="field">
+<label>{{ control.label }}
+<select name="{{ control.field }}">{% for option in control.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}</select></label>
+{% if control.open_ended %}<p class="hint">This covers anything added later.</p>{% endif %}
+</div>
+{% endfor %}{% for control in type_controls %}<div class="field">
+<label>{{ control.label }}
+<select name="{{ control.field }}">{% for option in control.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}</select></label>
+</div>
+{% endfor %}{% for power in view.offer.powers %}<label><input type="checkbox" name="scopes" value="{{ power.literal }}"> {{ power.literal }}{% if power.cannot_be_undone %} (cannot be undone){% endif %}</label>
+{% endfor %}{% for literal in view.offer.mechanisms %}<input type="hidden" name="scopes" value="{{ literal }}">
+{% endfor %}{% if view.offer.offers_edit %}<p class="hint">Editing lets this app add and delete items.</p>
+{% endif %}<div class="actions">
+<button type="submit" class="button" name="{{ answer_field }}" value="{{ no }}">Deny</button>
+<button type="submit" class="button primary" name="{{ answer_field }}" value="{{ yes }}">Approve</button>
+</div>
+</form>

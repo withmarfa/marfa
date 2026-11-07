@@ -1,0 +1,225 @@
+//! A person's standing consent to an app, and the `system.connection` item
+//! that shows it. Each change here writes both, in the transaction of the
+//! write that called it, so neither is ever seen without the other.
+
+use arc_swap::ArcSwap;
+use rusqlite::OptionalExtension;
+use serde_json::{Map, Value, json};
+use uuid::Uuid;
+
+use super::scope::{ScopeSet, combined};
+use super::store::{self, Client, Consent, ms_of};
+use crate::app::catalog::Catalog;
+use crate::app::items::write::{Change, Put, Update, apply_server_own};
+use crate::app::refusal::{Refusal, Result};
+use crate::app::unit::Unit;
+
+const TYPE: &str = "system.connection";
+pub(super) const CONSENT_SOURCE: &str = "marfa/oauth2/consent";
+pub(super) const DEVICE_SOURCE: &str = "marfa/oauth/device";
+/// The action of a write that may create the grant's item, which the item
+/// path audits by it. The grant has its own entry beside that one.
+pub(super) const GRANT_WRITE: &str = "item.create";
+pub(super) const GRANT_CREATED: &str = "auth.grant.created";
+
+/// What approving left standing.
+#[derive(Clone, Debug)]
+pub struct Stood {
+    pub grant_id: String,
+    pub scopes: ScopeSet,
+    pub created: bool,
+}
+
+fn version_of(unit: &Unit<'_, '_>, id: &str) -> Result<Option<i64>> {
+    Ok(unit
+        .tx()
+        .query_row("SELECT version FROM items WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
+fn properties(pairs: Value) -> Map<String, Value> {
+    match pairs {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
+fn applied(unit: &Unit<'_, '_>, cache: &ArcSwap<Catalog>, change: Change) -> Result<()> {
+    let done = apply_server_own(unit, cache, change)?;
+    if done.status >= 400 {
+        return Err(Refusal::internal("a grant's item did not write"));
+    }
+    Ok(())
+}
+
+fn create_item(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    client: &Client,
+    grant_id: &str,
+    scopes: &ScopeSet,
+    source: &str,
+) -> Result<()> {
+    applied(
+        unit,
+        cache,
+        Change::Put(Box::new(Put {
+            type_id: TYPE.to_string(),
+            id: Some(grant_id.to_string()),
+            state: Some("active".to_string()),
+            source: Some(source.to_string()),
+            create_only: true,
+            properties: Some(properties(json!({
+                "kind": "app",
+                "client_id": client.id,
+                "name": client.name(),
+                "scopes": scopes.literals(),
+                "status": "active",
+                "granted_at": unit.at,
+            }))),
+            ..Put::default()
+        })),
+    )
+}
+
+fn update_item(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    grant_id: &str,
+    version: i64,
+    fields: Map<String, Value>,
+    clear: Vec<String>,
+) -> Result<()> {
+    applied(
+        unit,
+        cache,
+        Change::Update(Box::new(Update {
+            id: grant_id.to_string(),
+            properties: Some(fields),
+            clear,
+            version,
+            ..Update::default()
+        })),
+    )
+}
+
+/// Leaves the person's consent reaching `approved` beside whatever it reaches
+/// now, and never less.
+pub(super) fn stand(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    client: &Client,
+    user_id: &str,
+    approved: &ScopeSet,
+    source: &str,
+) -> Result<Stood> {
+    let tx = unit.tx();
+    let now = ms_of(&unit.at)?;
+    let Some(consent) = store::consent(tx, &client.id, user_id)? else {
+        let grant_id = Uuid::now_v7().to_string();
+        create_item(unit, cache, client, &grant_id, approved, source)?;
+        store::insert_consent(
+            tx,
+            &Consent {
+                client_id: client.id.clone(),
+                user_id: user_id.to_string(),
+                grant_id: grant_id.clone(),
+                scopes: approved.clone(),
+                created_at: now,
+                updated_at: now,
+                last_used_at: None,
+                withdrawn_at: None,
+            },
+        )?;
+        return Ok(Stood {
+            grant_id,
+            scopes: approved.clone(),
+            created: true,
+        });
+    };
+    let held = if consent.stands() {
+        consent.scopes.clone()
+    } else {
+        ScopeSet::default()
+    };
+    let scopes = combined(&held, approved);
+    if !consent.stands() || scopes != consent.scopes {
+        match version_of(unit, &consent.grant_id)? {
+            Some(version) => update_item(
+                unit,
+                cache,
+                &consent.grant_id,
+                version,
+                properties(json!({
+                    "scopes": scopes.literals(),
+                    "status": "active",
+                    "granted_at": unit.at,
+                })),
+                vec!["revoked_at".to_string()],
+            )?,
+            None => create_item(unit, cache, client, &consent.grant_id, &scopes, source)?,
+        }
+        store::renew_consent(tx, &client.id, user_id, &scopes, now)?;
+    }
+    Ok(Stood {
+        grant_id: consent.grant_id,
+        scopes,
+        created: false,
+    })
+}
+
+/// Ends a grant: every credential issued under it stops, the consent is
+/// withdrawn and the item says so. Answers whether a grant stood.
+pub(super) fn end(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    client_id: &str,
+    user_id: &str,
+) -> Result<bool> {
+    let tx = unit.tx();
+    let now = ms_of(&unit.at)?;
+    let Some(consent) = store::consent(tx, client_id, user_id)?.filter(Consent::stands) else {
+        return Ok(false);
+    };
+    store::end_grant_credentials(tx, client_id, user_id, now)?;
+    store::withdraw_consent(tx, client_id, user_id, now)?;
+    if let Some(version) = version_of(unit, &consent.grant_id)? {
+        update_item(
+            unit,
+            cache,
+            &consent.grant_id,
+            version,
+            properties(json!({ "status": "revoked", "revoked_at": unit.at })),
+            Vec::new(),
+        )?;
+    }
+    Ok(true)
+}
+
+/// Removes a withdrawn grant altogether: its item and its consent.
+pub(super) fn forget(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    client_id: &str,
+    user_id: &str,
+) -> Result<()> {
+    let tx = unit.tx();
+    let Some(consent) = store::consent(tx, client_id, user_id)? else {
+        return Ok(());
+    };
+    if version_of(unit, &consent.grant_id)?.is_some() {
+        let id = consent.grant_id;
+        applied(
+            unit,
+            cache,
+            Change::Delete {
+                id: id.clone(),
+                version: None,
+            },
+        )?;
+        applied(unit, cache, Change::Purge { id, version: None })?;
+    }
+    store::remove_consent(tx, client_id, user_id)
+}

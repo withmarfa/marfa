@@ -1,7 +1,7 @@
 //! The doors of signing in, of setup and of the owner.
 
 pub mod cookies;
-mod origin;
+pub(super) mod origin;
 mod owner;
 mod pages;
 mod setup;
@@ -49,7 +49,7 @@ impl FromRequestParts<Arc<App>> for Visit {
     }
 }
 
-fn redirect(status: StatusCode, location: &str) -> Result<Response, Stopped> {
+pub(super) fn redirect(status: StatusCode, location: &str) -> Result<Response, Stopped> {
     let location = HeaderValue::from_str(location)
         .map_err(|_| Refusal::internal("a redirect did not form"))?;
     let mut response = Response::new(axum::body::Body::empty());
