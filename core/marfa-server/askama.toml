@@ -1,0 +1,6 @@
+[general]
+dirs = ["src/http/pages/templates"]
+
+[[escaper]]
+path = "crate::http::pages::escape::Html"
+extensions = ["html"]

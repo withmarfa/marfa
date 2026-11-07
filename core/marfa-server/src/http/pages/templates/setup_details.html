@@ -1,0 +1,24 @@
+<h1>Create your account</h1>
+<p class="lede">You'll use these details to sign in to this Marfa.</p>
+{% if let Some(message) = view.notice %}
+<p class="notice error" role="alert">{{ message }}</p>
+{% endif %}
+<form id="owner-form" method="post" action="/setup/claim" class="stack">
+<div class="field">
+<label for="name">Name</label>
+<input id="name" type="text" name="name" value="{{ view.name }}" autocomplete="name"{% if view.errors.name.is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
+{% if let Some(message) = view.errors.name %}<p class="error" id="name-error">{{ message }}</p>{% endif %}
+</div>
+<div class="field">
+<label for="email">Email</label>
+<input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="username" autocapitalize="none" spellcheck="false" required{% if view.errors.email.is_some() %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
+{% if let Some(message) = view.errors.email %}<p class="error" id="email-error">{{ message }}</p>{% endif %}
+</div>
+<div class="field">
+<label for="password">Password</label>
+<input id="password" type="password" name="password" autocomplete="new-password" required aria-describedby="password-hint{% if view.errors.password.is_some() %} password-error{% endif %}"{% if view.errors.password.is_some() %} aria-invalid="true"{% endif %}>
+<p class="hint" id="password-hint">Choose a password you don't use anywhere else.</p>
+{% if let Some(message) = view.errors.password %}<p class="error" id="password-error">{{ message }}</p>{% endif %}
+</div>
+<button type="submit" class="button primary wide">Create account</button>
+</form>
