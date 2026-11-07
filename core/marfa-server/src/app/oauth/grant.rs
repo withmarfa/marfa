@@ -197,3 +197,29 @@ pub(super) fn end(
     }
     Ok(true)
 }
+
+/// Removes a withdrawn grant altogether: its item and its consent.
+pub(super) fn forget(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    client_id: &str,
+    user_id: &str,
+) -> Result<()> {
+    let tx = unit.tx();
+    let Some(consent) = store::consent(tx, client_id, user_id)? else {
+        return Ok(());
+    };
+    if version_of(unit, &consent.grant_id)?.is_some() {
+        let id = consent.grant_id;
+        applied(
+            unit,
+            cache,
+            Change::Delete {
+                id: id.clone(),
+                version: None,
+            },
+        )?;
+        applied(unit, cache, Change::Purge { id, version: None })?;
+    }
+    store::remove_consent(tx, client_id, user_id)
+}

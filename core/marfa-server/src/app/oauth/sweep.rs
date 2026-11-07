@@ -2,8 +2,6 @@
 //! run at any time and as often as a caller likes, and works in batches so no
 //! write holds the others up for long.
 
-use std::sync::Arc;
-
 use rusqlite::params;
 use serde_json::json;
 
@@ -13,6 +11,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::audit::{self, Entry};
 use crate::app::refusal::Result;
+use crate::app::unit::Unit;
 use crate::db::Write;
 use crate::settings::registry::{
     DCR_CLIENT_RETENTION_DAYS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
@@ -26,6 +25,17 @@ const GRANT_RETIRED: &str = "auth.grant.retired";
 
 fn cutoff_of(app: &App, days: u64) -> Option<i64> {
     (days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY)
+}
+
+fn last_batch(count: usize) -> bool {
+    i64::try_from(count).unwrap_or(0) < BATCH
+}
+
+fn consents_in(unit: &Unit<'_, '_>, query: &str, cutoff: i64) -> Result<Vec<(String, String)>> {
+    let mut found = unit.tx().prepare(query)?;
+    Ok(found
+        .query_map(params![cutoff, BATCH], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 fn note_set(
@@ -52,7 +62,7 @@ fn note_set(
 
 /// `dcr-client-cleanup`: removes clients nobody approved, which nothing has
 /// shown or used since the cutoff. Anything a client holds spares it.
-pub async fn remove_idle_clients(app: &Arc<App>) -> Result<usize> {
+pub async fn remove_idle_clients(app: &App) -> Result<usize> {
     let Some(cutoff) = cutoff_of(app, app.settings.live().get(DCR_CLIENT_RETENTION_DAYS)) else {
         return Ok(0);
     };
@@ -82,7 +92,7 @@ pub async fn remove_idle_clients(app: &Arc<App>) -> Result<usize> {
             })
             .await?;
         removed += batch;
-        if i64::try_from(batch).unwrap_or(0) < BATCH {
+        if last_batch(batch) {
             return Ok(removed);
         }
     }
@@ -90,92 +100,120 @@ pub async fn remove_idle_clients(app: &Arc<App>) -> Result<usize> {
 
 /// Ends the grants no app has used since the cutoff, as a person's Disconnect
 /// would.
-pub async fn retire_idle_grants(app: &Arc<App>) -> Result<usize> {
+pub async fn retire_idle_grants(app: &App) -> Result<usize> {
     let Some(cutoff) = cutoff_of(app, app.settings.live().get(GRANT_INACTIVITY_DAYS)) else {
         return Ok(0);
     };
-    let cache = app.catalog_handle();
-    app.write(&Caller::Local, GRANT_RETIRED, move |unit| {
-        let idle: Vec<(String, String)> = {
-            let mut found = unit.tx().prepare(
-                "SELECT client_id, user_id FROM auth_oauth_consent \
-                 WHERE withdrawn_at IS NULL \
-                 AND COALESCE(last_used_at, updated_at) < ?1 LIMIT ?2",
-            )?;
-            found
-                .query_map(params![cutoff, BATCH], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?
-        };
-        let mut retired = 0;
-        for (client_id, user_id) in idle {
-            if !grant::end(unit, &cache, &client_id, &user_id)? {
-                continue;
-            }
-            retired += 1;
-            audit::record_from(
-                unit.tx(),
-                &unit.at,
-                None,
-                None,
-                Entry {
-                    action: GRANT_RETIRED,
-                    resource_type: "oauth_grant",
-                    resource_id: Some(&client_id),
-                    details: Some(json!({
-                        "client_id": client_id,
-                        "user_id": user_id,
-                        "cutoff": stamp_of(cutoff),
-                    })),
-                },
-            )?;
+    let mut retired = 0;
+    loop {
+        let cache = app.catalog_handle();
+        let batch = app
+            .write(&Caller::Local, GRANT_RETIRED, move |unit| {
+                let idle = consents_in(
+                    unit,
+                    "SELECT client_id, user_id FROM auth_oauth_consent \
+                     WHERE withdrawn_at IS NULL \
+                     AND COALESCE(last_used_at, updated_at) < ?1 LIMIT ?2",
+                    cutoff,
+                )?;
+                for (client_id, user_id) in &idle {
+                    grant::end(unit, &cache, client_id, user_id)?;
+                    audit::record_from(
+                        unit.tx(),
+                        &unit.at,
+                        None,
+                        None,
+                        Entry {
+                            action: GRANT_RETIRED,
+                            resource_type: "oauth_grant",
+                            resource_id: Some(client_id),
+                            details: Some(json!({
+                                "client_id": client_id,
+                                "user_id": user_id,
+                                "cutoff": stamp_of(cutoff),
+                            })),
+                        },
+                    )?;
+                }
+                Ok(idle.len())
+            })
+            .await?;
+        retired += batch;
+        if last_batch(batch) {
+            return Ok(retired);
         }
-        Ok(retired)
-    })
-    .await
+    }
 }
 
-/// Removes the consent rows of grants withdrawn before the cutoff, so a
-/// client they alone kept can go. The revoked item stays as the record.
-pub async fn purge_withdrawn_grants(app: &Arc<App>) -> Result<usize> {
+/// Removes the grants withdrawn before the cutoff, so a client they alone
+/// kept can go.
+pub async fn purge_withdrawn_grants(app: &App) -> Result<usize> {
     let Some(cutoff) = cutoff_of(app, app.settings.live().get(REVOKED_GRANT_RETENTION_DAYS)) else {
         return Ok(0);
     };
-    let at = app.clock.stamp();
-    app.db
-        .write(Write::caller(GRANTS_PURGED), move |tx| {
-            let count = tx.execute(
-                "DELETE FROM auth_oauth_consent WHERE rowid IN ( \
-                 SELECT rowid FROM auth_oauth_consent \
-                 WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2)",
-                params![cutoff, BATCH],
-            )?;
-            if count > 0 {
-                note_set(tx, &at, GRANTS_PURGED, "oauth_grant", count, cutoff)?;
-            }
-            Ok(count)
-        })
-        .await
+    let mut purged = 0;
+    loop {
+        let cache = app.catalog_handle();
+        let batch = app
+            .write(&Caller::Local, GRANTS_PURGED, move |unit| {
+                let withdrawn = consents_in(
+                    unit,
+                    "SELECT client_id, user_id FROM auth_oauth_consent \
+                     WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2",
+                    cutoff,
+                )?;
+                for (client_id, user_id) in &withdrawn {
+                    grant::forget(unit, &cache, client_id, user_id)?;
+                }
+                if !withdrawn.is_empty() {
+                    note_set(
+                        unit.tx(),
+                        &unit.at,
+                        GRANTS_PURGED,
+                        "oauth_grant",
+                        withdrawn.len(),
+                        cutoff,
+                    )?;
+                }
+                Ok(withdrawn.len())
+            })
+            .await?;
+        purged += batch;
+        if last_batch(batch) {
+            return Ok(purged);
+        }
+    }
 }
 
 /// Removes codes and tokens past their end. A rotated refresh token stays
 /// until then, since a replay of it must still be recognized.
 pub async fn sweep_expired(app: &App) -> Result<usize> {
     let now = app.clock.now_ms();
-    app.db
-        .write(Write::own(), move |tx| {
-            let mut removed = 0;
-            for table in [
-                "auth_oauth_code",
-                "auth_oauth_device_code",
-                "auth_oauth_access_token",
-                "auth_oauth_refresh_token",
-            ] {
-                removed += tx.execute(
-                    &format!("DELETE FROM {table} WHERE expires_at <= ?1"),
-                    [now],
-                )?;
+    let mut removed = 0;
+    for (table, key) in [
+        ("auth_oauth_code", "digest"),
+        ("auth_oauth_device_code", "device_code"),
+        ("auth_oauth_access_token", "id"),
+        ("auth_oauth_refresh_token", "id"),
+    ] {
+        loop {
+            let batch = app
+                .db
+                .write(Write::own(), move |tx| {
+                    Ok(tx.execute(
+                        &format!(
+                            "DELETE FROM {table} WHERE {key} IN ( \
+                             SELECT {key} FROM {table} WHERE expires_at <= ?1 LIMIT ?2)"
+                        ),
+                        params![now, BATCH],
+                    )?)
+                })
+                .await?;
+            removed += batch;
+            if last_batch(batch) {
+                break;
             }
-            Ok(removed)
-        })
-        .await
+        }
+    }
+    Ok(removed)
 }

@@ -321,6 +321,14 @@ pub fn withdraw_consent(tx: &Connection, client_id: &str, user_id: &str, now: i6
     Ok(())
 }
 
+pub fn remove_consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<()> {
+    tx.execute(
+        "DELETE FROM auth_oauth_consent WHERE client_id = ?1 AND user_id = ?2",
+        [client_id, user_id],
+    )?;
+    Ok(())
+}
+
 pub fn note_consent_used(tx: &Connection, client_id: &str, user_id: &str, now: i64) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_consent SET last_used_at = ?3 \
