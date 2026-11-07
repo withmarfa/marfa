@@ -9,6 +9,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use marfa_server::app::App;
 use marfa_server::app::oauth::authorize::sign_in_then;
+use marfa_server::app::oauth::signed_link;
 use marfa_server::app::oauth::sweep;
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -617,33 +618,29 @@ async fn a_stored_set_whose_literals_do_not_cover_each_other_still_stands() {
 async fn a_post_naming_a_scope_the_request_narrowed_away_grants_nothing() {
     let instance = Instance::signed_in().await;
     let client = instance.register("*:read").await;
-    let link = instance.consent_link(&client, "*:read").await;
-    let reply = instance
-        .send(post_form(
-            "/auth/authorize/decision",
-            Some(&instance.cookie),
-            &[
-                ("accept", "true"),
-                ("oauth_query", &link),
-                ("scopes", "system.*:read"),
-            ],
-        ))
-        .await;
+    let wide = "*:read system.*:read";
+    let params: Vec<(String, String)> = [
+        ("client_id", client.as_str()),
+        ("redirect_uri", CALLBACK),
+        ("response_type", "code"),
+        ("code_challenge", &challenge()),
+        ("code_challenge_method", "S256"),
+        ("scope", wide),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.to_string()))
+    .collect();
+    let exp = instance.app.clock.now_ms() / 1_000 + 600;
+    let secret = &instance.app.settings.start.auth_secret;
+    let link = signed_link::sign(&params, exp, secret).unwrap();
+    let consents = "SELECT count(*) FROM auth_oauth_consent";
+
+    let reply = instance.decide(&link, &["system.*:read"]).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text);
-    assert_eq!(
-        instance
-            .count("SELECT count(*) FROM auth_oauth_consent")
-            .await,
-        0
-    );
+    assert_eq!(instance.count(consents).await, 0);
     let witness = instance.decide(&link, &["*:read"]).await;
     assert!(code_in(&witness).is_some(), "{}", witness.text);
-    assert_eq!(
-        instance
-            .count("SELECT count(*) FROM auth_oauth_consent")
-            .await,
-        1
-    );
+    assert_eq!(instance.count(consents).await, 1);
 }
 
 #[tokio::test]
