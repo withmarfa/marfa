@@ -173,6 +173,14 @@ registry! {
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: u64::MAX }, "200";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: u64::MAX }, "60000";
     ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true";
+    AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Some("AUDIT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
+    TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Some("TRASH_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "60";
+    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Some("MARFA_EVENT_LOG_RETENTION_HOURS"), Rule::Whole { min: 0, max: 876_000 }, "720";
+    VERSION_RECENT_DAYS: u64 = "version_recent_days", Some("VERSION_RECENT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "30";
+    VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Some("VERSION_DAILY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90";
+    VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365";
+    VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: u64::MAX }, "500";
+    HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true";
     ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "";
 }
