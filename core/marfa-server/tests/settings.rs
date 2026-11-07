@@ -333,11 +333,11 @@ async fn a_change_is_live_at_once_survives_a_restart_and_clears_to_the_seed() {
     assert_eq!(instance.row("max_request_bytes"), None);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn racing_changes_leave_the_snapshot_at_the_last_commit() {
     let instance = Instance::start().await;
-    for round in 0..25u64 {
-        let changes = (1..=16u64).map(|n| {
+    for round in 0..1000u64 {
+        let changes = (1..=8u64).map(|n| {
             let app = instance.app.clone();
             tokio::spawn(async move {
                 let value = round * 100 + n;
