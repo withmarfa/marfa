@@ -22,6 +22,7 @@ import type { Answer, SseFrame } from "../../device/scripted-server.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
   EdgeDoor,
+  lastReport,
   scriptFolderWrites,
   sentCreates,
   sentEdgeWrites,
@@ -202,6 +203,9 @@ describe("links held until their target exists", () => {
     ]);
     expect(first.flagged[0]?.reason).toContain("matches no item");
     expect((await fileAt("Ticket.md")).status).toBe("held");
+    expect(lastReport(folder!).problems).toEqual([
+      { code: "held_file", count: 1 },
+    ]);
 
     // The witness: the first push asked the server for the name.
     const asked = lookups();

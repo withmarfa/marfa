@@ -111,6 +111,15 @@ async function folder(): Promise<string> {
   expect(r.status).toBe(201);
   return ((await r.json()) as { item: { id: string } }).item.id;
 }
+const NO_SUCH_ID = "01920000-0000-7000-8000-000000000000";
+async function aNote(): Promise<string> {
+  const r = await call("POST", "/items", {
+    type: "core.note",
+    properties: { body: "Not a folder" },
+  });
+  expect(r.status).toBe(201);
+  return ((await r.json()) as { item: { id: string } }).item.id;
+}
 async function key(
   type_permissions: Record<string, string> = { "system.folder": "read" },
   expires_at?: string,
@@ -188,8 +197,16 @@ describe("folder sync reports", () => {
     } while (cursor);
     expect(ids.has(firstId)).toBe(true);
     expect(ids.has(secondId)).toBe(true);
-    expect((await call("GET", "/folders")).status).toBe(403);
-    expect((await fetch(`${server.apiUrl}/folders`)).status).toBe(401);
+    const fromKey = await call("GET", "/folders");
+    expect(fromKey.status).toBe(403);
+    expect(await fromKey.json()).toMatchObject({
+      error: { code: "forbidden" },
+    });
+    const noCredential = await fetch(`${server.apiUrl}/folders`);
+    expect(noCredential.status).toBe(401);
+    expect(await noCredential.json()).toMatchObject({
+      error: { code: "unauthorized" },
+    });
     expect(
       (await call("GET", "/folders?limit=0", undefined, "", cookie)).status,
     ).toBe(400);
@@ -319,6 +336,286 @@ describe("folder sync reports", () => {
     expect(refused.body).toMatchObject({ error: { code: "forbidden" } });
     expect((await get(id)).sign_ins).toHaveLength(1);
   });
+  it("refuses a local command's invalid report and missing folder before its lack of a sign-in", async () => {
+    const id = await folder();
+    const note = await aNote();
+    for (const [path, body, status, code] of [
+      [id, report, 403, "forbidden"],
+      [id, {}, 400, "missing_required_field"],
+      [id, { ...report, folder_store_id: "/x" }, 400, "validation_error"],
+      ["not-an-id", report, 400, "invalid_id"],
+      [NO_SUCH_ID, report, 404, "item_not_found"],
+      [note, report, 404, "item_not_found"],
+    ] as const) {
+      const answer = await controlRequest(
+        server.controlSocket,
+        `/folders/${path}/status`,
+        { method: "PUT", body },
+      );
+      expect(answer.status, `${path} ${code}`).toBe(status);
+      expect(answer.body).toMatchObject({ error: { code } });
+    }
+    expect((await get(id)).sign_ins).toEqual([]);
+  });
+  it("answers item_not_found to the owner and a local command for an ID that holds no folder", async () => {
+    const id = await folder();
+    const note = await aNote();
+    const cookie = await signIn(server, origin);
+    const asOwner = (target: string) =>
+      call("GET", `/folders/${target}/status`, undefined, "", cookie);
+    const asLocal = (target: string) =>
+      controlRequest(server.controlSocket, `/folders/${target}/status`);
+    expect((await asOwner(id)).status).toBe(200);
+    expect((await asLocal(id)).status).toBe(200);
+    for (const target of [NO_SUCH_ID, note]) {
+      const owner = await asOwner(target);
+      expect(owner.status).toBe(404);
+      expect(await owner.json()).toMatchObject({
+        error: { code: "item_not_found" },
+      });
+      const local = await asLocal(target);
+      expect(local.status).toBe(404);
+      expect(local.body).toMatchObject({ error: { code: "item_not_found" } });
+    }
+    const ownerPut = await call(
+      "PUT",
+      `/folders/${NO_SUCH_ID}/status`,
+      report,
+      "",
+      cookie,
+    );
+    expect(ownerPut.status).toBe(404);
+    expect(await ownerPut.json()).toMatchObject({
+      error: { code: "item_not_found" },
+    });
+  });
+  it("keeps taking and answering reports for a revoked folder", async () => {
+    const id = await folder();
+    await put(id);
+    const revoked = await call("POST", `/folders/${id}/revoke`);
+    expect(revoked.status).toBe(200);
+    expect(
+      ((await revoked.json()) as { item: { state: string } }).item.state,
+    ).toBe("revoked");
+    const reader = await key();
+    const ack = await put(id, { ...report, sequence: 2 });
+    expect(ack).toMatchObject({ accepted: true, sequence: 2 });
+    expect(
+      await put(id, { ...report, folder_store_id: "copy-b" }, reader.key),
+    ).toMatchObject({ accepted: true, sequence: 1 });
+    const status = await get(id);
+    expect(status.sign_ins.map((group) => group.copies[0]!.sequence)).toEqual(
+      expect.arrayContaining([2, 1]),
+    );
+    expect(status.sign_ins).toHaveLength(2);
+  });
+  it("takes a copy ID of 1 to 128 letters, digits, hyphens and underscores and refuses any other", async () => {
+    const id = await folder();
+    const longest = "a".repeat(128);
+    for (const accepted of [
+      "a",
+      longest,
+      "AZaz09_-",
+      "01920000-0000-7000-8000-000000000000",
+    ]) {
+      expect(
+        await put(id, { ...report, folder_store_id: accepted }),
+        accepted,
+      ).toMatchObject({ accepted: true });
+    }
+    const before = await get(id);
+    expect(before.sign_ins[0]!.copies.map((c) => c.folder_store_id)).toContain(
+      longest,
+    );
+    for (const refused of [
+      "",
+      "a".repeat(129),
+      "a b",
+      "a.b",
+      "a/b",
+      "café",
+      "a\n",
+    ]) {
+      const r = await call("PUT", `/folders/${id}/status`, {
+        ...report,
+        folder_store_id: refused,
+      });
+      expect(r.status, JSON.stringify(refused)).toBe(400);
+      expect(await r.json()).toMatchObject({
+        error: { code: "validation_error" },
+      });
+    }
+    expect((await get(id)).sign_ins[0]!.copies).toHaveLength(
+      before.sign_ins[0]!.copies.length,
+    );
+  });
+  it("orders sign-ins by kind and ID and total problems as they first appear", async () => {
+    const id = await folder();
+    const [low, high] = [await key(), await key()].sort((a, b) =>
+      a.id < b.id ? -1 : 1,
+    );
+    const cookie = await signIn(server, origin);
+    const app = await registerApp(server, "system.folder:read");
+    const token = await connect(
+      server,
+      origin,
+      cookie,
+      app,
+      "system.folder:read",
+    );
+    const reporting = (problems: { code: string; count: number }[]) => ({
+      ...report,
+      problems,
+    });
+    // Reported in the reverse of the order they are listed in, so neither
+    // order below can be the order the reports arrived in.
+    await put(
+      id,
+      reporting([
+        { code: "refused", count: 1 },
+        { code: "held_file", count: 1 },
+      ]),
+      high!.key,
+    );
+    await put(
+      id,
+      reporting([
+        { code: "settings_invalid", count: 1 },
+        { code: "refused", count: 1 },
+      ]),
+      low!.key,
+    );
+    const browser = await call(
+      "PUT",
+      `/folders/${id}/status`,
+      reporting([
+        { code: "held_file", count: 2 },
+        { code: "conflict", count: 1 },
+      ]),
+      "",
+      cookie,
+    );
+    expect(browser.status).toBe(200);
+    await put(
+      id,
+      reporting([{ code: "unavailable", count: 1 }]),
+      token.access_token!,
+    );
+
+    const status = await get(id);
+    expect(status.sign_ins.map((group) => group.sign_in.kind)).toEqual([
+      "app",
+      "browser",
+      "key",
+      "key",
+    ]);
+    expect(status.sign_ins[2]!.sign_in.id).toBe(low!.id);
+    expect(status.sign_ins[3]!.sign_in.id).toBe(high!.id);
+    expect(status.totals.problems).toEqual([
+      { code: "unavailable", count: 1 },
+      { code: "held_file", count: 3 },
+      { code: "conflict", count: 1 },
+      { code: "settings_invalid", count: 1 },
+      { code: "refused", count: 2 },
+    ]);
+  });
+  it("orders copies by latest receipt, and copies received together by copy ID", async () => {
+    const id = await folder();
+    const copies = async () =>
+      (await get(id)).sign_ins[0]!.copies.map((c) => c.folder_store_id);
+    const wait = () => new Promise((resolve) => setTimeout(resolve, 15));
+    await put(id, { ...report, folder_store_id: "copy-a" });
+    await wait();
+    await put(id, { ...report, folder_store_id: "copy-b" });
+    expect(await copies()).toEqual(["copy-b", "copy-a"]);
+    await wait();
+    await put(id, { ...report, folder_store_id: "copy-a", sequence: 2 });
+    expect(await copies()).toEqual(["copy-a", "copy-b"]);
+
+    await clock.pause();
+    try {
+      await put(id, { ...report, folder_store_id: "copy-z" });
+      await put(id, { ...report, folder_store_id: "copy-y" });
+      const listed = (await get(id)).sign_ins[0]!.copies;
+      expect(listed[0]!.received_at).toBe(listed[1]!.received_at);
+      expect(listed.map((c) => c.folder_store_id)).toEqual([
+        "copy-y",
+        "copy-z",
+        "copy-a",
+        "copy-b",
+      ]);
+    } finally {
+      await clock.resume();
+    }
+  });
+  it("pages the folder inventory 50 at a time unless a limit from 1 to 200 is named", async () => {
+    const cookie = await signIn(server, origin);
+    const asOwner = (query: string) =>
+      call("GET", `/folders${query}`, undefined, "", cookie);
+    interface Page {
+      data: { id: string }[];
+      next_cursor: string | null;
+    }
+    const made = new Set<string>();
+    for (let index = 0; index < 51; index++) made.add(await folder());
+
+    const standard = await asOwner("");
+    expect(standard.status).toBe(200);
+    const first = (await standard.json()) as Page;
+    expect(first.data).toHaveLength(50);
+    expect(first.next_cursor).not.toBeNull();
+    const local = await controlRequest(server.controlSocket, "/folders");
+    expect(local.body.data as unknown[]).toHaveLength(50);
+
+    const two = (await (await asOwner("?limit=2")).json()) as Page;
+    expect(two.data).toHaveLength(2);
+
+    const whole = await asOwner("?limit=200");
+    expect(whole.status).toBe(200);
+    const wholePage = (await whole.json()) as Page;
+    expect(wholePage.data.length).toBeGreaterThan(50);
+    expect(wholePage.data.length).toBeLessThanOrEqual(200);
+
+    const walked: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const query: string = cursor
+        ? `?limit=20&cursor=${encodeURIComponent(cursor)}`
+        : "?limit=20";
+      const answer = await asOwner(query);
+      expect(answer.status).toBe(200);
+      const page = (await answer.json()) as Page;
+      walked.push(...page.data.map((row) => row.id));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(new Set(walked).size).toBe(walked.length);
+    for (const id of made) expect(walked).toContain(id);
+
+    for (const limit of ["0", "201", "abc", "1.5"]) {
+      const refused = await asOwner(`?limit=${limit}`);
+      expect(refused.status, String(limit)).toBe(400);
+      expect(await refused.json()).toMatchObject({
+        error: {
+          code: "validation_error",
+          details: { errors: [{ path: "limit" }] },
+        },
+      });
+    }
+
+    await aNote();
+    await aNote();
+    const otherOrdering = (await (
+      await call("GET", "/items?limit=1&sort=updated_at")
+    ).json()) as Page;
+    expect(otherOrdering.next_cursor).not.toBeNull();
+    for (const refused of ["broken", otherOrdering.next_cursor!]) {
+      const answer = await asOwner(`?cursor=${encodeURIComponent(refused)}`);
+      expect(answer.status, refused).toBe(400);
+      expect(await answer.json()).toMatchObject({
+        error: { code: "validation_error" },
+      });
+    }
+  });
   it("groups multiple copies under their canonical sign-ins and counts current observations", async () => {
     const id = await folder();
     const a = await key();
@@ -382,25 +679,38 @@ describe("folder sync reports", () => {
   });
   it("answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals", async () => {
     const id = await folder();
-    const unauthorized = await fetch(`${server.apiUrl}/folders/${id}/status`);
-    expect(unauthorized.status).toBe(401);
-    expect(await unauthorized.json()).toMatchObject({
-      error: { code: "unauthorized" },
-    });
-    const invalid = await call("GET", "/folders/not-an-id/status");
-    expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toMatchObject({
-      error: { code: "invalid_id" },
-    });
-    const missing = await call(
-      "PUT",
-      "/folders/01920000-0000-7000-8000-000000000000/status",
-      report,
-    );
-    expect(missing.status).toBe(404);
-    expect(await missing.json()).toMatchObject({
-      error: { code: "item_not_found" },
-    });
+    const note = await aNote();
+    const write = (method: string) =>
+      method === "PUT"
+        ? {
+            method,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+          }
+        : { method };
+    for (const method of ["GET", "PUT"]) {
+      const unauthorized = await fetch(
+        `${server.apiUrl}/folders/${id}/status`,
+        write(method),
+      );
+      expect(unauthorized.status, method).toBe(401);
+      expect(await unauthorized.json()).toMatchObject({
+        error: { code: "unauthorized" },
+      });
+      const body = method === "PUT" ? report : undefined;
+      const invalid = await call(method, "/folders/not-an-id/status", body);
+      expect(invalid.status, method).toBe(400);
+      expect(await invalid.json()).toMatchObject({
+        error: { code: "invalid_id" },
+      });
+      for (const target of [NO_SUCH_ID, note]) {
+        const missing = await call(method, `/folders/${target}/status`, body);
+        expect(missing.status, method).toBe(404);
+        expect(await missing.json()).toMatchObject({
+          error: { code: "item_not_found" },
+        });
+      }
+    }
     const empty = await key({});
     for (const method of ["GET", "PUT"]) {
       const forbidden = await call(

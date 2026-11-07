@@ -7678,6 +7678,100 @@ When a device reports a folder's sync health, a device MUST send only `folder_st
 
 **Tests:** `device/folder-health.test.ts › reports a confirmed complete sync using the registry's opaque copy identity`.
 
+### `folders/report-pending-uploads`
+
+While a folder inventory is complete, a device MUST report as `pending_uploads` the number of files `folders status` lists as `waiting`.
+
+**Tests:** `device/folder-health.test.ts › counts the files its status shows waiting as pending uploads`, `› counts no problem for a file whose item is already in the bin`.
+
+### `folders/report-pending-downloads`
+
+When a pull completes, a device MUST report as `pending_downloads`, until a later pull completes, the number of distinct items that pull flagged `unwritten`, `absent`, `outside` or `unsuited`.
+
+**Tests:** `device/folder-health.test.ts › counts what the last pull could not write as pending downloads and held files, until a later pull writes it`, `device/folders-placement.test.ts › reports each item a pull could not write as one pending download, and as a held file unless its bytes were absent`.
+
+### `folders/report-paused-removals`
+
+A device MUST report as `paused_removals` the sum of the `disk` and `pull` counts of `paused` in `folders status`.
+
+**Tests:** `device/folder-health.test.ts › counts the removals a large removal holds on disk or from a pull as paused removals and no problem`.
+
+### `folders/report-refused-files`
+
+When `folders status` flags a file `refused` or `default_edge_refused`, a device MUST count that file in its report under `refused`.
+
+**Tests:** `device/folder-health.test.ts › counts a file the server refused under refused`, `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`.
+
+### `folders/report-unreadable-files`
+
+When `folders status` flags a file `encoding` or `unreadable` and the file does not lie beneath a directory flagged `unreadable`, a device MUST count that file in its report under `unreadable`.
+
+**Reason:** a file beneath an unreadable directory is counted through the directory, by `folders/report-unreadable-once`.
+
+**Tests:** `device/folder-health.test.ts › counts a file flagged encoding or unreadable under unreadable`.
+
+### `folders/report-held-files`
+
+When `folders status` flags a file with a flag other than `removal`, `query`, `gone`, `refused`, `default_edge_refused`, `credential_refused`, `encoding` or `unreadable`, a device MUST count that file in its report under `held_file`.
+
+**Reason:** a file held for any cause the other statements do not name is one the person still has to act on. The fixtures below witness `empty`, `addition`, `outside_query`, `edges` and `dead`; `name`, `lost` and `lists` have none.
+
+**Tests:** `device/folder-health.test.ts › counts an empty file as a held file, and a file the query leaves alone as no problem`, `› keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`, `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
+
+### `folders/report-unproblematic-files`
+
+When `folders status` flags a file `removal`, `query` or `gone`, a device MUST NOT count that file in its report under any problem code.
+
+**Reason:** a removal held back is counted by `folders/report-paused-removals`, a file the query leaves alone is not a fault, and a file whose item is already in the bin only waits for a scan to let it go.
+
+**Tests:** `device/folder-health.test.ts › counts the removals a large removal holds on disk or from a pull as paused removals and no problem`, `› counts an empty file as a held file, and a file the query leaves alone as no problem`, `› counts no problem for a file whose item is already in the bin`.
+
+### `folders/report-unreadable-once`
+
+While a file flagged `unreadable` lies beneath a directory flagged `unreadable`, a device MUST count the directory and not the file under `unreadable`.
+
+**Tests:** `device/folder-health.test.ts › counts a file in an unreadable directory only through the directory`.
+
+### `folders/report-pull-problems`
+
+When a pull completes, a device MUST count under `held_file`, until a later pull completes, each distinct item that pull flagged `unwritten`, `outside` or `unsuited`.
+
+**Tests:** `device/folder-health.test.ts › counts what the last pull could not write as pending downloads and held files, until a later pull writes it`, `device/folders-placement.test.ts › reports each item a pull could not write as one pending download, and as a held file unless its bytes were absent`.
+
+### `folders/report-conflicts`
+
+A device MUST report under `conflict` the number of items outside the bin that are tagged `conflicted-copy` and are the source of a `derived-from` edge with a bound file's item at either end.
+
+**Tests:** `device/folder-health.test.ts › counts a tagged copy derived from a bound file as a conflict, whichever end holds the file, and neither one in the bin nor one without the tag`, `› counts no conflict for a tagged copy derived from an item when neither has a file`.
+
+### `folders/report-credential-refused`
+
+If the server answers a write from a folder with `401 unauthorized`, then a device MUST report `credential_refused` with a count of 1, however many files that holds back.
+
+**Reason:** a refused key is one fault of the whole folder, not one problem for each file it holds back.
+
+**Tests:** `device/folder-health.test.ts › counts one credential_refused however many files a refused key holds back`.
+
+### `folders/report-unavailable`
+
+If the server cannot be reached, or answers a read of a folder's changes with `403`, `429` or a `5xx`, then a device MUST report `unavailable` with a count of 1.
+
+**Reason:** a `403` on a read is a grant that may not read, which `folders/report-credential-refused` does not cover. `folders/health-hydrating` withholds this report while a copy that answers `hydration_incomplete` fills.
+
+**Tests:** `device/folder-health.test.ts › does not advance last full success after an offline push with an empty queue`, `› reports unavailable while the server answers a read %s`, `› reports unavailable, and not credential_refused, for a read the server answers 403`.
+
+### `folders/report-root-gone`
+
+When a pass reports `root_gone`, a device MUST report the problem `root_gone` with a count of 1.
+
+**Tests:** `device/folder-health.test.ts › counts one root_gone when another directory has taken the folder's place`, `› counts one root_gone when another directory has taken the folder's place as a pull writes`.
+
+### `folders/report-settings-invalid`
+
+While a device cannot use or cannot write a folder's settings file and the folder's first sync is not waiting, a device MUST report `settings_invalid` with a count of 1.
+
+**Tests:** `device/folder-health.test.ts › counts one settings_invalid while the settings file is refused`, `› counts one settings_invalid while a pull cannot write the settings file, and none once it can`, `› counts no settings_invalid for a refused settings file while the first sync waits`.
+
 ### `folders/report-full-success`
 
 When a confirmed folder sync completes with a complete readable inventory and without pending uploads, pending downloads, paused removals, first-sync waiting, or current problems, a device MUST report its completion time in `last_success_at`.
@@ -7861,37 +7955,3 @@ Where `--json` is given, the CLI MUST print a storage warning on standard error 
 **Reason:** A program reading standard output gets only JSON, as it does when the CLI warns of a plain `http` address.
 
 **Tests:** `device/folders-storage-warning.test.ts › keeps standard output to its JSON document under --json, with the warning a plain line on standard error`.
-
-## Folder inventory
-
-### `folders/inventory`
-
-When the owner or a private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
-
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
-
-### `folders/inventory-summary`
-
-When `GET /folders` returns a folder summary, the server MUST include only `id`, `title`, and `created_at`.
-
-**Reason:** the console lists folders without exposing folder settings or the content of items they hold. The title uses the stored title with whitespace trimmed and collapsed, or "Untitled folder" when blank. Reported copies are read through `GET /folders/{id}/status`.
-
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
-
-### `folders/inventory-paging`
-
-When `GET /folders` receives `limit` or `cursor`, the server MUST apply the shared paging rules to the active-folder inventory.
-
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.
-
-### `folders/inventory-authority`
-
-When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
-
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
-
-### `folders/inventory-authentication`
-
-When an unauthenticated caller asks for `GET /folders`, the server MUST answer `401 unauthorized`.
-
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.

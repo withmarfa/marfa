@@ -113,6 +113,14 @@ describe("folders: a refused default edge", () => {
     put(harness, BINARY, "not really a picture");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const reported = harness.server.requests.filter(
+      (request: RecordedRequest) =>
+        request.method === "PUT" &&
+        request.pathname === `/folders/${harness?.settings.id}/status`,
+    );
+    expect(JSON.parse(reported.at(-1)?.body ?? "{}")).toMatchObject({
+      problems: [{ code: "refused", count: 2 }],
+    });
 
     for (const path of ["Plain.md", BINARY]) {
       const file = await statusOf(harness, path);
