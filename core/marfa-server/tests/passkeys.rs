@@ -895,6 +895,26 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
 }
 
 #[tokio::test]
+async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() {
+    let instance = Instance::claimed().await;
+    let device = Device::new();
+    instance.add(&device).await;
+    let wrong = json!({ "email": EMAIL, "password": "not the password" });
+    for _ in 0..10 {
+        let refused = instance.post("/auth/sign-in/email", "", &wrong).await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    }
+
+    let signed = instance.sign_in_with(&device, 1).await;
+    assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
+    assert!(signed.session_cookie().is_some());
+
+    let right = json!({ "email": EMAIL, "password": PASSWORD });
+    let still = instance.post("/auth/sign-in/email", "", &right).await;
+    assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
     let instance = Instance::at("http://127.0.0.1:8600").await;
     let door = "/auth/passkey/generate-authenticate-options";
