@@ -218,11 +218,25 @@ Where a view sorts by `title`, the server MUST order each item by the field its 
 
 **Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a title field a type registered at runtime names`.
 
+### `views/items-order-tags`
+
+Where a view sorts by `tags`, the server MUST order each item by the smallest of its tags in binary lexical order of their UTF-8 bytes, in either direction.
+
+**Reason:** `device/view-sort-own` holds a working copy to the same tag, so an app lists a view in one order with a copy or without one.
+
+**Tests:** `compliance/views-items.test.ts › sorts by each item's smallest tag in binary order in either direction, with an untagged item last`.
+
+### `views/items-order-property`
+
+Where a view sorts by a property, the server MUST order the items as `search-and-filters/sort-property-ascending`, `search-and-filters/sort-property-descending`, `search-and-filters/sort-property-missing` and `search-and-filters/sort-property-ties` specify.
+
+**Tests:** `compliance/views-items.test.ts › sorts by a property across numbers, booleans and text, with null, objects and arrays last`.
+
 ### `views/items-order-missing`
 
 Where a view sorts by a field an item does not hold, the server MUST list that item after every item that holds it, in either direction.
 
-**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a property, numbers by value and an item without the property last in either direction`, `› sorts by type, state, tier and tags`.
+**Tests:** `compliance/views-items.test.ts › sorts by title, naming each type's own title field, with an untitled item last in either direction`, `› sorts by a property, numbers by value and an item without the property last in either direction`, `› sorts by type, state, tier and tags`, `› sorts by each item's smallest tag in binary order in either direction, with an untagged item last`.
 
 ### `views/items-order-ties`
 
@@ -235,6 +249,14 @@ Where a view has a sort and items tie on every sort key, the server MUST list th
 Where a view has no sort, the server MUST list items that share an `occurred_at` by descending ID.
 
 **Tests:** `compliance/views-items.test.ts › breaks a tie by descending ID where the view names no sort`.
+
+### `views/items-group-ignored`
+
+Where a view holds a `group`, the server MUST answer `GET /views/{id}/items` with the items it lists for that view with no `group`, in the same order, on a page that holds no groups.
+
+**Reason:** the server stores a `group` for each client to apply to the items it reads. `device/view-group-value`, `device/view-group-tags`, `device/view-group-order`, `device/view-group-hidden`, `device/view-group-edge`, `device/view-date-bucket` and `device/view-date-missing` state what its parts mean, and an app with no working copy gives them the same meaning.
+
+**Tests:** `compliance/views-items.test.ts › lists the same flat page with a group that would hide and reorder rows as without one`.
 
 ### `views/items-limit`
 

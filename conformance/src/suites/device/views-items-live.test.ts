@@ -53,11 +53,21 @@ beforeAll(async () => {
     -2,
     0.5,
     10,
+    0,
+    1,
+    2 ** 53,
+    2 ** 53 + 2,
+    1e300,
     true,
     false,
     "10",
     "2",
+    "",
+    "Z",
+    "a",
     "é",
+    "�",
+    "\u{1F600}",
     null,
     undefined,
     {},
@@ -92,6 +102,32 @@ beforeAll(async () => {
     tags: [mark],
     properties: { body: "untitled" },
   });
+  for (const tags of [
+    ["é", "f"],
+    ["�"],
+    ["\u{1F600}"],
+    [],
+    ["a", "z"],
+    ["b", "a"],
+    ["B", "y"],
+  ]) {
+    await made({
+      type: "core.note",
+      tags,
+      properties: { title: "Outside the mark", body: "" },
+    });
+  }
+  for (const occurred_at of [
+    "2026-03-29T01:30:00.500Z",
+    "2026-03-29T03:30:00+02:00",
+  ]) {
+    await made({
+      type: "core.note",
+      tags: [mark],
+      occurred_at,
+      properties: { title: "Another spelling of a time", body: "" },
+    });
+  }
   const archived = ids[1]!;
   expect((await client.transitionItem(archived, "archived")).ok).toBe(true);
 
@@ -160,6 +196,15 @@ beforeAll(async () => {
   add("tier descending", { sort: [desc("tier")] });
   add("tags ascending", { sort: [asc("tags")] });
   add("tags descending", { sort: [desc("tags")] });
+  const everyTagging = { filter: `source eq "${ctx.source}"` };
+  add("untagged items, tags ascending", {
+    query: everyTagging,
+    sort: [asc("tags")],
+  });
+  add("untagged items, tags descending", {
+    query: everyTagging,
+    sort: [desc("tags")],
+  });
   add("probe ascending", { sort: [asc("properties.probe")] });
   add("probe descending", { sort: [desc("properties.probe")] });
   add("a property no item holds", { sort: [asc("properties.absent")] });

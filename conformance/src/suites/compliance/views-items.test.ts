@@ -362,6 +362,165 @@ describe("the view's items door", () => {
       ),
     ).toEqual([bee.id, ay.id, none.id]);
   });
+
+  it("sorts by each item's smallest tag in binary order in either direction, with an untagged item last", async () => {
+    const source = await freshSource();
+    const tagged = (tags: string[]) => note(source, "Tagged", {}, { tags });
+    const accented = await tagged(["é", "f"]);
+    // UTF-16 code units would put the emoji before U+FFFD; bytes put it after.
+    const replacement = await tagged(["�"]);
+    const emoji = await tagged(["\u{1F600}"]);
+    const none = await note(source, "Untagged");
+    const lone = await tagged(["d"]);
+    const wide = await tagged(["a", "z"]);
+    const tied = await tagged(["b", "a"]);
+    const upper = await tagged(["B", "y"]);
+    const middle = await tagged(["c", "zz"]);
+
+    const up = await viewOf(source, {
+      sort: [{ by: "tags", direction: "asc" }],
+    });
+    expect(await listed(up)).toEqual([
+      upper.id,
+      wide.id,
+      tied.id,
+      middle.id,
+      lone.id,
+      accented.id,
+      replacement.id,
+      emoji.id,
+      none.id,
+    ]);
+    const down = await viewOf(source, {
+      sort: [{ by: "tags", direction: "desc" }],
+    });
+    expect(await listed(down)).toEqual([
+      emoji.id,
+      replacement.id,
+      accented.id,
+      lone.id,
+      middle.id,
+      wide.id,
+      tied.id,
+      upper.id,
+      none.id,
+    ]);
+  });
+
+  it("sorts by a property across numbers, booleans and text, with null, objects and arrays last", async () => {
+    const source = await freshSource();
+    const made = new Map<string, string>();
+    const probes: [string, unknown][] = [
+      ["text Z", "Z"],
+      ["zero", 0],
+      ["null", null],
+      ["2^53", 2 ** 53],
+      ["true", true],
+      ["accented", "é"],
+      // UTF-16 code units would put the emoji before U+FFFD; bytes put it after.
+      ["replacement", "�"],
+      ["emoji", "\u{1F600}"],
+      ["object", { nested: 1 }],
+      ["one", 1],
+      ["negative", -2],
+      ["false", false],
+      ["text 2", "2"],
+      ["real", 0.5],
+      ["array", [1]],
+      ["1e300", 1e300],
+      ["2^53 + 2", 2 ** 53 + 2],
+      ["empty", ""],
+      ["text 10", "10"],
+      ["text a", "a"],
+      ["missing", undefined],
+    ];
+    for (const [name, probe] of probes) {
+      const properties = probe === undefined ? {} : { probe };
+      made.set(name, (await note(source, name, properties)).id);
+    }
+    const ids = (names: string[]) => names.map((name) => made.get(name));
+    const tail = ["null", "object", "array", "missing"];
+
+    const up = await viewOf(source, {
+      sort: [{ by: "properties.probe", direction: "asc" }],
+    });
+    expect(await listed(up)).toEqual(
+      ids([
+        "negative",
+        "zero",
+        "false",
+        "real",
+        "true",
+        "one",
+        "2^53",
+        "2^53 + 2",
+        "1e300",
+        "empty",
+        "text 10",
+        "text 2",
+        "text Z",
+        "text a",
+        "accented",
+        "replacement",
+        "emoji",
+        ...tail,
+      ]),
+    );
+    const down = await viewOf(source, {
+      sort: [{ by: "properties.probe", direction: "desc" }],
+    });
+    expect(await listed(down)).toEqual(
+      ids([
+        "emoji",
+        "replacement",
+        "accented",
+        "text a",
+        "text Z",
+        "text 2",
+        "text 10",
+        "empty",
+        "1e300",
+        "2^53 + 2",
+        "2^53",
+        "true",
+        "one",
+        "real",
+        "zero",
+        "false",
+        "negative",
+        ...tail,
+      ]),
+    );
+  });
+
+  it("lists the same flat page with a group that would hide and reorder rows as without one", async () => {
+    const source = await freshSource();
+    const shown = await note(source, "A", {}, { tags: ["shown"] });
+    const hidden = await note(source, "B", {}, { tags: ["hidden"] });
+    const id = await viewOf(source, {
+      sort: [{ by: "title", direction: "asc" }],
+    });
+    const page = async () => {
+      const r = await client.listViewItems(id);
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      expect(Object.keys(r.data).sort()).toEqual(["data", "next_cursor"]);
+      return r.data.data.map((item) => item.id);
+    };
+    expect(await page()).toEqual([shown.id, hidden.id]);
+
+    const group = { by: "tags", order: ["hidden"], hidden: ["hidden"] };
+    const grouped = await client.updateView(id, { version: 1, group });
+    expect(grouped.status, JSON.stringify(grouped.error)).toBe(200);
+    expect((await client.getItem(id)).data.item.properties.group).toEqual(
+      group,
+    );
+    expect(await page()).toEqual([shown.id, hidden.id]);
+
+    const cleared = await client.updateView(id, { version: 2, group: null });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(await page()).toEqual([shown.id, hidden.id]);
+  });
+
   it("sorts by a property, numbers by value and an item without the property last in either direction", async () => {
     const source = await freshSource();
     const ten = await note(source, "Ten", { notes: "10" });
