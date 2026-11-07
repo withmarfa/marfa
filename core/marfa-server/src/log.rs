@@ -1,21 +1,42 @@
 //! Stdout carries only JSON objects, one per line. A log record has `level`
 //! and `message`; a request record has neither.
+//!
+//! The same events also leave for an OTLP collector, once telemetry has one:
+//! see [`crate::telemetry`].
 
 use std::io::Write;
+use std::sync::OnceLock;
 
 use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
+use tracing_subscriber::filter::{LevelFilter, filter_fn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{Layer, fmt};
+
+use crate::telemetry::{Logs, REQUEST_TARGET};
+
+static LOGS: OnceLock<Logs> = OnceLock::new();
+
+/// The layer that sends log records to a collector, once there is one.
+pub fn logs() -> &'static Logs {
+    LOGS.get_or_init(Logs::default)
+}
 
 pub fn init() {
-    tracing_subscriber::fmt()
+    let lines = fmt::layer()
         .json()
         .flatten_event(true)
         .with_current_span(false)
         .with_span_list(false)
         .with_target(false)
-        .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stdout)
-        .init();
+        .with_filter(filter_fn(|metadata| metadata.target() != REQUEST_TARGET));
+    let _ = tracing_subscriber::registry()
+        .with(lines)
+        .with(logs().clone())
+        .with(LevelFilter::INFO)
+        .try_init();
 }
 
 /// One request's record, written once its answer is ready.
@@ -42,6 +63,19 @@ pub fn now() -> String {
 }
 
 pub fn request(record: &Request<'_>) {
+    if logs().is_on() {
+        tracing::info!(
+            target: REQUEST_TARGET,
+            request_id = record.request_id,
+            method = record.method,
+            transport = record.transport,
+            route = record.route,
+            status = record.status,
+            duration_ms = record.duration_ms,
+            error_code = record.error_code,
+            "Request"
+        );
+    }
     let Ok(mut line) = serde_json::to_vec(record) else {
         return;
     };
@@ -49,4 +83,10 @@ pub fn request(record: &Request<'_>) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(&line);
     let _ = out.flush();
+}
+
+/// A request that ended in a fault no refusal foresaw. `error` is the fault's
+/// message, which holds nothing a statement was given.
+pub fn unhandled(request_id: &str, method: &str, path: &str, route: Option<&str>, error: &str) {
+    tracing::error!(request_id, method, path, route, error, "Unhandled error");
 }

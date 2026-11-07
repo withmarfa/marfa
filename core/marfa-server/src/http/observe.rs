@@ -12,12 +12,14 @@ use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-use super::answer::{Page, asks_for_html};
+use super::answer::{Page, Unhandled, asks_for_html};
 use super::body::Shared;
 use super::page;
 use crate::app::App;
 use crate::app::refusal::Code;
 use crate::log;
+use crate::settings::registry::ERROR_REPORTING_ENABLED;
+use crate::telemetry::Finished;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
@@ -117,6 +119,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         caller_address: None,
     });
 
+    let span = observed.app.telemetry.begin(request.headers(), &method);
     let mut response = next.run(request).await;
     body.finish();
 
@@ -138,18 +141,44 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         .headers()
         .get("x-error-code")
         .and_then(|value| value.to_str().ok());
+    let timestamp = log::now();
+    let route = notes.route.get().map(String::as_str);
+    let fault = response
+        .extensions()
+        .get::<Unhandled>()
+        .map(|held| held.0.clone());
+    if let Some(fault) = &fault {
+        log::unhandled(&request_id, &method, &path, route, &fault.message);
+    }
+    let status = response.status().as_u16();
     log::request(&log::Request {
-        timestamp: &log::now(),
+        timestamp: &timestamp,
         request_id: &request_id,
         method: &method,
         transport: observed.transport.name(),
         path: &path,
-        route: notes.route.get().map(String::as_str),
-        status: response.status().as_u16(),
+        route,
+        status,
         duration_ms: (started.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0,
         key_id: notes.key_id.get().map(String::as_str),
         error_code,
     });
+    let reporting = fault.is_some() && observed.app.settings.live().get(ERROR_REPORTING_ENABLED);
+    observed.app.telemetry.finish(
+        span,
+        &Finished {
+            request_id: &request_id,
+            method: &method,
+            path: &path,
+            route,
+            transport: observed.transport.name(),
+            status,
+            error_code,
+            fault: fault.as_ref(),
+            reporting,
+            timestamp: &timestamp,
+        },
+    );
     response
 }
 

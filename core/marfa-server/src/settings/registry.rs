@@ -172,6 +172,7 @@ registry! {
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: u64::MAX }, "200";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: u64::MAX }, "60000";
+    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true";
     ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "";
 }

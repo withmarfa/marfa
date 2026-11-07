@@ -28,7 +28,6 @@ libc = "0.2"
 marfa-rules.workspace = true
 marfa-telemetry.workspace = true
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
-opentelemetry-appender-tracing = { version = "0.33", default-features = false }
 opentelemetry-http = { version = "0.33", default-features = false }
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-json", "trace", "logs"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
@@ -40,7 +39,6 @@ thiserror.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tower-http = { version = "0.6", features = ["catch-panic"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-tracing-opentelemetry = { version = "0.34", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
 ureq.workspace = true
 url = "2"

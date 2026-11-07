@@ -88,7 +88,7 @@ fn run_transaction<T>(
     match catch_unwind(AssertUnwindSafe(|| job(&tx))) {
         Ok(Ok(value)) => finish(tx, value, write, faults),
         Ok(Err(refusal)) => Err(refusal),
-        Err(_) => Err(Refusal::internal("a write job panicked")),
+        Err(_) => Err(Refusal::panicked("a write job panicked")),
     }
 }
 

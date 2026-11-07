@@ -10,3 +10,4 @@ pub mod http;
 pub mod log;
 pub mod run;
 pub mod settings;
+pub mod telemetry;
