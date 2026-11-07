@@ -11,6 +11,7 @@ pub mod start;
 
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
 
@@ -55,7 +56,7 @@ impl Accepted {
     /// holds the control socket's claim before it comes here.
     pub fn open_secrets(self) -> Result<Settings, Failure> {
         let filled = secrets::open(self.given, &self.fixed.database, self.fixed.test_hooks)?;
-        let live = Snapshot::resolve(&self.seeds, &[]);
+        let live = Snapshot::resolve(&self.seeds, &[], 0);
         Ok(Settings {
             start: Arc::new(Start::new(
                 self.fixed,
@@ -64,6 +65,7 @@ impl Accepted {
             )),
             seeds: self.seeds,
             live: ArcSwap::from_pointee(live),
+            generation: AtomicU64::new(0),
         })
     }
 }
@@ -88,6 +90,7 @@ pub struct Settings {
     pub start: Arc<Start>,
     seeds: Seeds,
     live: ArcSwap<Snapshot>,
+    generation: AtomicU64,
 }
 
 impl Settings {
@@ -124,7 +127,7 @@ impl Settings {
     /// in the table and its setting falls back, since a stop here could not be
     /// mended through the API.
     pub fn apply_stored(&self, stored: &[(String, String)]) {
-        let snapshot = Snapshot::resolve(&self.seeds, stored);
+        let snapshot = Snapshot::resolve(&self.seeds, stored, 0);
         for key in snapshot.unreadable() {
             tracing::error!(
                 setting = key,
@@ -132,6 +135,24 @@ impl Settings {
             );
         }
         self.live.store(Arc::new(snapshot));
+    }
+
+    /// Numbers a change. Taken inside the write transaction, where writes are
+    /// serial, so the numbers follow the order of the commits.
+    pub(crate) fn next_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Makes committed rows live, unless a later commit is already.
+    pub(crate) fn publish(&self, generation: u64, stored: &[(String, String)]) {
+        let snapshot = Arc::new(Snapshot::resolve(&self.seeds, stored, generation));
+        self.live.rcu(|current| {
+            if current.generation() < generation {
+                snapshot.clone()
+            } else {
+                current.clone()
+            }
+        });
     }
 
     pub fn live(&self) -> Arc<Snapshot> {
@@ -245,6 +266,24 @@ mod tests {
         settings.apply_stored(&row("sign_in_address", "not an address"));
         assert_eq!(settings.live().get(SIGN_IN_ADDRESS), None);
         assert_eq!(settings.live().unreadable(), ["sign_in_address"]);
+    }
+
+    #[test]
+    fn an_older_publish_never_replaces_a_newer_one() {
+        let settings = opened(&[]);
+        let older = settings.next_generation();
+        let newer = settings.next_generation();
+        settings.publish(newer, &row("max_request_bytes", "2048"));
+        settings.publish(older, &row("max_request_bytes", "1024"));
+        assert_eq!(settings.live().get(MAX_REQUEST_BYTES), 2048);
+    }
+
+    #[test]
+    fn a_blank_row_counts_as_absent() {
+        let settings = opened(&[HOOKS, ("MARFA_AUTH_BASE_URL", "https://seed.example")]);
+        settings.apply_stored(&row("sign_in_address", ""));
+        assert!(settings.live().get(SIGN_IN_ADDRESS).is_some());
+        assert!(settings.live().unreadable().is_empty());
     }
 
     #[test]
