@@ -65,7 +65,8 @@ mod native {
     /// stand for the page when it also holds a picture.
     const ALMOST_NO_TEXT: usize = 50;
 
-    /// A picture covering at least this share of the page makes it a scan.
+    /// A picture, or a form that holds one, covering at least this share of the
+    /// page makes it a scan.
     const SCAN_SHARE: f32 = 0.25;
 
     /// The most page objects looked at to decide whether a page is a picture.
@@ -148,8 +149,10 @@ mod native {
         let mut drawn = false;
         for object in page.objects().iter().take(OBJECTS_LOOKED_AT) {
             drawn = true;
-            if object.object_type() == PdfPageObjectType::Image
-                && area > 0.0
+            if matches!(
+                object.object_type(),
+                PdfPageObjectType::Image | PdfPageObjectType::XObjectForm
+            ) && area > 0.0
                 && object
                     .bounds()
                     .map(|bounds| bounds.width().value * bounds.height().value / area)

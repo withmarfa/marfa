@@ -377,6 +377,21 @@ fn a_few_words_on_an_otherwise_blank_page_are_not_read_as_a_picture() {
 }
 
 #[test]
+fn a_few_words_over_a_picture_are_read_as_a_picture() {
+    let gray = gray_of("sentence.png");
+    let jpeg = jpeg_of(&gray);
+    let (width, height) = (
+        f64::from(gray.width()) / 2.0,
+        f64::from(gray.height()) / 2.0,
+    );
+    let content =
+        format!("q {width} 0 0 {height} 0 0 cm /Im1 Do Q BT /F1 12 Tf 10 10 Td (Page 3) Tj ET");
+    let pdf = pdf_of(&[&content], (width, height), Some((&gray, &jpeg)));
+    assert!(read_ocr(&pdf, PDF).text.starts_with(UPRIGHT));
+    assert_eq!(text(&pdf, PDF), "Page 3");
+}
+
+#[test]
 fn a_password_protected_pdf_is_encrypted_and_a_damaged_one_is_malformed() {
     assert!(matches!(
         refusal(&own("encrypted.pdf"), PDF, &options()),
