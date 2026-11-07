@@ -151,6 +151,17 @@ impl Order {
         )
     }
 
+    /// Where a page of `ask` reads from. A sort no index holds reads every
+    /// row, which the table gives in one pass and an index only row by row.
+    pub fn table(&self, ask: &Ask) -> &'static str {
+        let sorted_whole = self.keys.first().is_some_and(|key| key.nullable);
+        if sorted_whole && !ask.leaves_few() && ask.beneath.is_none() {
+            "items i NOT INDEXED"
+        } else {
+            "items i"
+        }
+    }
+
     pub fn width(&self) -> usize {
         self.keys.len()
     }

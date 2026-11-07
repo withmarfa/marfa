@@ -114,7 +114,7 @@ fn every_compiled_read_carries_the_callers_reach() {
         assert_reached(&selected, &ask);
 
         let order = Order::listing(&Sort::default(), &ask);
-        assert_reached(&page_sql(&selected, &order, None, 50), &ask);
+        assert_reached(&page_sql(&selected, &ask, &order, None, 50), &ask);
 
         for by in [By::State, By::Type, By::Source] {
             assert_reached(&stats_sql(&reach, &ask, &catalog, by).unwrap(), &ask);

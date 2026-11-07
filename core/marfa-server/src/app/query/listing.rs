@@ -49,13 +49,14 @@ pub(super) struct Found {
 /// The query for a keyset page of `selected` in `order`, one row past `limit`.
 pub(super) fn page_sql(
     selected: &Sql,
+    ask: &Ask,
     order: &Order,
     position: Option<&Position>,
     limit: i64,
 ) -> Sql {
     let mut sql = Sql::new("SELECT i.seq, ");
     order.columns(&mut sql);
-    sql.push(" FROM items i WHERE ");
+    sql.push(&format!(" FROM {} WHERE ", order.table(ask)));
     sql.append(selected);
     if let Some(position) = position {
         sql.push(" AND ");
@@ -135,7 +136,7 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
             })
             .transpose()?;
         let selected = selection(&reach, ask, &read.catalog, order.walked())?;
-        let sql = page_sql(&selected, &order, position.as_ref(), *limit);
+        let sql = page_sql(&selected, ask, &order, position.as_ref(), *limit);
         let rows = found(read, &sql, order.width())?;
         answered(
             read,

@@ -90,7 +90,7 @@ impl Ask {
     /// Whether a type, a source or a state with no active rows narrows this
     /// ask before any row is read. A page of anything else reads fewer rows
     /// by one walk of its order than by a walk for each type.
-    fn leaves_few(&self) -> bool {
+    pub(super) fn leaves_few(&self) -> bool {
         let rare = matches!(&self.states, States::Named(states)
             if states.iter().all(|state| state != "active"));
         !self.types.is_empty() || self.source.is_some() || rare
