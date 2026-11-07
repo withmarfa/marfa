@@ -125,11 +125,18 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
         }
         "orphan" => {
             // SAFETY: the new process holds stdout and sleeps, and does nothing else.
-            if unsafe { libc::fork() } == 0 {
+            let pid = unsafe { libc::fork() };
+            if pid == 0 {
                 std::thread::sleep(Duration::from_secs(3600));
             }
+            eprintln!("orphan {pid}");
             // SAFETY: ends the process, and the other one keeps the pipes open.
             unsafe { libc::_exit(0) }
+        }
+        "stopped" => {
+            // SAFETY: stops every thread here, the watchdog with them.
+            unsafe { libc::raise(libc::SIGSTOP) };
+            None
         }
         "report" => Some(report()),
         _ => None,

@@ -600,16 +600,37 @@ mod faults {
         times_out_on_time("flood-stderr")
     }
 
+    /// With its watchdog stopped too, only the parent can end it.
+    pub(super) fn a_stopped_child_times_out_on_time() -> Result<(), Failed> {
+        times_out_on_time("stopped")
+    }
+
     pub(super) fn an_orphan_holding_the_pipes_does_not_hold_the_parent() -> Result<(), Failed> {
         let started = Instant::now();
         let outcome = read(&fault("orphan"), TEXT, &short());
         check(started.elapsed() < Duration::from_secs(1), || {
             format!("took {:?}", started.elapsed())
         })?;
-        // On macOS the sandbox refused the fork, and the child ended the same way.
-        check(matches!(outcome, Err(Refusal::Crashed(_))), || {
-            format!("{outcome:?}")
-        })?;
+        let Err(Refusal::Crashed(reason)) = &outcome else {
+            return Err(format!("{outcome:?}").into());
+        };
+        let orphan: i32 = reason
+            .split("orphan ")
+            .nth(1)
+            .and_then(|rest| rest.split_ascii_whitespace().next())
+            .and_then(|pid| pid.parse().ok())
+            .ok_or_else(|| format!("no orphan named: {reason}"))?;
+        // The sandbox on macOS refuses the fork, and -1 is what that leaves.
+        if orphan > 0 {
+            std::thread::sleep(Duration::from_millis(50));
+            check(!is_running(orphan), || {
+                format!("process {orphan} outlived the reader")
+            })?;
+        } else {
+            check(cfg!(target_os = "macos"), || {
+                "the fork failed where it should work".into()
+            })?;
+        }
         parent_is_whole()
     }
 
@@ -765,11 +786,34 @@ mod faults {
         Ok((reading.text, reading.sandbox))
     }
 
+    /// Whether this kernel can sandbox a child, asked apart from the code under test.
+    fn kernel_can_sandbox() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
+            // SAFETY: with this flag and no attributes the call only gives the ABI version.
+            let version = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    std::ptr::null::<libc::c_void>(),
+                    0usize,
+                    LANDLOCK_CREATE_RULESET_VERSION,
+                )
+            };
+            version > 0
+        }
+        #[cfg(not(target_os = "linux"))]
+        true
+    }
+
     /// A kernel with no sandbox still reads, and has to say so: the file then opens,
     /// which is the same fact seen from the other side.
     fn refused_when_sandboxed(what: &str, name: &str, unconfined: &str) -> Result<(), Failed> {
         let (text, sandbox) = sandbox_of(name)?;
         println!("{what}: {sandbox:?}: {text}");
+        check(sandbox != Sandbox::Off || !kernel_can_sandbox(), || {
+            "the kernel has a sandbox and the child ran without it".into()
+        })?;
         match sandbox {
             Sandbox::Full => check(text.starts_with("refused") || text.contains("Err"), || {
                 format!("{what}: {text}")
@@ -1061,6 +1105,10 @@ fn main() {
         ),
         ("a_hang_times_out_on_time", faults::a_hang_times_out_on_time),
         ("a_spin_times_out_on_time", faults::a_spin_times_out_on_time),
+        (
+            "a_stopped_child_times_out_on_time",
+            faults::a_stopped_child_times_out_on_time,
+        ),
         (
             "a_stderr_flood_times_out_on_time",
             faults::a_stderr_flood_times_out_on_time,

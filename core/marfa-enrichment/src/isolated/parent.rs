@@ -346,7 +346,15 @@ impl Watched {
         }
         // SAFETY: waitid returned, so `info` is zero or filled in, and with WNOHANG
         // and nothing to report the id stays zero.
-        unsafe { info.assume_init().si_pid() != 0 }
+        let info = unsafe { info.assume_init() };
+        // SAFETY: waitid fills `si_pid` for a child, and it reads zero otherwise.
+        let reported = unsafe { info.si_pid() } != 0;
+        // macOS also reports a child that has only stopped, despite WEXITED.
+        reported
+            && matches!(
+                info.si_code,
+                libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+            )
     }
 
     fn write_some(&mut self, feed: &mut [&[u8]; 2]) {
@@ -507,7 +515,12 @@ fn conclude(
         });
     }
     match status.code() {
-        Some(0) => Answer::judge(&said.stdout, options.max_text_chars),
+        Some(0) => {
+            Answer::judge(&said.stdout, options.max_text_chars).map_err(|refusal| match refusal {
+                Refusal::Crashed(why) => with_last_words(why, said),
+                refusal => refusal,
+            })
+        }
         Some(EXIT_OVER_MEMORY) => Err(over_memory(options, None)),
         Some(EXIT_DEADLINE) => Err(Refusal::TimedOut),
         Some(code) => Err(crashed(&format!("exited with code {code}"), said)),
@@ -524,11 +537,15 @@ fn over_memory(options: &Options, used: Option<u64>) -> Refusal {
 }
 
 fn crashed(how: &str, said: &Said) -> Refusal {
+    with_last_words(format!("the reader {how}"), said)
+}
+
+fn with_last_words(why: String, said: &Said) -> Refusal {
     let last_words = said.stderr_for_a_log();
     Refusal::Crashed(if last_words.is_empty() {
-        format!("the reader {how}")
+        why
     } else {
-        format!("the reader {how}: {last_words}")
+        format!("{why}: {last_words}")
     })
 }
 
