@@ -20,7 +20,7 @@ pub enum EdgeIssues {
     /// `validation_error`, naming the field where one is at fault.
     Validation {
         message: String,
-        field: Option<&'static str>,
+        field: Option<String>,
     },
     /// `invalid_schema`.
     Schema(Vec<Issue>),
@@ -32,10 +32,10 @@ pub enum EdgeIssues {
     },
 }
 
-fn invalid(message: impl Into<String>, field: Option<&'static str>) -> EdgeIssues {
+fn invalid(message: impl Into<String>, field: Option<&str>) -> EdgeIssues {
     EdgeIssues::Validation {
         message: message.into(),
-        field,
+        field: field.map(str::to_string),
     }
 }
 
@@ -144,25 +144,28 @@ pub fn request_shape(body: &Obj) -> Result<(), EdgeIssues> {
         let Some(definition) = definition.as_object() else {
             return Err(invalid(
                 format!("property_schema.{name} is an object"),
-                None,
+                Some(&format!("property_schema.{name}")),
             ));
         };
         if !definition.get("type").is_some_and(Value::is_string) {
             return Err(invalid(
                 format!("property_schema.{name}.type is a string"),
-                None,
+                Some(&format!("property_schema.{name}.type")),
             ));
         }
         for key in ["type", "items_type"] {
             if matches!(text(definition, key), Some("thumbnail" | "status")) {
                 return Err(invalid(
                     "An edge never carries a thumbnail or a status",
-                    None,
+                    Some(&format!("property_schema.{name}.{key}")),
                 ));
             }
         }
         if text(definition, "format") == Some("thumbnail") {
-            return Err(invalid("An edge never carries a thumbnail", None));
+            return Err(invalid(
+                "An edge never carries a thumbnail",
+                Some(&format!("property_schema.{name}.format")),
+            ));
         }
         if definition.get("items_type").is_some_and(|v| !v.is_string())
             || definition.get("format").is_some_and(|v| !v.is_string())

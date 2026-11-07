@@ -29,6 +29,15 @@ pub async fn list(app: &App) -> Result<Vec<Value>> {
 
 fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
     let mut schema = catalog.types.owned(id)?;
+    let mut own: Vec<&str> = schema
+        .get("roles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    own.sort_unstable();
+    let own = json!(own);
     let plural = schema.remove("plural");
     if let Some(plural) =
         plural.filter(|plural| plural.as_str().is_some_and(|text| !text.is_empty()))
@@ -53,15 +62,6 @@ fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
     if !conflicts.is_empty() {
         schema.insert("conflicts".into(), Value::Array(conflicts));
     }
-    let mut own: Vec<&str> = schema
-        .get("roles")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    own.sort_unstable();
-    let own = json!(own);
     schema.insert("own_roles".into(), own);
     schema.insert(
         "provenance".into(),
@@ -117,7 +117,7 @@ pub async fn normalize(app: &App, body: Obj) -> Result<Value> {
                 return Err(Refusal::validation(fault));
             }
             let registered = catalog.types.get(&id).cloned().map(canonical);
-            let resolved = resolve(&catalog.types, &id, true)
+            let resolved = resolve(&catalog.types.without_icons(), &id, true)
                 .map_err(|fault| chain_refusal(&fault))?
                 .map(canonical);
             Ok(json!({

@@ -269,6 +269,9 @@ pub async fn set_icon(app: &App, caller: &Caller, id: String, body: Obj) -> Resu
         .get("icon")
         .ok_or_else(|| missing_field("icon"))?
         .clone();
+    if !icon.is_string() {
+        return Err(Refusal::validation("icon is a string").with_detail("field", "icon"));
+    }
     if let Some(issue) = icon_issue(Some(&icon), "icon") {
         return Err(Refusal::new(Code::InvalidSchema, "Invalid type icon")
             .with_detail("errors", json!([issue.to_json()])));

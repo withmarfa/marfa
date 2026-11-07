@@ -75,6 +75,13 @@ impl Registry {
         next
     }
 
+    /// This registry as its authors wrote it, with no owner's icon.
+    pub fn without_icons(&self) -> Registry {
+        let mut next = self.clone();
+        next.icons.clear();
+        next
+    }
+
     pub fn icon_of(&self, id: &str) -> Option<&str> {
         self.icons.get(id).map(String::as_str)
     }
