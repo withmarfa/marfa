@@ -488,7 +488,7 @@ If a `filter` names an operator other than `eq`, `neq`, `gt`, `gte`, `lt`, `lte`
 
 ### `search-and-filters/filter-malformed`
 
-If a `filter` holds a field with no operator, an operator that takes a value with none, a value after `exists` or `not_exists`, a value in a form `search-and-filters/filter-value-forms` does not name, a string with no closing quote, two conditions with no join, a join other than upper-case `AND` or `OR`, a join with no condition after it, a parenthesis, or a line break outside a string, then the server MUST answer `400 validation_error`.
+If a `filter` holds a field with no operator, an operator that takes a value with none, a value after `exists` or `not_exists`, a value in a form `search-and-filters/filter-value-forms` does not name, a string with no closing quote, two conditions with no join, a join other than upper-case `AND` or `OR`, a join with no condition after it, a parenthesis outside a string, or a line break outside a string, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
 
@@ -552,13 +552,13 @@ When a `filter` compares a property using an operator that takes a value, the se
 
 When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `contains`, the server MUST select the rows whose value holds the text.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`.
+**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
 
 ### `search-and-filters/filter-starts-with`
 
 When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `starts_with`, the server MUST select the rows whose value begins with the text.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`.
+**Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
 
 ### `search-and-filters/filter-text-case`
 
@@ -640,7 +640,7 @@ When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select t
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the rows that an edge of the type from that item points at`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the rows that an edge of the type from that item points at`, `› selects by an edge eq term and a backref eq term on every door as the listing does`.
 
 ### `search-and-filters/filter-backref-neq`
 

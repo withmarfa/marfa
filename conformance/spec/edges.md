@@ -410,7 +410,7 @@ When a `filter` holds `edge[<edge type>] eq "<id>"`, the server MUST select exac
 
 **Reason:** the other operators on an edge term are `search-and-filters/filter-edge-neq`, `search-and-filters/filter-edge-exists` and `search-and-filters/filter-edge-not-exists`, and `search-and-filters/filter-backref-eq` states the inbound term.
 
-**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`, `› filter=edge[X] eq "Y" full form returns the same set`, `compliance/filter-grammar.test.ts › selects by an edge key and a backref key as the full form does, on the listing and the stats`, `› answers an edge term the same on the doors beyond the listing`.
+**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`, `› filter=edge[X] eq "Y" full form returns the same set`, `compliance/filter-grammar.test.ts › selects by an edge key and a backref key as the full form does, on the listing and the stats`, `› answers an edge term the same on the doors beyond the listing`, `› selects by an edge eq term and a backref eq term on every door as the listing does`.
 
 ### `edges/filter-backref-key`
 
