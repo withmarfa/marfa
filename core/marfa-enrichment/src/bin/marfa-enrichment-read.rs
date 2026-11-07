@@ -2,12 +2,14 @@
 //! what it read. It is the proof that a build of this crate works.
 
 use std::path::{Path, PathBuf};
+
+mod common;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use marfa_enrichment::{OcrOptions, Options, read, serve_child_if_asked};
 
-const USAGE: &str = "usage: marfa-enrichment-read read <file> [--type <mime>] \
+const USAGE: &str = "usage: marfa-enrichment-read read <file>... [--type <mime>] \
 [--languages <a+b>] [--data-dir <folder>] [--no-ocr] [--time-limit <seconds>] \
 [--max-memory <bytes>]";
 
@@ -17,7 +19,7 @@ const REFUSED: u8 = 1;
 const MISUSED: u8 = 2;
 
 struct Command {
-    file: PathBuf,
+    files: Vec<PathBuf>,
     mime: Option<String>,
     options: Options,
 }
@@ -27,7 +29,7 @@ fn parse(arguments: impl Iterator<Item = String>) -> Result<Command, String> {
     if arguments.next().as_deref() != Some("read") {
         return Err("the command is `read`".into());
     }
-    let mut file = None;
+    let mut files = Vec::new();
     let mut mime = None;
     let mut ocr = Some(OcrOptions::default());
     let mut options = Options::default();
@@ -65,82 +67,34 @@ fn parse(arguments: impl Iterator<Item = String>) -> Result<Command, String> {
                     .map_err(|error| format!("--max-memory: {error}"))?;
             }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
-            path if file.is_none() => file = Some(PathBuf::from(path)),
-            other => return Err(format!("unexpected {other}")),
+            path => files.push(PathBuf::from(path)),
         }
     }
     options.ocr = ocr;
+    if files.is_empty() {
+        return Err("no file named".into());
+    }
     Ok(Command {
-        file: file.ok_or("no file named")?,
+        files,
         mime,
         options,
     })
 }
 
-/// The type a file's extension stands for.
-fn guess_type(file: &Path) -> Option<&'static str> {
-    let extension = file.extension()?.to_str()?.to_ascii_lowercase();
-    Some(match extension.as_str() {
-        "txt" | "log" => "text/plain",
-        "md" | "markdown" => "text/markdown",
-        "csv" => "text/csv",
-        "html" | "htm" => "text/html",
-        "xhtml" => "application/xhtml+xml",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "yaml" | "yml" => "application/yaml",
-        "toml" => "application/toml",
-        "pdf" => "application/pdf",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "xlsb" => "application/vnd.ms-excel.sheet.binary.macroenabled.12",
-        "xls" => "application/vnd.ms-excel",
-        "odt" => "application/vnd.oasis.opendocument.text",
-        "odp" => "application/vnd.oasis.opendocument.presentation",
-        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
-        "epub" => "application/epub+zip",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "tif" | "tiff" => "image/tiff",
-        "gif" => "image/gif",
-        "heic" => "image/heic",
-        "avif" => "image/avif",
-        _ => return None,
-    })
-}
-
-fn main() -> ExitCode {
-    serve_child_if_asked();
-
-    let command = match parse(std::env::args().skip(1)) {
-        Ok(command) => command,
-        Err(problem) => {
-            eprintln!("{problem}\n{USAGE}");
-            return ExitCode::from(MISUSED);
-        }
+/// Reads one file and prints what it read. Returns whether the file was read.
+fn read_one(file: &Path, mime: Option<&str>, options: &Options) -> Result<bool, u8> {
+    let Some(mime) = mime.or_else(|| common::guess_type(file)) else {
+        eprintln!("cannot tell the type of {}: use --type", file.display());
+        return Err(MISUSED);
     };
-    let Some(mime) = command
-        .mime
-        .as_deref()
-        .or_else(|| guess_type(&command.file))
-    else {
-        eprintln!(
-            "cannot tell the type of {}: use --type",
-            command.file.display()
-        );
-        return ExitCode::from(MISUSED);
-    };
-    let bytes = match std::fs::read(&command.file) {
+    let bytes = match std::fs::read(file) {
         Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!("cannot read {}: {error}", command.file.display());
-            return ExitCode::from(MISUSED);
+            eprintln!("cannot read {}: {error}", file.display());
+            return Err(MISUSED);
         }
     };
-    match read(&bytes, mime, &command.options) {
+    match read(&bytes, mime, options) {
         Ok(reading) => {
             println!("{}", reading.text);
             if let Some(size) = reading.dimensions {
@@ -153,11 +107,39 @@ fn main() -> ExitCode {
                 eprintln!("cut short: the time budget ran out");
             }
             eprintln!("sandbox: {:?}", reading.sandbox);
-            ExitCode::SUCCESS
+            Ok(true)
         }
         Err(refusal) => {
             eprintln!("refused: {refusal}");
-            ExitCode::from(REFUSED)
+            Ok(false)
         }
     }
+}
+
+fn main() -> ExitCode {
+    serve_child_if_asked();
+
+    let command = match parse(std::env::args().skip(1)) {
+        Ok(command) => command,
+        Err(problem) => {
+            eprintln!("{problem}\n{USAGE}");
+            return ExitCode::from(MISUSED);
+        }
+    };
+    // Several files are read one after another by this one parent, so a file that
+    // kills its reader shows that the parent goes on with the next.
+    let several = command.files.len() > 1;
+    let mut code = ExitCode::SUCCESS;
+    for file in &command.files {
+        if several {
+            println!("== {}", file.display());
+            eprintln!("== {}", file.display());
+        }
+        match read_one(file, command.mime.as_deref(), &command.options) {
+            Ok(true) => {}
+            Ok(false) => code = ExitCode::from(REFUSED),
+            Err(misused) => return ExitCode::from(misused),
+        }
+    }
+    code
 }

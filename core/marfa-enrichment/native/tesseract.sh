@@ -40,6 +40,9 @@ case "$CMAKE_SYSTEM" in
       -DCMAKE_SYSTEM_PROCESSOR="$CMAKE_PROCESSOR"
       -DCMAKE_C_COMPILER="$toolchain/bin/${MUSL_PREFIX}gcc"
       -DCMAKE_CXX_COMPILER="$toolchain/bin/${MUSL_PREFIX}g++"
+      # Tesseract runs a program to ask whether Leptonica has TIFF, which a cross
+      # compiler cannot do. Leptonica is built without it, so the answer is no.
+      -DLEPT_TIFF_RESULT=1
     )
     ;;
 esac

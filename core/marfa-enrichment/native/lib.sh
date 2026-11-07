@@ -81,7 +81,7 @@ download() {
     return 0
   fi
   rm -f "$file"
-  local part="$file.part"
+  local part="$file.part.$$"
   curl --fail --silent --show-error --location --retry 3 --output "$part" "$url" \
     || die "could not fetch $url"
   local got

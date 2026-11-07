@@ -9,6 +9,7 @@
 #   tool    <name> <url> <sha256>                a build tool fetched as an archive
 #   image   <name> <reference>                   a container image, by digest
 #   apt-snapshot <name> <timestamp>              the date of the Ubuntu package archive the image installs from
+#   toolchain <name> <version>                   a compiler version the builder must have
 #
 # To move a pin, change the URL and the hash together: the build stops at the
 # first hash that does not match.
@@ -56,3 +57,7 @@ apt-snapshot ubuntu 20261101T000000Z
 tool rust-1.98.1-x86_64-unknown-linux-gnu https://static.rust-lang.org/dist/rust-1.98.1-x86_64-unknown-linux-gnu.tar.xz 5326b36c53de11d148c8f8dab6553a3d1006c2cfd32123683073fad3c302605b
 tool rust-std-1.98.1-aarch64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-aarch64-unknown-linux-musl.tar.xz 7e0ad2e67817f224b7a6331e48d6397303fc050edaccf81784ed786ffddc884a
 tool rust-std-1.98.1-x86_64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-x86_64-unknown-linux-musl.tar.xz bd9f35880de21dab0e387e84009c00001ae7836a4ba565cb16823f13f75f325f
+
+# The Rust compiler a release is built with. The Linux image installs exactly
+# this; a Mac needs it on PATH (rustup toolchain install 1.98.1).
+toolchain rust 1.98.1
