@@ -37,10 +37,17 @@ fn preflight_answer(origin: HeaderValue, asked_headers: Option<HeaderValue>) -> 
 pub async fn page_origins(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let origin = request.headers().get(ORIGIN).cloned();
     let preflight = request.method() == Method::OPTIONS
-        && request.headers().contains_key(ACCESS_CONTROL_REQUEST_METHOD);
-    let asked_headers = request.headers().get(ACCESS_CONTROL_REQUEST_HEADERS).cloned();
+        && request
+            .headers()
+            .contains_key(ACCESS_CONTROL_REQUEST_METHOD);
+    let asked_headers = request
+        .headers()
+        .get(ACCESS_CONTROL_REQUEST_HEADERS)
+        .cloned();
     let mut response = next.run(request).await;
-    response.headers_mut().append(VARY, HeaderValue::from_static("Origin"));
+    response
+        .headers_mut()
+        .append(VARY, HeaderValue::from_static("Origin"));
     let Some(origin) = origin else {
         return response;
     };
@@ -56,6 +63,8 @@ pub async fn page_origins(State(app): State<Arc<App>>, request: Request, next: N
     if preflight {
         return preflight_answer(origin, asked_headers);
     }
-    response.headers_mut().insert(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    response
+        .headers_mut()
+        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
     response
 }
