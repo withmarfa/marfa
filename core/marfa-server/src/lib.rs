@@ -7,6 +7,7 @@ pub mod control_socket;
 pub mod db;
 pub mod failure;
 pub mod http;
+pub mod listener;
 pub mod log;
 pub mod run;
 pub mod settings;

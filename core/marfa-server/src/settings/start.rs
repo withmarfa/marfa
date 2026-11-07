@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use super::Environment;
 use super::rule;
+use crate::listener::{self, Declaration, Trust};
 
 const MAX_CLOCK_OFFSET_MS: u64 = 3_153_600_000_000;
 const MAX_I32: u64 = 2_147_483_647;
@@ -59,6 +60,9 @@ pub struct Start {
     pub node_env: NodeEnv,
     pub port: u16,
     pub listen_host: Option<String>,
+    /// Never stored: its trust describes the network in front of this port,
+    /// which a restored backup or a key with `config.manage` must not change.
+    pub public_listener: Declaration,
     pub database: DatabasePath,
     pub control_socket: PathBuf,
     pub control_only: bool,
@@ -111,6 +115,16 @@ impl Reader<'_> {
         self.take(name, rule::boolean).unwrap_or(false)
     }
 
+    fn trust(&mut self) -> Trust {
+        let ranges = self.take("TRUSTED_PROXY_CIDRS", listener::proxy_ranges);
+        let header = self.take("TRUSTED_PROXY_HEADER", listener::header_name);
+        match (header, ranges) {
+            (Some(header), _) => Trust::EdgeHeader(header),
+            (None, Some(ranges)) => Trust::Proxies(ranges),
+            (None, None) => Trust::Nothing,
+        }
+    }
+
     /// A secret is used as written, so whitespace around it would be part of
     /// it, and its value never reaches a refusal.
     fn secret(&mut self, name: &str, min_length: usize) -> Option<String> {
@@ -150,6 +164,7 @@ impl Start {
             })
             .unwrap_or(NodeEnv::Development);
         let port = reader.whole("PORT", 0, 65_535).unwrap_or(8600) as u16;
+        let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
         let clock_offset_ms = reader
@@ -183,6 +198,7 @@ impl Start {
             node_env,
             port,
             listen_host: environment.get("MARFA_LISTEN_HOST").map(str::to_string),
+            public_listener: Declaration::public(trust),
             database,
             control_socket,
             control_only,
