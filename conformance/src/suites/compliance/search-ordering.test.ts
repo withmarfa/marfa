@@ -187,16 +187,17 @@ describe("search ordering", () => {
   });
 
   it("refuses a sort or direction it does not take", async () => {
-    for (const bad of [
-      "sort=title",
-      "sort=properties.Title",
-      "sort=properties.a.b",
-      "sort=updated",
-      "direction=up",
-    ]) {
+    for (const [bad, path] of [
+      ["sort=title", "sort"],
+      ["sort=properties.Title", "sort"],
+      ["sort=properties.a.b", "sort"],
+      ["sort=updated", "sort"],
+      ["direction=up", "direction"],
+    ] as const) {
       const res = await client.rawRequest<unknown>(`/search?q=${word}&${bad}`);
       expect(res.status, bad).toBe(400);
       expect(res.error?.error.code, bad).toBe("validation_error");
+      expect(res.error?.error.details?.errors, bad).toMatchObject([{ path }]);
     }
     // The witness: the same search without the bad key is answered.
     expect((await client.search(word)).status).toBe(200);
