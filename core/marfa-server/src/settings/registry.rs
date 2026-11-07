@@ -46,6 +46,12 @@ impl Entry {
         }
     }
 
+    /// The text a row holds for a value this setting accepts: blank when it
+    /// means nothing, and otherwise normalized.
+    pub fn row_text(&self, text: &str) -> Result<String, String> {
+        self.parse(text).map(|value| value.row_text())
+    }
+
     fn default_value(&self) -> Value {
         self.parse(self.default)
             .expect("a registered default is inside its own rule")
@@ -73,6 +79,23 @@ pub enum Value {
     Text(String),
     Address(Option<Address>),
     Addresses(Vec<Address>),
+}
+
+impl Value {
+    fn row_text(&self) -> String {
+        match self {
+            Value::Whole(number) => number.to_string(),
+            Value::Boolean(flag) => flag.to_string(),
+            Value::Text(text) => text.clone(),
+            Value::Address(address) => address
+                .as_ref()
+                .map_or_else(String::new, |address| address.origin().to_string()),
+            Value::Addresses(list) => {
+                let origins: Vec<_> = list.iter().map(Address::origin).collect();
+                serde_json::Value::from(origins).to_string()
+            }
+        }
+    }
 }
 
 /// What a typed setting reads a resolved value as.
@@ -186,19 +209,21 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
 pub struct Snapshot {
     values: HashMap<&'static str, Value>,
     unreadable: Vec<&'static str>,
+    generation: u64,
 }
 
 impl Snapshot {
     /// Resolves each entry from its row, then its seed, then its default. A
-    /// row that does not read counts as absent and goes on `unreadable`, and a
-    /// row with no entry is left alone.
-    pub fn resolve(seeds: &Seeds, stored: &[(String, String)]) -> Snapshot {
+    /// blank row counts as absent, as a blank environment value does. A row
+    /// that does not read also counts as absent and goes on `unreadable`, and
+    /// a row with no entry is left alone.
+    pub fn resolve(seeds: &Seeds, stored: &[(String, String)], generation: u64) -> Snapshot {
         let mut values = HashMap::with_capacity(ENTRIES.len());
         let mut unreadable = Vec::new();
         for entry in ENTRIES {
             let row = stored
                 .iter()
-                .find(|(key, _)| key == entry.key)
+                .find(|(key, text)| key == entry.key && !text.is_empty())
                 .map(|(_, text)| entry.parse(text));
             let value = match row {
                 Some(Ok(value)) => value,
@@ -214,7 +239,15 @@ impl Snapshot {
             };
             values.insert(entry.key, value);
         }
-        Snapshot { values, unreadable }
+        Snapshot {
+            values,
+            unreadable,
+            generation,
+        }
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn get<T: Kind>(&self, setting: Setting<T>) -> T {
@@ -255,6 +288,24 @@ mod tests {
                 entry.key
             );
         }
+    }
+
+    #[test]
+    fn a_row_holds_the_normalized_value() {
+        let text = |setting: &Entry, given: &str| setting.row_text(given).unwrap();
+        assert_eq!(text(RATE_LIMIT_ENABLED.entry, "YES"), "true");
+        assert_eq!(text(MAX_REQUEST_BYTES.entry, "2048"), "2048");
+        assert_eq!(
+            text(SIGN_IN_ADDRESS.entry, "HTTPS://Marfa.Example:443/"),
+            "https://marfa.example"
+        );
+        assert_eq!(text(SIGN_IN_ADDRESS.entry, ""), "");
+        let list = text(
+            ADDRESSES.entry,
+            r#"["HTTP://A.example/","http://a.example"]"#,
+        );
+        assert_eq!(list, r#"["http://a.example"]"#);
+        assert_eq!(text(ADDRESSES.entry, &list), list);
     }
 
     #[test]

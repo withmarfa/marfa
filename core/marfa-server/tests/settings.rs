@@ -6,16 +6,21 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use marfa_server::app::App;
+use marfa_server::app::refusal::Code;
+use marfa_server::app::stored::{self, Change};
+use marfa_server::db::Write as DbWrite;
+use marfa_server::settings::registry::{MAX_REQUEST_BYTES, SIGN_IN_ADDRESS};
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::TempDir;
 
+const CHANGE: DbWrite = DbWrite::caller("settings.change");
 const STALE_VALUE: &str = "stale-value-from-a-shell";
 const MINT: &str = r#"{"label":"proof","source":"proof","permissions":["keys.mint"]}"#;
 
@@ -252,4 +257,206 @@ async fn the_sign_in_address_follows_the_port_bound_until_one_is_stored() {
     assert_eq!(sign_in.origin(), "http://127.0.0.1:51234");
     assert_eq!(sign_in.port(), 51234);
     app.db.close().await;
+}
+
+struct Instance {
+    dir: TempDir,
+    app: Arc<App>,
+}
+
+async fn boot(dir: &Path) -> Arc<App> {
+    let database = dir.join("marfa.db");
+    let pairs = [
+        ("SQLITE_PATH", database.to_str().unwrap()),
+        ("BLOB_PATH", dir.to_str().unwrap()),
+        ("MARFA_TEST_HOOKS", "true"),
+        ("MARFA_MAX_REQUEST_BYTES", "4096"),
+    ];
+    let accepted = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+    App::start(accepted).await.unwrap()
+}
+
+impl Instance {
+    async fn start() -> Instance {
+        let dir = TempDir::new().unwrap();
+        let app = boot(dir.path()).await;
+        Instance { dir, app }
+    }
+
+    fn row(&self, key: &str) -> Option<String> {
+        let read = "SELECT value FROM settings WHERE key = ?1";
+        Connection::open(self.dir.path().join("marfa.db"))
+            .unwrap()
+            .query_row(read, [key], |row| row.get(0))
+            .ok()
+    }
+
+    fn limit(&self) -> u64 {
+        self.app.settings.live().get(MAX_REQUEST_BYTES)
+    }
+}
+
+fn set(key: &str, value: impl ToString) -> Change {
+    Change {
+        key: key.to_string(),
+        value: Some(value.to_string()),
+    }
+}
+
+fn clear(key: &str) -> Change {
+    Change {
+        key: key.to_string(),
+        value: None,
+    }
+}
+
+#[tokio::test]
+async fn a_change_is_live_at_once_survives_a_restart_and_clears_to_the_seed() {
+    let mut instance = Instance::start().await;
+    assert_eq!(instance.limit(), 4096);
+
+    let changed = vec![set("max_request_bytes", 2048)];
+    stored::change(&instance.app, CHANGE, changed)
+        .await
+        .unwrap();
+    assert_eq!(instance.limit(), 2048);
+
+    instance.app.db.close().await;
+    instance.app = boot(instance.dir.path()).await;
+    assert_eq!(instance.limit(), 2048);
+
+    let cleared = vec![clear("max_request_bytes")];
+    stored::change(&instance.app, CHANGE, cleared)
+        .await
+        .unwrap();
+    assert_eq!(instance.limit(), 4096);
+    assert_eq!(instance.row("max_request_bytes"), None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn racing_changes_leave_the_snapshot_at_the_last_commit() {
+    let instance = Instance::start().await;
+    for round in 0..1000u64 {
+        let changes = (1..=8u64).map(|n| {
+            let app = instance.app.clone();
+            tokio::spawn(async move {
+                let value = round * 100 + n;
+                let change = vec![set("max_request_bytes", value)];
+                stored::change(&app, CHANGE, change).await.unwrap();
+            })
+        });
+        for change in changes.collect::<Vec<_>>() {
+            change.await.unwrap();
+        }
+        let committed = instance.row("max_request_bytes").unwrap();
+        assert_eq!(instance.limit().to_string(), committed);
+    }
+}
+
+#[tokio::test]
+async fn a_failed_commit_publishes_nothing_and_the_next_change_lands() {
+    let instance = Instance::start().await;
+    let first = vec![set("max_request_bytes", 2048)];
+    stored::change(&instance.app, CHANGE, first).await.unwrap();
+
+    let faults = &instance.app.faults;
+    faults.set("fail:commit", Some("settings.change")).unwrap();
+    let doomed = vec![set("max_request_bytes", 1024)];
+    assert!(stored::change(&instance.app, CHANGE, doomed).await.is_err());
+    assert_eq!(faults.list()[0].fired, 1);
+    assert_eq!(instance.limit(), 2048);
+    assert_eq!(instance.row("max_request_bytes").unwrap(), "2048");
+
+    faults.clear(None);
+    let next = vec![set("max_request_bytes", 512)];
+    stored::change(&instance.app, CHANGE, next).await.unwrap();
+    assert_eq!(instance.limit(), 512);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_still_publishes_when_its_caller_goes_away() {
+    let instance = Instance::start().await;
+    let faults = instance.app.faults.clone();
+    faults.set("hold:write", Some("settings.change")).unwrap();
+
+    let app = instance.app.clone();
+    let caller = tokio::spawn(async move {
+        let change = vec![set("max_request_bytes", 2048)];
+        let _ = stored::change(&app, CHANGE, change).await;
+    });
+    while faults.list().iter().all(|fault| fault.waiting == 0) {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    caller.abort();
+    let _ = caller.await;
+    faults.clear(None);
+
+    for _ in 0..500 {
+        if instance.limit() == 2048 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    panic!("the change committed but never went live");
+}
+
+#[tokio::test]
+async fn a_refused_change_writes_nothing_of_itself() {
+    let instance = Instance::start().await;
+    for doomed in [
+        set("max_request_bytes", 0),
+        set("sign_in_address", "marfa.example"),
+        set("no_such_setting", 1),
+        set("health_probe", "a note is not a setting"),
+    ] {
+        let key = doomed.key.clone();
+        let changes = vec![set("rate_limit_window_ms", 1000), doomed];
+        let refusal = stored::change(&instance.app, CHANGE, changes)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal.code, Code::ValidationError);
+        assert!(refusal.message.contains(&key), "{}", refusal.message);
+        assert_eq!(instance.row("rate_limit_window_ms"), None);
+    }
+}
+
+#[tokio::test]
+async fn a_row_holds_the_normalized_address_and_a_blank_clears_it() {
+    let instance = Instance::start().await;
+    let live = |instance: &Instance| instance.app.settings.live().get(SIGN_IN_ADDRESS);
+
+    let tidy = vec![set("sign_in_address", "HTTPS://Marfa.Example:443/")];
+    stored::change(&instance.app, CHANGE, tidy).await.unwrap();
+    assert_eq!(
+        instance.row("sign_in_address").unwrap(),
+        "https://marfa.example"
+    );
+    assert_eq!(live(&instance).unwrap().origin(), "https://marfa.example");
+    assert_eq!(instance.app.addresses().sign_in().host(), "marfa.example");
+
+    let blank = vec![set("sign_in_address", "")];
+    stored::change(&instance.app, CHANGE, blank).await.unwrap();
+    assert_eq!(instance.row("sign_in_address"), None);
+    assert_eq!(live(&instance), None);
+}
+
+#[tokio::test]
+async fn a_change_mends_a_row_that_does_not_read() {
+    let instance = Instance::start().await;
+    instance.app.db.close().await;
+    let database = instance.dir.path().join("marfa.db");
+    let put = "INSERT INTO settings (key, value) VALUES ('max_request_bytes', 'a lot')";
+    Connection::open(&database)
+        .unwrap()
+        .execute(put, [])
+        .unwrap();
+
+    let app = boot(instance.dir.path()).await;
+    assert_eq!(app.settings.live().unreadable(), ["max_request_bytes"]);
+    assert_eq!(app.settings.live().get(MAX_REQUEST_BYTES), 4096);
+
+    let mended = vec![set("max_request_bytes", 2048)];
+    stored::change(&app, CHANGE, mended).await.unwrap();
+    assert!(app.settings.live().unreadable().is_empty());
+    assert_eq!(app.settings.live().get(MAX_REQUEST_BYTES), 2048);
 }
