@@ -591,7 +591,7 @@ describe("folder sync reports", () => {
     expect(new Set(walked).size).toBe(walked.length);
     for (const id of made) expect(walked).toContain(id);
 
-    for (const limit of [0, 201]) {
+    for (const limit of ["0", "201", "abc", "1.5"]) {
       const refused = await asOwner(`?limit=${limit}`);
       expect(refused.status, String(limit)).toBe(400);
       expect(await refused.json()).toMatchObject({

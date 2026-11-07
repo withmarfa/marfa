@@ -6,7 +6,7 @@
 
 When an authenticated sign-in that can read a `system.folder` submits a valid report to `PUT /folders/{id}/status`, the server MUST answer `200` with `accepted`, the latest stored `sequence`, and its `received_at`.
 
-**Reason:** the server stores and sums a report's counts and problem codes without judging them; what they mean is a device's to state, in `folders/report-pending-uploads`, `folders/report-pending-downloads`, `folders/report-paused-removals`, `folders/report-file-problems` and the statements beside them.
+**Reason:** the server stores and sums a report's counts and problem codes without judging them; what they mean is a device's to state, in `folders/report-pending-uploads`, `folders/report-pending-downloads`, `folders/report-paused-removals`, `folders/report-refused-files`, `folders/report-held-files` and the statements beside them.
 
 **Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`.
 
@@ -186,9 +186,9 @@ When a private local command submits a valid report to `PUT /folders/{id}/status
 
 ### `folder-status/local-report-order`
 
-If a private local command's `PUT /folders/{id}/status` holds an invalid report or names an ID that is not a `system.folder`, then the server MUST answer that `400` or `404 item_not_found` and not `403 forbidden`.
+If a private local command's `PUT /folders/{id}/status` holds an invalid report, names a malformed ID, or names an ID that is not a `system.folder`, then the server MUST answer the `400` or `404 item_not_found` that refusal carries and not `403 forbidden`.
 
-**Reason:** the server checks the report, then the ID and the folder, and only then the sign-in. The refusals are `folder-status/missing-field`, `folder-status/privacy`, `folder-status/invalid-id` and `folder-status/missing-folder`.
+**Reason:** a local command learns a report or ID is wrong before it learns it has no sign-in to report under. The refusals are `folder-status/missing-field`, `folder-status/privacy`, `folder-status/invalid-id` and `folder-status/missing-folder`.
 
 **Tests:** `compliance/folder-status.test.ts › refuses a local command's invalid report and missing folder before its lack of a sign-in`.
 
@@ -268,7 +268,7 @@ When the owner or a private local command asks for `GET /folders`, the server MU
 
 ### `folder-status/inventory-limit-range`
 
-If the owner or a private local command names a `limit` outside 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
+If the owner or a private local command names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
 
 **Reason:** a `limit` above 200 is refused here, where `search-and-filters/limit-listing-capped` caps one on `GET /items`.
 
