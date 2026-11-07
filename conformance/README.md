@@ -161,10 +161,14 @@ deletes what it created.
 
 ## Target interface
 
-The harness reaches the server under test through one adapter command,
-`scripts/marfa-server.ts`, and never through the server's files. A second
-implementation is judged by the same fixtures when it supplies an adapter with
-the same commands and output.
+The harness starts, stops and arranges the server under test through one
+adapter command, `scripts/marfa-server.ts`. Most fixtures then reach it only
+over HTTP, but not all: some read or write the server's database or its private
+files to arrange a state or to check one. A second implementation is judged by
+the fixtures that reach it only through this adapter and HTTP when it supplies
+an adapter with the same commands and output. Those that reach past them hold
+today's server to its own storage, so they do not yet judge a second
+implementation.
 
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.

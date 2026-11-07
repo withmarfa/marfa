@@ -64,15 +64,6 @@ A rule whose precondition cannot be constructed over HTTP is written up here
 rather than left as a `.todo`: a `.todo` means the harness is missing, and
 these mean the server offers no way to reach the state.
 
-- **`ancestor_unavailable`.** The refusal fires when a merge cannot find the
-  base version's snapshot because thinning has removed it. Thinning is a
-  scheduled job with windows from server configuration, and no route runs it,
-  deletes a version snapshot, or ages a caller's base version. Covered by the
-  server's own tests under `packages/server`.
-- **Retention beyond the event-log window.** The window is configuration
-  (`MARFA_EVENT_LOG_RETENTION_HOURS`, 720 hours by default), and an event is retired only once it
-  is older than the retention, an hour at the shortest, so the re-import path
-  cannot be reached by a black-box run. The in-window path is covered here; the prune is a device rule.
 - **Blob eviction and the offline read cache.** Local to a device's store.
   The server has no half.
 

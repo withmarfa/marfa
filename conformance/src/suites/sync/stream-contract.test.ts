@@ -187,8 +187,7 @@ describe("the stream announces where it starts", () => {
     // announcement then covers, and from ids alone a correct server
     // delivering it cannot be told from one announcing its head one too
     // high; the probe check above is exact for that case, since the probe
-    // is written after the announcement, and the server's own
-    // `routes/events-cursor.test.ts` holds the head directly.
+    // is written after the announcement.
     const cursorId = BigInt(String(cursor));
     const resumedIds = new Set(
       events

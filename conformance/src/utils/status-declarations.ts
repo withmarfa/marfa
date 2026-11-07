@@ -73,9 +73,8 @@ const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 
 /**
  * The sign-in library's own routes, which it serves under one `/auth/*`
- * pattern: the server's route walk sees the pattern, not these, so each is
- * named here with why. A request under the pattern is held to the route its
- * path names.
+ * pattern, so each is named here with why. A request under the pattern is held
+ * to the route its path names.
  */
 export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "POST /auth/sign-in/email": "password sign-in, which the sign-in form calls",
@@ -103,8 +102,8 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
 
 /**
  * The routes the server serves outside its document, each with why: the
- * server's own list, which its route walk holds to its route table, and the
- * sign-in library's routes. A served route missing from here is reported, so
+ * server's own list and the sign-in library's routes. A served route missing
+ * from here is reported, so
  * the document cannot lose a door into this bucket without somebody writing
  * the reason down.
  */
@@ -498,9 +497,8 @@ const CLIENT_CLOSED_REQUEST = 499;
 /**
  * A route the document does not publish is counted, and a sign-in route among
  * them is held to `signInStatuses`: the sign-in routes, `/health` and the
- * document itself are outside the reference by design. Whether a served
- * route is missing from the document is the server's `openapi-routes.test.ts`
- * question, not this one.
+ * document itself are outside the reference by design. This report does not
+ * ask whether a served route is missing from the document.
  */
 export function reportStatuses(
   lines: readonly RequestLine[],
