@@ -572,7 +572,7 @@ export function getOwnerClient(): MarfaClient {
   if (!key) {
     throw new Error(
       "MARFA_OWNER_COOKIE is required for direct owner fixtures. " +
-        "`pnpm marfa:up` writes it to its env file.",
+        "`pnpm marfa:up` writes it to its env file when the target has an owner sign-in.",
     );
   }
   return new MarfaClient({
