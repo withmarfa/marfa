@@ -443,6 +443,11 @@ pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.map(|row| row.type_id))
 }
 
+/// The type of the row whose trash took `id`, which outlives that row.
+pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
+}
+
 /// How many items hold `type_id`, in any state.
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     rows::count_of_type(tx, type_id)

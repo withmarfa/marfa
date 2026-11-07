@@ -451,7 +451,7 @@ fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
     let edges = edges_of(&sent)?;
     if properties.is_none()
         && clear.is_empty()
-        && edges.is_none()
+        && edges.as_ref().is_none_or(Vec::is_empty)
         && tier.is_none()
         && occurred.is_none()
         && source_id.is_none()

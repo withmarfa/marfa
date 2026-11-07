@@ -223,24 +223,29 @@ fn moving(item: Item, mark: Option<Mark>) -> Moving {
     }
 }
 
-fn may_read_link(gate: &Gate<'_, '_>, link: &Link) -> Result<bool> {
+/// The types of a link's ends, where the caller may read the link and both.
+fn readable_ends(gate: &Gate<'_, '_>, link: &Link) -> Result<Option<(String, String)>> {
     let (source, target) = (
         super::type_of(gate.tx, &link.source)?,
         super::type_of(gate.tx, &link.target)?,
     );
-    Ok(match (source, target) {
-        (Some(source), Some(target)) => {
-            gate.caller.may_read_edge(&link.edge_type, &source)
-                && gate.caller.may_read_type(&target)
-        }
-        _ => false,
-    })
+    Ok(source.zip(target).filter(|(source, target)| {
+        gate.caller.may_read_edge(&link.edge_type, source) && gate.caller.may_read_type(target)
+    }))
 }
 
 fn blocked(gate: &Gate<'_, '_>, root: &str, held: &[Link]) -> Result<Refusal> {
     let mut named = Vec::new();
     for link in held {
-        if may_read_link(gate, link)? {
+        if let Some((source, target)) = readable_ends(gate, link)? {
+            gate.note(Need::BlockingEnd {
+                id: link.source.clone(),
+                type_id: source,
+            });
+            gate.note(Need::BlockingEnd {
+                id: link.target.clone(),
+                type_id: target,
+            });
             named.push(json!({
                 "id": link.id,
                 "edge_type": link.edge_type,

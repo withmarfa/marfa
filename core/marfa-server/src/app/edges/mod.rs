@@ -107,6 +107,14 @@ pub fn naming_host(
     Ok(None)
 }
 
+/// The type of the row the edge `id` now starts from.
+pub fn source_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    match rows::by_id(tx, id)? {
+        Some(edge) => super::items::type_of(tx, &edge.source_id),
+        None => Ok(None),
+    }
+}
+
 /// How many stored edges hold `edge_type`.
 pub fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64> {
     rows::count_of_type(tx, edge_type)

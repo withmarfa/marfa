@@ -217,6 +217,13 @@ impl<'c> Writing<'_, '_, 'c> {
         self.caller().require_edge(edge_type, Level::Write)
     }
 
+    fn note_edge(&self, id: &str, source: &Item) {
+        self.note(Need::EdgeSource {
+            id: id.to_string(),
+            type_id: source.type_id.clone(),
+        });
+    }
+
     pub(super) fn require_row_write(&self, row: &Item) -> Result<()> {
         self.note(Need::Item {
             id: row.id.clone(),
@@ -270,6 +277,7 @@ impl<'c> Writing<'_, '_, 'c> {
         {
             return Err(not_found(id));
         }
+        self.note_edge(id, &source);
         Ok((edge, source))
     }
 
@@ -451,6 +459,7 @@ impl<'c> Writing<'_, '_, 'c> {
                 &create.target_id,
                 &create.edge_type,
             )?;
+            self.note_edge(&held.id, &source);
             return Ok(Wrote::Repeated(held.clone()));
         }
         let kind = self
@@ -497,6 +506,7 @@ impl<'c> Writing<'_, '_, 'c> {
         if by != By::Copy {
             self.settle(kind, &source, &edge.target_id)?;
         }
+        self.note_edge(&edge.id, &source);
         Ok(Wrote::Created(edge))
     }
 
