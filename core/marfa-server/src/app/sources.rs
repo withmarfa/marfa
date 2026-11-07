@@ -190,8 +190,7 @@ pub async fn read(app: &App, caller: &Caller, code: String) -> Result<Value> {
     app.db
         .read(move |tx| {
             let caller = caller.current(tx, &at)?;
-            let known = held(tx, &at)?.contains(&code);
-            if known && caller.sees_source(&code) {
+            if caller.sees_source(&code) {
                 describe(tx, &code, &at)
             } else {
                 Err(Refusal::new(
