@@ -90,7 +90,10 @@ pub fn plan(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Vec<Step> {
             continue;
         };
         let Some(next) = parsed_ms(&row.next_run_at) else {
-            tracing::warn!(job = name, "A housekeeping schedule does not read; it runs now");
+            tracing::warn!(
+                job = name,
+                "A housekeeping schedule does not read; it runs now"
+            );
             steps.push(Step::Bring {
                 name,
                 next_ms: now_ms,
@@ -349,11 +352,17 @@ mod tests {
             next_after(Some(NOW), NOW, finished, 60_000, false),
             finished + 60_000
         );
-        assert_eq!(next_after(None, NOW, finished, 60_000, false), finished + 60_000);
+        assert_eq!(
+            next_after(None, NOW, finished, 60_000, false),
+            finished + 60_000
+        );
     }
 
     #[test]
     fn a_run_with_work_left_is_due_at_its_finish() {
-        assert_eq!(next_after(Some(NOW + 9), NOW, NOW + 3, 60_000, true), NOW + 3);
+        assert_eq!(
+            next_after(Some(NOW + 9), NOW, NOW + 3, 60_000, true),
+            NOW + 3
+        );
     }
 }

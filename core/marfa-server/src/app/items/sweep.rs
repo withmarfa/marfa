@@ -43,7 +43,10 @@ pub(super) fn announced(unit: &Unit<'_, '_>, event_type: &'static str, item: &It
 
 /// Does the work of one row of a batch so that its failure takes back that row
 /// alone. A row that cannot be read or moved stays, and the rest go on.
-pub(super) fn alone(tx: &Transaction<'_>, work: impl FnOnce() -> Result<()>) -> Result<Option<Refusal>> {
+pub(super) fn alone(
+    tx: &Transaction<'_>,
+    work: impl FnOnce() -> Result<()>,
+) -> Result<Option<Refusal>> {
     tx.execute_batch("SAVEPOINT one_row")?;
     match work() {
         Ok(()) => {

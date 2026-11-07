@@ -223,7 +223,10 @@ pub async fn prepare(app: &Arc<App>) -> Result<()> {
         })
         .await?;
     if cleared > 0 {
-        tracing::warn!(cleared, "Housekeeping runs the last process left unfinished");
+        tracing::warn!(
+            cleared,
+            "Housekeeping runs the last process left unfinished"
+        );
     }
     Ok(())
 }

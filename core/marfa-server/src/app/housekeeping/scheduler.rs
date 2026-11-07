@@ -103,15 +103,15 @@ pub fn start(app: Arc<App>) {
 /// noted it on, and the task goes on.
 async fn caught<F: Future>(future: F) -> std::result::Result<F::Output, Arc<Fault>> {
     let mut future = pin!(future);
-    poll_fn(|context| {
-        match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
+    poll_fn(
+        |context| match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
             Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
             Ok(Poll::Pending) => Poll::Pending,
             Err(_) => Poll::Ready(Err(Arc::new(Fault::panicked(
                 "a housekeeping run panicked",
             )))),
-        }
-    })
+        },
+    )
     .await
 }
 
@@ -143,11 +143,8 @@ impl From<Arc<Fault>> for Failed {
 }
 
 fn failing_statement() -> Refusal {
-    rusqlite::Error::SqliteFailure(
-        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
-        None,
-    )
-    .into()
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None)
+        .into()
 }
 
 /// The job itself, on a task of its own, which a run past its deadline leaves
@@ -288,7 +285,10 @@ pub async fn supervise(
         Ending::Cut => {
             return Err(Refusal::new(
                 Code::WriteContention,
-                format!("{} was stopped with the server, and runs again at its next start", job.name),
+                format!(
+                    "{} was stopped with the server, and runs again at its next start",
+                    job.name
+                ),
             ));
         }
     };
@@ -311,4 +311,21 @@ pub async fn supervise(
         app.housekeeping.wake.notify_one();
     }
     Ok(ended)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panic_in_a_run_is_caught_and_the_next_goes_on() {
+        crate::telemetry::install_panic_hook();
+        let fault: Result<(), _> = caught(async {
+            tokio::task::yield_now().await;
+            panic!("the run's own words");
+        })
+        .await;
+        assert!(fault.is_err());
+        assert_eq!(caught(async { 1 }).await.ok(), Some(1));
+    }
 }

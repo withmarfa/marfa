@@ -63,7 +63,12 @@ async fn expire(
 
 pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
     let (purged_records, records_done) = drain(&run, BATCH, || {
-        expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, idempotency::expire)
+        expire(
+            &app,
+            EVENT_LOG_RETENTION_HOURS,
+            HOUR_MS,
+            idempotency::expire,
+        )
     })
     .await?;
     let (deleted, events_done) = drain(&run, BATCH, || {

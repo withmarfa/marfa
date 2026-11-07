@@ -40,11 +40,11 @@ pub async fn run(
     caller.require(Permission::InstanceMaintain)?;
     query::only(&uri, &[])?;
     if !well_formed(&name) {
-        return Err(Refusal::validation(format!(
-            "\"{name}\" is not a housekeeping job's name"
-        ))
-        .with_detail("field", "name")
-        .into());
+        return Err(
+            Refusal::validation(format!("\"{name}\" is not a housekeeping job's name"))
+                .with_detail("field", "name")
+                .into(),
+        );
     }
     let ended = housekeeping::run_now(&app, &name).await?;
     Ok(json_answer(StatusCode::OK, &ended.to_json()))

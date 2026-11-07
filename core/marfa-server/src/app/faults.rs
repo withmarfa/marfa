@@ -198,7 +198,11 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
 
 /// Judges a `hold`, `release` or `fail` on a housekeeping job. A target refuses
 /// a job it does not run.
-fn judge_job(kind: &str, job: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+fn judge_job(
+    kind: &str,
+    job: &str,
+    arg: Option<&str>,
+) -> Result<(Option<Aim>, Option<u64>), String> {
     if !housekeeping::is_job(job) {
         return Err(format!("no job is named {job}"));
     }
@@ -220,7 +224,9 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
         .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
-        .ok_or_else(|| format!("a deadline takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}"))
+        .ok_or_else(|| {
+            format!("a deadline takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}")
+        })
 }
 
 /// Reads a name and argument into what arming needs, or says why not.

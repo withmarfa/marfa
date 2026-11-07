@@ -144,11 +144,16 @@ fn policy_of(app: &App, catalog: &Catalog, type_id: &str) -> Option<Policy> {
     let schema = match resolve(&catalog.types, type_id, false) {
         Ok(schema) => schema,
         Err(_) => {
-            tracing::warn!(type_id, "A type's chain does not resolve; its history stays");
+            tracing::warn!(
+                type_id,
+                "A type's chain does not resolve; its history stays"
+            );
             return None;
         }
     };
-    let declared = schema.as_ref().and_then(|schema| schema.get("version_policy"));
+    let declared = schema
+        .as_ref()
+        .and_then(|schema| schema.get("version_policy"));
     let field = |name: &str, default: i64| {
         declared
             .and_then(|policy| policy.get(name))
@@ -181,7 +186,9 @@ fn history(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
 /// What the policy gives up of one item, as `tx` sees it.
 fn doomed(app: &App, catalog: &Catalog, tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
     let type_id: Option<String> = tx
-        .query_row("SELECT type FROM items WHERE seq = ?1", [seq], |row| row.get(0))
+        .query_row("SELECT type FROM items WHERE seq = ?1", [seq], |row| {
+            row.get(0)
+        })
         .optional()?;
     let policy = type_id.and_then(|type_id| policy_of(app, catalog, &type_id));
     match policy {

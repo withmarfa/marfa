@@ -35,7 +35,10 @@ fn window(catalog: &Catalog, type_id: &str) -> Option<i64> {
     let schema = match resolve(&catalog.types, type_id, false) {
         Ok(schema) => schema?,
         Err(_) => {
-            tracing::warn!(type_id, "A type's chain does not resolve; its feed items stay");
+            tracing::warn!(
+                type_id,
+                "A type's chain does not resolve; its feed items stay"
+            );
             return None;
         }
     };
@@ -63,8 +66,9 @@ fn expired(tx: &Transaction<'_>, type_id: &str, before: &str, limit: i64) -> Res
 /// The types with an item past its window as things stand.
 fn types_due(app: &App, tx: &Transaction<'_>) -> Result<Vec<String>> {
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
-    let mut statement =
-        tx.prepare_cached(&format!("SELECT DISTINCT type FROM items WHERE {EXPIRABLE}"))?;
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT DISTINCT type FROM items WHERE {EXPIRABLE}"
+    ))?;
     let types = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -148,8 +152,7 @@ pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {
     let types = app.db.read(move |tx| types_due(&live, tx)).await?;
     let (mut moved, mut held) = (0, 0);
     for type_id in types {
-        let mut left = 0;
-        loop {
+        held += loop {
             if !run.go_on().await {
                 return Ok(Report {
                     result: result(moved, held),
@@ -164,12 +167,10 @@ pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {
                 })
                 .await?;
             moved += chunk.moved;
-            left = chunk.chosen - chunk.moved;
             if chunk.moved == 0 || (chunk.chosen as i64) < CHUNK {
-                break;
+                break chunk.chosen - chunk.moved;
             }
-        }
-        held += left;
+        };
     }
     Ok(Report::done(result(moved, held)))
 }
