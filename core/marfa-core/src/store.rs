@@ -83,6 +83,9 @@ pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";
 /// clock gave it: set by a completed hydration or catch-up and by a follow at
 /// the log's head, and removed by a hydration that clears the copy.
 pub const META_SYNCED_AT: &str = "synced_at";
+/// When the rows the copy holds were last held to the server's `read_only`,
+/// in seconds since the epoch. Absent in a copy that has never been.
+pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 /// How many of the latest changes `edge_changes` keeps whatever they name.
 /// The writer, as it opens the store, lets go of older rows of edges the
 /// copy no longer holds once there are more than twice this many.
@@ -93,7 +96,7 @@ pub const SCHEMA_VERSION: &str = "0";
 const META_TABLE: &str =
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
@@ -912,6 +915,7 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("items", "capture_latitude REAL"),
     ("items", "capture_longitude REAL"),
     ("items", "trashed_at TEXT"),
+    ("items", "read_only INTEGER NOT NULL DEFAULT 0"),
     ("folder_files", "embeds TEXT"),
 ];
 
@@ -2474,6 +2478,97 @@ pub fn now_millis() -> i64 {
 /// clock.
 pub(crate) fn mark_synced(conn: &Connection) -> Result<(), CoreError> {
     meta_set(conn, META_SYNCED_AT, &iso_at(crate::clock::system_time()))
+}
+
+/// Records that the rows the copy holds are as the server answers them.
+pub(crate) fn mark_read_only_read(conn: &Connection) -> Result<(), CoreError> {
+    let at = crate::clock::system_time()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    meta_set(conn, META_READ_ONLY_READ, &at.to_string())
+}
+
+/// Whether the copy has gone `every` or longer since its rows were held to
+/// the server's `read_only`. A time ahead of the clock says nothing of how
+/// long it has been, so it owes one too.
+pub(crate) fn read_only_owed(
+    conn: &Connection,
+    every: std::time::Duration,
+) -> Result<bool, CoreError> {
+    let Some(at) = meta_get(conn, META_READ_ONLY_READ)?.and_then(|at| at.parse::<u64>().ok())
+    else {
+        return Ok(true);
+    };
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(at);
+    Ok(crate::clock::system_time()
+        .duration_since(at)
+        .map_or(true, |since| since >= every))
+}
+
+/// One row of each source and type the copy holds that the server can answer:
+/// one it has taken, outside the bin (`items/bulk-get-omits`).
+pub(crate) fn read_only_samples(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT (SELECT id FROM items AS row
+                  WHERE row.source = held.source AND row.type = held.type
+                    AND row.version > 0 AND row.state <> 'trashed'
+                  LIMIT 1)
+           FROM (SELECT DISTINCT source, type FROM items) AS held",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, Option<String>>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids.into_iter().flatten().collect())
+}
+
+/// Holds every row of each answer's source and type to what the answer says
+/// of `read_only`, and answers how many rows of `items` it changed. Only
+/// `read_only` moves: a row's version, its fields and its waiting writes stay
+/// as they are, and a row the server has not taken keeps its false.
+///
+/// A row with writes waiting takes it from the row beneath them, which is the
+/// server's and names the server's type where a waiting write retypes it.
+pub(crate) fn hold_read_only(
+    conn: &Connection,
+    answers: &[crate::wire::WireReadOnly],
+) -> Result<u64, CoreError> {
+    let mut known = HashMap::new();
+    for answer in answers {
+        if let Some(read_only) = answer.read_only {
+            known.insert((answer.source.as_str(), answer.r#type.as_str()), read_only);
+        }
+    }
+    let mut changed = 0;
+    let mut rows = conn.prepare_cached(
+        "UPDATE items SET read_only = ?1
+          WHERE source = ?2 AND type = ?3 AND read_only <> ?1 AND version > 0
+            AND id NOT IN (SELECT id FROM beneath WHERE subject = 'item')",
+    )?;
+    for ((source, r#type), read_only) in &known {
+        changed += rows.execute(params![read_only, source, r#type])? as u64;
+    }
+    let beneath: Vec<(String, String)> = conn
+        .prepare_cached("SELECT id, row FROM beneath WHERE subject = 'item'")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut row = conn
+        .prepare_cached("UPDATE items SET read_only = ?1 WHERE id = ?2 AND read_only <> ?1")?;
+    for (id, kept) in beneath {
+        // What reads this row reports one it cannot read.
+        let Ok(mut held) = serde_json::from_str::<Item>(&kept) else {
+            continue;
+        };
+        let Some(&read_only) = known.get(&(held.source.as_str(), held.r#type.as_str())) else {
+            continue;
+        };
+        if held.read_only != read_only {
+            held.read_only = read_only;
+            set_beneath(conn, Subject::Item, &id, &serde_json::to_string(&held)?)?;
+        }
+        changed += row.execute(params![read_only, id])? as u64;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn iso_at(now: std::time::SystemTime) -> String {
@@ -4296,8 +4391,8 @@ pub fn upsert_item(
     crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     let before = attachments_before(conn, &[&item.id])?;
     conn.prepare_cached(
-        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT (id) DO UPDATE SET
            type = excluded.type, state = excluded.state, tier = excluded.tier,
            version = excluded.version, schema_version = excluded.schema_version,
@@ -4306,7 +4401,8 @@ pub fn upsert_item(
            updated_at = excluded.updated_at, properties = excluded.properties,
            capture_latitude = excluded.capture_latitude,
            capture_longitude = excluded.capture_longitude,
-           trashed_at = excluded.trashed_at",
+           trashed_at = excluded.trashed_at,
+           read_only = excluded.read_only",
     )?
     .execute(params![
             item.id,
@@ -4324,6 +4420,7 @@ pub fn upsert_item(
             item.capture_latitude,
             item.capture_longitude,
             item.trashed_at,
+            item.read_only,
     ])?;
     if let Some(tags) = tags {
         conn.prepare_cached("DELETE FROM tags WHERE item_id = ?1")?
@@ -5214,6 +5311,7 @@ fn read_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Item, Option<String>)
         capture_latitude: row.get(12)?,
         capture_longitude: row.get(13)?,
         trashed_at: row.get(14)?,
+        read_only: row.get(15)?,
         tags: Vec::new(),
     };
     Ok((item, why))
@@ -7127,6 +7225,7 @@ pub(crate) mod testing {
             capture_latitude: None,
             capture_longitude: None,
             trashed_at: (state == "trashed").then(|| occurred_at.into()),
+            read_only: false,
             edges: None,
         }
     }
@@ -7813,6 +7912,7 @@ mod tests {
             capture_latitude: Some(51.5),
             capture_longitude: Some(-0.25),
             trashed_at: Some("2032-04-04T04:04:04Z".into()),
+            read_only: true,
             edges: None,
         };
         upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
@@ -7832,6 +7932,7 @@ mod tests {
         assert_eq!(item.capture_latitude, Some(51.5));
         assert_eq!(item.capture_longitude, Some(-0.25));
         assert_eq!(item.trashed_at.as_deref(), Some("2032-04-04T04:04:04Z"));
+        assert!(item.read_only);
         assert_eq!(
             item.properties.get("title").and_then(Value::as_str),
             Some("T")

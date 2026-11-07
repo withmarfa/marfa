@@ -47,6 +47,7 @@ mod query;
 mod reach;
 #[cfg(test)]
 mod read_bench_tests;
+mod read_only;
 mod reads;
 #[cfg(test)]
 mod reads_tests;

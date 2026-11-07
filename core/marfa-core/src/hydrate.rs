@@ -739,6 +739,7 @@ fn attempt(
             }
             store::attachments_whole(&tx)?;
             store::mark_synced(&tx)?;
+            store::mark_read_only_read(&tx)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
             tx.commit()?;
             counts

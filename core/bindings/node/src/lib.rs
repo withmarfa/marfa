@@ -82,6 +82,8 @@ pub struct Item {
     pub capture_longitude: Option<f64>,
     /// When it went to the bin; absent outside it.
     pub trashed_at: Option<String>,
+    /// Whether a connector holds it read only, as the server last answered.
+    pub read_only: bool,
 }
 
 #[napi(object)]
@@ -1345,6 +1347,7 @@ fn item(item: marfa_core::Item) -> Item {
         capture_latitude: item.capture_latitude,
         capture_longitude: item.capture_longitude,
         trashed_at: item.trashed_at,
+        read_only: item.read_only,
     }
 }
 

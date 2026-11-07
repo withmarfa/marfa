@@ -15,7 +15,7 @@ use crate::error::CoreError;
 use crate::model::SliceTier;
 use crate::wire::{
     WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItem, WireItemWithMetadata,
-    WireMetadata, WirePage, WireType,
+    WireMetadata, WirePage, WireReadOnly, WireType,
 };
 
 /// The page asked of the item listing, the most it answers
@@ -1151,6 +1151,22 @@ impl Http {
             .into_iter()
             .map(|(row, _)| row)
             .collect())
+    }
+
+    /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only
+    /// what each row says of `read_only`.
+    pub(crate) fn read_only_of(&self, ids: &[String]) -> Result<Vec<WireReadOnly>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            items: Vec<WireReadOnly>,
+        }
+        let body = serde_json::json!({
+            "ids": ids,
+            "include": ["metadata", "system"],
+        })
+        .to_string();
+        let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
+        Ok(answer.items)
     }
 
     /// `items_by_id`, with each item as the server wrote it beside it.

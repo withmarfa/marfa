@@ -43,7 +43,20 @@ pub struct WireItem {
     #[serde(default)]
     pub trashed_at: Option<String>,
     #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
     pub edges: Option<HashMap<String, WireEdgeBlock>>,
+}
+
+/// What an answered row says of `read_only`, and the source and type that
+/// decide it. `read_only` is absent in an answer from a server that does not
+/// send it, which says nothing about the rows of that source and type.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireReadOnly {
+    pub r#type: String,
+    pub source: String,
+    #[serde(default)]
+    pub read_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

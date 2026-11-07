@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS items (
   properties TEXT NOT NULL,
   capture_latitude REAL,
   capture_longitude REAL,
-  trashed_at TEXT
+  trashed_at TEXT,
+  read_only INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS items_type_created ON items (type, created_at);
 CREATE INDEX IF NOT EXISTS items_type_updated ON items (type, updated_at);
@@ -47,6 +48,10 @@ CREATE INDEX IF NOT EXISTS items_created ON items (created_at, id);
 CREATE INDEX IF NOT EXISTS items_state_created ON items (state, created_at, id);
 DROP INDEX IF EXISTS items_state;
 CREATE INDEX IF NOT EXISTS items_tier ON items (tier);
+-- What `read_only::refresh` asks of the whole copy: which sources and types it
+-- holds, and whether any row of one differs from the server's, answered from
+-- the index however many rows each holds.
+CREATE INDEX IF NOT EXISTS items_read_only ON items (source, type, read_only);
 
 CREATE TABLE IF NOT EXISTS edges (
   id TEXT PRIMARY KEY,

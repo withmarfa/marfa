@@ -17,6 +17,7 @@ const QUICK: Pace = Pace {
     reconnect_first: Duration::from_millis(10),
     reconnect_most: Duration::from_millis(40),
     synced_every: Duration::from_secs(30),
+    read_only_every: Duration::from_secs(15 * 60),
     clock: &Instant::now,
 };
 

@@ -177,6 +177,12 @@ pub struct Item {
     /// outside that state, and for a row an archive restored to the bin
     /// without the time.
     pub trashed_at: Option<String>,
+    /// Whether a connector holds the item read only, as the server last
+    /// answered it. Advice for showing the item: a write to it is taken and
+    /// sent as any other is (`items/read-only-writable`). False for a row the
+    /// server has not answered, and in a row kept before the copy held this.
+    #[serde(default)]
+    pub read_only: bool,
     pub tags: Vec<String>,
 }
 
@@ -199,6 +205,7 @@ impl Item {
             capture_latitude: item.capture_latitude,
             capture_longitude: item.capture_longitude,
             trashed_at: item.trashed_at,
+            read_only: item.read_only,
             tags,
         })
     }
@@ -234,6 +241,7 @@ impl Item {
             capture_latitude: self.capture_latitude,
             capture_longitude: self.capture_longitude,
             trashed_at: self.trashed_at.clone(),
+            read_only: self.read_only,
             edges: None,
         }
     }
@@ -944,6 +952,7 @@ impl Draft {
             capture_latitude: self.capture_latitude,
             capture_longitude: self.capture_longitude,
             trashed_at: (self.state == Some(ItemState::Trashed)).then(crate::store::now_iso),
+            read_only: false,
             edges: None,
         }
     }

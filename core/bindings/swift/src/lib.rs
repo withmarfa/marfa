@@ -98,6 +98,11 @@ pub struct Item {
     /// archive restored to the bin without the time.
     #[uniffi(default = None)]
     pub trashed_at: Option<String>,
+    /// Whether a connector holds the item read only, as the server last
+    /// answered it, so an app can show it as not editable. A write to it is
+    /// still taken and sent.
+    #[uniffi(default = false)]
+    pub read_only: bool,
     /// The text under the property the type's display hints name as its
     /// title, or `title` where they name none; none where that holds no
     /// string.
@@ -1846,6 +1851,7 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
         capture_latitude: item.capture_latitude,
         capture_longitude: item.capture_longitude,
         trashed_at: item.trashed_at,
+        read_only: item.read_only,
         title: shown.title,
         body: shown.body,
         unreadable_properties: shown.unreadable_properties,

@@ -16,6 +16,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
+use crate::read_only;
 use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
@@ -42,6 +43,9 @@ pub(crate) struct Pace {
     /// The least time between two records of when a follow at the head of the
     /// log last synced, so a busy stream does not write one per event.
     pub(crate) synced_every: Duration,
+    /// How long a copy goes between holding its rows to the server's `read_only`,
+    /// which no event says has changed.
+    pub(crate) read_only_every: Duration,
     /// How long a stream stayed open is read from this clock, so a test can
     /// hold it still and a slow machine cannot make a stream that ended at
     /// once look like one that was held.
@@ -66,6 +70,7 @@ pub(crate) const PACE: Pace = Pace {
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
     synced_every: Duration::from_secs(30),
+    read_only_every: Duration::from_secs(15 * 60),
     clock: &crate::clock::now,
 };
 
@@ -508,8 +513,11 @@ pub(crate) fn catch_up(
     let scoped = context.http(http);
     let result = replay_build(core, &scoped, &context, idle, stop, catalog_changed)
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
-    let report = unless_stopped(result, stop)?;
+    let mut report = unless_stopped(result, stop)?;
     mark_synced_if_same(core, &context)?;
+    report.applied += read_only::refresh(core, &context, &scoped, stop, PACE.read_only_every)
+        .or_else(read_only::contained)
+        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
     Ok(report)
 }
 
@@ -985,6 +993,7 @@ fn follow_paced(
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
         let mut owes_drain = owes_drain;
         let mut synced = None;
+        let mut read_only_asked = None;
         while !stop.load(Ordering::Relaxed) {
             on_live(false);
             recovery.tell(&report.cursor, on_change);
@@ -1061,6 +1070,7 @@ fn follow_paced(
                 &mut report,
                 &mut refreshed,
                 &mut synced,
+                &mut read_only_asked,
                 &recovery,
                 on_change,
                 on_live,
@@ -1225,6 +1235,7 @@ fn read_stream(
     report: &mut FollowReport,
     refreshed: &mut HashSet<Unexplained>,
     synced: &mut Option<Instant>,
+    read_only_asked: &mut Option<Instant>,
     recovery: &Recovery,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
@@ -1270,6 +1281,16 @@ fn read_stream(
             // A heartbeat at the head says the copy is still current.
             if live_confirmed {
                 mark_synced_while_live(core, context, pace, now, synced)?;
+                refresh_read_only_while_live(
+                    core,
+                    context,
+                    pace,
+                    now,
+                    read_only_asked,
+                    stop,
+                    report,
+                    on_change,
+                )?;
             }
             continue;
         };
@@ -1314,6 +1335,16 @@ fn read_stream(
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced)?;
+                    refresh_read_only_while_live(
+                        core,
+                        context,
+                        pace,
+                        now,
+                        read_only_asked,
+                        stop,
+                        report,
+                        on_change,
+                    )?;
                 }
             }
             "stream_incomplete" => return Ok(Ended::Over),
@@ -1432,6 +1463,44 @@ fn mark_synced_while_live(
     }
     mark_synced_if_same(core, context)?;
     *synced = Some(at);
+    Ok(())
+}
+
+/// Holds the copy to the server's `read_only` once `read_only_every` has gone
+/// by, telling a change as an item change no event brought. `asked` paces the
+/// asking too, so a server that keeps failing the read is asked no more often
+/// than one that answers it.
+#[allow(clippy::too_many_arguments)]
+fn refresh_read_only_while_live(
+    core: &Core,
+    context: &Context,
+    pace: &Pace,
+    now: &dyn Fn() -> Instant,
+    asked: &mut Option<Instant>,
+    stop: &AtomicBool,
+    report: &mut FollowReport,
+    on_change: &mut dyn FnMut(&Change),
+) -> Result<()> {
+    let at = now();
+    if asked.is_some_and(|last| at.saturating_duration_since(last) < pace.read_only_every)
+        || !store::read_only_owed(&*core.conn()?, pace.read_only_every)?
+    {
+        return Ok(());
+    }
+    *asked = Some(at);
+    let changed = core
+        .http()
+        .and_then(|http| read_only::refresh(core, context, http, stop, pace.read_only_every))
+        .or_else(read_only::contained)?;
+    if changed > 0 {
+        report.applied += 1;
+        on_change(&Change {
+            event: ChangeEvent::Applied("item.updated".into()),
+            item_id: None,
+            edge_id: None,
+            cursor: report.cursor.clone(),
+        });
+    }
     Ok(())
 }
 
@@ -2002,6 +2071,7 @@ mod tests {
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
         synced_every: Duration::from_secs(30),
+        read_only_every: Duration::from_secs(15 * 60),
         clock: &frozen,
     };
 
@@ -3145,6 +3215,7 @@ mod tests {
                 &|| reading.now(),
                 &mut FollowReport::default(),
                 &mut HashSet::new(),
+                &mut None,
                 &mut None,
                 &recovery,
                 &mut |_| {},

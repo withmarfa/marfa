@@ -49,6 +49,8 @@ export interface Item {
   capture_longitude?: number | null;
   /** When the item went to the bin; null outside it or where none was kept. */
   trashed_at: string | null;
+  /** Whether a connector holds it read only, as the server last answered. */
+  read_only: boolean;
   tags: string[];
 }
 

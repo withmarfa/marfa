@@ -562,6 +562,7 @@ mod tests {
             capture_latitude: None,
             capture_longitude: None,
             trashed_at: None,
+            read_only: false,
             tags: Vec::new(),
         }
     }
