@@ -4790,7 +4790,7 @@ Where a device holds no answer from the server for a row's `read_only`, a device
 
 ### `device/read-only-refresh`
 
-When a device has finished a catch-up, or holds a stream at the server's head, and 15 minutes or more have gone by since it last read `read_only`, a device MUST read one row of each `source` and `type` it holds outside the bin and that the server has taken.
+When a device has finished a catch-up, or holds a stream at the server's head, and 15 minutes or more have gone by since it last read `read_only`, a device MUST read one row of each `source` and `type` it holds outside the bin and that the server has taken, choosing by `device/read-only-waiting-row`, where it holds such a row.
 
 **Reason:** no event and no version tells a copy that the server's answer changed, and one row answers for all those that share its `source` and `type`, so what a copy asks the server does not grow with the rows it holds.
 
@@ -4814,11 +4814,11 @@ If a read by `device/read-only-refresh` answers no row of a `source` and `type`,
 
 ### `device/read-only-hold`
 
-When a read by `device/read-only-refresh` answers a row, a device MUST hold every row of that row's `source` and `type` to the answer.
+When a read by `device/read-only-refresh` answers a row, a device MUST hold every row the server has taken of that row's `source` and `type` to the answer, taking a row with a write waiting by the `source` and `type` of the row beneath it.
 
-**Reason:** the server works the answer out from the `source` and `type`, not the row. The rows can be as many as the copy holds, so a device holds them a page at a time, reads of the copy get through between two pages, and a read counts as made only once every page is written, so one cut short is made again.
+**Reason:** the server works the answer out from the `source` and `type`, not the row, and a waiting write can retype the row here, so the row beneath it is the server's. The rows can be as many as the copy holds, so a device holds them a page at a time, reads of the copy get through between two pages, and a read counts as made only once every page is written, so one cut short is made again.
 
-**Tests:** `device/read-only.test.ts › holds every row of a source and type to one row's answer, with no event`, `› holds rows to the answer once a held stream reaches the head`.
+**Tests:** `device/read-only.test.ts › holds every row of a source and type to one row's answer, with no event`, `› holds rows to the answer once a held stream reaches the head`, `› keeps an edit waiting on a row whose read_only moves`.
 
 ### `device/read-only-moves-nothing`
 
@@ -4850,7 +4850,7 @@ If a read by `device/read-only-refresh` fails, other than by `device/reach-chang
 
 **Reason:** the value is advice, and a failed read says nothing about it.
 
-**Tests:** `device/read-only.test.ts › finishes a catch-up whose read of read_only fails, keeping what it holds and asking again`.
+**Tests:** `device/read-only.test.ts › finishes a catch-up whose read of read_only fails, keeping what it holds and asking again`, `› finishes a stream whose read of read_only fails, keeping what it holds`.
 
 ### `device/read-only-no-answer-finishes`
 
@@ -4858,7 +4858,7 @@ If a read by `device/read-only-refresh` fails, other than by `device/reach-chang
 
 **Reason:** a copy that stopped syncing for advice would lose far more than it protects.
 
-**Tests:** `device/read-only.test.ts › finishes a catch-up whose read of read_only fails, keeping what it holds and asking again`.
+**Tests:** `device/read-only.test.ts › finishes a catch-up whose read of read_only fails, keeping what it holds and asking again`, `› finishes a stream whose read of read_only fails, keeping what it holds`.
 
 ### `device/read-only-writable`
 

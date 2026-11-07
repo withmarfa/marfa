@@ -318,6 +318,37 @@ describe("an item's read_only in a working copy", () => {
     expect(followed.value.report.applied).toBe(0);
   });
 
+  it("finishes a stream whose read of read_only fails, keeping what it holds", async () => {
+    harness = await followedBy(
+      "read-only-no-answer-follow",
+      [{ id: "n1", ...NOTE, read_only: true }],
+      copyHeldLog([
+        copyItemEvent(
+          "2",
+          "item.created",
+          wireItem({ id: "n2", ...NOTE, read_only: true }),
+        ),
+      ]),
+    );
+    const { server, device } = harness;
+    lastRead(device, 16);
+    server.answer("POST", "/items/bulk-get", {
+      kind: "json",
+      status: 500,
+      body: { error: { code: "internal", message: "no" } },
+    });
+
+    const followed = await device.follow(2);
+
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect(looks(server)).toHaveLength(1);
+    // The witness that the stream itself finished: its event landed.
+    expect(followed.ok && followed.value.report.applied).toBe(1);
+    expect(followed.ok && followed.value.report.read_only_held).toBe(0);
+    expect(await readOnlyOf(device, "n2")).toBe(true);
+    expect(await readOnlyOf(device, "n1")).toBe(true);
+  });
+
   it("reports the rows it held apart from the events it applied", async () => {
     harness = await followedBy(
       "read-only-report",
