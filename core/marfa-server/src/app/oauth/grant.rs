@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::scope::{ScopeSet, combined};
 use super::store::{self, Client, Consent, ms_of};
 use crate::app::catalog::Catalog;
-use crate::app::items::write::{Change, Put, Update, apply};
+use crate::app::items::write::{Change, Put, Update, apply_server_own};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
 
@@ -47,7 +47,7 @@ fn properties(pairs: Value) -> Map<String, Value> {
 }
 
 fn applied(unit: &Unit<'_, '_>, cache: &ArcSwap<Catalog>, change: Change) -> Result<()> {
-    let done = apply(unit, cache, None, change)?;
+    let done = apply_server_own(unit, cache, change)?;
     if done.status >= 400 {
         return Err(Refusal::internal("a grant's item did not write"));
     }

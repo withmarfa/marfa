@@ -16,6 +16,7 @@ pub(super) struct Gate<'a, 'c> {
     pub tx: &'a Transaction<'c>,
     pub caller: &'a Caller,
     pub claim: Option<&'a Claim>,
+    pub server_own: bool,
 }
 
 fn reserved(type_id: &str) -> Refusal {
@@ -40,10 +41,11 @@ impl Gate<'_, '_> {
     }
 
     /// Whether the caller may write items of `type_id` through an item door,
-    /// which no caller may for a `system.*` type.
+    /// which no caller may for a `system.*` type: only the server's own writes
+    /// reach those.
     pub fn type_gate(&self, type_id: &str) -> Result<()> {
         self.type_map_gate(type_id)?;
-        if is_system(type_id) {
+        if is_system(type_id) && !self.server_own {
             return Err(reserved(type_id));
         }
         Ok(())

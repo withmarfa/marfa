@@ -232,33 +232,25 @@ pub fn apply(
         unit,
         catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
         claim,
+        server_own: false,
     };
-    match change {
-        Change::Put(put) => job.put(*put),
-        Change::Update(update) => job.update(*update),
-        Change::SetTags { id, tags, version } => job.set_tags(&id, tags, version),
-        Change::AddTags { id, tags, version } => job.add_tags(&id, tags, version),
-        Change::RemoveTag { id, tag, version } => job.remove_tag(&id, &tag, version),
-        Change::SetExtension {
-            id,
-            namespace,
-            data,
-        } => job.set_extension(&id, &namespace, &data),
-        Change::ClearExtension { id, namespace } => job.clear_extension(&id, &namespace),
-        Change::Transition { id, state, version } => job.transition(&id, &state, version),
-        Change::Delete { id, version } => job.delete(id, version),
-        Change::Trash { ids, digest } => job.trash(ids, digest.as_deref()),
-        Change::Restore { id, version } => job.restore(&id, version),
-        Change::Purge { id, version } => job.purge(id, version),
-        Change::Owner { act, id, version } => job.owner(act, id, version),
-        Change::Settle {
-            type_id,
-            keys,
-            settled_at,
-        } => job.settle(&type_id, &keys, &settled_at),
-        Change::Page(page) => job.page(*page),
-        Change::Entry { entry, note } => job.lone_entry(*entry, &note),
-    }
+    job.run(change)
+}
+
+/// A change the server makes to an item it keeps for itself. No door that
+/// takes a caller's item may lead here.
+pub(crate) fn apply_server_own(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    change: Change,
+) -> Result<Done> {
+    let job = Job {
+        unit,
+        catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+        claim: None,
+        server_own: true,
+    };
+    job.run(change)
 }
 
 /// A rule's refusal, as a write answers it.
@@ -471,9 +463,39 @@ struct Job<'a, 't, 'c> {
     unit: &'a Unit<'t, 'c>,
     catalog: Arc<Catalog>,
     claim: Option<&'a Claim>,
+    server_own: bool,
 }
 
 impl<'c> Job<'_, '_, 'c> {
+    fn run(self, change: Change) -> Result<Done> {
+        match change {
+            Change::Put(put) => self.put(*put),
+            Change::Update(update) => self.update(*update),
+            Change::SetTags { id, tags, version } => self.set_tags(&id, tags, version),
+            Change::AddTags { id, tags, version } => self.add_tags(&id, tags, version),
+            Change::RemoveTag { id, tag, version } => self.remove_tag(&id, &tag, version),
+            Change::SetExtension {
+                id,
+                namespace,
+                data,
+            } => self.set_extension(&id, &namespace, &data),
+            Change::ClearExtension { id, namespace } => self.clear_extension(&id, &namespace),
+            Change::Transition { id, state, version } => self.transition(&id, &state, version),
+            Change::Delete { id, version } => self.delete(id, version),
+            Change::Trash { ids, digest } => self.trash(ids, digest.as_deref()),
+            Change::Restore { id, version } => self.restore(&id, version),
+            Change::Purge { id, version } => self.purge(id, version),
+            Change::Owner { act, id, version } => self.owner(act, id, version),
+            Change::Settle {
+                type_id,
+                keys,
+                settled_at,
+            } => self.settle(&type_id, &keys, &settled_at),
+            Change::Page(page) => self.page(*page),
+            Change::Entry { entry, note } => self.lone_entry(*entry, &note),
+        }
+    }
+
     fn caller(&self) -> &Caller {
         &self.unit.caller
     }
@@ -483,6 +505,7 @@ impl<'c> Job<'_, '_, 'c> {
             tx: self.unit.tx(),
             caller: self.caller(),
             claim: self.claim,
+            server_own: self.server_own,
         }
     }
 

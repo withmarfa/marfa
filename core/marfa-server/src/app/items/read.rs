@@ -344,6 +344,7 @@ pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Resu
             tx: read.tx,
             caller: &read.caller,
             claim: None,
+            server_own: false,
         };
         let asked: Vec<Asked> = ids
             .into_iter()
