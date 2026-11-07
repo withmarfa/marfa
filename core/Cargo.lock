@@ -1428,6 +1428,7 @@ dependencies = [
  "libc",
  "marfa-core",
  "marfa-rules",
+ "marfa-telemetry",
  "rpassword",
  "security-framework",
  "serde",
@@ -1531,6 +1532,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "marfa-telemetry"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "url",
 ]
 
 [[package]]

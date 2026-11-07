@@ -16,6 +16,7 @@ clap.workspace = true
 keyring = "4"
 marfa-core = { workspace = true, features = ["telemetry"] }
 marfa-rules.workspace = true
+marfa-telemetry.workspace = true
 sha2.workspace = true
 flate2 = "1"
 hex.workspace = true

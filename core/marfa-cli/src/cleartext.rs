@@ -6,7 +6,8 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use url::{Host, Url};
+use marfa_telemetry::host::is_loopback;
+use url::Url;
 
 static ALLOWED: AtomicBool = AtomicBool::new(false);
 static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -25,16 +26,6 @@ pub fn allow() {
 /// leaves the warning on.
 pub fn allowed_by_environment() -> bool {
     crate::environment::flag("MARFA_ALLOW_HTTP")
-}
-
-/// `localhost`, `127.0.0.0/8` and `::1`, which never leave the machine.
-pub fn is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(Host::Domain(name)) => name == "localhost",
-        Some(Host::Ipv4(address)) => address.is_loopback(),
-        Some(Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    }
 }
 
 /// The origin and the warning for a plain `http` address on another host;
@@ -81,31 +72,6 @@ pub fn guarded() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_this_machine_is_loopback() {
-        for address in [
-            "http://localhost:8600",
-            "http://LOCALHOST",
-            "http://127.0.0.1",
-            "http://127.1.2.3:80",
-            "http://[::1]:8600",
-        ] {
-            assert!(is_loopback(&Url::parse(address).unwrap()), "{address}");
-        }
-        for address in [
-            "http://marfa.example",
-            "http://localhost.example",
-            "http://128.0.0.1",
-            "http://0.0.0.0",
-            "http://10.0.0.5",
-            "http://[::2]",
-            "http://[::ffff:10.0.0.5]",
-            "http://[::ffff:127.0.0.1]",
-        ] {
-            assert!(!is_loopback(&Url::parse(address).unwrap()), "{address}");
-        }
-    }
 
     #[test]
     fn a_warning_is_for_plain_http_to_another_host_and_names_only_its_origin() {
