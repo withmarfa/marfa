@@ -3,7 +3,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { folderHarness } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
-import { put, scriptFolderWrites, sentTitles } from "./folders.shared.js";
+import {
+  lastReport,
+  put,
+  scriptFolderWrites,
+  sentTitles,
+} from "./folders.shared.js";
 
 /**
  * "A folder can hold new files its query would not hold": with
@@ -97,6 +102,9 @@ describe("a new file outside the query", () => {
     expect(files).toHaveLength(1);
     expect(files[0]?.status).toBe("held");
     expect(files[0]?.flag).toBe("outside_query");
+    expect(lastReport(harness).problems).toEqual([
+      { code: "held_file", count: 1 },
+    ]);
     expect(files[0]?.item_id).toBeUndefined();
 
     const listed = await harness.folder.unmatched();

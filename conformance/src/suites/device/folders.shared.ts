@@ -47,6 +47,25 @@ export function isContentWrite(request: RecordedRequest): boolean {
   );
 }
 
+/** The status report a folder last sent, with its problems in the order of
+ *  their codes: the order a device lists them in is not a rule. */
+export function lastReport(harness: FolderHarness): {
+  sequence: number;
+  pending_uploads: number;
+  problems: Array<{ code: string; count: number }>;
+} {
+  const sent = harness.server.requests.filter(
+    (request) =>
+      request.method === "PUT" &&
+      request.pathname === `/folders/${harness.settings.id}/status`,
+  );
+  const body = sent.at(-1)?.body;
+  if (body === undefined) throw new Error("the folder sent no report");
+  const report = JSON.parse(body) as ReturnType<typeof lastReport>;
+  report.problems.sort((left, right) => left.code.localeCompare(right.code));
+  return report;
+}
+
 /** A file in the folder. */
 export function put(
   harness: FolderHarness,
