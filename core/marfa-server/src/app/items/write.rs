@@ -14,8 +14,12 @@ use marfa_rules::{js, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use super::rows::{self, Landed, NewRow};
-use super::{Item, Snapshot, Writer, is_system, metadata_for, metadata_text, parsed, title_key};
+use super::plan::{self, Act, Asked, Gate, Plan, invalid_transition, require_version};
+use super::rows::{self, Landed, Moved, NewRow};
+use super::{
+    Item, Keys, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text, not_found,
+    parsed, summary_of, title_key,
+};
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
@@ -102,6 +106,45 @@ pub enum Change {
         id: String,
         namespace: String,
     },
+    Transition {
+        id: String,
+        state: String,
+        version: Option<i64>,
+    },
+    Delete {
+        id: String,
+        version: Option<i64>,
+    },
+    Trash {
+        ids: Vec<String>,
+        digest: Option<String>,
+    },
+    Restore {
+        id: String,
+        version: Option<i64>,
+    },
+    Purge {
+        id: String,
+        version: Option<i64>,
+    },
+    Owner {
+        act: OwnerAct,
+        id: String,
+        version: i64,
+    },
+    Settle {
+        type_id: String,
+        keys: Keys,
+        settled_at: String,
+    },
+}
+
+/// What the owner does to an item through its summary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnerAct {
+    Trash,
+    Restore,
+    Purge,
 }
 
 impl Change {
@@ -114,6 +157,24 @@ impl Change {
             Change::RemoveTag { .. } => "item.untag",
             Change::SetExtension { .. } => "extension.set",
             Change::ClearExtension { .. } => "extension.delete",
+            Change::Transition { .. } => "item.transition",
+            Change::Delete { .. }
+            | Change::Owner {
+                act: OwnerAct::Trash,
+                ..
+            } => "item.delete",
+            Change::Trash { .. } => "items.trash",
+            Change::Restore { .. }
+            | Change::Owner {
+                act: OwnerAct::Restore,
+                ..
+            } => "item.restore",
+            Change::Purge { .. }
+            | Change::Owner {
+                act: OwnerAct::Purge,
+                ..
+            } => "item.purge",
+            Change::Settle { .. } => "items.tombstones",
         }
     }
 }
@@ -127,6 +188,13 @@ type Outcome = (Map<String, Value>, Option<Value>, Option<Item>);
 pub struct Done {
     pub status: u16,
     pub body: String,
+}
+
+fn done_ok() -> Done {
+    Done {
+        status: 200,
+        body: "{\"ok\":true}".to_string(),
+    }
 }
 
 /// Runs `change` as one write. With a `claim`, the answer is recorded under it
@@ -168,6 +236,17 @@ pub fn apply(
             data,
         } => job.set_extension(&id, &namespace, &data),
         Change::ClearExtension { id, namespace } => job.clear_extension(&id, &namespace),
+        Change::Transition { id, state, version } => job.transition(&id, &state, version),
+        Change::Delete { id, version } => job.delete(id, version),
+        Change::Trash { ids, digest } => job.trash(ids, digest.as_deref()),
+        Change::Restore { id, version } => job.restore(&id, version),
+        Change::Purge { id, version } => job.purge(id, version),
+        Change::Owner { act, id, version } => job.owner(act, id, version),
+        Change::Settle {
+            type_id,
+            keys,
+            settled_at,
+        } => job.settle(&type_id, &keys, &settled_at),
     }
 }
 
@@ -196,10 +275,6 @@ pub fn ruled(error: RuleError) -> Refusal {
     } else {
         refusal.with_detail("errors", errors)
     }
-}
-
-fn not_found() -> Refusal {
-    Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
 fn distinct(tags: &[String]) -> Vec<String> {
@@ -253,7 +328,7 @@ fn item_exists(row: &Item, by_id: bool) -> Refusal {
     .with_detail("matched_by", if by_id { "id" } else { "source_id" })
 }
 
-fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
+pub(super) fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
     Ok(Refusal::new(
         Code::VersionConflict,
         format!(
@@ -360,67 +435,21 @@ struct Job<'a, 't, 'c> {
     claim: Option<&'a Claim>,
 }
 
-impl Job<'_, '_, '_> {
+impl<'c> Job<'_, '_, 'c> {
     fn caller(&self) -> &Caller {
         &self.unit.caller
     }
 
-    fn note(&self, need: Need) {
-        if let Some(claim) = self.claim {
-            claim.note(need);
+    fn gate(&self) -> Gate<'_, 'c> {
+        Gate {
+            tx: self.unit.tx(),
+            caller: self.caller(),
+            claim: self.claim,
         }
     }
 
     fn writer(&self) -> Writer {
         self.caller().writer()
-    }
-
-    /// Whether the caller may write items of `type_id` through an item door,
-    /// which no caller may for a `system.*` type.
-    fn type_gate(&self, type_id: &str) -> Result<()> {
-        self.note(Need::Reach);
-        self.caller().require_reach()?;
-        self.note(Need::Type {
-            name: type_id.to_string(),
-            write: true,
-        });
-        self.caller().require_type(type_id, Level::Write)?;
-        if is_system(type_id) {
-            return Err(Refusal::new(
-                Code::TypeNotPermitted,
-                format!("Items of type \"{type_id}\" are not written through this door."),
-            ));
-        }
-        Ok(())
-    }
-
-    /// The row a door names by id, which reads as missing where it is gone
-    /// or unreadable, and says so where the caller may read it in the bin.
-    fn writable_row(&self, id: &str) -> Result<Item> {
-        self.note(Need::Reach);
-        self.caller().require_reach()?;
-        let row = rows::by_id(self.unit.tx(), id)?
-            .filter(|row| self.caller().may_read_type(&row.type_id))
-            .ok_or_else(not_found)?;
-        if row.state == "trashed" {
-            self.note(Need::Item {
-                id: row.id.clone(),
-                type_id: row.type_id.clone(),
-                write: false,
-            });
-            return Err(not_found().with_detail("trashed", true));
-        }
-        self.row_gate(&row)?;
-        Ok(row)
-    }
-
-    fn row_gate(&self, row: &Item) -> Result<()> {
-        self.note(Need::Item {
-            id: row.id.clone(),
-            type_id: row.type_id.clone(),
-            write: true,
-        });
-        self.type_gate(&row.type_id)
     }
 
     /// The source a write stands under: the one it names, which the caller
@@ -434,7 +463,7 @@ impl Job<'_, '_, '_> {
     }
 
     fn may_write_under(&self, source: &str, disclosed: bool) -> Result<()> {
-        self.note(Need::Source {
+        self.gate().note(Need::Source {
             name: source.to_string(),
             disclosed,
         });
@@ -578,7 +607,7 @@ impl Job<'_, '_, '_> {
                 "An item cannot be created in the state \"{state}\"."
             )));
         }
-        self.type_gate(&put.type_id)?;
+        self.gate().type_gate(&put.type_id)?;
         let source = self.source_of(put.source.as_deref())?;
         self.refuse_unlisted_source(&put.type_id, &source)?;
         if let Some(tags) = &put.tags {
@@ -620,7 +649,7 @@ impl Job<'_, '_, '_> {
         if put.create_only {
             return Err(item_exists(&row, false));
         }
-        self.row_gate(&row)?;
+        self.gate().row_gate(&row)?;
         if row.state == "trashed" {
             require_declared(&put.type_id, &row)?;
             return self.acknowledge(&row);
@@ -686,6 +715,7 @@ impl Job<'_, '_, '_> {
             .unwrap_or("library");
         let writer = self.writer();
         let key = title_key(rules, &put.type_id, &properties);
+        let link = self.held_link(&put.type_id, &properties, None)?;
         let item = rows::insert(
             tx,
             &NewRow {
@@ -701,6 +731,8 @@ impl Job<'_, '_, '_> {
                 occurred_at: put.occurred_at.as_deref().unwrap_or(at),
                 at,
                 trashed_at: (state == "trashed").then_some(at),
+                trashed_by: (state == "trashed").then_some(&writer),
+                link: link.as_deref(),
                 capture_latitude: put.capture_latitude,
                 capture_longitude: put.capture_longitude,
                 writer: &writer,
@@ -716,7 +748,7 @@ impl Job<'_, '_, '_> {
     }
 
     fn update(&self, update: Update) -> Result<Done> {
-        let row = self.writable_row(&update.id)?;
+        let row = self.gate().writable_row(&update.id)?;
         let moving = update.retype
             && update
                 .type_id
@@ -724,7 +756,7 @@ impl Job<'_, '_, '_> {
                 .is_some_and(|declared| declared != row.type_id);
         if moving {
             if let Some(destination) = update.type_id.as_deref() {
-                self.type_gate(destination)?;
+                self.gate().type_gate(destination)?;
             }
         } else if let Some(declared) = update.type_id.as_deref() {
             require_declared(declared, &row)?;
@@ -917,7 +949,7 @@ impl Job<'_, '_, '_> {
                         &policy,
                     )?);
                 }
-                self.resolved(row, named, &stale, &detection, &policy)?
+                self.resolved(row, named, &ancestor, &stale, &detection, &policy)?
             }
         };
         Ok(Settled {
@@ -934,11 +966,26 @@ impl Job<'_, '_, '_> {
         &self,
         row: &Item,
         named: i64,
+        ancestor: &Snapshot,
         stale: &Stale<'_>,
         detection: &Detection,
         policy: &MergePolicy,
     ) -> Result<Outcome> {
         let plan = conflict::plan(stale, detection, policy);
+        if !plan.keep_both.is_empty()
+            && self
+                .catalog
+                .link_field(&row.type_id)
+                .is_some_and(|field| self.catalog.rules.requires(&row.type_id, field))
+        {
+            return Err(collision(
+                row,
+                named,
+                ancestor,
+                &detection.conflicting,
+                policy,
+            )?);
+        }
         let strategies: Map<String, Value> = plan
             .strategies
             .iter()
@@ -968,7 +1015,10 @@ impl Job<'_, '_, '_> {
     ) -> Result<(bool, Item)> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
-        let properties = conflict::copy_properties(stale, keep_both);
+        let mut properties = conflict::copy_properties(stale, keep_both);
+        if let Some(field) = self.catalog.link_field(&row.type_id) {
+            properties.shift_remove(field);
+        }
         let written: Map<String, Value> = properties
             .iter()
             .filter(|(name, value)| {
@@ -1008,6 +1058,8 @@ impl Job<'_, '_, '_> {
                 occurred_at: at,
                 at,
                 trashed_at: None,
+                trashed_by: None,
+                link: None,
                 capture_latitude: None,
                 capture_longitude: None,
                 writer: &writer,
@@ -1075,12 +1127,42 @@ impl Job<'_, '_, '_> {
         Ok(rules.coerced_properties(resulting, &result))
     }
 
+    /// The link `properties` give an item of `type_id`, refused where another
+    /// row than `own` holds it. Each row-writing path comes through here, so
+    /// the rule cannot differ by door.
+    fn held_link(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        own: Option<&str>,
+    ) -> Result<Option<String>> {
+        let Some(field) = self.catalog.link_field(type_id) else {
+            return Ok(None);
+        };
+        let Some(link) = link_in(field, properties) else {
+            return Ok(None);
+        };
+        if let Some(holder) = rows::link_holder(self.unit.tx(), type_id, link)?
+            && Some(holder.as_str()) != own
+        {
+            return Err(Refusal::new(
+                Code::LinkTaken,
+                format!("Another item of type \"{type_id}\" already holds this link."),
+            )
+            .with_detail("existing_id", holder)
+            .with_detail("field", field)
+            .with_detail("value", link));
+        }
+        Ok(Some(link.to_string()))
+    }
+
     /// Keeps the version the row leaves and writes the one it reaches.
     fn land(&self, row: &Item, resulting: &str, settled: &Settled) -> Result<Item> {
         let rules = &self.catalog.rules;
         let at = self.unit.at.as_str();
         let writer = self.writer();
         let key = title_key(rules, resulting, &settled.properties);
+        let link = self.held_link(resulting, &settled.properties, Some(&row.id))?;
         let fields = &settled.fields;
         rows::advance(
             self.unit.tx(),
@@ -1090,6 +1172,7 @@ impl Job<'_, '_, '_> {
                 type_id: resulting,
                 tier: fields.tier.as_deref().or(row.tier.as_deref()),
                 source_id: fields.source_id.as_deref().or(row.source_id.as_deref()),
+                link: link.as_deref(),
                 properties: &js::canonical(&settled.properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(resulting),
@@ -1101,7 +1184,7 @@ impl Job<'_, '_, '_> {
     }
 
     fn tag_row(&self, id: &str, version: Option<i64>) -> Result<Item> {
-        let row = self.writable_row(id)?;
+        let row = self.gate().writable_row(id)?;
         if let Some(named) = version
             && named != row.version
         {
@@ -1152,14 +1235,14 @@ impl Job<'_, '_, '_> {
     }
 
     fn extension_row(&self, id: &str, namespace: &str) -> Result<Item> {
-        let row = self.writable_row(id)?;
+        let row = self.gate().writable_row(id)?;
         if RESERVED_NAMESPACES.contains(&namespace) {
             return Err(Refusal::new(
                 Code::Forbidden,
                 format!("Namespace \"{namespace}\" is reserved"),
             ));
         }
-        self.note(Need::Extension {
+        self.gate().note(Need::Extension {
             namespace: namespace.to_string(),
             write: true,
         });
@@ -1197,5 +1280,203 @@ impl Job<'_, '_, '_> {
         let row = self.extension_row(id, namespace)?;
         rows::remove_extension(self.unit.tx(), row.seq, namespace)?;
         self.extensions_landed(&row, namespace)
+    }
+
+    fn moved_to_bin(&self, plan: &Plan) -> Result<Vec<Item>> {
+        let (at, writer) = (self.unit.at.as_str(), self.writer());
+        plan.items
+            .iter()
+            .map(|item| {
+                rows::move_state(
+                    self.unit.tx(),
+                    item,
+                    &Moved {
+                        state: "trashed",
+                        trashed_at: Some(at),
+                        trashed_by: Some(&writer),
+                        at,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn moved_out(&self, item: &Item, state: &str) -> Result<Item> {
+        rows::move_state(
+            self.unit.tx(),
+            item,
+            &Moved {
+                state,
+                trashed_at: None,
+                trashed_by: None,
+                at: &self.unit.at,
+            },
+        )
+    }
+
+    /// The row and its gate, for a door that reaches it in or out of the bin.
+    fn lifecycle_row(&self, id: &str, version: Option<i64>) -> Result<Item> {
+        let gate = self.gate();
+        let row = gate.readable_row(id)?;
+        gate.row_gate(&row)?;
+        require_version(&row, version)?;
+        Ok(row)
+    }
+
+    fn transition(&self, id: &str, state: &str, version: Option<i64>) -> Result<Done> {
+        let row = self.lifecycle_row(id, version)?;
+        let to_bin = state == "trashed";
+        let from_bin = row.state == "trashed";
+        if !matches!(
+            (row.state.as_str(), state),
+            ("active", "archived" | "trashed")
+                | ("archived", "active" | "trashed")
+                | ("trashed", "active")
+        ) {
+            return Err(invalid_transition(&row.state, state));
+        }
+        let item = if to_bin {
+            let asked = [Asked {
+                id: row.id.clone(),
+                version,
+            }];
+            let plan = plan::plan(&self.gate(), Act::Bin, &asked)?;
+            self.moved_to_bin(&plan)?
+                .pop()
+                .ok_or_else(|| Refusal::internal("a plan lost the row it was asked about"))?
+        } else {
+            self.moved_out(&row, state)?
+        };
+        self.unit.audit(
+            "item",
+            &item.id,
+            Some(json!({ "from_state": row.state, "to_state": state })),
+        )?;
+        self.announce("item.state_changed", &item)?;
+        if to_bin {
+            self.announce("item.deleted", &item)?;
+        } else if from_bin {
+            self.announce("item.restored", &item)?;
+        }
+        self.answer(200, &item, "")
+    }
+
+    fn delete(&self, id: String, version: Option<i64>) -> Result<Done> {
+        let plan = plan::plan(&self.gate(), Act::Bin, &[Asked { id, version }])?;
+        for item in self.moved_to_bin(&plan)? {
+            self.unit.audit("item", &item.id, None)?;
+            self.announce("item.deleted", &item)?;
+        }
+        Ok(done_ok())
+    }
+
+    fn trash(&self, ids: Vec<String>, digest: Option<&str>) -> Result<Done> {
+        let asked: Vec<Asked> = ids
+            .iter()
+            .map(|id| Asked {
+                id: id.clone(),
+                version: None,
+            })
+            .collect();
+        let plan = plan::plan(&self.gate(), Act::Bin, &asked)?;
+        if digest.is_some_and(|digest| digest != plan.digest) {
+            return Err(Refusal::new(
+                Code::TrashPlanChanged,
+                "What this trash would take has changed since the preview.",
+            )
+            .with_detail("digest", plan.digest));
+        }
+        let moved = self.moved_to_bin(&plan)?;
+        for item in &moved {
+            self.announce("item.deleted", item)?;
+        }
+        self.unit.audit_set(
+            "items.trash",
+            Some(json!({ "ids": ids, "trashed": moved.len() })),
+        )?;
+        Ok(done_ok())
+    }
+
+    fn restore(&self, id: &str, version: Option<i64>) -> Result<Done> {
+        let row = self.lifecycle_row(id, version)?;
+        if row.state != "trashed" {
+            return Err(invalid_transition(&row.state, "active"));
+        }
+        let item = self.moved_out(&row, "active")?;
+        self.unit.audit("item", &item.id, None)?;
+        self.announce("item.restored", &item)?;
+        self.answer(200, &item, "")
+    }
+
+    fn purge(&self, id: String, version: Option<i64>) -> Result<Done> {
+        let plan = plan::plan(&self.gate(), Act::Purge, &[Asked { id, version }])?;
+        for item in &plan.items {
+            rows::purge(self.unit.tx(), item, &self.unit.at)?;
+            self.unit.audit("item", &item.id, None)?;
+            self.announce("item.purged", item)?;
+        }
+        Ok(done_ok())
+    }
+
+    /// What the owner does through a summary, answered with the summary alone
+    /// so that nothing of the item's content leaves through this door.
+    fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<Done> {
+        self.caller().require_direct()?;
+        let row = rows::by_id(self.unit.tx(), &id)?
+            .filter(|row| !super::is_system(&row.type_id))
+            .ok_or_else(not_found)?;
+        let summary = summary_of(&self.catalog.rules, &row)?;
+        if row.version != version {
+            return Ok(Done {
+                status: 409,
+                body: json!({
+                    "error": {
+                        "code": "version_conflict",
+                        "message": "This item changed. Refresh the page before trying again.",
+                    },
+                    "current": summary,
+                })
+                .to_string(),
+            });
+        }
+        match act {
+            OwnerAct::Trash => self.delete(id, None)?,
+            OwnerAct::Restore => self.restore(&id, None)?,
+            OwnerAct::Purge => self.purge(id, None)?,
+        };
+        Ok(Done {
+            status: 200,
+            body: summary.to_string(),
+        })
+    }
+
+    /// Moves what `keys` left under `type_id` to `settled_at`, where later.
+    fn settle(&self, type_id: &str, keys: &Keys, settled_at: &str) -> Result<Done> {
+        check_keys(&self.catalog, type_id, Some(keys))?;
+        self.gate().type_gate(type_id)?;
+        let tx = self.unit.tx();
+        match keys {
+            Keys::Links(links) => {
+                for link in links {
+                    rows::settle_link(tx, type_id, link, settled_at)?;
+                }
+            }
+            Keys::Natural { source, source_ids } => {
+                self.may_write_under(source, true)?;
+                for source_id in source_ids {
+                    rows::settle_key(tx, type_id, source, source_id, settled_at)?;
+                }
+            }
+        }
+        let tombstones = rows::tombstones(tx, type_id, keys)?;
+        self.unit.audit(
+            "type",
+            type_id,
+            Some(json!({ "settled_at": settled_at, "count": tombstones.len() })),
+        )?;
+        Ok(Done {
+            status: 200,
+            body: json!({ "tombstones": tombstones }).to_string(),
+        })
     }
 }

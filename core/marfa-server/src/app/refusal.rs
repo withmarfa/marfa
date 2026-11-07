@@ -132,6 +132,8 @@ pub struct Refusal {
     /// The SQLite result code behind a failed statement, for those allowed to
     /// read it. It never reaches the envelope.
     pub cause: Option<&'static str>,
+    /// The commit itself failed, so the write may have landed.
+    pub commit_failed: bool,
 }
 
 impl Refusal {
@@ -142,6 +144,7 @@ impl Refusal {
             details: None,
             members: None,
             cause: None,
+            commit_failed: false,
         }
     }
 

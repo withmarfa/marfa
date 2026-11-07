@@ -56,7 +56,7 @@ fn kind_of(action: &str) -> &'static str {
 pub struct Entry<'a> {
     pub action: &'a str,
     pub resource_type: &'a str,
-    pub resource_id: &'a str,
+    pub resource_id: Option<&'a str>,
     pub details: Option<Value>,
 }
 

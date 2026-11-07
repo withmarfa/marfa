@@ -55,7 +55,22 @@ impl<'c> Unit<'_, 'c> {
             Entry {
                 action,
                 resource_type,
-                resource_id,
+                resource_id: Some(resource_id),
+                details,
+            },
+        )
+    }
+
+    /// Leaves the entry for a write that names many rows and no one of them.
+    pub fn audit_set(&self, resource_type: &str, details: Option<Value>) -> Result<()> {
+        audit::record(
+            self.tx,
+            &self.at,
+            &self.caller,
+            Entry {
+                action: self.action,
+                resource_type,
+                resource_id: None,
                 details,
             },
         )

@@ -48,7 +48,10 @@ fn sqlite_failure(code: std::ffi::c_int) -> rusqlite::Error {
 /// cannot promise that nothing was kept.
 fn commit_refused(error: rusqlite::Error) -> Refusal {
     let full = error.sqlite_error_code() == Some(ErrorCode::DiskFull);
-    let refusal = Refusal::from(error);
+    let refusal = Refusal {
+        commit_failed: true,
+        ..Refusal::from(error)
+    };
     if full {
         refusal.with_detail("write_outcome", "unknown")
     } else {

@@ -118,6 +118,8 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             catalog::raise(unit.tx())?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
+            items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
+            items::drop_tombstones(unit.tx(), &id)?;
             unit.audit("type", &id, None)?;
             let held = Provenance {
                 origin: "user",
@@ -177,6 +179,7 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
             }
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
+            items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             unit.audit("type", &id, None)?;
             let shown = next
                 .owned(&id)
@@ -274,6 +277,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         catalog::raise(unit.tx())?;
         let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
+        items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
         unit.audit("type", &id, None)?;
         Ok(())
     })
