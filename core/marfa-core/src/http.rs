@@ -35,8 +35,8 @@ pub const BULK_GET_LIMIT: usize = 100;
 
 /// The server's cap on a request's body unless its instance names another,
 /// past which it answers `413 request_too_large` and closes the connection.
-/// An instance does not say what it set, so a device holds every request to
-/// the default.
+/// The root says what an instance set (`store::request_limit`); this is what
+/// a device goes by where it has not said.
 pub const REQUEST_LIMIT: usize = 1_048_576;
 
 /// The most values `POST /items/lookup` takes in one request
@@ -639,9 +639,9 @@ impl Http {
         let Some(expected) = relocation.expected_instance.as_deref() else {
             return Err(wrong());
         };
-        let served = self.anonymous_instance_id()?;
+        let served = self.anonymous_root()?;
         self.refuse_if_let_go()?;
-        if served != expected {
+        if served.instance_id != expected {
             return Err(wrong());
         }
         (relocation.keep)(&self.let_go)?;
@@ -1018,16 +1018,17 @@ impl Http {
 
     /// The instance the server says it is, which its root answers to anyone.
     pub fn instance_id(&self) -> Result<String, CoreError> {
-        self.confirm_origin()?;
-        self.refuse_if_let_go()?;
-        self.anonymous_instance_id()
+        self.served().map(|served| served.instance_id)
     }
 
-    fn anonymous_instance_id(&self) -> Result<String, CoreError> {
-        #[derive(serde::Deserialize)]
-        struct Root {
-            instance_id: String,
-        }
+    /// What the server's root answers to anyone about the instance.
+    pub(crate) fn served(&self) -> Result<Served, CoreError> {
+        self.confirm_origin()?;
+        self.refuse_if_let_go()?;
+        self.anonymous_root()
+    }
+
+    fn anonymous_root(&self) -> Result<Served, CoreError> {
         // ureq derives Basic authorization from URL userinfo even when no
         // Authorization header was supplied.
         let mut url = self.url(&[], &[]);
@@ -1061,11 +1062,11 @@ impl Http {
                 }
             });
         }
-        let root: Root = serde_json::from_str(&body)?;
+        let root: Served = serde_json::from_str(&body)?;
         if root.instance_id.is_empty() {
             return Err(CoreError::Decoding("the root names no instance".into()));
         }
-        Ok(root.instance_id)
+        Ok(root)
     }
 
     pub fn catalog(&self) -> Result<WireCatalog, CoreError> {
@@ -1316,11 +1317,9 @@ impl Http {
             if let Some(instance) = &self.instance {
                 request = request.header(INSTANCE_HEADER, instance);
             }
-            let request = closing_past_limit(request, outgoing.body.len())
-                .body(outgoing.body)
-                .map_err(|error| {
-                    CoreError::Invalid(format!("this write cannot be sent: {error}"))
-                })?;
+            let request = request.body(outgoing.body).map_err(|error| {
+                CoreError::Invalid(format!("this write cannot be sent: {error}"))
+            })?;
             self.agent
                 .run(request)
                 .map_err(|error| self.unreached(error))
@@ -1577,12 +1576,9 @@ impl Http {
         let send = |authorization: Option<&str>, text: Option<&str>| {
             let builder = builder(authorization);
             match text {
-                Some(text) => self.dispatch(
-                    closing_past_limit(builder, text.len())
-                        .body(text)
-                        .map_err(cannot_send)?,
-                    budget.clone(),
-                ),
+                Some(text) => {
+                    self.dispatch(builder.body(text).map_err(cannot_send)?, budget.clone())
+                }
                 None => self.dispatch(builder.body(()).map_err(cannot_send)?, budget.clone()),
             }
             .map_err(network)
@@ -2009,18 +2005,22 @@ fn http_date(raw: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-/// A server closes the connection a body over its cap arrived on, just after
-/// answering. Told to close first, the client does not pool that connection,
-/// where the next request could meet the reset.
-fn closing_past_limit(
-    builder: ureq::http::request::Builder,
-    length: usize,
-) -> ureq::http::request::Builder {
-    if length > REQUEST_LIMIT {
-        builder.header("Connection", "close")
-    } else {
-        builder
-    }
+/// What a device reads from the root each time it confirms the instance.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct Served {
+    pub instance_id: String,
+    /// `None` from a server that publishes no limit, or none a device can use,
+    /// which says nothing of what it takes.
+    #[serde(default, deserialize_with = "published_limit")]
+    pub max_request_bytes: Option<usize>,
+}
+
+fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<usize>, D::Error> {
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(from)?;
+    Ok(value
+        .and_then(|value| value.as_u64())
+        .filter(|limit| *limit > 0)
+        .and_then(|limit| usize::try_from(limit).ok()))
 }
 
 /// Only for an answer naming the server's contract; `Http::refused` decides.
@@ -2604,116 +2604,6 @@ mod tests {
         });
         serving.join().unwrap().unwrap();
         assert!(matches!(&sent, Err(CoreError::Network(_))), "{sent:?}");
-    }
-
-    /// Answers one request with a `413`, leaves its connection open and says
-    /// whether the client sent the next request down it.
-    fn serve_noting_reuse() -> (String, std::thread::JoinHandle<bool>) {
-        use std::io::Write;
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let serving = std::thread::spawn(move || {
-            let read_request = |socket: &mut std::net::TcpStream| {
-                let mut seen = Vec::new();
-                let mut chunk = [0u8; 65536];
-                loop {
-                    let got = Read::read(socket, &mut chunk).unwrap();
-                    seen.extend_from_slice(&chunk[..got]);
-                    let text = String::from_utf8_lossy(&seen).to_lowercase();
-                    let Some(end) = text.find("\r\n\r\n") else {
-                        if got == 0 {
-                            return false;
-                        }
-                        continue;
-                    };
-                    let length = text[..end]
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length: "))
-                        .map_or(0, |value| value.trim().parse::<usize>().unwrap());
-                    if seen.len() >= end + 4 + length {
-                        return true;
-                    }
-                }
-            };
-            let empty = |status: &str| {
-                format!(
-                    "HTTP/1.1 {status}\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 2\r\n\r\n{{}}"
-                )
-            };
-            let (mut first, _) = listener.accept().unwrap();
-            assert!(read_request(&mut first));
-            first
-                .write_all(empty("413 Payload Too Large").as_bytes())
-                .unwrap();
-            let reused = read_request(&mut first);
-            if reused {
-                first.write_all(empty("200 OK").as_bytes()).unwrap();
-            } else {
-                let (mut second, _) = listener.accept().unwrap();
-                assert!(read_request(&mut second));
-                second.write_all(empty("200 OK").as_bytes()).unwrap();
-            }
-            reused
-        });
-        (url, serving)
-    }
-
-    #[test]
-    fn a_connection_that_carried_a_body_over_the_limit_is_not_used_again() {
-        let long = "x".repeat(REQUEST_LIMIT + 1);
-        let next = |http: &Http| {
-            http.fetch(
-                Call {
-                    method: Method::Get,
-                    segments: &["items"],
-                    params: &[],
-                    headers: &[],
-                    body: CallBody::None,
-                    credential: true,
-                    stream: false,
-                },
-                true,
-            )
-            .map(|_| ())
-            .unwrap();
-        };
-
-        let (url, serving) = serve_noting_reuse();
-        let http = Http::new(&url, "k").unwrap();
-        let answer = http
-            .send(&Outgoing {
-                method: Method::Post,
-                segments: vec!["items".into()],
-                params: Vec::new(),
-                body: &long,
-                idempotency_key: "key",
-            })
-            .unwrap();
-        assert_eq!(answer.status, 413);
-        next(&http);
-        assert!(!serving.join().unwrap());
-
-        // The witness: within the limit, the same exchange shares the connection.
-        let (url, serving) = serve_noting_reuse();
-        let http = Http::new(&url, "k").unwrap();
-        let answer = http
-            .send(&Outgoing {
-                method: Method::Post,
-                segments: vec!["items".into()],
-                params: Vec::new(),
-                body: "{}",
-                idempotency_key: "key",
-            })
-            .unwrap();
-        assert_eq!(answer.status, 413);
-        next(&http);
-        assert!(serving.join().unwrap());
-
-        let (url, serving) = serve_noting_reuse();
-        let http = Http::new(&url, "k").unwrap();
-        let _ = http.fetch(post_items(&long), true);
-        next(&http);
-        assert!(!serving.join().unwrap());
     }
 
     /// Answers one request with `answer`, written as it is, once the request

@@ -103,7 +103,11 @@ const KEPT_LOOK: Duration = Duration::from_secs(60);
 
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
-pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
+/// The size past which a document is warned of, against what the server said
+/// it takes, or else its default.
+fn near(limit: Option<usize>) -> usize {
+    limit.unwrap_or(REQUEST_LIMIT).saturating_mul(9) / 10
+}
 
 /// Each held as `encoding`, by the same binding an `unreadable` file is.
 const NOT_UTF8: &str = "it is not UTF-8 text; saved as UTF-8, it is sent";
@@ -163,17 +167,18 @@ fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, i
 
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
 /// outside the request.
-fn near_limit(key: &str, text: &str) -> Option<Flagged> {
-    if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
+fn near_limit(key: &str, text: &str, limit: Option<usize>) -> Option<Flagged> {
+    if !is_document(Path::new(key)) || text.len().saturating_mul(6) < near(limit) {
         return None;
     }
     let size = serde_json::to_string(text).map_or(text.len(), |sent| sent.len());
-    (size >= NEAR_LIMIT).then(|| Flagged {
+    let most = limit.unwrap_or(REQUEST_LIMIT);
+    (size >= near(limit)).then(|| Flagged {
         path: key.to_string(),
         flag: "size",
         reason: format!(
-            "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that a server on its default size does not take it",
-            size * 100 / REQUEST_LIMIT
+            "is {size} bytes as it is sent, {}% of the {most} a request may carry; a file past that stays here and is not sent",
+            size.saturating_mul(100) / most
         ),
         item: None,
     })
@@ -330,6 +335,13 @@ impl Flagged {
             .or_else(|| held.strip_prefix(state::EDGES_WAITING))
         {
             ("edges", reason)
+        } else if let Some(words) = over_limit_words(held) {
+            return Flagged {
+                path: path.to_string(),
+                flag: "refused",
+                reason: format!("{OVER_LIMIT_SAID}{words}"),
+                item: None,
+            };
         } else {
             ("refused", held.strip_prefix(state::REFUSED).unwrap_or(held))
         };
@@ -339,6 +351,11 @@ impl Flagged {
             reason: reason.to_string(),
             item: None,
         }
+    }
+
+    /// Whether this file is held for its size against what the server takes.
+    fn over_limit(&self) -> bool {
+        self.flag == "refused" && self.reason.starts_with(OVER_LIMIT_SAID)
     }
 }
 
@@ -1804,6 +1821,27 @@ impl Folder {
 
 const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
 
+/// How a person is told a file is held for its size.
+const OVER_LIMIT_SAID: &str = "This file is ";
+
+/// The words of a hold the copy made for a file's size, as the error reads.
+fn over_limit_words(held: &str) -> Option<&str> {
+    held.strip_prefix(LOCAL_ADMISSION_REFUSAL)?
+        .strip_prefix("validation (over_request_limit): ")?
+        .strip_prefix(crate::model::OVER_REQUEST_LIMIT_WRITE)
+}
+
+/// What a file's record holds for a write the drain refused unsent for its
+/// size, so the scan judges it as it judges a hold it made itself.
+fn over_limit_held(reason: &str) -> Option<String> {
+    let words = reason.strip_prefix(crate::model::OVER_REQUEST_LIMIT_REASON)?;
+    Some(format!(
+        "{LOCAL_ADMISSION_REFUSAL}validation ({}): {}{words}",
+        crate::model::OVER_REQUEST_LIMIT,
+        crate::model::OVER_REQUEST_LIMIT_WRITE
+    ))
+}
+
 fn local_refusal_prefix() -> &'static str {
     LOCAL_ADMISSION_REFUSAL
         .strip_prefix(state::REFUSED)
@@ -1829,7 +1867,7 @@ fn copy_refused(refused: &state::Refused) -> bool {
 fn local_admission_refusal(error: &CoreError) -> bool {
     matches!(error, CoreError::Validation {code, ..}
         if matches!(code.as_str(), "invalid_properties" | "validation_error"
-            | "edge_constraint_violation" | "edge_cycle"))
+            | "edge_constraint_violation" | "edge_cycle" | crate::model::OVER_REQUEST_LIMIT))
         || matches!(error, CoreError::NotFound {code, ..} if code == "item_not_found")
         || matches!(error, CoreError::UnknownType { .. })
 }
@@ -2066,7 +2104,12 @@ impl Folder {
     fn hold_refused(&self) -> Result<()> {
         let conn = self.core.conn()?;
         for mut bound in state::bound_awaiting(&conn)? {
-            let was = (bound.writes.clone(), bound.lines.clone(), bound.edit_line);
+            let was = (
+                bound.writes.clone(),
+                bound.lines.clone(),
+                bound.edit_line,
+                bound.held.clone(),
+            );
             let queue = crate::store::queued_writes_named(&conn, &waited_on(&bound))?;
             for verdict in &queue {
                 let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
@@ -2116,7 +2159,12 @@ impl Folder {
                 // A delete of an edge already gone did what it was asked.
                 let gone = row.kind == WriteKind::DeleteEdge
                     && verdict.reason.as_deref() == Some("edge_not_found");
+                let over_limit = verdict.reason.as_deref().and_then(over_limit_held);
                 match verdict.verdict {
+                    // Held as a hold the scan made, so it is judged again.
+                    Some(crate::model::Verdict::Refused) if over_limit.is_some() => {
+                        bound.held = over_limit;
+                    }
                     Some(crate::model::Verdict::Refused) if !gone => {
                         let code = verdict.reason.clone().unwrap_or_default();
                         let message = row
@@ -2173,7 +2221,9 @@ impl Folder {
                     bound.edit_line = Some(bound.edit_line.unwrap_or(0).max(line));
                 }
             }
-            if (&bound.writes, &bound.lines, bound.edit_line) != (&was.0, &was.1, was.2) {
+            if (&bound.writes, &bound.lines, bound.edit_line, &bound.held)
+                != (&was.0, &was.1, was.2, &was.3)
+            {
                 state::bind(&conn, &bound)?;
             }
         }

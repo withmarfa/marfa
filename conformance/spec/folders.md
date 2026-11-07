@@ -6848,7 +6848,7 @@ While a paused folder removal remains unchanged, the CLI MUST say its watch noti
 
 ### `folders/size-warning`
 
-When a folder scan admits a new or edited document whose JSON-encoded text reaches 943718 bytes, a device MUST include a `size` warning naming that path and size.
+When a folder scan admits a new or edited document whose JSON-encoded text reaches nine tenths of the server's limit, or 943718 bytes where the root has named none, a device MUST include a `size` warning naming that path and size.
 
 **Tests:** `device/folders.test.ts › warns of a text near the limit`, `device/folders-contract-b.test.ts › warns at the exact JSON-encoded size boundary including escaped text`.
 
@@ -6865,6 +6865,46 @@ While a file is held under `folders/lost-row-unchanged-held` and the queue keeps
 **Reason:** "bound to an item this copy no longer holds" does not tell a person that the server refused the file, or why.
 
 **Tests:** `device/folders-contract-b.test.ts › preserves a document after a request-too-large %s refusal`.
+
+### `folders/over-limit-held`
+
+If a folder file's write is larger than the server's limit (`queue-and-verdicts/request-over-limit-unsent`), then a device MUST report the file as `refused`, with a reason naming the size of its request and the limit.
+
+**Tests:** `cli/request-size.test.ts › holds a file past the limit, sends none of it and delivers what is beside it`.
+
+### `folders/over-limit-said`
+
+When a folder push holds a file under `folders/over-limit-held`, the CLI MUST say the path and the reason in words.
+
+**Tests:** `cli/request-size.test.ts › holds a file past the limit, sends none of it and delivers what is beside it`.
+
+### `folders/over-limit-shrunk`
+
+When a file held under `folders/over-limit-held` changes to fit the server's limit, a device MUST send it.
+
+**Tests:** `cli/request-size.test.ts › sends a held file once it fits, whether it was a create or an edit`.
+
+### `folders/over-limit-edit-keeps-others`
+
+When a device sends an edit of a file once held under `folders/over-limit-held`, a device MUST send it on the version the file was read at.
+
+**Reason:** the server then merges it, as any stale edit, so a change made elsewhere while the file was held is not overwritten.
+
+**Tests:** `cli/request-size.test.ts › keeps an edit made elsewhere while an edit of the file was held`.
+
+### `folders/over-limit-root-read`
+
+While a folder holds a file under `folders/over-limit-held`, a device MUST read the root before each scan.
+
+**Reason:** a held file leaves nothing to send, and a drain with nothing to send reads nothing, so without this read a raised limit would go unseen.
+
+**Tests:** `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
+
+### `folders/over-limit-raised`
+
+When the server's limit rises to fit a file held under `folders/over-limit-held`, a device MUST send the file with no change to it.
+
+**Tests:** `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
 
 ### `folders/request-too-large-bytes-kept`
 
@@ -6886,7 +6926,7 @@ When the server refuses a folder document create with `413 request_too_large` an
 
 ### `folders/size-status-warning`
 
-When a folder status reads a document near the fixed 1 MiB request limit, a device MUST include its size warning in the file’s status.
+When a folder status reads a document that would have the warning `folders/size-warning` names, a device MUST include its size warning in the file’s status.
 
 **Tests:** `device/folders.test.ts › warns of a text near the limit`.
 

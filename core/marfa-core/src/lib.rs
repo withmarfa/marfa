@@ -62,6 +62,8 @@ mod removal;
 mod remove_tests;
 #[cfg(test)]
 mod replace_tests;
+#[cfg(test)]
+mod request_limit_tests;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
@@ -3603,8 +3605,15 @@ pub(crate) fn check_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<
     if draft.source_id.is_none() {
         catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
     }
+    if catalog.request_limit().is_some() {
+        // An id the queue mints is as long as this one.
+        let id = draft.id.as_deref().unwrap_or(MINTED_ID_SHAPE);
+        catalog.refuse_over_request_limit(&draft.payload(id)?)?;
+    }
     Ok(())
 }
+
+const MINTED_ID_SHAPE: &str = "00000000-0000-7000-8000-000000000000";
 
 /// What no copy could make an item of, whatever it holds: a name the server
 /// would refuse, an id that is no id, a system type, or a type it does not hold.
@@ -3788,6 +3797,7 @@ fn queue_create(
         .collect();
     edge_rules::refuse_unwritable_edges(tx, &inline)?;
     let payload = draft.payload(&id)?;
+    catalog.refuse_over_request_limit(&payload)?;
     let mut row = draft.wire(&id);
     row.tier = shown_tier.map(|tier| tier.as_str().into());
     store::upsert_item(
@@ -4047,6 +4057,7 @@ fn queue_update(
         }
         payload = body.to_string();
     }
+    catalog.refuse_over_request_limit(&payload)?;
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
         &edit.properties,

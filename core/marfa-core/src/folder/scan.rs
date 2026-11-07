@@ -254,6 +254,7 @@ impl Folder {
     }
 
     fn scan_as(&self, full: bool, settle: Option<Duration>, mode: Files) -> Result<ScanReport> {
+        self.read_limit_if_holding();
         let start = match self.scan_root()? {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(start) => start,
@@ -288,6 +289,7 @@ impl Folder {
             crate::store::meta_set(&*self.core.conn()?, EMBEDS_REREAD, "1")?;
         }
         self.record_stats(&scan)?;
+        self.note_limit_holds(&scan.report, full)?;
         if self.root_left(&mut scan).is_break() {
             return Ok(scan.report);
         }
@@ -296,6 +298,35 @@ impl Folder {
         }
         scan.report.root_gone = scan.report.root_gone.or_else(|| self.root_gone());
         Ok(scan.report)
+    }
+
+    /// Reads the root where a file is held over the limit it last named, so a
+    /// limit raised since lets the file go in this pass, with nothing else
+    /// waiting to send. A root that does not answer leaves the limit as it was.
+    fn read_limit_if_holding(&self) {
+        let holding = self.core.conn().is_ok_and(|conn| {
+            matches!(
+                crate::store::meta_get(&conn, crate::store::META_LIMIT_HOLDS),
+                Ok(Some(_))
+            )
+        });
+        if holding && let Ok(http) = self.core.http() {
+            let _ = crate::catch_up::refuse_another_instance(&self.core, http);
+        }
+    }
+
+    /// Only a full pass reads every file, so only it can say none is held.
+    fn note_limit_holds(&self, report: &ScanReport, full: bool) -> Result<()> {
+        let conn = self.core.conn()?;
+        let key = crate::store::META_LIMIT_HOLDS;
+        if report.flagged.iter().any(Flagged::over_limit) {
+            if crate::store::meta_get(&conn, key)?.is_none() {
+                crate::store::meta_set(&conn, key, "1")?;
+            }
+        } else if full {
+            crate::store::meta_delete(&conn, key)?;
+        }
+        Ok(())
     }
 
     /// The pass's first phase: that the folder's root is there, then what
@@ -883,7 +914,10 @@ impl Folder {
                     // The server has answered these bytes already; the file of
                     // an item purged or in the bin, of the folder's own bytes,
                     // is the pull's to take away (35).
-                    if bound.path == file.key && bound.content_hash == file.hash {
+                    if bound.path == file.key
+                        && bound.content_hash == file.hash
+                        && self.create_over_limit(&item_id)?.is_none()
+                    {
                         let pulls = bound.written_hash.as_deref() == Some(file.hash.as_str()) && {
                             let conn = self.core.conn()?;
                             crate::store::purged(&conn, &item_id)?
@@ -914,7 +948,11 @@ impl Folder {
                         &mut report.flagged,
                     )? {
                         report.created += 1;
-                        report.warnings.extend(near_limit(&file.key, &file.text));
+                        report.warnings.extend(near_limit(
+                            &file.key,
+                            &file.text,
+                            catalog.request_limit(),
+                        ));
                     }
                 }
                 Some(Claim {
@@ -1940,7 +1978,7 @@ impl Folder {
         Ok(if self.file_item(item_id, catalog)? {
             None
         } else {
-            near_limit(&file.key, &file.text)
+            near_limit(&file.key, &file.text, catalog.request_limit())
         })
     }
 

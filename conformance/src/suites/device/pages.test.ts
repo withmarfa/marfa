@@ -1114,25 +1114,139 @@ describe("a folder's first sync", () => {
       return folder;
     }
 
-    it("asks to close the connection of a body past the limit and no other", async () => {
-      const held = await sized("request-limit-connection");
-      put(
-        held,
-        "Large.md",
-        `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
+    /** Has the root name what `limit` says, or nothing where it says none. */
+    function naming(held: FolderHarness, limit: () => number | undefined) {
+      held.server.copyAnswer("GET", "/", () => {
+        const root = answers.root(held.server.contract) as Extract<
+          Answer,
+          { kind: "json" }
+        >;
+        const named = limit();
+        return named === undefined
+          ? root
+          : {
+              ...root,
+              body: { ...(root.body as object), max_request_bytes: named },
+            };
+      });
+    }
+
+    const creates = (held: FolderHarness, title: string) =>
+      held.server.requests.filter((request) => titled(request, title));
+
+    const note = (title: string, length: number) =>
+      `---\ntitle: ${title}\n---\n${"\u00e9".repeat(length)}\n`;
+
+    async function refusedCreate(held: FolderHarness) {
+      const pushed = await held.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed).slice(0, 400)).toBe(true);
+      return pushed.ok
+        ? pushed.value.drain.verdicts.find(
+            (entry) => entry.kind === "create_item",
+          )
+        : undefined;
+    }
+
+    it("refuses unsent a write one byte past the limit, and sends one at it", async () => {
+      const probe = await sized("request-limit-probe");
+      naming(probe, () => 100);
+      put(probe, "Probe.md", note("Probe", 2_000));
+      const told = await refusedCreate(probe);
+
+      expect(told?.verdict).toBe("refused");
+      expect(creates(probe, "Probe")).toHaveLength(0);
+      expect(told?.reason).not.toContain("request_too_large");
+      expect(told?.reason).toContain("this server takes 100.");
+      const size = Number(
+        /is ([\d,]+) bytes as a request/
+          .exec(told?.reason ?? "")?.[1]
+          ?.replaceAll(",", ""),
       );
-      put(held, "Small.md", "---\ntitle: Small\n---\ntext\n");
+      // Two bytes a character: the bytes sent are counted, not the characters.
+      expect(size).toBeGreaterThan(4_000);
+
+      const over = await sized("request-limit-over");
+      naming(over, () => size - 1);
+      put(over, "Probe.md", note("Probe", 2_000));
+      expect((await refusedCreate(over))?.verdict).toBe("refused");
+      expect(creates(over, "Probe")).toHaveLength(0);
+
+      const at = await sized("request-limit-at");
+      naming(at, () => size);
+      put(at, "Probe.md", note("Probe", 2_000));
+      expect((await refusedCreate(at))?.verdict).toBe("accepted");
+      expect(creates(at, "Probe")).toHaveLength(1);
+    });
+
+    it("follows the limit the root names at each drain, raised or lowered", async () => {
+      const held = await sized("request-limit-follows");
+      let limit = 100;
+      naming(held, () => limit);
+      put(held, "First.md", note("First", 2_000));
+      expect((await held.folder.push()).ok).toBe(true);
+      expect(creates(held, "First")).toHaveLength(0);
+
+      limit = 1_000_000;
+      // Held for what the root said: nothing changes but what it says now.
+      expect((await held.folder.push()).ok).toBe(true);
+      expect(creates(held, "First")).toHaveLength(1);
+
+      limit = 100;
+      put(held, "Second.md", note("Second", 2_000));
+      expect((await held.folder.push()).ok).toBe(true);
+      expect(creates(held, "Second")).toHaveLength(0);
+    });
+
+    it("sends a large write to a server that names no limit", async () => {
+      const held = await sized("request-limit-unnamed");
+      put(held, "Large.md", note("Large", 600_000));
+      expect((await refusedCreate(held))?.verdict).toBe("accepted");
+      expect(creates(held, "Large")).toHaveLength(1);
+    });
+
+    it("sends again under its key a write sent before the limit fell", async () => {
+      let dropped = false;
+      const held = await sized("request-limit-fell", (answer, request) => {
+        if (dropped || !titled(request, "Large")) return answer;
+        dropped = true;
+        return { kind: "drop" };
+      });
+      let limit = 1_000_000;
+      naming(held, () => limit);
+      put(held, "Large.md", note("Large", 2_000));
+      await held.folder.push();
+      expect(creates(held, "Large")).toHaveLength(1);
+
+      limit = 100;
+      await held.folder.push();
+      const sent = creates(held, "Large");
+      expect(sent).toHaveLength(2);
+      expect(sent[1]?.headers["idempotency-key"]).toBe(
+        sent[0]?.headers["idempotency-key"],
+      );
+    });
+
+    it("keeps out of a page a create past the limit, and pages the rest", async () => {
+      const held = await sized("request-limit-page");
+      naming(held, () => 1_000);
+      const titles = Array.from({ length: 50 }, (_, at) => `Small ${at}`);
+      for (const title of titles) put(held, `${title}.md`, note(title, 1));
+      put(held, "Large.md", note("Large", 2_000));
 
       expect((await held.folder.push()).ok).toBe(true);
 
-      const connection = (title: string) =>
-        held.server.requests.find((request) => titled(request, title))?.headers
-          .connection;
-      expect(connection("Large")).toBe("close");
-      expect(connection("Small")).not.toBe("close");
-      expect(
-        held.server.requests.some((request) => titled(request, "Small")),
-      ).toBe(true);
+      const pages = held.server.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname === "/items/bulk",
+      );
+      expect(pages).toHaveLength(1);
+      const paged = (
+        JSON.parse(pages[0]?.body ?? "{}") as {
+          items: Array<{ properties: { title: string } }>;
+        }
+      ).items.map((entry) => entry.properties.title);
+      expect(paged.sort()).toEqual([...titles].sort());
+      expect(creates(held, "Large")).toHaveLength(0);
     });
 
     it("takes a 413 whose body cannot be read as the refusal it is", async () => {

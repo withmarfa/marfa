@@ -1332,41 +1332,8 @@ fn send_queue(
                 continue;
             }
             Readiness::RefusedWith(reason) => {
-                {
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    store::record_verdict(
-                        &tx,
-                        &row.id,
-                        &store::Answered {
-                            verdict: Verdict::Refused,
-                            reason: Some(&reason),
-                            answer: None,
-                            conflicted_copy_id: None,
-                        },
-                    )?;
-                    if let Some(owed) = store::owed_of(&tx, row)? {
-                        store::owe_read_back(&tx, &owed)?;
-                        store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
-                    }
-                    tx.commit()?;
-                }
+                refuse_unsent(core, row, reason, replacing, pass, report)?;
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
-                // Told before the read, which can end the pass.
-                report.unsent += 1;
-                put_verdict(
-                    report,
-                    replacing,
-                    verdict_of(
-                        row,
-                        &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
-                        None,
-                    ),
-                );
-                if let Some(unread) = reconcile(core, row, pass)? {
-                    report.unavailable = Some(unread.reason);
-                    waited(report, unread.retry_after_seconds);
-                }
                 continue;
             }
             Readiness::Ready => {}
@@ -1401,6 +1368,19 @@ fn send_queue(
                 .ok_or_else(|| CoreError::Store(format!("the queued write {} is gone", row.id)))?;
             &decided
         };
+        // Only a write never sent: one sent before may have landed, and goes
+        // again under its key for the server to say.
+        let limit = store::request_limit(&*core.conn()?)?;
+        if row.kind != WriteKind::UploadBlob
+            && let Some(words) = crate::model::over_request_limit(payload.len(), limit)
+            && store::unsent(&*core.conn()?, &row.id)?
+        {
+            let reason = format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_REASON);
+            store::meta_set(&*core.conn()?, store::META_LIMIT_HOLDS, "1")?;
+            refuse_unsent(core, row, reason, replacing, pass, report)?;
+            answers.insert(row.id.clone(), Some(Verdict::Refused));
+            continue;
+        }
         // Opened before anything is marked sent, so missing bytes settle as
         // refused rather than failing the pass.
         let sendable = match address(row, &payload)? {
@@ -1732,6 +1712,52 @@ fn send_queue(
 
 /// Parks every unanswered write until the credential is replaced, and says
 /// so: the rest of the pass would meet the same refusal.
+/// Refuses `row` with the device's own `reason`, nothing sent. Told before
+/// the read it owes, which can end the pass.
+fn refuse_unsent(
+    core: &Core,
+    row: &QueuedWrite,
+    reason: String,
+    replacing: Option<usize>,
+    pass: &mut ReachChange,
+    report: &mut DrainReport,
+) -> Result<()> {
+    {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        store::record_verdict(
+            &tx,
+            &row.id,
+            &store::Answered {
+                verdict: Verdict::Refused,
+                reason: Some(&reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        if let Some(owed) = store::owed_of(&tx, row)? {
+            store::owe_read_back(&tx, &owed)?;
+            store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
+        }
+        tx.commit()?;
+    }
+    report.unsent += 1;
+    put_verdict(
+        report,
+        replacing,
+        verdict_of(
+            row,
+            &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
+            None,
+        ),
+    );
+    if let Some(unread) = reconcile(core, row, pass)? {
+        report.unavailable = Some(unread.reason);
+        waited(report, unread.retry_after_seconds);
+    }
+    Ok(())
+}
+
 fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
     let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
     report.stopped = Some(format!(

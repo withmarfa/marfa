@@ -6,8 +6,8 @@ use serde::Serialize;
 use super::edge_types::EdgeTypes;
 use super::health::Found;
 use super::{
-    Flagged, Folder, NEAR_LIMIT, ScanReport, captured_identities, carries_frontmatter, document,
-    id_named, identity, is_document, named_by_its_file, near_limit, one_per_name, state, text_of,
+    Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document, id_named,
+    identity, is_document, named_by_its_file, near, near_limit, one_per_name, state, text_of,
 };
 use crate::Result;
 use crate::catalog::Catalog;
@@ -100,16 +100,35 @@ impl Folder {
     /// keeps that refusal. A create refused unsent has a device's reason, not
     /// the server's.
     fn refused_create(&self, item_id: &str) -> Result<Option<String>> {
-        let rows = crate::store::read_writes(
+        Ok(self
+            .refused_creates(item_id, 1)?
+            .into_iter()
+            .next_back()
+            .and_then(|row| row.reason))
+    }
+
+    /// The hold on a file whose create the drain refused unsent for its size,
+    /// which a device decided and the next scan judges again.
+    pub(super) fn create_over_limit(&self, item_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .refused_creates(item_id, 0)?
+            .into_iter()
+            .next_back()
+            .and_then(|row| row.reason)
+            .and_then(|reason| super::over_limit_held(&reason)))
+    }
+
+    fn refused_creates(&self, item_id: &str, sent: i64) -> Result<Vec<QueuedWrite>> {
+        crate::store::read_writes(
             &*self.core.conn()?,
-            "WHERE item_id = ?1 AND kind = ?2 AND verdict = ?3 AND sent = 1",
-            [
+            "WHERE item_id = ?1 AND kind = ?2 AND verdict = ?3 AND sent = ?4",
+            rusqlite::params![
                 item_id,
                 WriteKind::CreateItem.as_str(),
                 Verdict::Refused.as_str(),
+                sent,
             ],
-        )?;
-        Ok(rows.into_iter().next_back().and_then(|row| row.reason))
+        )
     }
 
     /// Writes nothing, so a store opened without holding it answers it.
@@ -184,6 +203,7 @@ impl Folder {
                 .collect(),
             marked: marks.values().map(identity::Identity::key).collect(),
         };
+        let limit = catalog.request_limit();
         let mut seen: HashSet<String> = HashSet::new();
         let mut files: Vec<FileStatus> = Vec::new();
         for held in named.flagged {
@@ -242,12 +262,16 @@ impl Folder {
             // limit is not read for it.
             let short = captured.is_some_and(|captured| {
                 usize::try_from(captured.metadata.borrow().len())
-                    .is_ok_and(|len| len.saturating_mul(6) < NEAR_LIMIT)
+                    .is_ok_and(|len| len.saturating_mul(6) < near(limit))
             });
-            entry.warning = (!file_item && is_document(path) && !short)
+            let held_for_size = entry
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with(super::OVER_LIMIT_SAID));
+            entry.warning = (!file_item && is_document(path) && !short && !held_for_size)
                 .then(|| found.bytes())
                 .flatten()
-                .and_then(|bytes| near_limit(key, text_of(bytes).ok()?))
+                .and_then(|bytes| near_limit(key, text_of(bytes).ok()?, limit))
                 .map(|flagged| flagged.reason);
             files.push(entry);
         }
@@ -354,6 +378,10 @@ impl Folder {
         if self.core.get(&bound.item_id)?.is_none() {
             if changed {
                 return Ok(waits(entry, vec!["scan"]));
+            }
+            if let Some(held) = self.create_over_limit(&bound.item_id)? {
+                let flagged = Flagged::of(&bound.path, &held);
+                return Ok(entry.because(flagged.flag, flagged.reason));
             }
             return Ok(match bound.writes.refused.last() {
                 Some(refused) => entry.because(refused_flag(&refused.change), refused.reason.clone()),

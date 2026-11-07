@@ -995,6 +995,9 @@ pub struct Indexing {
 /// descendant, or a type whose declared parent chain reaches the root.
 pub struct Catalog {
     entries: HashMap<String, Entry>,
+    /// What the root last said a request may carry, which a write is held to
+    /// as a field is held to its type.
+    request_limit: Option<usize>,
 }
 
 const MAX_PARENT_WALK: usize = 64;
@@ -1006,6 +1009,7 @@ impl Catalog {
     pub fn empty() -> Catalog {
         Catalog {
             entries: HashMap::new(),
+            request_limit: None,
         }
     }
 
@@ -1060,7 +1064,27 @@ impl Catalog {
                 },
             );
         }
-        Ok(Catalog { entries })
+        Ok(Catalog {
+            entries,
+            request_limit: crate::store::request_limit(conn)?,
+        })
+    }
+
+    pub(crate) fn request_limit(&self) -> Option<usize> {
+        self.request_limit
+    }
+
+    /// Refuses a write whose request body, `payload`, is larger than the
+    /// server said it takes (`queue-and-verdicts/request-over-limit-unsent`).
+    pub(crate) fn refuse_over_request_limit(&self, payload: &str) -> Result<(), CoreError> {
+        match crate::model::over_request_limit(payload.len(), self.request_limit) {
+            Some(words) => Err(CoreError::Validation {
+                code: crate::model::OVER_REQUEST_LIMIT.into(),
+                message: format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_WRITE),
+                details: None,
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Refuses `properties` where the server would refuse them as an item
@@ -1595,6 +1619,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            request_limit: None,
         }
     }
 

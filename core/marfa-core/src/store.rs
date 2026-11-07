@@ -29,6 +29,12 @@ pub const META_SLICE_QUERY: &str = "slice_query";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
 pub const META_INSTANCE_ID: &str = "instance_id";
+/// The largest request body the root last named, in bytes; absent where it
+/// has named none (`queue-and-verdicts/request-limit-unknown`).
+const META_REQUEST_LIMIT: &str = "request_limit";
+/// Set while a folder holds a file over that limit, so a pass reads the root
+/// before it judges the file again, even with nothing to send.
+pub(crate) const META_LIMIT_HOLDS: &str = "folder_limit_holds";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 /// Set by a hydration from the server's count of its slice when it started,
 /// and absent where the server did not answer one.
@@ -1274,6 +1280,22 @@ pub fn meta_keys(conn: &Connection, prefix: &str) -> Result<Vec<String>, CoreErr
         .query_map([prefix], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     Ok(found)
+}
+
+/// What the root last said this server takes in one request. Fresh in a
+/// drain once it has confirmed the instance, which reads the root.
+pub fn request_limit(conn: &Connection) -> Result<Option<usize>, CoreError> {
+    Ok(meta_get(conn, META_REQUEST_LIMIT)?.and_then(|limit| limit.parse().ok()))
+}
+
+pub(crate) fn note_request_limit(conn: &Connection, limit: Option<usize>) -> Result<(), CoreError> {
+    if request_limit(conn)? == limit {
+        return Ok(());
+    }
+    match limit {
+        Some(limit) => meta_set(conn, META_REQUEST_LIMIT, &limit.to_string()),
+        None => meta_delete(conn, META_REQUEST_LIMIT),
+    }
 }
 
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
