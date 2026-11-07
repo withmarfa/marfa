@@ -14,8 +14,8 @@ use super::store::{self, Client};
 use super::{Answered, Problem};
 use crate::app::App;
 use crate::app::audit::{self, Entry};
-use crate::app::auth::Visit;
 use crate::app::auth::limits::{admit, document_lanes};
+use crate::app::auth::{Visit, configured_origins};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
@@ -277,10 +277,14 @@ pub(super) fn ceiling_lacks(
     Ok(lacking)
 }
 
-/// `keys-and-oauth/page-origin-allowed`: whether a standing consent to a web
-/// client names `origin`.
+/// `keys-and-oauth/page-origin-allowed` and `keys-and-oauth/origin-configured`:
+/// whether the `cors_origins` setting or a standing consent to a web client
+/// names `origin`.
 pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
     let origin = origin.to_string();
+    if configured_origins(app).contains(&origin) {
+        return Ok(true);
+    }
     app.db
         .read(move |tx| {
             Ok(store::consented_clients(tx)?.iter().any(|client| {

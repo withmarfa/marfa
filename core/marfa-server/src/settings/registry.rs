@@ -281,6 +281,8 @@ registry! {
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
     HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", Some("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
     AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", Some("AUDIT_CLEANUP_INTERVAL_MS"), INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
+    AUTH_SESSION_CLEANUP_INTERVAL_MS: u64 = "auth_session_cleanup_interval_ms", Some("AUTH_SESSION_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `auth-session-cleanup` job runs, in milliseconds.";
+    DCR_CLIENT_CLEANUP_INTERVAL_MS: u64 = "dcr_client_cleanup_interval_ms", Some("MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `dcr-client-cleanup` job runs, in milliseconds.";
     EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
     FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
     HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", Some("MARFA_HEARTBEAT_INTERVAL_MS"), INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
@@ -289,6 +291,7 @@ registry! {
     TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", Some("TRASH_PURGE_INTERVAL_MS"), INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
     VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", Some("VERSION_THINNING_INTERVAL_MS"), INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
     ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
+    CORS_ORIGINS: Vec<Address> = "cors_origins", Some("CORS_ORIGINS"), Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
 }
 
@@ -300,6 +303,16 @@ pub fn entry(key: &str) -> Option<&'static Entry> {
 /// What replaces a default under test hooks, by key.
 pub type Seeds = HashMap<&'static str, Value>;
 
+/// The JSON list a row holds for origins an environment gives between commas.
+fn list_of(text: &str) -> String {
+    let origins: Vec<&str> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .collect();
+    Json::from(origins).to_string()
+}
+
 /// Reads each entry's test name, adding a line for a value outside its rule.
 pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
     let mut seeds = Seeds::new();
@@ -310,7 +323,11 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
         else {
             continue;
         };
-        match entry.parse(text) {
+        let read = match entry.rule {
+            Rule::Addresses => entry.parse(&list_of(text)),
+            _ => entry.parse(text),
+        };
+        match read {
             Ok(value) => {
                 seeds.insert(entry.key, value);
             }

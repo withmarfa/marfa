@@ -539,23 +539,63 @@ async fn a_challenge_from_before_an_address_change_is_spent() {
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
 
+fn consequence<'v>(checked: &'v Reply, code: &str) -> Option<&'v Value> {
+    let consequences = checked.body["consequences"].as_array().unwrap();
+    consequences.iter().find(|entry| entry["code"] == code)
+}
+
+#[tokio::test]
+async fn a_new_sign_in_host_says_how_many_passkeys_it_strands() {
+    let instance = Instance::claimed().await;
+    let device = Device::new();
+    let check = "/config/address-check";
+    let other_host = json!({ "sign_in_address": "https://marfa.example" });
+    let other_port = json!({ "sign_in_address": "http://localhost:8700" });
+
+    let before = instance.control_post(check, &other_host).await;
+    assert_eq!(before.status, StatusCode::OK, "{}", before.text);
+    assert!(consequence(&before, "passkeys_unusable").is_none());
+
+    instance.add(&device).await;
+    let after = instance.control_post(check, &other_host).await;
+    let stranded = consequence(&after, "passkeys_unusable").unwrap();
+    assert_eq!(stranded["count"], 1, "{}", after.text);
+
+    let same_host = instance.control_post(check, &other_port).await;
+    assert_eq!(same_host.status, StatusCode::OK, "{}", same_host.text);
+    assert!(consequence(&same_host, "passkeys_unusable").is_none());
+}
+
+#[tokio::test]
+async fn a_page_the_cors_origins_setting_names_may_open_a_passkey_ceremony() {
+    let mut instance = Instance::claimed().await;
+    let door = "/auth/passkey/generate-authenticate-options";
+    instance.origin = "https://named.example".to_string();
+    let refused = instance.get(door, "").await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+
+    let named = json!(["https://named.example"]).to_string();
+    instance
+        .app
+        .settings
+        .apply_stored(&[("cors_origins".to_string(), named)]);
+    let answered = instance.get(door, "").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.text);
+}
+
 #[tokio::test]
 async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
     let mut instance = Instance::claimed().await;
     let device = Device::new();
     let id = instance.add(&device).await;
-    assert_eq!(
-        passkeys::stranded_by(&instance.app, HOST.to_string())
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        passkeys::stranded_by(&instance.app, "marfa.example".to_string())
-            .await
-            .unwrap(),
-        1
-    );
+    let stranded_by = |host: &'static str| {
+        instance
+            .app
+            .db
+            .read(move |tx| passkeys::stranded_by(tx, host))
+    };
+    assert_eq!(stranded_by(HOST).await.unwrap(), 0);
+    assert_eq!(stranded_by("marfa.example").await.unwrap(), 1);
     instance.move_to("https://marfa.example");
     let asked = instance
         .asked("/auth/passkey/generate-authenticate-options", "")

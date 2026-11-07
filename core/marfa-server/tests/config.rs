@@ -7,6 +7,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use marfa_server::app::auth::configured_origins;
 use marfa_server::app::{App, instance, stored};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -230,6 +231,30 @@ async fn a_value_of_the_wrong_kind_or_size_is_named_and_a_null_in_a_put_is_refus
 }
 
 #[tokio::test]
+async fn cors_origins_seed_from_a_comma_list_and_change_as_a_list() {
+    let seed = [
+        ("MARFA_TEST_HOOKS", "true"),
+        ("CORS_ORIGINS", "https://a.example, https://b.example"),
+    ];
+    let instance = Instance::start(&seed).await;
+    assert_eq!(
+        configured_origins(&instance.app),
+        ["https://a.example", "https://b.example"]
+    );
+    let changed = instance
+        .patch(json!({ "cors_origins": ["https://c.example"] }))
+        .await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.text);
+    assert_eq!(configured_origins(&instance.app), ["https://c.example"]);
+
+    let refused = instance
+        .patch(json!({ "cors_origins": ["not an origin"] }))
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(configured_origins(&instance.app), ["https://c.example"]);
+}
+
+#[tokio::test]
 async fn a_setting_whose_area_is_not_built_is_not_known() {
     let instance = Instance::start(&[]).await;
     let refused = instance
@@ -292,14 +317,7 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
         .iter()
         .map(|entry| entry["code"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        codes,
-        [
-            "browser_sessions_end",
-            "passkeys_unusable",
-            "apps_sign_in_again"
-        ]
-    );
+    assert_eq!(codes, ["browser_sessions_end", "apps_sign_in_again"]);
     assert_eq!(
         instance.config().await["sign_in_address"],
         "https://a.example"

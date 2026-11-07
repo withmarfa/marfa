@@ -22,6 +22,7 @@ use super::access::Caller;
 use super::addresses::Address;
 use super::audit::{self, Entry};
 use super::refusal::{Refusal, Result};
+use crate::settings::registry::CORS_ORIGINS;
 
 /// Who is at the door, as far as a request can say.
 #[derive(Clone, Debug, Default)]
@@ -42,10 +43,22 @@ pub fn carries_sessions(address: &Address) -> bool {
     address.is_https() || matches!(address.host(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
+/// The origins the `cors_origins` setting names.
+pub fn configured_origins(app: &App) -> Vec<String> {
+    app.settings
+        .live()
+        .get(CORS_ORIGINS)
+        .iter()
+        .map(|address| address.origin().to_string())
+        .collect()
+}
+
 /// The origins a browser form may come from: the sign-in address's, and those
-/// `CORS_ORIGINS` names, which no setting registers yet.
+/// the `cors_origins` setting names.
 pub fn form_origins(app: &App) -> Vec<String> {
-    vec![app.addresses().sign_in().origin().to_string()]
+    let mut origins = configured_origins(app);
+    origins.insert(0, app.addresses().sign_in().origin().to_string());
+    origins
 }
 
 /// The whole second an instant falls in, which is how the sign-in tables hold

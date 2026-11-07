@@ -566,6 +566,6 @@ pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
 
 /// How many passkeys could not sign in if the sign-in address's host became
 /// `host`: a passkey answers only the host it was made for.
-pub async fn stranded_by(app: &App, host: String) -> Result<i64> {
-    app.db.read(move |tx| store::count_beyond(tx, &host)).await
+pub fn stranded_by(tx: &Transaction<'_>, host: &str) -> Result<i64> {
+    store::count_beyond(tx, host)
 }

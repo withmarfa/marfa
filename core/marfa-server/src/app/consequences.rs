@@ -6,6 +6,7 @@ use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use super::addresses::{Address, Addresses};
+use super::auth::passkeys;
 use super::refusal::Result;
 
 /// One thing a change of address does.
@@ -23,9 +24,10 @@ impl Consequence {
     }
 }
 
-/// A count a later area registers where it owns the table: it gives `None`
-/// until there is something to count.
-type Counter = fn(&Transaction<'_>) -> Result<Option<u64>>;
+/// A count a later area registers where it owns the table, of what a move to
+/// the address it is given reaches: it gives `None` until there is something to
+/// count.
+type Counter = fn(&Transaction<'_>, &Address) -> Result<Option<u64>>;
 
 struct Registered {
     code: &'static str,
@@ -33,8 +35,13 @@ struct Registered {
     count: Counter,
 }
 
-fn not_counted(_: &Transaction<'_>) -> Result<Option<u64>> {
+fn not_counted(_: &Transaction<'_>, _: &Address) -> Result<Option<u64>> {
     Ok(None)
+}
+
+fn stranded_passkeys(tx: &Transaction<'_>, sign_in: &Address) -> Result<Option<u64>> {
+    let count = passkeys::stranded_by(tx, sign_in.host())?;
+    Ok(Some(u64::try_from(count).unwrap_or(0)))
 }
 
 /// What a change of the sign-in address does, and where each is counted.
@@ -47,7 +54,7 @@ const SIGN_IN_CHANGED: &[Registered] = &[
     Registered {
         code: "passkeys_unusable",
         sentence: "Passkeys stop working until they are added again at the new address.",
-        count: not_counted,
+        count: stranded_passkeys,
     },
     Registered {
         code: "apps_sign_in_again",
@@ -66,11 +73,16 @@ pub fn of_change(
 ) -> Result<Vec<Consequence>> {
     let mut found = Vec::new();
     if before.sign_in() != after.sign_in() {
+        let sign_in = after.sign_in();
         for registered in SIGN_IN_CHANGED {
+            let count = (registered.count)(tx, &sign_in)?;
+            if count == Some(0) {
+                continue;
+            }
             found.push(Consequence {
                 code: registered.code,
                 sentence: registered.sentence.to_string(),
-                count: (registered.count)(tx)?,
+                count,
             });
         }
     }
