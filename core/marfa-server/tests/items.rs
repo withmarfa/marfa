@@ -677,6 +677,57 @@ async fn an_item_written_before_its_type_changed_still_takes_a_write() {
 }
 
 #[tokio::test]
+async fn a_field_made_searchable_reaches_the_rows_past_the_first_page() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("paged", json!({ "*": "write" })).await;
+    let marked = |searchable: bool, version: i64| {
+        json!({
+            "id": "user.paged",
+            "version": version,
+            "fields": { "word": { "type": "string", "searchable": searchable } },
+        })
+    };
+    let registered = instance
+        .local(Method::POST, "/types", marked(false, 1))
+        .await;
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
+    let items: Vec<Value> = (0..1_500)
+        .map(|at| {
+            let word = if at == 1_499 { "lastword" } else { "plain" };
+            json!({ "type": "user.paged", "properties": { "word": word } })
+        })
+        .collect();
+    let page = json!({ "atomic": false, "items": items });
+    let loaded = instance
+        .call(&token, Method::POST, "/items/bulk", page)
+        .await;
+    assert_eq!(loaded.status, StatusCode::OK, "{}", loaded.text);
+    let hits = async || {
+        let found = instance.get(&token, "/search?q=lastword").await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.text);
+        found.json()["data"].as_array().unwrap().len()
+    };
+    assert_eq!(hits().await, 0);
+
+    let changed = instance
+        .local(Method::PUT, "/types/user.paged", marked(true, 2))
+        .await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.text);
+    for _ in 0..500 {
+        if hits().await == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("The last row never reached the search index.");
+}
+
+#[tokio::test]
 async fn a_refusal_that_leaves_the_body_unread_still_reaches_the_client() {
     let instance = Instance::start().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
