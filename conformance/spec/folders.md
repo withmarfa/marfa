@@ -7696,25 +7696,41 @@ A device MUST report as `paused_removals` the sum of the `disk` and `pull` count
 
 **Tests:** `device/folder-health.test.ts › counts the removals a large removal holds on disk or from a pull as paused removals and no problem`.
 
-### `folders/report-file-problems`
+### `folders/report-refused-files`
 
-When `folders status` flags a file, a device MUST count that file in its report under `refused` for the flag `refused` or `default_edge_refused`, under `unreadable` for `encoding` or `unreadable`, under no code for `credential_refused`, `removal`, `query` or `gone`, and under `held_file` for any other flag.
+When `folders status` flags a file `refused` or `default_edge_refused`, a device MUST count that file in its report under `refused`.
 
-**Reason:** `credential_refused` is one fault of the whole folder, so `folders/report-credential-refused` reports it once.
+**Tests:** `device/folder-health.test.ts › counts a file the server refused under refused`, `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`.
 
-**Tests:** `device/folder-health.test.ts › counts each file under the problem code of the flag its status shows`, `› counts no problem for a file whose item is already in the bin`, `› counts the removals a large removal holds on disk or from a pull as paused removals and no problem`, `device/folders-default-refused.test.ts › shows a default the copy refused for a document and a file, and makes it once the edge type admits it, the files unchanged`.
+### `folders/report-unreadable-files`
+
+When `folders status` flags a file `encoding` or `unreadable` and the file does not lie beneath a directory flagged `unreadable`, a device MUST count that file in its report under `unreadable`.
+
+**Reason:** a file beneath an unreadable directory is counted through the directory, by `folders/report-unreadable-once`.
+
+**Tests:** `device/folder-health.test.ts › counts a file flagged encoding or unreadable under unreadable`.
+
+### `folders/report-held-files`
+
+When `folders status` flags a file `empty`, `addition`, `outside_query`, `edges` or `dead`, a device MUST count that file in its report under `held_file`.
+
+**Reason:** this list is the flags a fixture asserts, and states nothing about any other flag.
+
+**Tests:** `device/folder-health.test.ts › counts an empty file as a held file, and a file the query leaves alone as no problem`, `› keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`, `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
+
+### `folders/report-unproblematic-files`
+
+When `folders status` flags a file `removal` or `query`, a device MUST NOT count that file in its report under any problem code.
+
+**Reason:** a removal held back is counted by `folders/report-paused-removals`, and a file the query leaves alone is not a fault.
+
+**Tests:** `device/folder-health.test.ts › counts the removals a large removal holds on disk or from a pull as paused removals and no problem`, `› counts an empty file as a held file, and a file the query leaves alone as no problem`, `› counts no problem for a file whose item is already in the bin`.
 
 ### `folders/report-unreadable-once`
 
 While a file flagged `unreadable` lies beneath a directory flagged `unreadable`, a device MUST count the directory and not the file under `unreadable`.
 
-**Tests:** `device/folder-health.test.ts › counts a directory gone in the walk as a held file, and a file in an unreadable directory only through the directory`.
-
-### `folders/report-gone-directory`
-
-When a folder scan flags a directory `gone`, a device MUST count that directory under `held_file`.
-
-**Tests:** `device/folder-health.test.ts › counts a directory gone in the walk as a held file, and a file in an unreadable directory only through the directory`.
+**Tests:** `device/folder-health.test.ts › counts a file in an unreadable directory only through the directory`.
 
 ### `folders/report-pull-problems`
 
@@ -7726,31 +7742,35 @@ When a pull completes, a device MUST count under `held_file`, until a later pull
 
 A device MUST report under `conflict` the number of items outside the bin that are tagged `conflicted-copy` and are the source of a `derived-from` edge with a bound file's item at either end.
 
-**Tests:** `device/folder-health.test.ts › counts a tagged copy derived from a bound file as a conflict, and neither one in the bin nor one without the tag`.
+**Tests:** `device/folder-health.test.ts › counts a tagged copy derived from a bound file as a conflict, whichever end holds the file, and neither one in the bin nor one without the tag`, `› counts no conflict for a tagged copy derived from an item when neither has a file`.
 
 ### `folders/report-credential-refused`
 
-If the server refuses a folder's credential, then a device MUST report `credential_refused` with a count of 1, however many files that holds back.
+If the server answers a write from a folder with `401 unauthorized`, then a device MUST report `credential_refused` with a count of 1, however many files that holds back.
+
+**Reason:** a refused key is one fault of the whole folder, not one problem for each file it holds back.
 
 **Tests:** `device/folder-health.test.ts › counts one credential_refused however many files a refused key holds back`.
 
 ### `folders/report-unavailable`
 
-If a folder's pass fails for any reason other than a refused credential, then a device MUST report `unavailable` with a count of 1.
+If the server cannot be reached, or answers a read of a folder's changes with `403`, `429` or a `5xx`, then a device MUST report `unavailable` with a count of 1.
 
-**Tests:** `device/folder-health.test.ts › does not advance last full success after an offline push with an empty queue`.
+**Reason:** a `403` on a read is a grant that may not read, which `folders/report-credential-refused` does not cover. `folders/health-hydrating` withholds this report while a copy that answers `hydration_incomplete` fills.
+
+**Tests:** `device/folder-health.test.ts › does not advance last full success after an offline push with an empty queue`, `› reports unavailable while the server answers a read %s`, `› reports unavailable, and not credential_refused, for a read the server answers 403`.
 
 ### `folders/report-root-gone`
 
 When a pass reports `root_gone`, a device MUST report the problem `root_gone` with a count of 1.
 
-**Tests:** `device/folder-health.test.ts › counts one root_gone when another directory has taken the folder's place`.
+**Tests:** `device/folder-health.test.ts › counts one root_gone when another directory has taken the folder's place`, `› counts one root_gone when another directory has taken the folder's place as a pull writes`.
 
 ### `folders/report-settings-invalid`
 
-While a device cannot use or cannot write a folder's settings file, a device MUST report `settings_invalid` with a count of 1.
+While a device cannot use or cannot write a folder's settings file and the folder's first sync is not waiting, a device MUST report `settings_invalid` with a count of 1.
 
-**Tests:** `device/folder-health.test.ts › counts one settings_invalid while the settings file is refused`.
+**Tests:** `device/folder-health.test.ts › counts one settings_invalid while the settings file is refused`, `› counts one settings_invalid while a pull cannot write the settings file, and none once it can`.
 
 ### `folders/report-full-success`
 
