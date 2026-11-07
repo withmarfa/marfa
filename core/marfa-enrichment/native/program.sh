@@ -58,8 +58,8 @@ case "$TARGET" in
   *-unknown-linux-musl)
     # One compiler for everything: the one PDFium and Tesseract were built with, and
     # its libstdc++ and musl, so the program holds one C++ library.
-    toolchain="$WORK/$MUSL_TOOLCHAIN"
-    [ -x "$toolchain/bin/${MUSL_PREFIX}gcc" ] || tool_into "$MUSL_TOOLCHAIN" "$toolchain"
+    kept_tool "$MUSL_TOOLCHAIN"
+    toolchain=$KEPT_TOOL
     underscored=${TARGET//-/_}
     upper=$(echo "$underscored" | tr '[:lower:]' '[:upper:]')
     export "CARGO_TARGET_${upper}_LINKER=$toolchain/bin/${MUSL_PREFIX}gcc"

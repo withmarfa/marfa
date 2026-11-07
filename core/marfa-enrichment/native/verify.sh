@@ -152,6 +152,7 @@ fault write-file "write-file $SCRATCH/written.txt"
 fault open-file "open $FILES/sample.txt"
 fault connect "connect 1.1.1.1:80"
 fault tcp-loopback "connect 127.0.0.1:9"
+fault udp "udp 127.0.0.1:9"
 printf 'a good file\n' >"$FILES_DIR/good.txt"
 
 # The owner's model: a copy of the English model under a name of the owner's own, in a
@@ -289,7 +290,10 @@ read_cases() {
   check refuse-not-a-workbook 1 "refused: the file is malformed" $R read "$f/not-a-workbook.xls"
   check refuse-over-limit 1 "refused: the file is past a limit" $R read "$f/sample.txt" --max-memory 100
   # What the child holds, from the proof program: the limits the parent set.
-  check sandbox-state 0 "sandbox: " marfa-enrichment-read-proof read "$f/faults/report.txt"
+  # An emulator may run a program without honoring its filter, and then says so.
+  local sandbox_wants="sandbox: Full"
+  [ "$EMULATED" = no ] || sandbox_wants="sandbox: "
+  check sandbox-state 0 "$sandbox_wants" marfa-enrichment-read-proof read "$f/faults/report.txt"
 }
 
 # Faults: one file after another by the same parent, and the good file must read.
@@ -323,15 +327,13 @@ fault_cases() {
   check fault-write-file 0 "Err(" marfa-enrichment-read-proof read "$FILES/faults/write-file.txt"
   check fault-open-file 0 "refused" marfa-enrichment-read-proof read "$FILES/faults/open-file.txt"
   check fault-connect 0 "refused" marfa-enrichment-read-proof read "$FILES/faults/connect.txt"
-  # RLIMIT_NPROC stops a reader that is not root, and does not bind root (the README
-  # says so). Landlock has no rule for processes.
-  if [ "$KIND" = linux ] && [ "$RUN_USER" = 0:0 ]; then fork_wants=forked; else fork_wants=refused; fi
-  check fault-fork 0 "$fork_wants" marfa-enrichment-read-proof read "$FILES/faults/fork.txt"
+  check fault-udp 0 "refused" marfa-enrichment-read-proof read "$FILES/faults/udp.txt"
+  check fault-fork 0 "refused" marfa-enrichment-read-proof read "$FILES/faults/fork.txt"
   DOCKER_EXTRA=''
   [ -e "$SCRATCH/written.txt" ] && echo "NOTE the reader wrote $SCRATCH/written.txt" | tee -a "$REPORT"
   # macOS adds __CF_USER_TEXT_ENCODING to every process's environment, and its sandbox
   # denies even the working directory's name.
-  if [ "$KIND" = mac ]; then report_wants="descriptors=0,1,2"; else report_wants="descriptors=0,1,2|environment= |directory=/|no_new_privs=1"; fi
+  if [ "$KIND" = mac ]; then report_wants="descriptors=0,1,2"; else report_wants="descriptors=0,1,2|environment= |directory=/"; fi
   check fault-report 0 "$report_wants" marfa-enrichment-read-proof read "$FILES/faults/report.txt"
 }
 

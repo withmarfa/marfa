@@ -21,7 +21,6 @@ select_target "${1:-}"
 select_root
 need git curl python3 patch tar
 
-BRANCH=$(manifest_line git pdfium | awk '{ print $4 }')
 COMMIT=$(manifest_line git pdfium | awk '{ print $5 }')
 
 recipe_items=(
@@ -52,11 +51,6 @@ if [ -f "$ARCHIVE" ] && [ -f "$ARCHIVE.sha256" ] \
 fi
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 
-# The branch moves only if PDFium cherry-picks onto it. Stopping here costs
-# nothing; stopping after the build would cost the build.
-head=$(git ls-remote "$(manifest_line git pdfium | awk '{ print $3 }')" "refs/heads/$BRANCH" | cut -f1)
-[ "$head" = "$COMMIT" ] || die "PDFium $BRANCH is at ${head:-nothing}, and the manifest pins $COMMIT"
-
 BUILD="$WORK/pdfium-binaries"
 DEPOT_TOOLS="$WORK_ROOT/depot_tools"
 checkout depot_tools "$DEPOT_TOOLS"
@@ -81,6 +75,9 @@ fi
 cd "$BUILD"
 # depot_tools would update itself past the commit pinned in the manifest.
 export DEPOT_TOOLS_UPDATE=0
+# Step 2 syncs at this commit and stops if the checkout is anywhere else
+# (native/patches/pdfium-steps.patch).
+export PDFium_COMMIT=$COMMIT
 export PDFium_TARGET_OS=$PDFIUM_OS PDFium_TARGET_CPU=$PDFIUM_CPU PDFium_TARGET_ENVIRONMENT=$PDFIUM_ENV
 
 # build.sh's step 0 writes the environment file its later steps read, and step 1
@@ -100,7 +97,7 @@ else
   tool_into "$MUSL_TOOLCHAIN" "$BUILD/$MUSL_TOOLCHAIN"
 fi
 
-args=(-s -b "$BRANCH")
+args=(-s)
 if [ -n "$PDFIUM_ENV" ]; then
   platform=("$PDFIUM_OS" "$PDFIUM_CPU" "$PDFIUM_ENV")
 else
@@ -140,7 +137,7 @@ mkdir -p "$STAGE_OUT/include"
 mv "$STAGE_OUT/include-pdfium" "$STAGE_OUT/include/pdfium"
 cp -R staging/licenses "$STAGE_OUT/licenses/pdfium"
 cp staging/args.gn "$STAGE_OUT/pdfium-args.gn"
-echo "$COMMIT" >"$STAGE_OUT/pdfium-commit"
+git -C pdfium rev-parse HEAD >"$STAGE_OUT/pdfium-commit"
 tar -czf "$ARCHIVE.part" -C "$STAGE_OUT" .
 mv "$ARCHIVE.part" "$ARCHIVE"
 echo "$(sha256_of "$ARCHIVE")  $(basename "$ARCHIVE")" >"$ARCHIVE.sha256"

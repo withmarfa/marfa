@@ -486,9 +486,7 @@ mod native {
     pub(super) fn a_language_cannot_name_a_path() -> Result<(), Failed> {
         let options = ocr_options(None, "../../../../etc/passwd");
         let outcome = read(&fixture("sentence.png"), "image/png", &options);
-        check(matches!(outcome, Err(Refusal::OcrUnavailable(_))), || {
-            format!("{outcome:?}")
-        })
+        check(ocr_refused(&outcome), || format!("{outcome:?}"))
     }
 
     /// A model the owner added loads from inside the sandbox, after it is up: the
@@ -510,7 +508,7 @@ mod native {
         })?;
         let without = ocr_options(None, "mine");
         let outcome = read(&fixture("sentence.png"), "image/png", &without);
-        check(matches!(outcome, Err(Refusal::OcrUnavailable(_))), || {
+        check(ocr_refused(&outcome), || {
             format!("the witness: without the folder {outcome:?}")
         })
     }
@@ -528,10 +526,18 @@ mod native {
         let options = ocr_options(Some(inside.path().to_owned()), "mine");
         let outcome = read(&fixture("sentence.png"), "image/png", &options);
         match outcome {
-            Err(Refusal::OcrUnavailable(_)) => Ok(()),
             Ok(reading) if reading.sandbox != marfa_enrichment::Sandbox::Full => Ok(()),
-            other => Err(format!("{other:?}").into()),
+            other => check(ocr_refused(&other), || format!("{other:?}")),
         }
+    }
+
+    /// A picture whose text cannot be read keeps its size beside the refusal.
+    fn ocr_refused(outcome: &Result<marfa_enrichment::Reading, Refusal>) -> bool {
+        matches!(
+            outcome,
+            Ok(reading) if matches!(reading.text_refused, Some(Refusal::OcrUnavailable(_)))
+                && reading.dimensions.is_some()
+        )
     }
 }
 

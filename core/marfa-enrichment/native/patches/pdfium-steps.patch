@@ -8,6 +8,21 @@
 -[ $START_STEP -le 10 ] && . steps/10-pack.sh
 +# Marfa links the library into its own program and tests that; it runs neither
 +# PDFium's example (step 9) nor packs (step 10).
+--- a/steps/02-checkout.sh
++++ b/steps/02-checkout.sh
+@@ -21,4 +21,11 @@
+   find pdfium -name .git -prune -execdir sh -xc 'git reset --hard && git clean -df' \;
+ fi
+ 
+-gclient sync -r "origin/${PDFium_BRANCH:-main}" --no-history --shallow
++gclient sync -r "${PDFium_COMMIT:?}" --no-history --shallow
++
++# Stop before the build if the checkout is not what the pin says: PDFium at the
++# manifest's commit, and each dependency at the revision that commit's DEPS names.
++test "$(git -C pdfium rev-parse HEAD)" == "$PDFium_COMMIT"
++gclient revinfo >revinfo-pinned
++gclient revinfo --actual >revinfo-actual
++diff revinfo-pinned revinfo-actual
 --- a/steps/04-install-extras.sh
 +++ b/steps/04-install-extras.sh
 @@ -11,9 +11,9 @@

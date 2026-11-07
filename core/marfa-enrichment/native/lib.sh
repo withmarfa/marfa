@@ -123,7 +123,10 @@ checkout() {
 # its newest commit. The pin forbids that update, so the fetch is done here alone.
 bootstrap_depot_tools() {
   local folder=$1
-  [ -f "$folder/python3_bin_reldir.txt" ] && return 0
+  local done="$folder/.bootstrapped" commit
+  commit=$(git -C "$folder" rev-parse HEAD) || die "$folder is not a checkout"
+  [ "$(cat "$done" 2>/dev/null)" = "$commit" ] && return 0
+  rm -f "$folder/python3_bin_reldir.txt"
   (
     set +u
     export DEPOT_TOOLS_DIR=$folder
@@ -136,6 +139,7 @@ bootstrap_depot_tools() {
     bootstrap_python3
   ) >/dev/null || die "could not bootstrap depot_tools in $folder"
   [ -f "$folder/python3_bin_reldir.txt" ] || die "depot_tools did not bootstrap in $folder"
+  echo "$commit" >"$done"
 }
 
 # need <tool>...: stops with a clear message for the first one missing.
@@ -158,6 +162,21 @@ tool_into() {
   rm -rf "$folder"
   mkdir -p "$folder"
   tar -xf "$file" -C "$folder" --strip-components=1
+}
+
+# kept_tool <name>: sets KEPT_TOOL to a folder holding the tool pinned as `tool <name>`,
+# unpacked once. The folder is named for the hash the manifest pins, so a new pin
+# unpacks afresh and never finds an earlier compiler, and the mark written last means
+# an unpacking that stopped part way is not taken for a finished one.
+kept_tool() {
+  local name=$1
+  local sha
+  sha=$(manifest_line tool "$name" | awk '{ print $4 }')
+  KEPT_TOOL="$WORK/$name-$sha"
+  [ -f "$KEPT_TOOL.unpacked" ] && return 0
+  rm -rf "$WORK/$name" "$WORK/$name"-*
+  tool_into "$name" "$KEPT_TOOL"
+  : >"$KEPT_TOOL.unpacked"
 }
 
 # recipe_hash <kind:name>...: a short hash of the manifest lines and files that decide
