@@ -66,8 +66,14 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
             let size = 1usize << 62;
             let layout = std::alloc::Layout::from_size_align(size, 1).expect("a valid layout");
             // SAFETY: the layout has a size. The allocation is meant to fail.
-            let pointer = unsafe { std::alloc::alloc(layout) };
-            assert!(!pointer.is_null() || fail(layout));
+            let pointer = std::hint::black_box(unsafe { std::alloc::alloc(layout) });
+            // A release build removes an allocation whose result is only compared with
+            // null, so the pointer is used where the optimizer cannot see it.
+            if pointer.is_null() {
+                fail(layout);
+            }
+            // SAFETY: a pointer from `alloc` for a layout of at least one byte.
+            unsafe { std::ptr::write_volatile(pointer, 1) };
             None
         }
         #[cfg(feature = "native")]
@@ -152,7 +158,7 @@ fn deeper(depth: u64) -> u64 {
     deeper(std::hint::black_box(depth + 1)) + frame[1]
 }
 
-fn fail(layout: std::alloc::Layout) -> bool {
+fn fail(layout: std::alloc::Layout) -> ! {
     std::alloc::handle_alloc_error(layout)
 }
 

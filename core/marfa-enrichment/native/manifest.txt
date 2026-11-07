@@ -10,6 +10,7 @@
 #   image   <name> <reference>                   a container image, by digest
 #   apt-snapshot <name> <timestamp>              the date of the Ubuntu package archive the image installs from
 #   toolchain <name> <version>                   a compiler version the builder must have
+#   licence <name> <url> <sha256>                a licence text that ships with a program and that no source archive holds
 #
 # To move a pin, change the URL and the hash together: the build stops at the
 # first hash that does not match.
@@ -61,3 +62,13 @@ tool rust-std-1.98.1-x86_64-unknown-linux-musl https://static.rust-lang.org/dist
 # The Rust compiler a release is built with. The Linux image installs exactly
 # this; a Mac needs it on PATH (rustup toolchain install 1.98.1).
 toolchain rust 1.98.1
+
+# Licence texts for what a Linux program holds that no source archive of ours
+# carries: the models, and the C library and C++ runtime of the musl.cc toolchain
+# (musl 1.2.2-git-50-gb76f37fd and GCC 11.2.1, as its libc.a and libgcc.a say).
+# licenses.sh adds these to the licences PDFium, Leptonica, Tesseract and the Rust
+# crates bring with them.
+licence tessdata_fast https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+licence musl https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?id=b76f37fd f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af
+licence gcc-copying3 https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING3 8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903
+licence gcc-runtime-exception https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING.RUNTIME 9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74

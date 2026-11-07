@@ -178,3 +178,12 @@ recipe_hash() {
     done
   } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16
 }
+
+# licence_into <name> <file>: the licence text pinned as `licence <name>`, verified.
+licence_into() {
+  local name=$1 out=$2
+  local _kind _name url sha
+  read -r _kind _name url sha <<<"$(manifest_line licence "$name")"
+  download "$url" "$sha" "$DOWNLOADS/licence-$name.txt"
+  cp "$DOWNLOADS/licence-$name.txt" "$out"
+}

@@ -187,9 +187,11 @@ void marfa_exit_when_new_fails(int code) {
 #ifdef MARFA_FAULT_INJECTION
 void marfa_fault_new_fails(void) {
   volatile size_t size = static_cast<size_t>(1) << 62;
-  char *bytes = new char[size];
+  // A compiler may drop a `new` whose block is only freed again, so the block is
+  // written through a volatile pointer.
+  volatile char *bytes = new char[size];
   bytes[0] = 1;
-  delete[] bytes;
+  delete[] const_cast<char *>(bytes);
 }
 #endif
 

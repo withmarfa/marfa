@@ -6,6 +6,8 @@
 #   marfa-enrichment-read-proof  the same with the `fault-injection` feature, which makes a
 #                                reader crash on marked bytes, so verify.sh can prove
 #                                that the parent survives. Never ship it.
+#   marfa-enrichment-fuzz        reads mutated files through the real reader (native/fuzz.sh).
+#                                Never ship it.
 #
 # Then it checks what it made: the file kind and its libraries, the macOS
 # deployment target, and that the shipped file ignores a fault that the proof file obeys.
@@ -23,7 +25,7 @@ need cargo rustc
 CORE=$(cd "$NATIVE_DIR/../.." && pwd)
 OUT="$ROOT/out/$TARGET"
 mkdir -p "$OUT"
-rm -f "$OUT"/marfa-enrichment-read "$OUT"/marfa-enrichment-read-proof
+rm -f "$OUT"/marfa-enrichment-read "$OUT"/marfa-enrichment-read-proof "$OUT"/marfa-enrichment-fuzz
 
 want=$(manifest_line toolchain rust | awk '{ print $3 }')
 have=$(rustc --version | awk '{ print $2 }')
@@ -72,14 +74,16 @@ case "$TARGET" in
 esac
 export RUSTFLAGS="$flags"
 
+# build <program> <features> <file>
 build() {
   (cd "$CORE" && cargo build --release --locked --target "$TARGET" -p marfa-enrichment \
-    --bin marfa-enrichment-read --features "$1")
-  cp "$CARGO_TARGET_DIR/$TARGET/release/marfa-enrichment-read" "$2"
+    --bin "$1" --features "$2")
+  cp "$CARGO_TARGET_DIR/$TARGET/release/$1" "$3"
 }
 
-build native "$OUT/marfa-enrichment-read"
-MARFA_ENRICHMENT_ALLOW_FAULTS=1 build native,fault-injection "$OUT/marfa-enrichment-read-proof"
+build marfa-enrichment-read native "$OUT/marfa-enrichment-read"
+MARFA_ENRICHMENT_ALLOW_FAULTS=1 build marfa-enrichment-read native,fault-injection "$OUT/marfa-enrichment-read-proof"
+build marfa-enrichment-fuzz native "$OUT/marfa-enrichment-fuzz"
 
 # What was made is what it should be. A program cannot be searched for its fault code:
 # the compiler turns the marker into immediate comparisons, so no string is left. It is
@@ -104,7 +108,7 @@ rm -f "$fault_file"
 
 case "$TARGET" in
   aarch64-apple-darwin)
-    for program in "$shipped" "$proof"; do
+    for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
       bad=$(otool -L "$program" | tail -n +2 | awk '{ print $1 }' \
         | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
       [ -z "$bad" ] || die "$program links something that is not part of macOS: $bad"
@@ -119,7 +123,7 @@ case "$TARGET" in
       aarch64-*) kind='ARM aarch64' ;;
       x86_64-*) kind='x86-64' ;;
     esac
-    for program in "$shipped" "$proof"; do
+    for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
       description=$(file -b "$program")
       case "$description" in
         *"$kind"*) ;;
@@ -139,8 +143,8 @@ case "$TARGET" in
     ;;
 esac
 
-for program in "$shipped" "$proof"; do
+for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
   echo "program: $(wc -c <"$program") bytes $program"
 done
-( cd "$OUT" && { sha256sum marfa-enrichment-read marfa-enrichment-read-proof 2>/dev/null \
-    || shasum -a 256 marfa-enrichment-read marfa-enrichment-read-proof; } >SHA256SUMS )
+( cd "$OUT" && { sha256sum marfa-enrichment-read marfa-enrichment-read-proof marfa-enrichment-fuzz 2>/dev/null \
+    || shasum -a 256 marfa-enrichment-read marfa-enrichment-read-proof marfa-enrichment-fuzz; } >SHA256SUMS )

@@ -157,6 +157,15 @@ mod native {
                     println!("cargo:rustc-link-search=native={}", dir.display());
                 }
                 println!("cargo:rustc-link-lib=static=stdc++");
+                // Rust's standard library asks for `libunwind`, the LLVM unwinder that
+                // its own musl bundle carries. This program is linked with the
+                // compiler's C library and C++ library, and libstdc++ throws through
+                // the compiler's `libgcc_eh`; a second unwinder beside it would
+                // compete for the same symbols. A linker script under the name
+                // `libunwind.a` sends the request to `libgcc_eh`.
+                let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+                fs::write(out.join("libunwind.a"), "INPUT(-lgcc_eh)\n").unwrap();
+                println!("cargo:rustc-link-search=native={}", out.display());
             }
             other => stop(&format!(
                 "the `native` feature does not support {other} yet"
