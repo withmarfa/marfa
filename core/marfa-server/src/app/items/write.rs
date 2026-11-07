@@ -441,20 +441,14 @@ impl Job<'_, '_, '_> {
         if self.caller().may_grant(source) {
             return Ok(());
         }
-        let message = if disclosed {
+        Err(Refusal::new(
+            Code::Forbidden,
             format!(
                 "This credential may not write under the source \"{source}\". A write names its \
                  own credential's source or one that credential claims."
-            )
-        } else {
-            "This credential may not write under the item's source.".to_string()
-        };
-        let refusal = Refusal::new(Code::Forbidden, message);
-        Err(if disclosed {
-            refusal.with_detail("source", source)
-        } else {
-            refusal
-        })
+            ),
+        )
+        .with_detail("source", source))
     }
 
     fn refuse_unlisted_source(&self, type_id: &str, source: &str) -> Result<()> {
