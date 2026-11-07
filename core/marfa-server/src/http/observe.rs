@@ -7,32 +7,20 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::{MatchedPath, Request, State};
+use axum::extract::{ConnectInfo, MatchedPath, Request, State};
 use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
 use super::answer::{Page, asks_for_html};
 use super::body::Shared;
+use super::caller_address::caller_address;
+use super::listening::Peer;
 use super::page;
 use crate::app::App;
 use crate::app::refusal::Code;
+use crate::listener::{Declaration, Transport};
 use crate::log;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transport {
-    Http,
-    LocalSocket,
-}
-
-impl Transport {
-    fn name(self) -> &'static str {
-        match self {
-            Transport::Http => "http",
-            Transport::LocalSocket => "local_socket",
-        }
-    }
-}
 
 /// What a request learns about itself on the way in, for its record.
 #[derive(Default)]
@@ -44,8 +32,10 @@ pub struct Notes {
 #[derive(Clone)]
 pub struct RequestContext {
     pub transport: Transport,
-    pub notes: Arc<Notes>,
+    /// `None` on a connection with no network address, such as the control
+    /// socket.
     pub caller_address: Option<IpAddr>,
+    pub notes: Arc<Notes>,
 }
 
 /// Left on the answer to a request no route serves.
@@ -55,7 +45,7 @@ pub struct Unmatched;
 #[derive(Clone)]
 pub struct Observed {
     pub app: Arc<App>,
-    pub transport: Transport,
+    pub listener: Arc<Declaration>,
 }
 
 fn acceptable_id(id: &str) -> bool {
@@ -111,10 +101,17 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let notes = Arc::new(Notes::default());
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<Peer>>()
+        .and_then(|ConnectInfo(Peer(address))| *address);
+    let caller_address =
+        peer.map(|peer| caller_address(peer, &observed.listener.trust, request.headers()));
+    let transport = observed.listener.transport;
     request.extensions_mut().insert(RequestContext {
-        transport: observed.transport,
+        transport,
+        caller_address,
         notes: notes.clone(),
-        caller_address: None,
     });
 
     let mut response = next.run(request).await;
@@ -142,7 +139,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         timestamp: &log::now(),
         request_id: &request_id,
         method: &method,
-        transport: observed.transport.name(),
+        transport: transport.name(),
         path: &path,
         route: notes.route.get().map(String::as_str),
         status: response.status().as_u16(),

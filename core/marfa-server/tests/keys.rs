@@ -147,6 +147,21 @@ fn bare(source: &str) -> Value {
 }
 
 #[tokio::test]
+async fn a_valid_key_is_served_whatever_host_it_was_sent_to() {
+    let instance = Instance::start(&[]).await;
+    let (id, secret) = instance.key(bare("any route")).await;
+    for host in ["marfa.example", "100.64.0.1:8600", "not a host name"] {
+        let mut asked = request(Method::GET, "/keys/current", Some(&secret), None);
+        asked
+            .headers_mut()
+            .insert(header::HOST, HeaderValue::from_str(host).unwrap());
+        let reply = send(&instance.public, asked).await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        assert_eq!(reply.body["id"], id.as_str());
+    }
+}
+
+#[tokio::test]
 async fn a_key_holding_only_keys_mint_cannot_touch_a_wider_key_at_any_door() {
     let instance = Instance::start(&[]).await;
     let (own, minter) = instance.key(narrow_minter("minter")).await;

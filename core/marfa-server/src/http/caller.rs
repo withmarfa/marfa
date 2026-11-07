@@ -8,11 +8,12 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue};
 
 use super::answer::Stopped;
-use super::observe::{RequestContext, Transport};
+use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::keys;
 use crate::app::refusal::Result;
+use crate::listener::Transport;
 
 #[derive(Clone)]
 struct Identified(Result<Option<Caller>>);

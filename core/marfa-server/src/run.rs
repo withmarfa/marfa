@@ -12,6 +12,8 @@ use crate::app::App;
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
+use crate::http::listening::{Socket, Tcp};
+use crate::listener::Declaration;
 use crate::settings::Accepted;
 
 /// Leaves room inside the ten seconds a container runtime gives a stop.
@@ -73,15 +75,15 @@ fn listen(
     stop: &watch::Receiver<bool>,
 ) {
     if let Some(listener) = public {
-        servers.spawn(http::serve_public(
-            listener,
-            app.clone(),
+        servers.spawn(http::serve(
+            Tcp::new(listener, app.settings.start.public_listener.name),
+            http::public(app.clone()),
             stopped(stop.clone()),
         ));
     }
-    servers.spawn(http::serve_control(
-        private,
-        app.clone(),
+    servers.spawn(http::serve(
+        Socket::new(private, Declaration::control().name),
+        http::control(app.clone()),
         stopped(stop.clone()),
     ));
 }

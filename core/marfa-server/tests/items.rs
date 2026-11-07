@@ -10,7 +10,8 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use marfa_server::app::App;
-use marfa_server::http::{control, public, serve_public};
+use marfa_server::http::listening::Tcp;
+use marfa_server::http::{control, public, serve};
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -623,8 +624,12 @@ async fn a_refusal_that_leaves_the_body_unread_still_reaches_the_client() {
     let instance = Instance::start().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let app = instance.app.clone();
-    let server = tokio::spawn(serve_public(listener, app, std::future::pending()));
+    let router = public(instance.app.clone());
+    let server = tokio::spawn(serve(
+        Tcp::new(listener, "public"),
+        router,
+        std::future::pending(),
+    ));
 
     let answers = tokio::task::spawn_blocking(move || {
         let body = vec![b'x'; 2 * 1024 * 1024];
