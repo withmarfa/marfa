@@ -6896,7 +6896,7 @@ When a device sends an edit of a file once held under `folders/over-limit-held`,
 
 While a folder holds a file under `folders/over-limit-held`, a device MUST read the root before each scan.
 
-**Reason:** a held file leaves nothing to send, and a drain with nothing to send reads nothing, so without this read a raised limit would go unseen.
+**Reason:** a held file leaves nothing to send, and a drain with nothing to send reads the root at most once (`queue-and-verdicts/request-limit-refused-read`), so without this read a raised limit would go unseen.
 
 **Tests:** `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
 

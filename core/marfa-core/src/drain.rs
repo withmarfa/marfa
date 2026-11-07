@@ -1049,7 +1049,7 @@ fn send_queue(
     {
         // A relocation must be admitted before this pass changes local queue
         // verdicts or resolves body dependencies. Same-origin transport has
-        // no relocation gate, and an empty pass still makes no request.
+        // no relocation gate, and an empty pass does not reach this one.
         match crate::catch_up::ask_unless_stopped(stop, http, Http::confirm_origin) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
