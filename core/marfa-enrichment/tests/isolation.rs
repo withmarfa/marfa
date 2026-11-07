@@ -220,6 +220,11 @@ fn two_hundred_reads_eight_at_a_time() -> Result<(), Failed> {
     check(wrong.load(Ordering::SeqCst) == 0, || {
         format!("{} reads went wrong", wrong.load(Ordering::SeqCst))
     })?;
+    // The kernel retires a joined thread a moment later on macOS.
+    let settling = Instant::now();
+    while thread_count() > threads && settling.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let (after, threads_after) = (open_descriptors(), thread_count());
     println!(
         "descriptors {descriptors} -> {after} (most {}), threads {threads} -> {threads_after}",
