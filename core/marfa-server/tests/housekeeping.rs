@@ -353,6 +353,10 @@ async fn feed_expiry_bins_an_item_a_second_past_its_window() {
     assert_eq!(instance.state(&library), "active");
     let audited = "SELECT count(*) FROM audit_log WHERE action = 'items.feed_expired'";
     assert_eq!(instance.count(audited), 1);
+    let announced = format!(
+        "SELECT count(*) FROM event_log WHERE event_type = 'item.deleted' AND item_id = '{id}'"
+    );
+    assert_eq!(instance.count(&announced), 1);
 
     let path = format!("/items/{id}/restore");
     instance.ok(Method::POST, &path, json!({})).await;
