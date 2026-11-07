@@ -1,6 +1,8 @@
 //! Where an item write's transaction ends, and what a retry sees. The
 //! contract's fixtures hold the rest.
 
+use std::collections::BTreeMap;
+use std::future::Future;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
@@ -119,12 +121,15 @@ impl Instance {
 
     /// A key that writes under its own source, as `(id, secret)`.
     async fn key(&self, source: &str, types: Value) -> (String, String) {
-        let body = json!({
-            "label": source,
-            "source": source,
-            "permissions": [],
-            "type_permissions": types,
-        });
+        self.key_with(source, json!({ "type_permissions": types }))
+            .await
+    }
+
+    async fn key_with(&self, source: &str, grants: Value) -> (String, String) {
+        let mut body = json!({ "label": source, "source": source, "permissions": [] });
+        body.as_object_mut()
+            .unwrap()
+            .extend(grants.as_object().unwrap().clone());
         let minted = self.local(Method::POST, "/keys", body).await;
         assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.text);
         let minted = minted.json();
@@ -189,6 +194,59 @@ impl Instance {
             events: count("SELECT count(*) FROM event_log"),
             audits: count("SELECT count(*) FROM audit_log WHERE action LIKE 'item.%'"),
         }
+    }
+
+    fn count(&self, sql: &str) -> i64 {
+        let file = self.dir.path().join("marfa.db");
+        let db = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        db.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    /// Every table's rows, named from the schema so a table added later is read.
+    fn tables(&self) -> BTreeMap<String, i64> {
+        let file = self.dir.path().join("marfa.db");
+        let db = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut named = db
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap();
+        let names: Vec<String> = named
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        names
+            .into_iter()
+            .map(|name| {
+                let sql = format!("SELECT count(*) FROM \"{name}\"");
+                let rows = db.query_row(&sql, [], |row| row.get(0)).unwrap();
+                (name, rows)
+            })
+            .collect()
+    }
+
+    /// Sends one write through a hold, lands `between` while it waits, and
+    /// answers what the held write met.
+    async fn held(
+        self: &Arc<Self>,
+        action: &str,
+        token: &str,
+        method: Method,
+        path: &str,
+        body: Value,
+        between: impl Future<Output = Reply>,
+    ) -> Reply {
+        self.app.faults.set("hold:write", Some(action)).unwrap();
+        let waiting = {
+            let (instance, token, path) = (self.clone(), token.to_string(), path.to_string());
+            tokio::spawn(async move { instance.call(&token, method, &path, body).await })
+        };
+        self.when_held().await;
+        let landed = between.await;
+        assert_eq!(landed.status, StatusCode::OK, "{}", landed.text);
+        self.app.faults.clear(Some("hold:write"));
+        waiting.await.unwrap()
     }
 
     async fn when_held(&self) {
@@ -657,4 +715,473 @@ async fn a_refusal_that_leaves_the_body_unread_still_reaches_the_client() {
         assert!(sent && read, "sent {sent}, read {read}: {text}");
         assert!(text.starts_with("HTTP/1.1 4"), "{text}");
     }
+}
+
+fn purger(level: &str) -> Value {
+    json!({ "permissions": ["items.purge"], "type_permissions": notes(level) })
+}
+
+fn linked_doc(id: &str) -> Value {
+    json!({
+        "id": id,
+        "fields": { "body": { "type": "string" }, "url": { "type": "string" } },
+        "link_field": "url",
+    })
+}
+
+fn doc(source_id: &str, url: &str) -> Value {
+    json!({
+        "type": "acme.doc",
+        "source_id": source_id,
+        "properties": { "body": "kept", "url": url },
+        "tags": ["shared"],
+    })
+}
+
+async fn made(instance: &Instance, token: &str, body: Value) -> (String, String) {
+    let answer = instance.call(token, Method::POST, "/items", body).await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.text);
+    let id = answer.json()["item"]["id"].as_str().unwrap().to_string();
+    let path = format!("/items/{id}");
+    (id, path)
+}
+
+async fn register_doc(instance: &Instance) {
+    let registered = instance
+        .local(Method::POST, "/types", linked_doc("acme.doc"))
+        .await;
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
+}
+
+async fn binned(instance: &Instance, token: &str, path: &str) {
+    let answer = instance.call(token, Method::DELETE, path, json!({})).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+}
+
+#[tokio::test]
+async fn a_bin_and_an_update_of_one_version_land_only_the_first() {
+    let instance = Arc::new(Instance::start().await);
+    let (_, token) = instance.key("race", notes("write")).await;
+    let update = json!({ "version": 1, "properties": { "body": "moved" } });
+
+    let (_, path) = made(
+        &instance,
+        &token,
+        json!({ "type": "core.note", "properties": { "body": "kept" } }),
+    )
+    .await;
+    let at_one = format!("{path}?version=1");
+    let bin = instance.call(&token, Method::DELETE, &at_one, json!({}));
+    let lost = instance
+        .held(
+            "item.update",
+            &token,
+            Method::PATCH,
+            &path,
+            update.clone(),
+            bin,
+        )
+        .await;
+    assert_eq!(lost.status, StatusCode::NOT_FOUND, "{}", lost.text);
+    assert_eq!(lost.json()["error"]["details"]["trashed"], true);
+    let body = instance.count("SELECT json_extract(properties, '$.body') = 'kept' FROM items");
+    assert_eq!(body, 1);
+
+    let (_, path) = made(
+        &instance,
+        &token,
+        json!({ "type": "core.note", "properties": { "body": "kept" } }),
+    )
+    .await;
+    let at_one = format!("{path}?version=1");
+    let moved = instance.call(&token, Method::PATCH, &path, update);
+    let lost = instance
+        .held(
+            "item.delete",
+            &token,
+            Method::DELETE,
+            &at_one,
+            json!({}),
+            moved,
+        )
+        .await;
+    assert_eq!(lost.status, StatusCode::CONFLICT, "{}", lost.text);
+    let read = instance.get(&token, &path).await.json();
+    assert_eq!(read["item"]["version"], 2);
+    assert_eq!(read["item"]["state"], "active");
+}
+
+#[tokio::test]
+async fn a_row_in_the_bin_keeps_its_keys_and_outlives_its_type() {
+    let instance = Instance::start().await;
+    register_doc(&instance).await;
+    let (_, token) = instance
+        .key_with(
+            "bin",
+            json!({
+                "permissions": ["schema.write"],
+                "type_permissions": { "acme.doc": "write" },
+            }),
+        )
+        .await;
+    let (id, path) = made(&instance, &token, doc("held", "held-url")).await;
+    binned(&instance, &token, &path).await;
+
+    let mut taker = doc("held", "other-url");
+    taker["mode"] = json!("create_only");
+    let refused = instance.call(&token, Method::POST, "/items", taker).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+    let body = doc("other", "held-url");
+    let refused = instance.call(&token, Method::POST, "/items", body).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+    assert_eq!(refused.code(), "link_taken");
+    assert_eq!(refused.json()["error"]["details"]["existing_id"], id);
+
+    let gone = instance
+        .call(
+            &token,
+            Method::DELETE,
+            "/types/acme.doc?force=true",
+            json!({}),
+        )
+        .await;
+    assert_eq!(gone.status, StatusCode::OK, "{}", gone.text);
+    let back = format!("{path}/restore");
+    let restored = instance.call(&token, Method::POST, &back, json!({})).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.text);
+    let read = instance.get(&token, &path).await.json();
+    assert_eq!(read["item"]["state"], "active");
+    assert_eq!(read["item"]["properties"]["url"], "held-url");
+}
+
+#[tokio::test]
+async fn a_purge_changes_each_table_by_what_it_removed_and_no_other() {
+    let instance = Instance::start().await;
+    register_doc(&instance).await;
+    let (_, token) = instance
+        .key_with(
+            "purge",
+            json!({
+                "permissions": ["items.purge"],
+                "type_permissions": { "acme.doc": "write" },
+                "extension_permissions": { "notes-app": "write" },
+            }),
+        )
+        .await;
+    let (id, path) = made(&instance, &token, doc("gone", "gone-url")).await;
+    let (_, kept) = made(&instance, &token, doc("kept", "kept-url")).await;
+    for item in [&path, &kept] {
+        let namespace = format!("{item}/extensions/notes-app");
+        let extended = instance
+            .call(&token, Method::PUT, &namespace, json!({ "pinned": true }))
+            .await;
+        assert_eq!(extended.status, StatusCode::OK, "{}", extended.text);
+    }
+    let update = json!({ "version": 1, "properties": { "body": "second" } });
+    let moved = instance.call(&token, Method::PATCH, &path, update).await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+    binned(&instance, &token, &path).await;
+
+    let of_row = |table: &str| {
+        instance.count(&format!(
+            "SELECT count(*) FROM {table} WHERE item_seq = (SELECT seq FROM items WHERE id = '{id}')"
+        ))
+    };
+    let (tags, extensions, versions) = (
+        of_row("item_tags"),
+        of_row("item_extensions"),
+        of_row("item_versions"),
+    );
+    assert_eq!((tags, extensions, versions), (1, 1, 1));
+    let mut expected = instance.tables();
+
+    let purging = format!("{path}/purge");
+    let purged = instance
+        .call(&token, Method::POST, &purging, json!({}))
+        .await;
+    assert_eq!(purged.status, StatusCode::OK, "{}", purged.text);
+
+    for (table, change) in [
+        ("items", -1),
+        ("item_tags", -tags),
+        ("item_extensions", -extensions),
+        ("item_versions", -versions),
+        ("link_tombstones", 1),
+        ("natural_key_tombstones", 1),
+        ("event_log", 1),
+        ("audit_log", 1),
+    ] {
+        *expected.get_mut(table).unwrap() += change;
+    }
+    assert_eq!(instance.tables(), expected);
+    assert_eq!(
+        instance.count("SELECT count(*) FROM pragma_foreign_key_check"),
+        0
+    );
+    assert_eq!(instance.get(&token, &kept).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_purge_takes_a_row_once_and_only_from_the_bin() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key_with("purge", purger("write")).await;
+    let item = instance.note(&token, "once").await;
+    let path = format!("/items/{}", item["id"].as_str().unwrap());
+    let (purging, back) = (format!("{path}/purge"), format!("{path}/restore"));
+
+    let live = instance
+        .call(&token, Method::POST, &purging, json!({}))
+        .await;
+    assert_eq!(live.status, StatusCode::BAD_REQUEST, "{}", live.text);
+    assert_eq!(live.code(), "invalid_transition");
+    assert_eq!(instance.get(&token, &path).await.status, StatusCode::OK);
+
+    binned(&instance, &token, &path).await;
+    let first = instance.keyed(&token, &purging, "once", &json!({})).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
+    assert_eq!(instance.written().items, 0);
+
+    let before = instance.written();
+    let replay = instance.keyed(&token, &purging, "once", &json!({})).await;
+    assert_eq!(replay.text, first.text);
+    assert!(replay.headers.contains_key("idempotency-replayed"));
+
+    for door in [&purging, &back] {
+        let refused = instance.call(&token, Method::POST, door, json!({})).await;
+        assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
+        assert_eq!(refused.code(), "item_not_found");
+    }
+    assert_eq!(instance.written(), before);
+}
+
+#[tokio::test]
+async fn a_digest_made_stale_after_its_preview_bins_nothing() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("stale", notes("write")).await;
+    let item = instance.note(&token, "previewed").await;
+    let id = item["id"].as_str().unwrap();
+    let path = format!("/items/{id}");
+    let ids = json!({ "ids": [id] });
+
+    let preview = instance
+        .call(&token, Method::POST, "/items/trash-preview", ids.clone())
+        .await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.text);
+    let digest = preview.json()["digest"].clone();
+    let update = json!({ "version": 1, "properties": { "body": "moved on" } });
+    let moved = instance.call(&token, Method::PATCH, &path, update).await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+
+    let stale = json!({ "ids": [id], "digest": digest });
+    let refused = instance
+        .call(&token, Method::POST, "/items/trash", stale)
+        .await;
+    assert_eq!(refused.code(), "trash_plan_changed", "{}", refused.text);
+    assert_eq!(instance.get(&token, &path).await.status, StatusCode::OK);
+
+    // The witness: the digest the refusal names takes the row.
+    let fresh = json!({ "ids": [id], "digest": refused.json()["error"]["details"]["digest"] });
+    let taken = instance
+        .call(&token, Method::POST, "/items/trash", fresh)
+        .await;
+    assert_eq!(taken.status, StatusCode::OK, "{}", taken.text);
+    let hidden = instance.get(&token, &path).await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_write_that_fails_keeps_the_tombstone_it_would_have_cleared() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key_with("tomb", purger("write")).await;
+    let body = json!({
+        "type": "core.note",
+        "source_id": "returning",
+        "properties": { "body": "back" },
+    });
+    let (_, path) = made(&instance, &token, body.clone()).await;
+    binned(&instance, &token, &path).await;
+    let purging = format!("{path}/purge");
+    let purged = instance
+        .call(&token, Method::POST, &purging, json!({}))
+        .await;
+    assert_eq!(purged.status, StatusCode::OK, "{}", purged.text);
+    let tombstones = "SELECT count(*) FROM natural_key_tombstones";
+    assert_eq!(instance.count(tombstones), 1);
+
+    for fault in ["fail:commit", "fail:audit"] {
+        instance.app.faults.set(fault, Some("item.create")).unwrap();
+        let failed = instance
+            .call(&token, Method::POST, "/items", body.clone())
+            .await;
+        instance.app.faults.clear(Some(fault));
+        assert!(failed.status.is_server_error(), "{}", failed.text);
+        assert_eq!(instance.count(tombstones), 1, "{fault}");
+    }
+
+    made(&instance, &token, body).await;
+    assert_eq!(instance.count(tombstones), 0);
+}
+
+fn page_of(count: usize) -> Vec<Value> {
+    (0..count)
+        .map(|at| json!({ "type": "core.note", "properties": { "body": format!("entry {at}") } }))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_best_effort_page_keeps_the_entries_around_the_one_that_failed() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("best", notes("write")).await;
+    let mut items = page_of(600);
+    items[500] = json!({ "type": "core.note", "properties": { "body": 7 } });
+    let page = json!({ "atomic": false, "items": items });
+
+    let answer = instance
+        .call(&token, Method::POST, "/items/bulk", page)
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let answer = answer.json();
+    let results = answer["results"].as_array().unwrap();
+    assert_eq!(results.len(), 600);
+    assert_eq!(results[500]["outcome"], "errored");
+    assert_eq!(results[500]["index"], 500);
+    assert_eq!(results[499]["outcome"], "created");
+    assert_eq!(results[501]["outcome"], "created");
+    let written = instance.written();
+    assert_eq!((written.items, written.events), (599, 599));
+}
+
+#[tokio::test]
+async fn an_atomic_page_whose_last_entry_fails_writes_nothing() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("atomic", notes("write")).await;
+    let mut items = page_of(50);
+    let before = instance.written();
+    let good = items[49].clone();
+    items[49] = json!({ "type": "core.note", "properties": { "body": 7 } });
+
+    let page = json!({ "items": items.clone() });
+    let refused = instance
+        .call(&token, Method::POST, "/items/bulk", page)
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(refused.code(), "bulk_atomic_rollback");
+    assert_eq!(refused.json()["error"]["details"]["index"], 49);
+    assert_eq!(instance.written(), before);
+
+    items[49] = good;
+    let page = json!({ "items": items });
+    let landed = instance
+        .call(&token, Method::POST, "/items/bulk", page)
+        .await;
+    assert_eq!(landed.status, StatusCode::OK, "{}", landed.text);
+    assert_eq!(instance.written().items, 50);
+}
+
+#[tokio::test]
+async fn a_page_naming_one_natural_key_twice_lands_on_one_row() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("twice", notes("write")).await;
+    for (atomic, source_id) in [(true, "atomic"), (false, "best")] {
+        let entry = |body: &str| {
+            json!({
+                "type": "core.note",
+                "source_id": source_id,
+                "properties": { "body": body },
+            })
+        };
+        let page = json!({ "atomic": atomic, "items": [entry("first"), entry("second")] });
+        let answer = instance
+            .call(&token, Method::POST, "/items/bulk", page)
+            .await;
+        assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+        let answer = answer.json();
+        let results = answer["results"].as_array().unwrap();
+        assert_eq!(results[0]["outcome"], "created");
+        assert_eq!(results[1]["outcome"], "updated");
+        assert_eq!(results[0]["id"], results[1]["id"]);
+        let path = format!("/items/{}", results[0]["id"].as_str().unwrap());
+        let read = instance.get(&token, &path).await.json();
+        assert_eq!(read["item"]["properties"]["body"], "second");
+        assert_eq!(read["item"]["version"], 2);
+    }
+    assert_eq!(instance.written().items, 2);
+}
+
+#[tokio::test]
+async fn a_system_row_stays_out_of_the_bin_where_a_note_goes_in() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("system", json!({ "*": "write" })).await;
+    let id = "01900000-0000-7000-8000-000000000001";
+    let file = instance.dir.path().join("marfa.db");
+    Connection::open(file)
+        .unwrap()
+        .execute(
+            "INSERT INTO items (id, type, state, source, properties, version, schema_version, \
+             occurred_at, created_at, updated_at) VALUES (?1, 'system.folder', 'active', 'system', \
+             jsonb('{}'), 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', \
+             '2026-01-01T00:00:00.000Z')",
+            [id],
+        )
+        .unwrap();
+
+    let path = format!("/items/{id}");
+    let refused = instance
+        .call(&token, Method::DELETE, &path, json!({}))
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert_eq!(refused.code(), "type_not_permitted");
+    let state = format!("SELECT count(*) FROM items WHERE id = '{id}' AND state = 'active'");
+    assert_eq!(instance.count(&state), 1);
+
+    let item = instance.note(&token, "binned").await;
+    binned(
+        &instance,
+        &token,
+        &format!("/items/{}", item["id"].as_str().unwrap()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_key_that_may_only_read_and_a_state_nothing_has_move_nothing() {
+    let instance = Instance::start().await;
+    let (_, writer) = instance.key("writer", notes("write")).await;
+    let (_, reader) = instance.key_with("reader", purger("read")).await;
+    let item = instance.note(&writer, "held").await;
+    let path = format!("/items/{}", item["id"].as_str().unwrap());
+    let moving = format!("{path}/transition");
+
+    let unknown = json!({ "state": "shredded" });
+    let refused = instance.call(&writer, Method::POST, &moving, unknown).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(refused.code(), "validation_error");
+
+    let before = instance.written();
+    let binning = json!({ "state": "trashed" });
+    for (method, door, body) in [
+        (Method::DELETE, path.clone(), json!({})),
+        (Method::POST, moving.clone(), binning.clone()),
+        (Method::POST, format!("{path}/restore"), json!({})),
+        (Method::POST, format!("{path}/purge"), json!({})),
+    ] {
+        let refused = instance.call(&reader, method, &door, body).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{door}: {}",
+            refused.text
+        );
+        assert_eq!(refused.code(), "type_not_permitted");
+    }
+    assert_eq!(instance.written(), before);
+
+    // The witness: the same transition lands for a key that may write.
+    let moved = instance.call(&writer, Method::POST, &moving, binning).await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
 }

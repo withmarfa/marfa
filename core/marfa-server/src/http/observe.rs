@@ -168,7 +168,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
             method: &method,
             path: &path,
             route,
-            transport: observed.transport.name(),
+            transport: observed.listener.transport.name(),
             status,
             error_code,
             fault: fault.as_ref(),

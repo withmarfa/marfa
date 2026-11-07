@@ -4,6 +4,8 @@
 //! the item tables, so no other part of the crate can change an item without
 //! the checks, the version step, the audit entry and the event.
 
+pub mod bulk;
+mod plan;
 mod read;
 mod rows;
 pub mod write;
@@ -16,11 +18,43 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use super::access::Caller;
-use super::refusal::{Refusal, Result};
+use super::catalog::Catalog;
+use super::refusal::{Code, Refusal, Result};
 
 pub use read::{
-    Detail, Many, bulk_get, detail, extension, extensions, history, metadata, tag_counts, titles,
+    Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, detail, extension, extensions,
+    history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
+
+const UNTITLED: &str = "Untitled";
+
+/// The keys a purge can leave a tombstone of.
+#[derive(Clone, Debug)]
+pub enum Keys {
+    Links(Vec<String>),
+    Natural {
+        source: String,
+        source_ids: Vec<String>,
+    },
+}
+
+/// Refuses `keys` where `type_id` cannot hold them.
+fn check_keys(catalog: &Catalog, type_id: &str, keys: Option<&Keys>) -> Result<()> {
+    if !catalog.rules.known(type_id) {
+        return Err(
+            Refusal::new(Code::UnknownType, format!("Unknown type: {type_id}"))
+                .with_detail("type", type_id),
+        );
+    }
+    if matches!(keys, Some(Keys::Links(_))) && catalog.link_field(type_id).is_none() {
+        return Err(Refusal::validation(format!(
+            "Type \"{type_id}\" names no link_field, so its rows hold no links"
+        ))
+        .with_detail("field", "links")
+        .with_detail("type", type_id));
+    }
+    Ok(())
+}
 
 /// An item as stored. `properties` is the stored JSON as text, which goes out
 /// as it stands.
@@ -42,6 +76,8 @@ pub struct Item {
     pub trashed_at: Option<String>,
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
+    link: Option<String>,
+    trashed_by: Option<Writer>,
 }
 
 /// Who wrote a version.
@@ -226,6 +262,39 @@ pub fn read_only(_tx: &Transaction<'_>, _source: &str, _type_id: &str) -> Result
     Ok(false)
 }
 
+fn not_found() -> Refusal {
+    Refusal::new(Code::ItemNotFound, "Item not found")
+}
+
+/// The link a type's `field` makes of `properties`: only text with something
+/// in it is a link.
+fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a str> {
+    properties
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
+fn name_of(rules: &Rules, row: &Item) -> Result<String> {
+    let properties = parsed(&row.properties)?;
+    Ok(rules
+        .display(&row.type_id, &properties)
+        .name
+        .unwrap_or_else(|| UNTITLED.to_string()))
+}
+
+/// An item by its name, with nothing of its content.
+fn summary_of(rules: &Rules, row: &Item) -> Result<Value> {
+    Ok(json!({
+        "id": row.id,
+        "type": row.type_id,
+        "version": row.version,
+        "name": name_of(rules, row)?,
+        "source": row.source,
+        "created_at": row.created_at,
+    }))
+}
+
 fn is_system(type_id: &str) -> bool {
     type_id.split('.').next() == Some("system")
 }
@@ -315,4 +384,46 @@ pub fn rekey_changed(
         }
     }
     Ok(())
+}
+
+/// Makes the links of the items of `types` agree with `after`, for each type
+/// whose `link_field` it changes. A tombstone recorded a value of the old
+/// field, which says nothing about the new one.
+pub fn relink_changed(
+    tx: &Transaction<'_>,
+    before: &Catalog,
+    after: &Catalog,
+    types: &[String],
+) -> Result<()> {
+    for type_id in types {
+        let field = after.link_field(type_id);
+        if before.link_field(type_id) == field {
+            continue;
+        }
+        rows::drop_link_tombstones(tx, type_id)?;
+        rows::clear_links(tx, type_id)?;
+        let Some(field) = field else {
+            continue;
+        };
+        for (seq, properties) in rows::of_type(tx, type_id)? {
+            let properties = parsed(&properties)?;
+            let Some(link) = link_in(field, &properties) else {
+                continue;
+            };
+            if rows::set_link(tx, seq, link)? {
+                return Err(Refusal::new(
+                    Code::LinkTaken,
+                    format!("Two items of type \"{type_id}\" hold one value in {field}."),
+                )
+                .with_detail("type", type_id.as_str())
+                .with_detail("field", field));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Forgets what purges left under a type just registered.
+pub fn drop_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
+    rows::drop_tombstones(tx, type_id)
 }

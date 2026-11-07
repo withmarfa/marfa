@@ -389,6 +389,53 @@ fn a_file_that_is_not_a_database_is_refused_and_left_as_it_was() {
     assert_eq!(beside.count(), 1);
 }
 
+/// Starts a write that sleeps through `naps`, beating after each if `beats`,
+/// and answers once it holds the writer.
+async fn long_write(db: &Arc<Db>, naps: u32, beats: bool) -> tokio::task::JoinHandle<Result<()>> {
+    let (holding, held) = tokio::sync::oneshot::channel();
+    let pulse = db.pulse();
+    let writing = db.clone();
+    let write = tokio::spawn(async move {
+        writing
+            .write(WRITE, move |_| {
+                let _ = holding.send(());
+                for _ in 0..naps {
+                    std::thread::sleep(Duration::from_millis(100));
+                    if beats {
+                        pulse.tick();
+                    }
+                }
+                Ok(())
+            })
+            .await
+    });
+    held.await.unwrap();
+    write
+}
+
+#[tokio::test]
+async fn a_write_behind_a_job_that_keeps_beating_waits_until_it_ends() {
+    let folder = folder();
+    let db = Arc::new(open(&folder.file));
+    let write = long_write(&db, 8, true).await;
+
+    db.write(WRITE, |_| Ok(())).await.unwrap();
+
+    write.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_write_behind_a_job_that_stopped_beating_meets_its_budget() {
+    let folder = folder();
+    let db = Arc::new(open(&folder.file));
+    let write = long_write(&db, 8, false).await;
+
+    let refused = db.write(WRITE, |_| Ok(())).await.unwrap_err();
+
+    assert_eq!(refused.code, Code::WriteContention);
+    write.await.unwrap().unwrap();
+}
+
 #[test]
 fn a_database_locked_elsewhere_is_refused_within_its_budget() {
     let place = folder();

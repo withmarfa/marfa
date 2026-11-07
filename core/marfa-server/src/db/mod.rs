@@ -16,6 +16,7 @@ use std::time::Duration;
 use rusqlite::Transaction;
 
 pub use open::Options;
+pub use writer::Pulse;
 
 use crate::app::faults::{FAIL_LOCK, Faults, HOLD_WRITE};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -107,6 +108,12 @@ impl Db {
             .submit(write, self.budget, job)
             .await
             .map_err(|refusal| self.with_budget(refusal))
+    }
+
+    /// What a job that writes for longer than the busy budget beats, so the
+    /// writes queued behind it wait for it rather than give up.
+    pub fn pulse(&self) -> Pulse {
+        self.writer.pulse()
     }
 
     /// Closes the readers, runs what is queued, checkpoints and closes.

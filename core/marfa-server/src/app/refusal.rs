@@ -138,6 +138,10 @@ pub struct Refusal {
     /// What an unhandled fault is told to the outside as. Set on a refusal
     /// of `internal_error` and no other.
     pub fault: Option<Arc<Fault>>,
+    /// The commit itself failed, so the write may have landed.
+    pub commit_failed: bool,
+    /// The row refused, once its own gates let the caller be told of it.
+    pub row: Option<String>,
 }
 
 impl Refusal {
@@ -149,6 +153,8 @@ impl Refusal {
             members: None,
             cause: None,
             fault: None,
+            commit_failed: false,
+            row: None,
         }
     }
 
@@ -175,6 +181,11 @@ impl Refusal {
         self.members
             .get_or_insert_default()
             .insert(name.to_string(), value.into());
+        self
+    }
+
+    pub fn naming_row(mut self, id: &str) -> Refusal {
+        self.row = Some(id.to_string());
         self
     }
 

@@ -62,7 +62,7 @@ const HISTORY_PAGE: i64 = 50;
 const REPLAYED_HEADER: &str = "idempotency-replayed";
 
 /// What a path names. A segment that does not decode names no item.
-pub struct Named<T>(T);
+pub struct Named<T>(pub T);
 
 impl<T> FromRequestParts<Arc<App>> for Named<T>
 where
@@ -194,7 +194,7 @@ fn replayed(kept: Kept) -> Response {
     response
 }
 
-fn finished(done: Done) -> Response {
+pub(super) fn finished(done: Done) -> Response {
     text_answer(
         StatusCode::from_u16(done.status).unwrap_or(StatusCode::OK),
         done.body,
@@ -203,7 +203,7 @@ fn finished(done: Done) -> Response {
 
 /// Runs `job` under the request's `Idempotency-Key`, where it carries one. The
 /// write keeps its own answer; this keeps or releases a refusal's.
-async fn keyed<F, Fut>(app: &Arc<App>, caller: &Caller, sent: Sent, job: F) -> Answer
+pub(super) async fn keyed<F, Fut>(app: &Arc<App>, caller: &Caller, sent: Sent, job: F) -> Answer
 where
     F: FnOnce(Option<Claim>, Uri, ReadBody) -> Fut,
     Fut: Future<Output = Result<Done>>,
@@ -234,18 +234,18 @@ where
     }
 }
 
-fn check_item_id(id: &str) -> Result<()> {
+pub(super) fn check_item_id(id: &str) -> Result<()> {
     validation::id("id", id).map_err(|_| Refusal::new(Code::InvalidId, "Invalid item ID"))
 }
 
-fn invalid_field(field: &str, message: impl Into<String>) -> Refusal {
+pub(super) fn invalid_field(field: &str, message: impl Into<String>) -> Refusal {
     let message = message.into();
     Refusal::validation(message.clone())
         .with_detail("field", field)
         .with_detail("errors", json!([{ "path": field, "message": message }]))
 }
 
-fn text_of(body: &Map<String, Value>, field: &str) -> Result<Option<String>> {
+pub(super) fn text_of(body: &Map<String, Value>, field: &str) -> Result<Option<String>> {
     match body.get(field) {
         None => Ok(None),
         Some(Value::String(text)) => Ok(Some(text.clone())),
@@ -273,7 +273,7 @@ fn whole_of(value: &Value) -> Option<i64> {
     })
 }
 
-fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
+pub(super) fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
     match body.get("version") {
         None => Ok(None),
         Some(value) => whole_of(value)
@@ -285,7 +285,7 @@ fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
     }
 }
 
-fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
+pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
     let Some(text) = text_of(body, "occurred_at")? else {
         return Ok(None);
     };
@@ -294,7 +294,7 @@ fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
 
-fn properties_of(body: &mut Map<String, Value>) -> Result<Option<Map<String, Value>>> {
+pub(super) fn properties_of(body: &mut Map<String, Value>) -> Result<Option<Map<String, Value>>> {
     match body.remove("properties") {
         None => Ok(None),
         Some(Value::Object(properties)) => {
@@ -315,13 +315,13 @@ fn strings_of(value: &Value, field: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn tags_of(value: &Value) -> Result<Vec<String>> {
+pub(super) fn tags_of(value: &Value) -> Result<Vec<String>> {
     let tags = strings_of(value, "tags")?;
     validation::tags(&tags).map_err(ruled)?;
     Ok(tags)
 }
 
-fn declared_type(body: &Map<String, Value>) -> Result<Option<String>> {
+pub(super) fn declared_type(body: &Map<String, Value>) -> Result<Option<String>> {
     let declared = text_of(body, "type")?;
     if let Some(type_id) = &declared {
         check_id(type_id, "type")?;
@@ -690,7 +690,7 @@ pub async fn set_metadata(
     .await
 }
 
-fn named_version(uri: &Uri) -> Result<Option<i64>> {
+pub(super) fn named_version(uri: &Uri) -> Result<Option<i64>> {
     query::only(uri, &["version"])?;
     let named = query::pairs(uri)?
         .into_iter()

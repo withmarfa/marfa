@@ -3,6 +3,7 @@
 pub mod answer;
 mod audit;
 pub mod body;
+mod bulk;
 mod caller;
 mod caller_address;
 mod control;
@@ -11,19 +12,21 @@ mod health;
 mod items;
 mod keys;
 pub mod listening;
+mod lookup;
 pub mod observe;
 mod page;
 mod query;
 mod root;
 mod sources;
 mod test_hooks;
+mod trash;
 mod types;
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
@@ -31,9 +34,11 @@ use axum::routing::{delete, get, patch, post, put};
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::app::App;
+use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
 use crate::listener::Declaration;
 use answer::{panicked, refusal_answer};
+use caller::identify;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
@@ -117,12 +122,33 @@ fn schema_doors() -> Routes {
         .route("/edge-types/{id}", delete(edge_types::delete))
 }
 
-fn item_doors() -> Routes {
+/// The instance's own authority holds no type map, and every content door
+/// answers within one.
+async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
+    let (mut parts, body) = request.into_parts();
+    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local))) {
+        return refusal_answer(&unauthorized());
+    }
+    next.run(Request::from_parts(parts, body)).await
+}
+
+fn item_doors(app: Arc<App>) -> Routes {
     Router::new()
         .route("/items", post(items::create))
+        .route("/items/bulk", post(bulk::write))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
-        .route("/items/{id}", get(items::read).patch(items::update))
+        .route("/items/lookup", post(lookup::lookup))
+        .route("/items/tombstones", post(lookup::settle))
+        .route("/items/trash", post(trash::trash))
+        .route("/items/trash-preview", post(trash::preview))
+        .route(
+            "/items/{id}",
+            get(items::read).patch(items::update).delete(trash::delete),
+        )
+        .route("/items/{id}/transition", post(trash::transition))
+        .route("/items/{id}/restore", post(trash::restore))
+        .route("/items/{id}/purge", post(trash::purge))
         .route("/items/{id}/versions", get(items::versions))
         .route(
             "/items/{id}/metadata",
@@ -138,6 +164,19 @@ fn item_doors() -> Routes {
                 .delete(items::clear_extension),
         )
         .route("/metadata/tags", get(items::tags))
+        .route_layer(from_fn_with_state(app, within_a_map))
+}
+
+/// The doors the instance's own authority reaches by the name of an item,
+/// never its content.
+fn owner_item_doors() -> Routes {
+    Router::new()
+        .route("/items/summaries", get(trash::summaries))
+        .route("/items/summaries/{id}/trash", post(trash::owner_trash))
+        .route("/items/summaries/{id}/restore", post(trash::owner_restore))
+        .route("/items/summaries/{id}/purge", post(trash::owner_purge))
+        .route("/trash", get(trash::bin))
+        .route("/trash/empty", post(trash::empty))
 }
 
 fn shared(app: Arc<App>) -> Routes {
@@ -149,8 +188,9 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
-        .merge(key_doors(app))
-        .merge(item_doors())
+        .merge(key_doors(app.clone()))
+        .merge(item_doors(app))
+        .merge(owner_item_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
