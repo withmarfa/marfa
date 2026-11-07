@@ -103,7 +103,11 @@ const KEPT_LOOK: Duration = Duration::from_secs(60);
 
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
-pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
+/// The size past which a document is warned of, against what the server said
+/// it takes, or else its default.
+fn near(limit: Option<usize>) -> usize {
+    limit.unwrap_or(REQUEST_LIMIT).saturating_mul(9) / 10
+}
 
 /// Each held as `encoding`, by the same binding an `unreadable` file is.
 const NOT_UTF8: &str = "it is not UTF-8 text; saved as UTF-8, it is sent";
@@ -163,17 +167,25 @@ fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, i
 
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
 /// outside the request.
-fn near_limit(key: &str, text: &str) -> Option<Flagged> {
-    if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
+fn near_limit(key: &str, text: &str, limit: Option<usize>) -> Option<Flagged> {
+    if !is_document(Path::new(key)) || text.len().saturating_mul(6) < near(limit) {
         return None;
     }
     let size = serde_json::to_string(text).map_or(text.len(), |sent| sent.len());
-    (size >= NEAR_LIMIT).then(|| Flagged {
+    let most = limit.unwrap_or(REQUEST_LIMIT);
+    // Where no limit is named a device sends the file, whatever its size
+    // (`queue-and-verdicts/request-limit-unknown`).
+    let past = if limit.is_some() {
+        "a file past that stays here and is not sent"
+    } else {
+        "past that a server on its default size does not take it"
+    };
+    (size >= near(limit)).then(|| Flagged {
         path: key.to_string(),
         flag: "size",
         reason: format!(
-            "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that the server refuses it request_too_large and the file is held",
-            size * 100 / REQUEST_LIMIT
+            "is {size} bytes as it is sent, {}% of the {most} a request may carry; {past}",
+            size.saturating_mul(100) / most
         ),
         item: None,
     })
@@ -330,6 +342,13 @@ impl Flagged {
             .or_else(|| held.strip_prefix(state::EDGES_WAITING))
         {
             ("edges", reason)
+        } else if let Some(words) = over_limit_words(held) {
+            return Flagged {
+                path: path.to_string(),
+                flag: "refused",
+                reason: format!("{OVER_LIMIT_SAID}{words}"),
+                item: None,
+            };
         } else {
             ("refused", held.strip_prefix(state::REFUSED).unwrap_or(held))
         };
@@ -339,6 +358,11 @@ impl Flagged {
             reason: reason.to_string(),
             item: None,
         }
+    }
+
+    /// Whether this file is held for its size against what the server takes.
+    fn over_limit(&self) -> bool {
+        self.flag == "refused" && self.reason.starts_with(OVER_LIMIT_SAID)
     }
 }
 
@@ -1780,11 +1804,15 @@ impl Folder {
         let links = bound.map(|bound| bound.links.clone()).unwrap_or_default();
         let embeds = bound.map(|bound| bound.embeds.clone()).unwrap_or_default();
         let lines = bound.map(|bound| bound.lines.clone()).unwrap_or_default();
+        let mut writes = bound.map(|bound| bound.writes.clone()).unwrap_or_default();
+        // Counted, as a save that queues is, so an answer to an earlier save
+        // reads as earlier than the bytes held here.
+        writes.save += i64::from(bound.is_none_or(|bound| bound.content_hash != file.hash));
         let kept = Kept {
             edit_line: bound.and_then(|bound| bound.edit_line),
             own: bound.and_then(|bound| bound.own.clone()),
             held: Some(held),
-            writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
+            writes,
             named: named.cloned(),
             bytes: false,
             blob: bound.and_then(|bound| bound.blob.clone()),
@@ -1803,6 +1831,27 @@ impl Folder {
 }
 
 const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
+
+/// How a person is told a file is held for its size.
+const OVER_LIMIT_SAID: &str = "This file is ";
+
+/// The words of a hold the copy made for a file's size, as the error reads.
+fn over_limit_words(held: &str) -> Option<&str> {
+    held.strip_prefix(LOCAL_ADMISSION_REFUSAL)?
+        .strip_prefix("validation (over_request_limit): ")?
+        .strip_prefix(crate::model::OVER_REQUEST_LIMIT_WRITE)
+}
+
+/// What a file's record holds for a write the drain refused unsent for its
+/// size, so the scan judges it as it judges a hold it made itself.
+fn over_limit_held(reason: &str) -> Option<String> {
+    let words = reason.strip_prefix(crate::model::OVER_REQUEST_LIMIT_REASON)?;
+    Some(format!(
+        "{LOCAL_ADMISSION_REFUSAL}validation ({}): {}{words}",
+        crate::model::OVER_REQUEST_LIMIT,
+        crate::model::OVER_REQUEST_LIMIT_WRITE
+    ))
+}
 
 fn local_refusal_prefix() -> &'static str {
     LOCAL_ADMISSION_REFUSAL
@@ -1829,7 +1878,7 @@ fn copy_refused(refused: &state::Refused) -> bool {
 fn local_admission_refusal(error: &CoreError) -> bool {
     matches!(error, CoreError::Validation {code, ..}
         if matches!(code.as_str(), "invalid_properties" | "validation_error"
-            | "edge_constraint_violation" | "edge_cycle"))
+            | "edge_constraint_violation" | "edge_cycle" | crate::model::OVER_REQUEST_LIMIT))
         || matches!(error, CoreError::NotFound {code, ..} if code == "item_not_found")
         || matches!(error, CoreError::UnknownType { .. })
 }
@@ -2066,7 +2115,12 @@ impl Folder {
     fn hold_refused(&self) -> Result<()> {
         let conn = self.core.conn()?;
         for mut bound in state::bound_awaiting(&conn)? {
-            let was = (bound.writes.clone(), bound.lines.clone(), bound.edit_line);
+            let was = (
+                bound.writes.clone(),
+                bound.lines.clone(),
+                bound.edit_line,
+                bound.held.clone(),
+            );
             let queue = crate::store::queued_writes_named(&conn, &waited_on(&bound))?;
             for verdict in &queue {
                 let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
@@ -2116,7 +2170,20 @@ impl Folder {
                 // A delete of an edge already gone did what it was asked.
                 let gone = row.kind == WriteKind::DeleteEdge
                     && verdict.reason.as_deref() == Some("edge_not_found");
+                let over_limit = verdict.reason.as_deref().and_then(over_limit_held);
+                // A file's edit carries the whole file, as a title's alone
+                // does not, so an answer to its last save says what became of
+                // the bytes it holds now.
+                let ends_size_hold = over_limit.is_none()
+                    && verdict.verdict != Some(crate::model::Verdict::Conflicted)
+                    && matches!(change, state::Change::Edit)
+                    && save == bound.writes.save
+                    && bound.writes.queued[at].line.is_some();
                 match verdict.verdict {
+                    // Held as a hold the scan made, so it is judged again.
+                    Some(crate::model::Verdict::Refused) if over_limit.is_some() => {
+                        bound.held = over_limit;
+                    }
                     Some(crate::model::Verdict::Refused) if !gone => {
                         let code = verdict.reason.clone().unwrap_or_default();
                         let message = row
@@ -2165,6 +2232,14 @@ impl Folder {
                     Some(crate::model::Verdict::Dead) => continue,
                     _ => continue,
                 }
+                if ends_size_hold
+                    && bound
+                        .held
+                        .as_deref()
+                        .is_some_and(|held| over_limit_words(held).is_some())
+                {
+                    bound.held = None;
+                }
                 // A refused edit spends no line.
                 let spent = bound.writes.queued.remove(at).line;
                 if verdict.verdict != Some(crate::model::Verdict::Refused)
@@ -2173,7 +2248,9 @@ impl Folder {
                     bound.edit_line = Some(bound.edit_line.unwrap_or(0).max(line));
                 }
             }
-            if (&bound.writes, &bound.lines, bound.edit_line) != (&was.0, &was.1, was.2) {
+            if (&bound.writes, &bound.lines, bound.edit_line, &bound.held)
+                != (&was.0, &was.1, was.2, &was.3)
+            {
                 state::bind(&conn, &bound)?;
             }
         }

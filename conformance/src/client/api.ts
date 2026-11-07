@@ -1631,6 +1631,7 @@ export class MarfaClient {
       instance_id: string;
       contract: number;
       features: string[];
+      max_request_bytes: number;
     }>
   > {
     return this.request<{
@@ -1640,6 +1641,7 @@ export class MarfaClient {
       instance_id: string;
       contract: number;
       features: string[];
+      max_request_bytes: number;
     }>("/");
   }
 

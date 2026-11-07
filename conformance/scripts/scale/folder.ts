@@ -213,6 +213,5 @@ export async function folder(): Promise<void> {
           : `${FIRST_SYNC_COVERS}; ${problem}`,
     }),
   );
-  recorder.learnedItems(0);
   recorder.finish();
 }

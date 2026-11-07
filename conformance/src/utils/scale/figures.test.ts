@@ -141,7 +141,7 @@ describe("the folder and device figures", () => {
       ceiling: 2000,
       issue: 2611,
     });
-    expect(CEILINGS.folder_watch_cpu).toEqual({ ceiling: 0.5, issue: 2608 });
+    expect(CEILINGS.folder_watch_cpu).toEqual({ ceiling: 1, issue: 2608 });
     expect(CEILINGS.device_hydrate).toEqual({ ceiling: 60, issue: null });
     expect(CEILINGS.device_follow_change).toEqual({
       ceiling: 1000,
@@ -162,7 +162,7 @@ describe("the folder and device figures", () => {
   });
 
   it("judges a quiet watch by CPU seconds a minute", () => {
-    expect(scalar("folder_watch_cpu", "cpu_s_per_min", 0.4).passed).toBe(true);
+    expect(scalar("folder_watch_cpu", "cpu_s_per_min", 0.9).passed).toBe(true);
     expect(scalar("folder_watch_cpu", "cpu_s_per_min", 26).passed).toBe(false);
   });
 

@@ -43,7 +43,7 @@ describe("adversarial input — large properties", () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
-        properties: { title: "Large test", body: "x".repeat(500_000) },
+        properties: { title: "Large test", body: "x".repeat(1_000_001) },
       }),
     );
     expect(r.ok).toBe(false);

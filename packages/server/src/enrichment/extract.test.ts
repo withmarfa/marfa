@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,11 +9,13 @@ import { TesseractOcr } from "./ocr.js";
 import { HTML_MAX_DEPTH, HTML_MAX_INPUT_BYTES } from "./html.js";
 import type { OcrEngine } from "./ocr.js";
 
+const MAX_TEXT_CHARS = 100_000;
+
 const fixture = (name: string): Promise<Buffer> =>
   readFile(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)));
 
 const OPTS = {
-  maxTextChars: DEFAULT_MAX_STRING_LENGTH,
+  maxTextChars: MAX_TEXT_CHARS,
   ocr: null,
   office: {
     maxInflatedBytes: 64 * 1024 * 1024,

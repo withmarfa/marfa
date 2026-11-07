@@ -5612,7 +5612,7 @@ describe("large removals, status and size", () => {
     put(
       harness,
       "default.md",
-      `---\ntype: core.note\ntitle: Default\n---\n${"x".repeat(100_001)}\n`,
+      `---\ntype: core.note\ntitle: Default\n---\n${"x".repeat(1_000_001)}\n`,
     );
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
@@ -5622,7 +5622,7 @@ describe("large removals, status and size", () => {
       "default.md",
     ]);
     expect(scanned.value.flagged[0]?.reason).toContain("body");
-    expect(scanned.value.flagged[0]?.reason).toContain("100000");
+    expect(scanned.value.flagged[0]?.reason).toContain("1000000");
     expect(
       scanned.value.warnings.map((file) => [file.path, file.flag]),
       "a text near the server's limit went without a warning, or a small one was warned of",
@@ -5636,6 +5636,10 @@ describe("large removals, status and size", () => {
       warned("large.md"),
       "the status did not name the text near the limit",
     ).toMatch(/\d/);
+    // With no limit named, it promises no hold.
+    expect(warned("large.md")).toContain(
+      "past that a server on its default size does not take it",
+    );
     expect(warned("small.md")).toBeUndefined();
     // A push says it in words for the file its own scan takes.
     put(

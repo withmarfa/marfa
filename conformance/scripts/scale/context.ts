@@ -20,6 +20,7 @@ import {
   type Figure,
   type Fragment,
 } from "../../src/utils/scale/figures.js";
+import { parseFragment } from "../../src/utils/scale/report.js";
 
 /**
  * The size of the instance. 250,000 items is what the budgets were set at in
@@ -164,9 +165,10 @@ function fragmentPath(step: string, partial: boolean): string {
 
 export function readFragment(step: string, partial = false): Fragment | null {
   const file = fragmentPath(step, partial);
-  return existsSync(file)
-    ? (JSON.parse(readFileSync(file, "utf8")) as Fragment)
-    : null;
+  if (!existsSync(file)) return null;
+  const fragment = parseFragment(readFileSync(file, "utf8"));
+  if (fragment === null) log(`${file} is not a whole fragment; it is ignored`);
+  return fragment;
 }
 
 /**

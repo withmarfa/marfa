@@ -645,6 +645,12 @@ it.each(["create", "edit"] as const)(
           (f) => f.path === (kind === "edit" ? "Note 0.md" : "new.md"),
         )?.flag,
     ).toBe(kind === "edit" ? "refused" : "lost");
+    expect(
+      status.ok &&
+        status.value.files.find(
+          (f) => f.path === (kind === "edit" ? "Note 0.md" : "new.md"),
+        )?.reason,
+    ).toContain("request");
   },
 );
 

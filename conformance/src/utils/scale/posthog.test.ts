@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { distribution, scalar } from "./figures.js";
+import { SEED_RATE_REFERENCE, distribution, scalar } from "./figures.js";
 import { benchmarkEvent, captureUrl, propertyName } from "./posthog.js";
 import type { FiguresFile } from "./report.js";
 
@@ -72,12 +72,16 @@ describe("the event", () => {
         "get_item_p95_ms",
         "items",
         "items_seeded_count",
+        "not_judged",
+        "not_judged_count",
         "passed",
         "profile",
         "rss_at_rest_mb",
         "run_id",
+        "runner_factor",
         "seed_rate_per_s",
         "server_restart_ms",
+        "slow_runner",
       ].sort(),
     );
   });
@@ -137,10 +141,14 @@ describe("the event", () => {
         "commit",
         "failed_count",
         "items",
+        "not_judged",
+        "not_judged_count",
         "passed",
         "profile",
         "rss_peak_mb",
         "run_id",
+        "runner_factor",
+        "slow_runner",
       ].sort(),
     );
     expect(unmeasured.properties).toMatchObject({
@@ -166,5 +174,44 @@ describe("the capture address", () => {
     expect(captureUrl("https://eu.i.posthog.com/")).toBe(
       "https://eu.i.posthog.com/i/v0/e/",
     );
+  });
+});
+
+describe("a night on a slow runner", () => {
+  const event = (factor: number) =>
+    benchmarkEvent(
+      {
+        ...file,
+        figures: [
+          scalar("items_target", "count", 250_000),
+          scalar("items_seeded", "count", 250_000),
+          scalar("seed_errors", "count", 0),
+          scalar("seed_rate", "per_s", SEED_RATE_REFERENCE / factor),
+          scalar("server_restart", "ms", 5_000),
+        ],
+      },
+      { token: "t", distinctId: "d" },
+    ).properties;
+
+  it("says so, with the factor and what it did not judge", () => {
+    expect(event(2)).toMatchObject({
+      passed: true,
+      runner_factor: 2,
+      slow_runner: true,
+      not_judged_count: 1,
+      not_judged: "server_restart",
+      failed_count: 0,
+    });
+  });
+
+  it("sends the same figure as failed on a fast night", () => {
+    expect(event(1)).toMatchObject({
+      passed: false,
+      runner_factor: 1,
+      slow_runner: false,
+      not_judged_count: 0,
+      not_judged: "",
+      failed_count: 1,
+    });
   });
 });

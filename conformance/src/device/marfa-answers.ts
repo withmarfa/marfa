@@ -1044,6 +1044,7 @@ export const answers = {
   root: (
     contract: unknown,
     instanceId: string = SCRIPTED_INSTANCE,
+    maxRequestBytes: number | null = 1_048_576,
   ): Answer => ({
     kind: "json",
     status: 200,
@@ -1053,6 +1054,9 @@ export const answers = {
       instance_id: instanceId,
       contract,
       features: ["items"],
+      ...(maxRequestBytes === null
+        ? {}
+        : { max_request_bytes: maxRequestBytes }),
     },
   }),
   created: (item: Record<string, unknown>, tags: string[] = []): Answer => ({

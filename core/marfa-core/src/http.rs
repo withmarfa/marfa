@@ -34,8 +34,9 @@ pub const EDGE_PAGE_LIMIT: u32 = 500;
 pub const BULK_GET_LIMIT: usize = 100;
 
 /// The server's cap on a request's body unless its instance names another,
-/// past which it answers `413 request_too_large`. An instance does not say
-/// what it set, so a device holds every request to the default.
+/// past which it answers `413 request_too_large` and closes the connection.
+/// The root says what an instance set (`store::request_limit`); this is what
+/// a device goes by where it has not said.
 pub const REQUEST_LIMIT: usize = 1_048_576;
 
 /// The most values `POST /items/lookup` takes in one request
@@ -638,9 +639,9 @@ impl Http {
         let Some(expected) = relocation.expected_instance.as_deref() else {
             return Err(wrong());
         };
-        let served = self.anonymous_instance_id()?;
+        let served = self.anonymous_root()?;
         self.refuse_if_let_go()?;
-        if served != expected {
+        if served.instance_id != expected {
             return Err(wrong());
         }
         (relocation.keep)(&self.let_go)?;
@@ -1017,16 +1018,17 @@ impl Http {
 
     /// The instance the server says it is, which its root answers to anyone.
     pub fn instance_id(&self) -> Result<String, CoreError> {
-        self.confirm_origin()?;
-        self.refuse_if_let_go()?;
-        self.anonymous_instance_id()
+        self.served().map(|served| served.instance_id)
     }
 
-    fn anonymous_instance_id(&self) -> Result<String, CoreError> {
-        #[derive(serde::Deserialize)]
-        struct Root {
-            instance_id: String,
-        }
+    /// What the server's root answers to anyone about the instance.
+    pub(crate) fn served(&self) -> Result<Served, CoreError> {
+        self.confirm_origin()?;
+        self.refuse_if_let_go()?;
+        self.anonymous_root()
+    }
+
+    fn anonymous_root(&self) -> Result<Served, CoreError> {
         // ureq derives Basic authorization from URL userinfo even when no
         // Authorization header was supplied.
         let mut url = self.url(&[], &[]);
@@ -1060,11 +1062,11 @@ impl Http {
                 }
             });
         }
-        let root: Root = serde_json::from_str(&body)?;
+        let root: Served = serde_json::from_str(&body)?;
         if root.instance_id.is_empty() {
             return Err(CoreError::Decoding("the root names no instance".into()));
         }
-        Ok(root.instance_id)
+        Ok(root)
     }
 
     pub fn catalog(&self) -> Result<WireCatalog, CoreError> {
@@ -1331,8 +1333,15 @@ impl Http {
             .get("Idempotency-Replayed")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        // A body that will not read is a transport failure, not an answer.
-        let body = self.whole(response.into_body())?;
+        // A body that will not read is a transport failure, not an answer,
+        // but for a `413`: the server closes that connection as it answers,
+        // and the status alone says what it refused.
+        let body = match self.whole(response.into_body()) {
+            Err(_) if status == 413 && contract_named => {
+                r#"{"error":{"code":"request_too_large"}}"#.to_string()
+            }
+            body => body?,
+        };
         let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
             Ok(envelope) => envelope.error.code,
             Err(_) => String::new(),
@@ -1996,6 +2005,24 @@ fn http_date(raw: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
+/// What a device reads from the root each time it confirms the instance.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct Served {
+    pub instance_id: String,
+    /// `None` from a server that publishes no limit, or none a device can use,
+    /// which says nothing of what it takes.
+    #[serde(default, deserialize_with = "published_limit")]
+    pub max_request_bytes: Option<usize>,
+}
+
+fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<usize>, D::Error> {
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(from)?;
+    Ok(value
+        .and_then(|value| value.as_u64())
+        .filter(|limit| *limit > 0)
+        .and_then(|limit| usize::try_from(limit).ok()))
+}
+
 /// Only for an answer naming the server's contract; `Http::refused` decides.
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
@@ -2475,6 +2502,108 @@ mod tests {
             assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
             serving.join().unwrap().unwrap();
         }
+    }
+
+    /// Reads a request's head, answers `413` and closes with the rest of the
+    /// body unread, as the server does for a body over its cap.
+    fn serve_closing_early() -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let _ = Read::read(&mut socket, &mut [0u8; 4096]);
+            let body = r#"{"error":{"code":"request_too_large"}}"#;
+            let _ = write!(
+                socket,
+                "HTTP/1.1 413 Payload Too Large\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        (url, serving)
+    }
+
+    /// Far past what the system's socket buffers take without the peer reading.
+    const LONG_BODY: usize = 32 * 1024 * 1024;
+
+    fn post_items(body: &str) -> Call<'_> {
+        Call {
+            method: Method::Post,
+            segments: &["items"],
+            params: &[],
+            headers: &[],
+            body: CallBody::Json(body),
+            credential: true,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn a_connection_closed_while_sending_a_body_over_the_limit_claims_no_answer() {
+        let (url, serving) = serve_closing_early();
+        let body = "x".repeat(LONG_BODY);
+        let sent = Http::new(&url, "k").unwrap().send(&Outgoing {
+            method: Method::Post,
+            segments: vec!["items".into()],
+            params: Vec::new(),
+            body: &body,
+            idempotency_key: "key",
+        });
+        serving.join().unwrap();
+        assert!(matches!(&sent, Err(CoreError::Network(_))), "{sent:?}");
+
+        let (url, serving) = serve_closing_early();
+        let fetched = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items(&body), true)
+            .map(|_| "answered");
+        serving.join().unwrap();
+        assert!(
+            matches!(&fetched, Err(CoreError::Network(_))),
+            "{fetched:?}"
+        );
+    }
+
+    #[test]
+    fn a_413_heard_whose_body_cannot_be_read_stays_a_refusal() {
+        let (url, serving) = serve(
+            format!(
+                "HTTP/1.1 413 Payload Too Large\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 100\r\n\r\n{{"
+            )
+            .into_bytes(),
+        );
+        let answer = Http::new(&url, "k")
+            .unwrap()
+            .send(&Outgoing {
+                method: Method::Post,
+                segments: vec!["items".into()],
+                params: Vec::new(),
+                body: "{}",
+                idempotency_key: "key",
+            })
+            .unwrap();
+        serving.join().unwrap().unwrap();
+        assert_eq!(
+            (answer.status, answer.code.as_str(), answer.contract_named),
+            (413, "request_too_large", true)
+        );
+
+        // The witness: the same cut in any other answer stays a failure.
+        let (url, serving) = serve(
+            format!(
+                "HTTP/1.1 200 OK\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 100\r\n\r\n{{"
+            )
+            .into_bytes(),
+        );
+        let sent = Http::new(&url, "k").unwrap().send(&Outgoing {
+            method: Method::Post,
+            segments: vec!["items".into()],
+            params: Vec::new(),
+            body: "{}",
+            idempotency_key: "key",
+        });
+        serving.join().unwrap().unwrap();
+        assert!(matches!(&sent, Err(CoreError::Network(_))), "{sent:?}");
     }
 
     /// Answers one request with `answer`, written as it is, once the request

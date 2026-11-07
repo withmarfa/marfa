@@ -29,6 +29,7 @@ import {
   mergeFragments,
   parseFiguresFile,
   renderSummary,
+  slowRunnerReason,
   verdictOf,
   type FiguresFile,
 } from "../../src/utils/scale/report.js";
@@ -195,8 +196,17 @@ export function judge(): void {
   }
   const file = JSON.parse(readFileSync(FIGURES_FILE, "utf8")) as FiguresFile;
   const verdict = verdictOf(file);
+  if (verdict.notJudged.length > 0 && verdict.runnerFactor !== null) {
+    console.log(
+      `::warning::Slow runner (${slowRunnerReason(verdict.runnerFactor)}): not judged: ${verdict.notJudged.join(", ")}.`,
+    );
+  }
   if (verdict.passed) {
-    log("every figure is within its ceiling");
+    log(
+      verdict.notJudged.length > 0
+        ? "every figure that was judged is within its ceiling"
+        : "every figure is within its ceiling",
+    );
     return;
   }
   const reasons = [

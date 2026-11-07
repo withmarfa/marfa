@@ -62,6 +62,8 @@ mod removal;
 mod remove_tests;
 #[cfg(test)]
 mod replace_tests;
+#[cfg(test)]
+mod request_limit_tests;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
@@ -1907,14 +1909,14 @@ impl Core {
     /// own, after it.
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_create(draft, Body::Read)
+        self.noting_limit_refusal(self.write_create(draft, Body::Read))
     }
 
     /// What the edit changes of the item's body's links and embeds is
     /// queued as edge writes of their own, after it.
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_update(id, edit, Based::OnHeld, Body::Read)
+        self.noting_limit_refusal(self.write_update(id, edit, Based::OnHeld, Body::Read))
     }
 
     /// The base may be a version earlier than the one held, which the server
@@ -1922,7 +1924,18 @@ impl Core {
     /// rather than overwritten.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        self.write_update(id, edit, Based::AsRead, Body::Read)
+        self.noting_limit_refusal(self.write_update(id, edit, Based::AsRead, Body::Read))
+    }
+
+    /// Outside the write's transaction, which the refusal rolled back. A
+    /// folder's scan keeps a mark of its own for the file it holds.
+    fn noting_limit_refusal(&self, written: Result<QueuedWrite>) -> Result<QueuedWrite> {
+        if matches!(&written, Err(CoreError::Validation { code, .. })
+            if code == crate::model::OVER_REQUEST_LIMIT)
+        {
+            store::note_limit_refused(&*self.conn()?)?;
+        }
+        written
     }
 
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
@@ -3623,8 +3636,15 @@ pub(crate) fn check_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<
     if draft.source_id.is_none() {
         catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
     }
+    if catalog.request_limit().is_some() {
+        // An id the queue mints is as long as this one.
+        let id = draft.id.as_deref().unwrap_or(MINTED_ID_SHAPE);
+        catalog.refuse_over_request_limit(&draft.payload(id)?)?;
+    }
     Ok(())
 }
+
+const MINTED_ID_SHAPE: &str = "00000000-0000-7000-8000-000000000000";
 
 /// What no copy could make an item of, whatever it holds: a name the server
 /// would refuse, an id that is no id, a system type, or a type it does not hold.
@@ -3808,6 +3828,7 @@ fn queue_create(
         .collect();
     edge_rules::refuse_unwritable_edges(tx, &inline)?;
     let payload = draft.payload(&id)?;
+    catalog.refuse_over_request_limit(&payload)?;
     let mut row = draft.wire(&id);
     row.tier = shown_tier.map(|tier| tier.as_str().into());
     store::upsert_item(
@@ -4067,6 +4088,7 @@ fn queue_update(
         }
         payload = body.to_string();
     }
+    catalog.refuse_over_request_limit(&payload)?;
     let projected = catalog.projected_properties(
         edit.r#type.as_deref().unwrap_or(&held.r#type),
         &edit.properties,

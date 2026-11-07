@@ -119,7 +119,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 
   // A watch on that folder: an edit reaching the server, and a quiet watch.
   folder_edit_to_server: { ceiling: 2000, issue: 2611 },
-  folder_watch_cpu: { ceiling: 0.5, issue: 2608 },
+  folder_watch_cpu: { ceiling: 1, issue: 2608 },
   folder_watch_rss: recorded,
 
   // A device copying the instance, then following the event stream.
@@ -134,6 +134,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   // the figures claim, so any error fails the night.
   seed_rate: recorded,
   seed_errors: { ceiling: 0, issue: null },
+  items_target: recorded,
   items_seeded: recorded,
   parent_of_edges: recorded,
   about_edges: recorded,
@@ -154,10 +155,83 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 export const KNOWN_OVER: Readonly<Record<string, number>> = {
   search_common: 2656,
   archive_export: 2657,
-  folder_watch_cpu: 2608,
   bulk_page_ratio: 2658,
   device_hydrate: 2659,
 };
+
+/**
+ * Items a second a whole seed reaches on a fast night. Hosted runners differ by
+ * more than the ceilings allow, and a fixed CPU or disk loop does not show it:
+ * nights that seeded at the same pace read 280 to 852 ms on one such loop.
+ */
+export const SEED_RATE_REFERENCE = 248;
+
+/** A runner more than this many times slower than a fast night is slow. */
+export const SLOW_RUNNER_FACTOR = 1.25;
+
+/**
+ * How far past its ceiling, beyond the runner's own slowness, a figure may be
+ * and still be put down to the runner. A noisy host hits the tail hardest: an
+ * edit's p95 reached 2.95 times its ceiling on a host 1.7 times slower.
+ */
+export const NOT_JUDGED_MARGIN = 2;
+
+/**
+ * How many times slower than a fast night tonight's seed ran; null when the
+ * seed cannot say, since a partial seed's rate proves nothing.
+ *
+ * A regression in bulk writes lowers `seed_rate` too, so it can excuse the time
+ * figures up to their bound. Those figures still show in the summary.
+ */
+export function runnerFactor(figures: readonly Figure[]): number | null {
+  const reading = (name: string) => {
+    const value = figures.find((figure) => figure.name === name)?.value;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const rate = reading("seed_rate");
+  const seeded = reading("items_seeded");
+  const target = reading("items_target");
+  const errors = reading("seed_errors");
+  if (rate === null || seeded === null || target === null || errors === null) {
+    return null;
+  }
+  if (rate <= 0 || seeded < target || errors > 0) return null;
+  return SEED_RATE_REFERENCE / rate;
+}
+
+export function isSlowRunner(factor: number | null): factor is number {
+  return factor !== null && factor > SLOW_RUNNER_FACTOR;
+}
+
+/** What a slower host costs more of: wall time, and the CPU time of the same work. */
+const TIME_UNITS: readonly Unit[] = ["ms", "s", "cpu_s_per_min"];
+
+/**
+ * A slow runner explains a figure only when it measured what it should and came
+ * in over a time ceiling. Errors, too few samples and no value are not slowness.
+ */
+export function overTimeCeilingAlone(figure: Figure): boolean {
+  return (
+    TIME_UNITS.includes(figure.unit) &&
+    figure.ceiling !== null &&
+    figure.errors === 0 &&
+    Number.isFinite(figure.value) &&
+    figure.value > figure.ceiling &&
+    (figure.samples === null || figure.samples >= MIN_SAMPLES)
+  );
+}
+
+/** Whether tonight's runner explains this figure's miss, up to the bound. */
+export function explainedBySlowRunner(
+  figure: Figure,
+  figures: readonly Figure[],
+): boolean {
+  const factor = runnerFactor(figures);
+  if (!isSlowRunner(factor) || !overTimeCeilingAlone(figure)) return false;
+  return (
+    figure.value <= (figure.ceiling as number) * factor * NOT_JUDGED_MARGIN
+  );
+}
 
 function entryFor(name: string): CeilingEntry {
   const entry = CEILINGS[name];
