@@ -39,7 +39,7 @@ mod native {
         process::exit(1);
     }
 
-    /// The models the manifest lists, as (language, file name).
+    /// The languages of the models the manifest lists.
     fn models(manifest: &Path) -> Vec<String> {
         let text = fs::read_to_string(manifest)
             .unwrap_or_else(|error| stop(&format!("cannot read {}: {error}", manifest.display())));

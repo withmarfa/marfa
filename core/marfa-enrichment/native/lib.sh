@@ -63,8 +63,7 @@ sha256_of() {
   fi
 }
 
-# fields <kind> <name>: the manifest line for a pin, split into one word per
-# line after the kind and name.
+# manifest_line <kind> <name>: the manifest line for a pin.
 manifest_line() {
   local kind=$1 name=$2
   local line
