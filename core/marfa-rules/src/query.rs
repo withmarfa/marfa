@@ -96,6 +96,32 @@ impl FromStr for SortDirection {
     }
 }
 
+/// The scalar a row sorts by under `properties.<name>`, as an SQL expression
+/// over `table.properties`: a number or a boolean as a REAL (false 0, true 1),
+/// a string as text, and anything else as NULL. SQLite orders every number
+/// before every string and strings by their UTF-8 bytes, so sorting on this
+/// with NULL last is the contract's order. `name` is one
+/// [`SortField::property`] has checked, so it is safe inside the path.
+/// `text` as a `LIKE` pattern matches it, under `ESCAPE '\\'`.
+pub fn escape_like(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// The value a property sorts by, which SQLite's own order puts in the
+/// contract's: numbers and booleans by value, then text by its bytes, with
+/// anything else null. `path` is the SQL that gives the JSON path.
+pub fn property_sort_expression(table: &str, path: &str) -> String {
+    format!(
+        "CASE json_type({table}.properties, {path}) \
+         WHEN 'integer' THEN CAST(json_extract({table}.properties, {path}) AS REAL) \
+         WHEN 'real' THEN CAST(json_extract({table}.properties, {path}) AS REAL) \
+         WHEN 'text' THEN json_extract({table}.properties, {path}) \
+         WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END"
+    )
+}
+
 /// The `type` filter that names every type, which a `type` list refuses.
 pub const EVERY_TYPE: &str = "*";
 

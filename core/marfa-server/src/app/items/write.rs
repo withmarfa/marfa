@@ -15,6 +15,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
+use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
@@ -27,8 +28,10 @@ use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::idempotency::{self, Claim, Need};
+use crate::app::query::VIEW_TYPE;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
+use crate::app::views;
 
 const COPY_TAG: &str = "conflicted-copy";
 const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
@@ -81,9 +84,27 @@ pub struct Update {
     pub edges: Option<Inline>,
 }
 
+/// A write to a `system.view`, which only the view doors make.
+#[derive(Debug)]
+pub enum ViewChange {
+    Create {
+        settings: Map<String, Value>,
+    },
+    Update {
+        id: String,
+        settings: Map<String, Value>,
+        clear: Vec<String>,
+        version: i64,
+    },
+    Delete {
+        id: String,
+    },
+}
+
 /// A write to an item, by the door's description of it.
 #[derive(Debug)]
 pub enum Change {
+    View(ViewChange),
     Put(Box<Put>),
     Update(Box<Update>),
     SetTags {
@@ -161,6 +182,9 @@ pub enum OwnerAct {
 impl Change {
     fn action(&self) -> &'static str {
         match self {
+            Change::View(ViewChange::Create { .. }) => "view.create",
+            Change::View(ViewChange::Update { .. }) => "view.update",
+            Change::View(ViewChange::Delete { .. }) => "view.delete",
             Change::Put(_) => "item.create",
             Change::Update(_) => "item.update",
             Change::SetTags { .. } => "item.metadata.replace",
@@ -408,8 +432,7 @@ fn collision(
     .with_member("current", row.state_named()?)
     .with_member("ancestor", ancestor.state_named()?)
     .with_member("conflicting_fields", conflicting)
-    .with_member("merge_policy", policy.to_json())
-    .with_member("requested_version", named))
+    .with_member("merge_policy", policy.to_json()))
 }
 
 /// What a write to a row it resolved asks for.
@@ -520,7 +543,7 @@ pub(crate) fn settle_late_part(
         unit.audit("item", &item.id, None)?;
         announce(unit, "item.deleted", &item)?;
     }
-    Ok(())
+    index::settle(tx, &catalog.rules)
 }
 
 struct Job<'a, 't, 'c> {
@@ -532,7 +555,8 @@ struct Job<'a, 't, 'c> {
 
 impl<'t, 'c> Job<'_, 't, 'c> {
     fn run(self, change: Change) -> Result<Done> {
-        match change {
+        let done = match change {
+            Change::View(change) => self.view(change),
             Change::Put(put) => self.put(*put),
             Change::Update(update) => self.update(*update),
             Change::SetTags { id, tags, version } => self.set_tags(&id, tags, version),
@@ -557,7 +581,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             } => self.settle(&type_id, &keys, &settled_at),
             Change::Page(page) => self.page(*page),
             Change::Entry { entry, note } => self.lone_entry(*entry, &note),
-        }
+        }?;
+        index::settle(self.unit.tx(), &self.catalog.rules)?;
+        Ok(done)
     }
 
     fn caller(&self) -> &Caller {
@@ -740,6 +766,78 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 metadata_text(tx, item, |_| true)?
             ),
         })
+    }
+
+    /// A view is written by the platform on the caller's word: the item doors
+    /// fence `system.*` off from every key, and write on `system.view` is what
+    /// these doors ask instead.
+    fn view(&self, change: ViewChange) -> Result<Done> {
+        self.caller().require_view_write()?;
+        match change {
+            ViewChange::Create { settings } => {
+                views::check(&settings, &self.catalog)?;
+                let source = self.source_of(None)?;
+                let item = self.created(
+                    Put {
+                        type_id: VIEW_TYPE.to_string(),
+                        properties: Some(settings),
+                        ..Put::default()
+                    },
+                    &source,
+                )?;
+                self.unit.audit("item", &item.id, None)?;
+                self.answer(201, &item, "")
+            }
+            ViewChange::Update {
+                id,
+                settings,
+                clear,
+                version,
+            } => {
+                let row = self.view_row(&id)?;
+                views::check(&settings, &self.catalog)?;
+                if row.state == "revoked" {
+                    return Err(Refusal::new(
+                        Code::InvalidTransition,
+                        format!("View {id} is revoked, and a revoked view does not change"),
+                    ));
+                }
+                let (item, resolution) = self.landed(
+                    &row,
+                    &Writing {
+                        properties: Some(settings),
+                        clear,
+                        version: Some(version),
+                        ..Writing::default()
+                    },
+                )?;
+                self.unit.audit("item", &item.id, None)?;
+                let also = match resolution {
+                    Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
+                    None => String::new(),
+                };
+                self.answer(200, &item, &also)
+            }
+            ViewChange::Delete { id } => {
+                let row = self.view_row(&id)?;
+                for purging in plan::walked_purge(&self.gate(), row)? {
+                    let item = &purging.item;
+                    for (edge, source) in &purging.edges {
+                        edges::purge_edge(self.unit, edge, source, &item.id)?;
+                    }
+                    rows::purge(self.unit.tx(), item, &self.unit.at)?;
+                    self.unit.audit("item", &item.id, None)?;
+                    self.announce("item.purged", item)?;
+                }
+                Ok(done_ok())
+            }
+        }
+    }
+
+    fn view_row(&self, id: &str) -> Result<Item> {
+        rows::by_id(self.unit.tx(), id)?
+            .filter(|row| row.type_id == VIEW_TYPE)
+            .ok_or_else(|| Refusal::new(Code::ItemNotFound, format!("View {id} not found")))
     }
 
     fn put(&self, put: Put) -> Result<Done> {

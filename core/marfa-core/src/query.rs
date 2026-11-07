@@ -8,6 +8,7 @@ use crate::model::{Item, ItemState, ListFilters, Sort, SortDirection, SortField}
 use crate::store::{self, Unreadable};
 use marfa_rules::catalog::Catalog;
 use marfa_rules::query as rules;
+use marfa_rules::query::escape_like;
 
 pub(crate) fn list(
     conn: &Connection,
@@ -174,7 +175,7 @@ pub(crate) fn list_where_with(
         SortField::Property(name) => format!(
             "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
             direction_sql(sort.direction),
-            expression = property_sort_expression(name),
+            expression = rules::property_sort_expression("items", &format!("'$.{name}'")),
         ),
         // As on the server (`search-and-filters/bin-order`).
         SortField::TrashedAt => format!(
@@ -204,14 +205,6 @@ fn direction_sql(direction: SortDirection) -> &'static str {
         SortDirection::Ascending => "ASC",
         SortDirection::Descending => "DESC",
     }
-}
-
-/// `name` is a property name `SortField::property` has checked, so it is
-/// safe inside the path.
-fn property_sort_expression(name: &str) -> String {
-    format!(
-        "CASE WHEN json_type(items.properties, '$.{name}') IN ('integer', 'real') THEN CAST(json_extract(items.properties, '$.{name}') AS REAL) WHEN json_type(items.properties, '$.{name}') IN ('text', 'true', 'false') THEN json_extract(items.properties, '$.{name}') ELSE NULL END"
-    )
 }
 
 /// A `type` list, as the server reads one (`search-and-filters/type-list`): a
@@ -306,12 +299,6 @@ pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values:
         );
         values.push(Value::String(tag.clone()));
     }
-}
-
-pub(crate) fn escape_like(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
 }
 
 #[cfg(test)]

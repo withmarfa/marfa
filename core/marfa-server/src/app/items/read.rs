@@ -296,6 +296,47 @@ pub async fn bulk_get(
     .await
 }
 
+/// The rows at `seqs` as a page shows them, each item with its metadata where
+/// `include` asks for it.
+pub(crate) fn listed_rows(
+    read: &Reader<'_, '_>,
+    seqs: &[i64],
+    include: &Many,
+) -> Result<Vec<(String, Option<String>)>> {
+    rows::by_seqs(read.tx, seqs)?
+        .iter()
+        .map(|row| {
+            let mut text = if include.edges {
+                row.hydrated(read.tx, &read.caller, &read.catalog)?
+            } else {
+                row.answered(read.tx, &read.caller)?
+            };
+            if include.extensions {
+                let held =
+                    extensions_text(read.tx, row, |name| read.caller.may_read_extension(name))?;
+                text.pop();
+                text.push_str(&format!(",\"extensions\":{held}}}"));
+            }
+            let metadata = include
+                .metadata
+                .then(|| metadata_for(read.tx, row, &read.caller))
+                .transpose()?;
+            Ok((text, metadata))
+        })
+        .collect()
+}
+
+/// The rows of a listing's page.
+pub(crate) fn listed(read: &Reader<'_, '_>, seqs: &[i64], include: &Many) -> Result<Vec<String>> {
+    Ok(listed_rows(read, seqs, include)?
+        .into_iter()
+        .map(|(item, metadata)| match metadata {
+            Some(metadata) => format!("{{\"item\":{item},\"metadata\":{metadata}}}"),
+            None => item,
+        })
+        .collect())
+}
+
 pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<String> {
     reading(app, caller, move |read| {
         read.caller.require_reach()?;

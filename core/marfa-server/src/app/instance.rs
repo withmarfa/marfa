@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::App;
+use super::query::{SECRET_KEY, Secret};
 use super::refusal::{Refusal, Result};
 use crate::db::{Db, Write};
 
@@ -38,6 +39,28 @@ pub async fn identity(db: &Db) -> Result<String> {
         get(tx, ID)?.ok_or_else(|| Refusal::internal("the instance id was not kept"))
     })
     .await
+}
+
+/// The secret page cursors are signed with, made the first time a database is
+/// started and never answered.
+pub async fn cursor_secret(db: &Db) -> Result<Secret> {
+    let held = db.read(|tx| get(tx, SECRET_KEY)).await?;
+    let text = match held {
+        Some(text) => text,
+        None => {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes)
+                .map_err(|_| Refusal::internal("no randomness was available"))?;
+            let made = hex::encode(bytes);
+            db.write(Write::own(), move |tx| {
+                insert(tx, SECRET_KEY, &made)?;
+                get(tx, SECRET_KEY)?
+                    .ok_or_else(|| Refusal::internal("the cursor secret was not kept"))
+            })
+            .await?
+        }
+    };
+    Ok(Secret(text.into_bytes()))
 }
 
 pub async fn name(app: &App) -> Result<String> {

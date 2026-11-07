@@ -1,5 +1,6 @@
-//! The SQL of the item tables. Nothing outside `items` reaches this module, so
-//! every write to these tables goes through `write`.
+//! The SQL that writes the item tables and reads one row or one walk of them.
+//! Nothing outside `items` reaches this module, so every write to these tables
+//! goes through `write`. `query` compiles what a listing or a search reads.
 
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
 use serde::Serialize;
@@ -11,6 +12,52 @@ const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(p
      version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
      capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
      trashed_by_name, trashed_with, trashed_with_type, went_with_hosts FROM items";
+
+/// What the search index reads of a row.
+pub(super) struct Indexed {
+    pub type_id: String,
+    pub state: String,
+    pub properties: String,
+}
+
+pub(super) fn indexed(tx: &Transaction<'_>, seq: i64) -> Result<Option<Indexed>> {
+    let mut statement =
+        tx.prepare_cached("SELECT type, state, json(properties) FROM items WHERE seq = ?1")?;
+    Ok(statement
+        .query_row([seq], |row| {
+            Ok(Indexed {
+                type_id: row.get(0)?,
+                state: row.get(1)?,
+                properties: row.get(2)?,
+            })
+        })
+        .optional()?)
+}
+
+/// Up to `limit` rows of one type and state past `after`, by `seq`.
+pub(super) fn seqs_of(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    state: &str,
+    after: i64,
+    limit: usize,
+) -> Result<Vec<i64>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT seq FROM items WHERE type = ?1 AND state = ?2 AND seq > ?3 ORDER BY seq LIMIT ?4",
+    )?;
+    let found = statement.query_map(params![type_id, state, after, limit as i64], |row| {
+        row.get(0)
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The rows at `seqs`, in that order. A row a snapshot holds is always found.
+pub(super) fn by_seqs(tx: &Transaction<'_>, seqs: &[i64]) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE seq = ?1"))?;
+    seqs.iter()
+        .map(|seq| Ok(statement.query_row([seq], item_of)?))
+        .collect()
+}
 
 const SNAPSHOT: &str = "SELECT v.id, i.id, v.version, json(v.properties), v.type, v.tier, \
      v.occurred_at, v.source_id, v.writer_kind, v.writer_id, v.writer_name, v.created_at \

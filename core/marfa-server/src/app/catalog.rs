@@ -12,6 +12,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use marfa_rules::builtin;
 use marfa_rules::catalog::{Catalog as Rules, CatalogEntry, EdgeType};
+use marfa_rules::edges::OnDelete;
 use marfa_rules::schema::{Obj, Registry};
 use marfa_rules::wire::{WireEdgeType, WireType};
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -107,6 +108,15 @@ impl Catalog {
     /// The rules of the edge type `id`, shipped or registered here.
     pub fn edge_kind(&self, id: &str) -> Option<&EdgeType> {
         self.edge_kinds.get(id)
+    }
+
+    /// The edge types that make their source a part of their target.
+    pub fn with_hosts_types(&self) -> Vec<&str> {
+        self.edge_kinds
+            .values()
+            .filter(|kind| OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::WithHosts)
+            .map(|kind| kind.id.as_str())
+            .collect()
     }
 }
 
@@ -323,6 +333,7 @@ impl App {
         if let Err(refusal) = published {
             tracing::warn!(code = refusal.code.wire(), "The catalog was not published");
         }
+        self.reindexing.notify_one();
     }
 }
 

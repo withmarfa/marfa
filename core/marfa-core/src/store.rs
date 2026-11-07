@@ -13,6 +13,7 @@ use crate::model::{
 use crate::wire::{WireEdge, WireItem};
 use marfa_rules::catalog::Indexing;
 use marfa_rules::js;
+pub use marfa_rules::search::{FtsText, fts_text};
 use marfa_rules::wire::{WireCatalog, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
@@ -5314,46 +5315,6 @@ fn invalid_row(column: usize, text: &str) -> rusqlite::Error {
             format!("unreadable value {text:?}"),
         )),
     )
-}
-
-/// What one row contributes to the index, column by column.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct FtsText {
-    pub title: String,
-    pub body: String,
-    pub description: String,
-    pub name: String,
-    pub extra: String,
-}
-
-/// The server's rule: the four core properties when they hold a string, the
-/// type's other declared string properties joined by a space, and nothing the
-/// type does not declare. A thumbnail is not a string property, so its base64
-/// is never indexed.
-pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> FtsText {
-    let core = |name: &str| -> String {
-        if indexing.opted_out.iter().any(|opted| opted == name) {
-            return String::new();
-        }
-        properties
-            .get(name)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let extra: Vec<&str> = indexing
-        .extra
-        .iter()
-        .filter_map(|name| properties.get(name).and_then(Value::as_str))
-        .filter(|text| !text.is_empty())
-        .collect();
-    FtsText {
-        title: core("title"),
-        body: core("body"),
-        description: core("description"),
-        name: core("name"),
-        extra: extra.join(" "),
-    }
 }
 
 impl ItemState {
