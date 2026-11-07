@@ -48,7 +48,7 @@ const edgeTypes = listEdgeTypes()
 
 writeFileSync(
   fileURLToPath(
-    new URL("../core/marfa-core/src/builtin_catalog.json", import.meta.url),
+    new URL("../core/marfa-rules/src/builtin_catalog.json", import.meta.url),
   ),
   `${JSON.stringify(
     {
