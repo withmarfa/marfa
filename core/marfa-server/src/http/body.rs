@@ -213,7 +213,7 @@ impl ReadBody {
 }
 
 fn nested_too_deep() -> Refusal {
-    Refusal::validation("The body nests more than 64 levels.")
+    Refusal::validation("The body nests deeper than 64 levels.")
 }
 
 fn ill_formed(pointer: String) -> Refusal {
