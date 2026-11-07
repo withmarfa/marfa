@@ -379,6 +379,7 @@ impl Job<'_, '_, '_> {
     /// which no caller may for a `system.*` type.
     fn type_gate(&self, type_id: &str) -> Result<()> {
         self.note(Need::Reach);
+        self.caller().require_reach()?;
         self.note(Need::Type {
             name: type_id.to_string(),
             write: true,
