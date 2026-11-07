@@ -1710,8 +1710,6 @@ fn send_queue(
     Ok(())
 }
 
-/// Parks every unanswered write until the credential is replaced, and says
-/// so: the rest of the pass would meet the same refusal.
 /// Refuses `row` with the device's own `reason`, nothing sent. Told before
 /// the read it owes, which can end the pass.
 fn refuse_unsent(
@@ -1758,6 +1756,8 @@ fn refuse_unsent(
     Ok(())
 }
 
+/// Parks every unanswered write until the credential is replaced, and says
+/// so: the rest of the pass would meet the same refusal.
 fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
     let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
     report.stopped = Some(format!(
