@@ -149,7 +149,7 @@ fn bare(source: &str) -> Value {
 #[tokio::test]
 async fn a_valid_key_is_served_whatever_host_it_was_sent_to() {
     let instance = Instance::start(&[]).await;
-    let (id, secret) = instance.key(json!({ "label": "any route" })).await;
+    let (id, secret) = instance.key(bare("any route")).await;
     for host in ["marfa.example", "100.64.0.1:8600", "not a host name"] {
         let mut asked = request(Method::GET, "/keys/current", Some(&secret), None);
         asked
