@@ -1345,4 +1345,62 @@ describe("which event each write announces", () => {
       "edge.deleted",
     ]);
   });
+
+  it("announces each edge the edges of a POST /items/bulk entry create or remove", async ({
+    signal,
+  }) => {
+    const first = await seed("bulk-inline-edge-first");
+    const second = await seed("bulk-inline-edge-second");
+    const entry = {
+      type: "core.note",
+      source: ctx.source,
+      source_id: `bulk-inline-${ctx.runId}`,
+      properties: { body: "bulk inline edges" },
+    };
+    let id = "";
+    const frames = await announced(async () => {
+      const created = await client.bulkItems([
+        { ...entry, edges: { about: [first] } },
+      ]);
+      expect(created.status, JSON.stringify(created.error)).toBe(200);
+      expect(created.data.results[0]?.outcome).toBe("created");
+      id = created.data.results[0]!.id!;
+      trackItem(ctx, id);
+      const landed = await client.bulkItems([
+        { ...entry, edges: { about: [second] } },
+      ]);
+      expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+      expect(landed.data.results[0]?.outcome).toBe("updated");
+    }, signal);
+    const edgeFrames = frames.filter(
+      (e) =>
+        (e.data as { edge?: { source_id?: string } }).edge?.source_id === id,
+    );
+    expect(edgeFrames.map((e) => e.event).sort()).toEqual([
+      "edge.created",
+      "edge.created",
+      "edge.deleted",
+    ]);
+  });
+
+  it("announces item.updated at the version it held for a PATCH that carries only edges", async ({
+    signal,
+  }) => {
+    const target = await seed("edges-only-target");
+    const id = await seed("edges-only-item");
+    const before = (await client.getItem(id)).data.item.version;
+    const frames = await announced(async () => {
+      const patched = await client.updateItem(id, {
+        edges: { about: [target] },
+        version: before,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      expect(patched.data.item.version).toBe(before);
+    }, signal);
+    const mine = frames.filter((e) => rowOf(e) === id);
+    expect(mine.map((e) => e.event)).toEqual(["item.updated"]);
+    expect((mine[0]?.data as { item: { version: number } }).item.version).toBe(
+      before,
+    );
+  });
 });

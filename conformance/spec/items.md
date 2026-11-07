@@ -1226,7 +1226,7 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 ### `items/transition-announced`
 
-When a transition moves an item to another state, the server MUST announce `item.state_changed` for it.
+When a transition moves the item it names to another state, the server MUST announce `item.state_changed` for that item.
 
 **Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 

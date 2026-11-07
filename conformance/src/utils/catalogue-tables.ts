@@ -93,19 +93,19 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
 const EVENT_TEXT: Readonly<Record<string, string>> = {
   "item.created": "A write creates an item (`events/create-announced`).",
   "item.updated":
-    "A write changes an item (`events/update-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).",
+    "A write changes an item (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).",
   "item.deleted":
-    "An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).",
+    "An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).",
   "item.restored":
     "An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).",
   "item.purged":
     "An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).",
   "item.state_changed":
-    "A transition moves an item to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`).",
+    "A transition moves the item it names to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`).",
   "metadata.changed":
-    "A tag write, whether or not it changes the tags (`items/tag-announced`), or an extension write (`items/extension-announced`).",
+    "A tag operation commits for an item, whether or not it changes the tags (`items/tag-announced`), or an extension namespace is written or deleted (`items/extension-announced`).",
   "edge.created":
-    "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`).",
+    "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).",
   "edge.updated":
     "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
   "edge.deleted":
