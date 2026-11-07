@@ -295,8 +295,19 @@ pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::super::client::{AuthMethod, GrantType, ResponseType};
+    use std::net::IpAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Barrier, mpsc};
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+    use tokio::sync::{mpsc as tokio_mpsc, oneshot};
+
     use super::super::redirect::AppKind;
     use super::*;
+    use crate::settings::{Environment, Settings};
+
+    type FetchResult = std::result::Result<Vec<u8>, Failure>;
 
     fn registration(scope: &str, grants: Vec<GrantType>) -> Registration {
         Registration {
@@ -369,5 +380,191 @@ mod tests {
         assert!(
             ceiling_lacks(&client, &ScopeSet::parse("user.recipe:write"), &registries).is_err()
         );
+    }
+
+    const OWN: &str = "https://own.example";
+
+    async fn started() -> (TempDir, Arc<App>) {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("SQLITE_PATH", database.to_str().unwrap()),
+            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_AUTH_BASE_URL", OWN),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    fn visit() -> Visit {
+        Visit {
+            address: Some(IpAddr::from([203, 0, 113, 7])),
+            user_agent: None,
+        }
+    }
+
+    fn id_at(number: usize) -> String {
+        format!("https://app.example/clients/{number}")
+    }
+
+    fn document(id: &str) -> Vec<u8> {
+        json!({
+            "client_id": id,
+            "client_name": "An app",
+            "redirect_uris": ["http://127.0.0.1/callback"],
+            "grant_types": ["authorization_code"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "scope": "core.note:read",
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn failing_as(failure: Failure) -> impl FnOnce(&str) -> FetchResult + Send + 'static {
+        move |_| Err(failure)
+    }
+
+    fn answering(id: &str) -> impl FnOnce(&str) -> FetchResult + Send + 'static + use<> {
+        let body = document(id);
+        move |_| Ok(body)
+    }
+
+    fn error_of(answer: Answered<Client>) -> &'static str {
+        answer.unwrap_err().error
+    }
+
+    #[tokio::test]
+    async fn a_fetch_leaves_the_async_threads_and_every_write_free() {
+        let (_dir, app) = started().await;
+        let id = id_at(1);
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let body = document(&id);
+        let parked = move |_: &str| {
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            Ok(body)
+        };
+        let meanwhile = async {
+            started_rx.await.unwrap();
+            app.db.write(Write::own(), |_| Ok(())).await.unwrap();
+            release_tx.send(()).unwrap();
+        };
+        let seen = visit();
+        let (answer, ()) = tokio::join!(resolve_by(&app, &id, &seen, parked), meanwhile);
+        assert_eq!(answer.unwrap().unwrap().id, id);
+    }
+
+    #[tokio::test]
+    async fn fetches_are_limited_by_address_and_nothing_past_it_is_fetched() {
+        let (_dir, app) = started().await;
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = |id: &str| {
+            let fetches = fetches.clone();
+            let body = document(id);
+            move |_: &str| {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Ok(body)
+            }
+        };
+        for number in 0..10 {
+            let id = id_at(number);
+            let answer = resolve_by(&app, &id, &visit(), counted(&id)).await;
+            assert!(answer.unwrap().is_ok());
+        }
+        let id = id_at(10);
+        let answer = resolve_by(&app, &id, &visit(), counted(&id)).await;
+        assert_eq!(error_of(answer.unwrap()), "temporarily_unavailable");
+        assert_eq!(fetches.load(Ordering::SeqCst), 10);
+    }
+
+    #[tokio::test]
+    async fn no_more_fetches_run_at_once_than_the_cap() {
+        let (_dir, app) = started().await;
+        let (started_tx, mut started_rx) = tokio_mpsc::unbounded_channel();
+        let release = Arc::new(Barrier::new(MOST_FETCHES_AT_ONCE + 1));
+        let mut parked = Vec::new();
+        for number in 0..MOST_FETCHES_AT_ONCE {
+            let (app, id) = (app.clone(), id_at(number));
+            let (started_tx, release) = (started_tx.clone(), release.clone());
+            let body = document(&id);
+            parked.push(tokio::spawn(async move {
+                let fetch = move |_: &str| {
+                    started_tx.send(()).unwrap();
+                    release.wait();
+                    Ok(body)
+                };
+                resolve_by(&app, &id, &visit(), fetch).await
+            }));
+        }
+        for _ in 0..MOST_FETCHES_AT_ONCE {
+            started_rx.recv().await.unwrap();
+        }
+        let id = id_at(MOST_FETCHES_AT_ONCE);
+        let over = resolve_by(&app, &id, &visit(), |_: &str| {
+            panic!("a fetch ran past the cap")
+        })
+        .await;
+        assert_eq!(error_of(over.unwrap()), "temporarily_unavailable");
+        release.wait();
+        for task in parked {
+            assert!(task.await.unwrap().unwrap().is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_id_on_this_instance_is_never_fetched() {
+        let (_dir, app) = started().await;
+        let own = format!("{OWN}/clients/1");
+        let answer = resolve_by(&app, &own, &visit(), |_: &str| {
+            panic!("a fetch of this instance ran")
+        })
+        .await;
+        assert_eq!(error_of(answer.unwrap()), "invalid_client");
+        let id = id_at(1);
+        let elsewhere = resolve_by(&app, &id, &visit(), answering(&id)).await;
+        assert_eq!(elsewhere.unwrap().unwrap().id, id);
+    }
+
+    #[tokio::test]
+    async fn a_stored_client_works_through_an_outage_and_a_new_one_waits() {
+        let (_dir, app) = started().await;
+        let id = id_at(1);
+        let unavailable = || failing_as(Failure::Unavailable("down"));
+        let unknown = resolve_by(&app, &id, &visit(), unavailable()).await;
+        assert_eq!(error_of(unknown.unwrap()), "temporarily_unavailable");
+
+        resolve_by(&app, &id, &visit(), answering(&id))
+            .await
+            .unwrap()
+            .unwrap();
+        let fresh = resolve_by(&app, &id, &visit(), |_: &str| {
+            panic!("a fresh copy was fetched again")
+        })
+        .await;
+        assert!(fresh.unwrap().is_ok());
+
+        app.clock.advance(2 * 3_600_000).unwrap();
+        let stale = resolve_by(&app, &id, &visit(), unavailable()).await;
+        assert_eq!(stale.unwrap().unwrap().id, id);
+    }
+
+    #[tokio::test]
+    async fn an_error_is_never_kept() {
+        let (_dir, app) = started().await;
+        let id = id_at(1);
+        for failure in [Failure::Unavailable("down"), Failure::Refused("no")] {
+            let failed = resolve_by(&app, &id, &visit(), failing_as(failure)).await;
+            assert!(failed.unwrap().is_err());
+        }
+        let bad = resolve_by(&app, &id, &visit(), |_: &str| Ok(b"not json".to_vec())).await;
+        assert_eq!(error_of(bad.unwrap()), "invalid_client");
+        let answer = resolve_by(&app, &id, &visit(), answering(&id)).await;
+        assert_eq!(answer.unwrap().unwrap().id, id);
     }
 }
