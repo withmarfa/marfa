@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use marfa_rules::builtin;
-use marfa_rules::catalog::{Catalog as Rules, CatalogEntry};
+use marfa_rules::catalog::{Catalog as Rules, CatalogEntry, EdgeType};
 use marfa_rules::schema::{Obj, Registry};
-use marfa_rules::wire::WireType;
+use marfa_rules::wire::{WireEdgeType, WireType};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
@@ -41,6 +41,8 @@ pub enum Snapshot {
 #[derive(Debug)]
 pub struct Catalog {
     pub generation: i64,
+    /// Every edge type by id, shipped and registered, as the rules read one.
+    edge_kinds: HashMap<String, EdgeType>,
     /// The types whose stored definition reads, with their owners' icons.
     pub types: Registry,
     pub provenance: HashMap<String, Provenance>,
@@ -60,6 +62,7 @@ impl Catalog {
             provenance: HashMap::new(),
             unreadable: Vec::new(),
             edge_types: Vec::new(),
+            edge_kinds: HashMap::new(),
             rules: Rules::empty(),
         }
     }
@@ -99,6 +102,11 @@ impl Catalog {
         self.edge_types
             .iter()
             .find(|held| held.get("id").and_then(Value::as_str) == Some(id))
+    }
+
+    /// The rules of the edge type `id`, shipped or registered here.
+    pub fn edge_kind(&self, id: &str) -> Option<&EdgeType> {
+        self.edge_kinds.get(id)
     }
 }
 
@@ -179,14 +187,37 @@ fn load(tx: &Transaction<'_>, generation: i64) -> Result<Catalog> {
         }
     }
     let rules = rules_of(&rows);
+    let edge_kinds = edge_kinds_of(&edge_types)?;
     Ok(Catalog {
         generation,
         types: Registry::new(rows).with_icons(icons),
         provenance,
         unreadable,
         edge_types,
+        edge_kinds,
         rules,
     })
+}
+
+fn edge_kinds_of(registered: &[Obj]) -> Result<HashMap<String, EdgeType>> {
+    let shipped = builtin::shipped_edge_types()
+        .map_err(|error| Refusal::internal(&format!("the shipped edge types: {error}")))?;
+    let held = shipped
+        .iter()
+        .filter_map(Value::as_object)
+        .chain(registered)
+        .filter_map(|row| {
+            let named = crate::app::edge_types::presented(row.clone());
+            match serde_json::from_value::<WireEdgeType>(named) {
+                Ok(wire) => EdgeType::from_wire(wire).ok(),
+                Err(_) => None,
+            }
+            .or_else(|| {
+                tracing::error!("A stored edge type does not read as an edge type");
+                None
+            })
+        });
+    Ok(held.map(|kind| (kind.id.clone(), kind)).collect())
 }
 
 fn rules_of(rows: &[Obj]) -> Rules {

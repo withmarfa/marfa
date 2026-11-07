@@ -19,13 +19,14 @@ use super::body::{Bag, JsonBody, ReadBody, only_declared};
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::edges::write::Inline;
 use crate::app::idempotency::{self, Claim, Entry, Kept, MAX_KEY_CHARACTERS};
 use crate::app::items::write::{self, Change, Done, Put, Settle, Update, ruled};
 use crate::app::items::{self, Detail, Many};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
 
-const CREATE_FIELDS: [&str; 13] = [
+const CREATE_FIELDS: [&str; 14] = [
     "type",
     "properties",
     "id",
@@ -39,8 +40,9 @@ const CREATE_FIELDS: [&str; 13] = [
     "capture_latitude",
     "capture_longitude",
     "tags",
+    "edges",
 ];
-const UPDATE_FIELDS: [&str; 10] = [
+const UPDATE_FIELDS: [&str; 11] = [
     "properties",
     "clear_properties",
     "type",
@@ -51,6 +53,7 @@ const UPDATE_FIELDS: [&str; 10] = [
     "tier",
     "occurred_at",
     "source_id",
+    "edges",
 ];
 const TAG_FIELDS: [&str; 1] = ["tags"];
 const BULK_GET_FIELDS: [&str; 2] = ["ids", "include"];
@@ -294,6 +297,22 @@ pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
 
+/// The edges an item write lists, by edge type.
+pub(super) fn edges_of(body: &Map<String, Value>) -> Result<Option<Inline>> {
+    let Some(sent) = body.get("edges") else {
+        return Ok(None);
+    };
+    let Value::Object(listed) = sent else {
+        return Err(invalid_field("edges", "edges must be an object."));
+    };
+    let mut inline = Vec::with_capacity(listed.len());
+    for (edge_type, targets) in listed {
+        let field = format!("edges.{edge_type}");
+        inline.push((edge_type.clone(), strings_of(targets, &field)?));
+    }
+    Ok(Some(inline))
+}
+
 pub(super) fn properties_of(body: &mut Map<String, Value>) -> Result<Option<Map<String, Value>>> {
     match body.remove("properties") {
         None => Ok(None),
@@ -360,6 +379,7 @@ fn put_of(body: &ReadBody) -> Result<Put> {
         capture_latitude: number_of(&sent, "capture_latitude")?,
         capture_longitude: number_of(&sent, "capture_longitude")?,
         tags: sent.get("tags").map(tags_of).transpose()?,
+        edges: edges_of(&sent)?,
     })
 }
 
@@ -428,8 +448,10 @@ fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
         sent.get("occurred_at").cloned(),
         text_of(&sent, "source_id")?,
     );
+    let edges = edges_of(&sent)?;
     if properties.is_none()
         && clear.is_empty()
+        && edges.is_none()
         && tier.is_none()
         && occurred.is_none()
         && source_id.is_none()
@@ -479,6 +501,7 @@ fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
         occurred_at,
         source_id,
         settle,
+        edges,
     })
 }
 
@@ -509,6 +532,8 @@ fn detail_of(uri: &Uri) -> Result<Detail> {
                 // Every item read carries its metadata, asked for or not.
                 "" | "metadata" => {}
                 "versions" => detail.versions = true,
+                "backrefs" => detail.backrefs = true,
+                "neighbors" => detail.neighbors = true,
                 other => {
                     return Err(invalid_field(
                         "include",

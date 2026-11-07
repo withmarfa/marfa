@@ -54,6 +54,14 @@ pub enum Need {
         name: String,
         disclosed: bool,
     },
+    Edge {
+        name: String,
+        write: bool,
+    },
+    /// The type of a row an edge that cascades ends at.
+    CascadeTarget {
+        name: String,
+    },
 }
 
 impl Need {
@@ -66,7 +74,8 @@ impl Need {
             Need::Item { .. } => 2,
             Need::Type { .. } => 3,
             Need::Extension { .. } => 4,
-            Need::Source { .. } => 5,
+            Need::Edge { .. } | Need::CascadeTarget { .. } => 5,
+            Need::Source { .. } => 6,
         }
     }
 }
@@ -306,6 +315,13 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                 let level = if write { Level::Write } else { Level::Read };
                 caller.require_extension(&namespace, level)?;
             }
+            Need::Edge { name, write: true } => caller.require_edge(&name, Level::Write)?,
+            Need::Edge { name, write: false } => {
+                if caller.require_edge(&name, Level::Read).is_err() {
+                    return Err(Refusal::new(Code::EdgeNotFound, "Edge not found"));
+                }
+            }
+            Need::CascadeTarget { name } => caller.require_cascade_target(&name)?,
             Need::Source { name, disclosed } => {
                 if caller.may_grant(&name) {
                     continue;
@@ -396,6 +412,16 @@ fn visit(tx: &Transaction<'_>, claim: &Claim, value: &Value) -> Result<()> {
         claim.note(Need::Item {
             id: id.to_string(),
             type_id: type_id.to_string(),
+            write: false,
+        });
+    }
+    if let (Some(name), true, true) = (
+        row.get("edge_type").and_then(Value::as_str),
+        row.contains_key("source_id"),
+        row.contains_key("target_id"),
+    ) {
+        claim.note(Need::Edge {
+            name: name.to_string(),
             write: false,
         });
     }

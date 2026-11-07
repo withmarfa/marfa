@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
-use super::plan::{self, Act, Asked, Gate, Plan, invalid_transition, require_version};
+use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
     Item, Keys, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text, not_found,
@@ -24,6 +24,7 @@ use super::{
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
+use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::idempotency::{self, Claim, Need};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -49,6 +50,7 @@ pub struct Put {
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
     pub tags: Option<Vec<String>>,
+    pub edges: Option<Inline>,
 }
 
 /// How a stale write that collides is settled.
@@ -76,6 +78,7 @@ pub struct Update {
     pub occurred_at: Option<String>,
     pub source_id: Option<String>,
     pub settle: Settle,
+    pub edges: Option<Inline>,
 }
 
 /// A write to an item, by the door's description of it.
@@ -431,6 +434,7 @@ struct Writing {
     source_id: Option<String>,
     settle: Settle,
     tags: Option<Vec<String>>,
+    edges: Option<Inline>,
     /// Landing on the row is the write, whatever it carries.
     upsert: bool,
 }
@@ -467,13 +471,72 @@ struct Settled {
     copy: Option<Item>,
 }
 
+fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
+    unit.announce(&Event {
+        event_type,
+        item_id: &item.id,
+        type_id: &item.type_id,
+        source: &item.source,
+        payload: format!(
+            "{{\"event_type\":\"{event_type}\",\"item\":{}}}",
+            item.logged()?
+        ),
+    })
+}
+
+fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec<Item>> {
+    let (at, writer) = (unit.at.as_str(), unit.caller.writer());
+    moving
+        .iter()
+        .map(|moving| {
+            rows::move_state(
+                unit.tx(),
+                &moving.item,
+                &Moved {
+                    state: moving.state,
+                    trashed_at: Some(at),
+                    trashed_by: Some(&writer),
+                    at,
+                    mark: moving.mark.as_ref(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Sends a part just written to a host in the bin after it, where that leaves
+/// it with no host out of the bin.
+pub(crate) fn settle_late_part(
+    unit: &Unit<'_, '_>,
+    catalog: &Catalog,
+    source_id: &str,
+    target_id: &str,
+) -> Result<()> {
+    let tx = unit.tx();
+    let (Some(source), Some(host)) = (rows::by_id(tx, source_id)?, rows::by_id(tx, target_id)?)
+    else {
+        return Ok(());
+    };
+    let gate = Gate {
+        tx,
+        caller: &unit.caller,
+        catalog,
+        claim: None,
+    };
+    for item in moved_to_bin(unit, &plan::late_part(&gate, &source, &host)?)? {
+        unit.audit("item", &item.id, None)?;
+        announce(unit, "item.deleted", &item)?;
+    }
+    Ok(())
+}
+
 struct Job<'a, 't, 'c> {
     unit: &'a Unit<'t, 'c>,
     catalog: Arc<Catalog>,
     claim: Option<&'a Claim>,
 }
 
-impl<'c> Job<'_, '_, 'c> {
+impl<'t, 'c> Job<'_, 't, 'c> {
     fn caller(&self) -> &Caller {
         &self.unit.caller
     }
@@ -482,8 +545,23 @@ impl<'c> Job<'_, '_, 'c> {
         Gate {
             tx: self.unit.tx(),
             caller: self.caller(),
+            catalog: &self.catalog,
             claim: self.claim,
         }
+    }
+
+    fn edge_writing(&self) -> EdgeWriting<'_, 't, 'c> {
+        EdgeWriting::of(self.unit, &self.catalog, self.claim)
+    }
+
+    /// Makes `item`'s edges what `writing` lists, and answers the row as that
+    /// leaves it, since a part written to a host in the bin follows it there.
+    fn with_inline(&self, item: Item, inline: Option<&Inline>) -> Result<Item> {
+        let Some(inline) = inline else {
+            return Ok(item);
+        };
+        edges::inline_replace(&self.edge_writing(), &item, inline)?;
+        rows::by_id(self.unit.tx(), &item.id)?.ok_or_else(not_found)
     }
 
     fn writer(&self) -> Writer {
@@ -598,7 +676,7 @@ impl<'c> Job<'_, '_, 'c> {
             status,
             body: format!(
                 "{{\"item\":{},\"metadata\":{}{also}}}",
-                item.answered(tx)?,
+                item.hydrated(tx, self.caller(), &self.catalog)?,
                 metadata_for(tx, item, self.caller())?
             ),
         })
@@ -609,16 +687,7 @@ impl<'c> Job<'_, '_, 'c> {
     }
 
     fn announce(&self, event_type: &'static str, item: &Item) -> Result<()> {
-        self.unit.announce(&Event {
-            event_type,
-            item_id: &item.id,
-            type_id: &item.type_id,
-            source: &item.source,
-            payload: format!(
-                "{{\"event_type\":\"{event_type}\",\"item\":{}}}",
-                item.logged()?
-            ),
-        })
+        announce(self.unit, event_type, item)
     }
 
     fn announce_metadata(&self, item: &Item) -> Result<()> {
@@ -715,6 +784,7 @@ impl<'c> Job<'_, '_, 'c> {
                 occurred_at: put.occurred_at,
                 source_id: put.source_id,
                 tags: put.tags,
+                edges: put.edges,
                 upsert: true,
                 ..Writing::default()
             },
@@ -731,6 +801,9 @@ impl<'c> Job<'_, '_, 'c> {
     fn created(&self, put: Put, source: &str) -> Result<Item> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
+        if let Some(inline) = &put.edges {
+            edges::inline_gates(&self.edge_writing(), inline)?;
+        }
         self.refuse_undeclared(&put.type_id, put.properties.as_ref())?;
         if !rules.known(&put.type_id) {
             return Err(Refusal::new(
@@ -788,7 +861,7 @@ impl<'c> Job<'_, '_, 'c> {
             rows::set_tags(tx, item.seq, &distinct(tags))?;
         }
         self.announce("item.created", &item)?;
-        Ok(item)
+        self.with_inline(item, put.edges.as_ref())
     }
 
     fn update(&self, update: Update) -> Result<Done> {
@@ -818,6 +891,7 @@ impl<'c> Job<'_, '_, 'c> {
                 occurred_at: update.occurred_at,
                 source_id: update.source_id,
                 settle: update.settle,
+                edges: update.edges,
                 ..Writing::default()
             },
         )
@@ -831,7 +905,11 @@ impl<'c> Job<'_, '_, 'c> {
             {
                 return Err(stale_bare(&row, named)?);
             }
-            return self.answer(200, &row, "");
+            if writing.edges.is_some() {
+                self.announce("item.updated", &row)?;
+            }
+            let item = self.with_inline(row, writing.edges.as_ref())?;
+            return self.answer(200, &item, "");
         }
         let (item, resolution) = self.landed(&row, &writing)?;
         let details = if writing.upsert {
@@ -858,6 +936,9 @@ impl<'c> Job<'_, '_, 'c> {
     fn judge_change(&self, row: &Item, writing: &Writing) -> Result<()> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
+        if let Some(inline) = &writing.edges {
+            edges::inline_gates(&self.edge_writing(), inline)?;
+        }
         if let Some(destination) = writing.destination.as_deref()
             && !rules.known(destination)
         {
@@ -909,14 +990,20 @@ impl<'c> Job<'_, '_, 'c> {
         }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
         let settled = self.settled(row, resulting, writing)?;
+        if resulting != row.type_id {
+            let replaced = writing.edges.as_deref().unwrap_or_default();
+            edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
+        }
         let item = self.land(row, resulting, &settled)?;
         if let Some(tags) = &writing.tags {
             rows::set_tags(self.unit.tx(), item.seq, &distinct(tags))?;
         }
         if let Some(copy) = &settled.copy {
             self.announce("item.created", copy)?;
+            edges::copy_edges(&self.edge_writing(), row, copy)?;
         }
         self.announce("item.updated", &item)?;
+        let item = self.with_inline(item, writing.edges.as_ref())?;
         Ok((item, settled.resolution))
     }
 
@@ -1504,6 +1591,7 @@ impl<'c> Job<'_, '_, 'c> {
             occurred_at: put.occurred_at,
             source_id: put.source_id,
             tags: put.tags,
+            edges: put.edges,
             upsert: true,
             ..Writing::default()
         };
@@ -1511,23 +1599,8 @@ impl<'c> Job<'_, '_, 'c> {
         self.landed(&row, &writing).map(|_| ())
     }
 
-    fn moved_to_bin(&self, plan: &Plan) -> Result<Vec<Item>> {
-        let (at, writer) = (self.unit.at.as_str(), self.writer());
-        plan.items
-            .iter()
-            .map(|item| {
-                rows::move_state(
-                    self.unit.tx(),
-                    item,
-                    &Moved {
-                        state: "trashed",
-                        trashed_at: Some(at),
-                        trashed_by: Some(&writer),
-                        at,
-                    },
-                )
-            })
-            .collect()
+    fn moved_to_bin(&self, moving: &[Moving]) -> Result<Vec<Item>> {
+        moved_to_bin(self.unit, moving)
     }
 
     fn moved_out(&self, item: &Item, state: &str) -> Result<Item> {
@@ -1539,8 +1612,31 @@ impl<'c> Job<'_, '_, 'c> {
                 trashed_at: None,
                 trashed_by: None,
                 at: &self.unit.at,
+                mark: None,
             },
         )
+    }
+
+    /// Brings back what `row`'s leaving the bin brings with it.
+    fn brought_back(&self, row: &Item) -> Result<()> {
+        for back in plan::returning(&self.gate(), row)? {
+            let item = self.moved_out(&back.item, "active")?;
+            self.unit.audit("item", &item.id, None)?;
+            self.unit.announce(&Event {
+                event_type: "item.restored",
+                item_id: &item.id,
+                type_id: &item.type_id,
+                source: &item.source,
+                payload: format!(
+                    "{{\"event_type\":\"item.restored\",\"item\":{},\"restored_with\":{},\
+                     \"restored_with_type\":{}}}",
+                    item.logged()?,
+                    Value::from(back.with),
+                    Value::from(back.with_type)
+                ),
+            })?;
+        }
+        Ok(())
     }
 
     /// The row and its gate, for a door that reaches it in or out of the bin.
@@ -1564,18 +1660,19 @@ impl<'c> Job<'_, '_, 'c> {
         ) {
             return Err(invalid_transition(&row.state, state));
         }
-        let item = if to_bin {
+        let mut taken = if to_bin {
             let asked = [Asked {
                 id: row.id.clone(),
                 version,
             }];
             let plan = plan::plan(&self.gate(), Act::Bin, &asked)?;
-            self.moved_to_bin(&plan)?
-                .pop()
-                .ok_or_else(|| Refusal::internal("a plan lost the row it was asked about"))?
+            self.moved_to_bin(&plan.moving)?
         } else {
-            self.moved_out(&row, state)?
+            vec![self.moved_out(&row, state)?]
         };
+        let item = taken
+            .pop()
+            .ok_or_else(|| Refusal::internal("a plan lost the row it was asked about"))?;
         self.unit.audit(
             "item",
             &item.id,
@@ -1583,16 +1680,21 @@ impl<'c> Job<'_, '_, 'c> {
         )?;
         self.announce("item.state_changed", &item)?;
         if to_bin {
+            for row in &taken {
+                self.unit.audit("item", &row.id, None)?;
+                self.announce("item.deleted", row)?;
+            }
             self.announce("item.deleted", &item)?;
         } else if from_bin {
             self.announce("item.restored", &item)?;
+            self.brought_back(&row)?;
         }
         self.answer(200, &item, "")
     }
 
     fn delete(&self, id: String, version: Option<i64>) -> Result<Done> {
         let plan = plan::plan(&self.gate(), Act::Bin, &[Asked { id, version }])?;
-        for item in self.moved_to_bin(&plan)? {
+        for item in self.moved_to_bin(&plan.moving)? {
             self.unit.audit("item", &item.id, None)?;
             self.announce("item.deleted", &item)?;
         }
@@ -1615,7 +1717,7 @@ impl<'c> Job<'_, '_, 'c> {
             )
             .with_detail("digest", plan.digest));
         }
-        let moved = self.moved_to_bin(&plan)?;
+        let moved = self.moved_to_bin(&plan.moving)?;
         for item in &moved {
             self.announce("item.deleted", item)?;
         }
@@ -1634,12 +1736,17 @@ impl<'c> Job<'_, '_, 'c> {
         let item = self.moved_out(&row, "active")?;
         self.unit.audit("item", &item.id, None)?;
         self.announce("item.restored", &item)?;
+        self.brought_back(&row)?;
         self.answer(200, &item, "")
     }
 
     fn purge(&self, id: String, version: Option<i64>) -> Result<Done> {
         let plan = plan::plan(&self.gate(), Act::Purge, &[Asked { id, version }])?;
-        for item in &plan.items {
+        for purging in &plan.purging {
+            let item = &purging.item;
+            for (edge, source) in &purging.edges {
+                edges::purge_edge(self.unit, edge, source, &item.id)?;
+            }
             rows::purge(self.unit.tx(), item, &self.unit.at)?;
             self.unit.audit("item", &item.id, None)?;
             self.announce("item.purged", item)?;
@@ -1654,7 +1761,7 @@ impl<'c> Job<'_, '_, 'c> {
         let row = rows::by_id(self.unit.tx(), &id)?
             .filter(|row| !super::is_system(&row.type_id))
             .ok_or_else(not_found)?;
-        let summary = summary_of(&self.catalog.rules, &row)?;
+        let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {
             return Ok(Done {
                 status: 409,

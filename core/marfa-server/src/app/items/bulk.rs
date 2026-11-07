@@ -169,7 +169,7 @@ fn error_of(refusal: &Refusal) -> Value {
 
 /// What a refusal of an entry makes of it, or of the page: before anything has
 /// landed, what is no verdict on the entry answers for the whole page.
-fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Result<Value> {
+pub(crate) fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Result<Value> {
     if refusal.commit_failed {
         let error = json!({
             "code": Code::InternalError.wire(),
