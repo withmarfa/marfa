@@ -2028,7 +2028,7 @@ describe("the working copy belongs to one server", () => {
     const store = new DatabaseSync(harness.device.store);
     try {
       store.exec(
-        "ALTER TABLE items DROP COLUMN trashed_at; ALTER TABLE items DROP COLUMN capture_longitude; ALTER TABLE items DROP COLUMN capture_latitude;",
+        "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only; ALTER TABLE items DROP COLUMN trashed_at; ALTER TABLE items DROP COLUMN capture_longitude; ALTER TABLE items DROP COLUMN capture_latitude;",
       );
     } finally {
       store.close();
@@ -2071,13 +2071,14 @@ describe("the working copy belongs to one server", () => {
     try {
       const columns = reopened
         .prepare(
-          "SELECT name FROM pragma_table_info('items') WHERE name IN ('capture_latitude', 'capture_longitude', 'trashed_at') ORDER BY cid",
+          "SELECT name FROM pragma_table_info('items') WHERE name IN ('capture_latitude', 'capture_longitude', 'trashed_at', 'read_only') ORDER BY cid",
         )
         .all() as Array<{ name: string }>;
       expect(columns.map((row) => row.name)).toEqual([
         "capture_latitude",
         "capture_longitude",
         "trashed_at",
+        "read_only",
       ]);
     } finally {
       reopened.close();

@@ -4768,6 +4768,66 @@ When the preview text is blank, a device MUST answer that the item has no previe
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+## An item's read_only
+
+An item's `read_only` is advice to an app, which the server works out as it answers a row from the row's `source` and `type` and the connector registrations and keys as they stand (`items/read-only-current`). The server refuses no write for it (`items/read-only-writable`). A registration or a key that changes moves no row and sends no event, so a working copy asks.
+
+### `device/read-only-held`
+
+When an app reads a row from a working copy, a device MUST answer the `read_only` the server last gave for the row or, by `device/read-only-refresh`, for its `source` and `type`.
+
+**Reason:** an app shows a read-only item as not editable from its copy, online or not.
+
+**Tests:** `device/read-only.test.ts › takes read_only from a hydration and from a later frame`.
+
+### `device/read-only-unanswered`
+
+Where a device holds no answer from the server for a row's `read_only`, a device MUST answer it `false`.
+
+**Reason:** a row saved here and not yet sent, a row from a server that leaves the field out and a row of a copy made before the field have no answer, and `false` offers the edit the server takes anyway.
+
+**Tests:** `device/read-only.test.ts › answers false for a row whose answer leaves read_only out`, `› answers false for a row saved here until the server answers`, `› opens a copy made before read_only with its unsent work, and takes the answer at the next sync`.
+
+### `device/read-only-refresh`
+
+When a device has finished a catch-up, or holds a stream at the server's head, and 15 minutes or more have gone by since it last read `read_only`, a device MUST read one row of each `source` and `type` it holds and hold every row of them to the answer.
+
+**Reason:** no event and no version tells a copy that the server's answer changed, and one row answers for all those that share its `source` and `type`, so what this costs does not grow with the rows a copy holds.
+
+**Tests:** `device/read-only.test.ts › holds every row of a source and type to one row's answer, with no event`, `› asks nothing within 15 minutes of its last read, and asks again after them`, `› holds rows to the answer once a held stream reaches the head`.
+
+### `device/read-only-moves-nothing`
+
+When a device holds a row to an answer by `device/read-only-refresh`, a device MUST leave the row's version, its fields and the writes waiting on it as they were.
+
+**Reason:** `read_only` is not an edit, so it cannot make a row look changed to a queued write or conflict with one.
+
+**Tests:** `device/read-only.test.ts › holds every row of a source and type to one row's answer, with no event`, `› keeps an edit waiting on a row whose read_only moves`.
+
+### `device/read-only-told`
+
+When a device changes rows by `device/read-only-refresh` while it holds a stream, a device MUST tell one `item.updated` change that names no row.
+
+**Reason:** an app reading the change it is told reads the copy again, and the rows that moved can be as many as the copy holds.
+
+**Tests:** `device/read-only.test.ts › holds rows to the answer once a held stream reaches the head`.
+
+### `device/read-only-no-answer`
+
+If a read by `device/read-only-refresh` fails, other than by `device/reach-changed`, then a device MUST keep the values it holds and finish the catch-up or the stream it ran in.
+
+**Reason:** the value is advice, and a copy that stopped syncing for it would lose far more than it protects.
+
+**Tests:** `device/read-only.test.ts › finishes a catch-up whose read of read_only fails, keeping what it holds and asking again`.
+
+### `device/read-only-writable`
+
+A device MUST NOT refuse or hold a write because of a row's `read_only`.
+
+**Reason:** the server takes the write (`items/read-only-writable`), so a device that stopped it would make the copy stricter than the server.
+
+**Tests:** `device/read-only.test.ts › sends an edit of a read-only row, and holds the answer's read_only`.
+
 ## Certified read access
 
 A device keeps its copy under the reach the server certifies (`reach.md`): it holds the instance, cursor and reach of the copy stream that hydrated it, and presents them back on every read that fills the copy.
