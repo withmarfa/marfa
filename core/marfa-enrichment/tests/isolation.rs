@@ -292,7 +292,13 @@ fn removed() {
             "{after:?}"
         );
     }
-    assert_eq!(zombies_and_children(), -1);
+    // For a moment after a `posix_spawn` that failed, macOS still lists the process it
+    // built and is taking down, though no one can wait for it.
+    let started = Instant::now();
+    while zombies_and_children() != -1 {
+        assert!(started.elapsed() < Duration::from_secs(1), "a child stayed");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn set_executable(path: &Path) {
@@ -370,6 +376,93 @@ mod native {
             .map_err(|refusal| refusal.to_string())?;
         check(reading.text.contains("upright"), || {
             format!("{:?}", reading.text)
+        })
+    }
+
+    /// A PDF of one page drawn by `content`, using `resources`, with `extra` objects
+    /// numbered from 5.
+    fn pdf(content: &str, resources: &str, extra: &[Vec<u8>]) -> Vec<u8> {
+        let mut objects = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 750 70] /Contents 4 0 R \
+                 /Resources << {resources} >> >>"
+            )
+            .into_bytes(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            )
+            .into_bytes(),
+        ];
+        objects.extend_from_slice(extra);
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend(body);
+            out.extend(b"\nendobj\n");
+        }
+        let table = out.len();
+        let size = objects.len() + 1;
+        out.extend(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            out.extend(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{table}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
+    }
+
+    pub(super) fn reads_a_text_pdf() -> Result<(), Failed> {
+        let bytes = pdf(
+            "BT /F1 18 Tf 10 30 Td (Words a PDF holds) Tj ET",
+            "/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >>",
+            &[],
+        );
+        let reading =
+            read(&bytes, "application/pdf", &options()).map_err(|refusal| refusal.to_string())?;
+        check(reading.text.contains("Words a PDF holds"), || {
+            format!("{:?}", reading.text)
+        })
+    }
+
+    /// PDFium draws the page and Tesseract reads the drawing, all under the sandbox.
+    pub(super) fn reads_a_scanned_pdf() -> Result<(), Failed> {
+        let picture = image::load_from_memory(&fixture("sentence.png"))
+            .map_err(|error| error.to_string())?
+            .into_luma8();
+        let (width, height) = picture.dimensions();
+        let pixels = picture.into_raw();
+        let mut image = format!(
+            "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} \
+             /ColorSpace /DeviceGray /BitsPerComponent 8 /Length {} >>\nstream\n",
+            pixels.len()
+        )
+        .into_bytes();
+        image.extend(pixels);
+        image.extend(b"\nendstream");
+        let bytes = pdf(
+            "q 750 0 0 70 0 0 cm /Im1 Do Q",
+            "/XObject << /Im1 5 0 R >>",
+            &[image],
+        );
+        let options = ocr_options(None, "eng");
+        let reading =
+            read(&bytes, "application/pdf", &options).map_err(|refusal| refusal.to_string())?;
+        check(reading.text.contains("upright"), || {
+            format!("{:?}", reading.text)
+        })
+    }
+
+    pub(super) fn a_damaged_pdf_is_malformed() -> Result<(), Failed> {
+        let outcome = read(b"%PDF-1.4\nnothing else", "application/pdf", &options());
+        check(matches!(outcome, Err(Refusal::Malformed(_))), || {
+            format!("{outcome:?}")
         })
     }
 
@@ -936,6 +1029,12 @@ fn main() {
         (
             "an_encrypted_pdf_is_named",
             native::an_encrypted_pdf_is_named,
+        ),
+        ("reads_a_text_pdf", native::reads_a_text_pdf),
+        ("reads_a_scanned_pdf", native::reads_a_scanned_pdf),
+        (
+            "a_damaged_pdf_is_malformed",
+            native::a_damaged_pdf_is_malformed,
         ),
         (
             "a_language_cannot_name_a_path",

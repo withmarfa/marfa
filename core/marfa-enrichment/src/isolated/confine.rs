@@ -15,7 +15,7 @@ const MOST_DESCRIPTORS: u64 = 16;
 /// this is the kernel's backstop behind it, so it must never bind first on a page
 /// that fits the limit.
 #[cfg(target_os = "linux")]
-const ADDRESS_SPACE_HEADROOM: u64 = 512 * 1024 * 1024;
+const ADDRESS_SPACE_HEADROOM: u64 = 256 * 1024 * 1024;
 
 /// Sets a limit to at most `soft` and `hard`. A limit that the process already holds
 /// lower stays, because raising a hard limit needs a privilege a child should not
