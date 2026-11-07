@@ -4,13 +4,13 @@
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
 use serde::Serialize;
 
-use super::{Item, Keys, Snapshot, Writer};
+use super::{Item, Keys, Mark, Snapshot, Writer};
 use crate::app::refusal::Result;
 
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
      version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
      capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
-     trashed_by_name FROM items";
+     trashed_by_name, trashed_with, trashed_with_type, went_with_hosts FROM items";
 
 const SNAPSHOT: &str = "SELECT v.id, i.id, v.version, json(v.properties), v.type, v.tier, \
      v.occurred_at, v.source_id, v.writer_kind, v.writer_id, v.writer_name, v.created_at \
@@ -20,6 +20,14 @@ fn writer_of(kind: Option<String>, id: Option<String>, name: Option<String>) -> 
     kind.zip(id)
         .zip(name)
         .map(|((kind, id), name)| Writer { kind, id, name })
+}
+
+fn mark_of(with: Option<String>, with_type: Option<String>, hosts: bool) -> Option<Mark> {
+    with.zip(with_type).map(|(with, with_type)| Mark {
+        with,
+        with_type,
+        hosts,
+    })
 }
 
 fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
@@ -42,6 +50,7 @@ fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
         capture_longitude: row.get(15)?,
         link: row.get(16)?,
         trashed_by: writer_of(row.get(17)?, row.get(18)?, row.get(19)?),
+        mark: mark_of(row.get(20)?, row.get(21)?, row.get(22)?),
     })
 }
 
@@ -244,6 +253,7 @@ pub(super) struct Moved<'a> {
     pub state: &'a str,
     pub trashed_at: Option<&'a str>,
     pub trashed_by: Option<&'a Writer>,
+    pub mark: Option<&'a Mark>,
     pub at: &'a str,
 }
 
@@ -251,7 +261,8 @@ pub(super) struct Moved<'a> {
 pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> Result<Item> {
     tx.prepare_cached(
         "UPDATE items SET state = ?2, trashed_at = ?3, trashed_by_kind = ?4, trashed_by_id = ?5, \
-         trashed_by_name = ?6, updated_at = ?7 WHERE seq = ?1",
+         trashed_by_name = ?6, updated_at = ?7, trashed_with = ?8, trashed_with_type = ?9, \
+         went_with_hosts = ?10 WHERE seq = ?1",
     )?
     .execute(params![
         item.seq,
@@ -261,8 +272,20 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
         to.trashed_by.map(|by| &by.id),
         to.trashed_by.map(|by| &by.name),
         to.at,
+        to.mark.map(|mark| &mark.with),
+        to.mark.map(|mark| &mark.with_type),
+        to.mark.is_some_and(|mark| mark.hosts),
     ])?;
     stored(tx, &item.id)
+}
+
+/// The rows in the bin that a move to the bin marked as gone with `root`.
+pub(super) fn marked_with(tx: &Transaction<'_>, root: &str) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{ITEM} WHERE trashed_with = ?1 AND state = 'trashed' ORDER BY seq"
+    ))?;
+    let found = statement.query_map([root], item_of)?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Deletes a row and all that hangs from it, leaving its tombstones.

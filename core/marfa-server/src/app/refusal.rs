@@ -97,6 +97,7 @@ codes! {
     LinkTaken = "link_taken", 409;
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
+    SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
     SourceIdConflict = "source_id_conflict", 409;
     TrashPlanChanged = "trash_plan_changed", 409;
     TypeAlreadyExists = "type_already_exists", 409;
@@ -255,6 +256,9 @@ impl From<rusqlite::Error> for Refusal {
 mod tests {
     use super::*;
 
+    /// Codes the server holds that `errors.md` does not table yet.
+    const BEYOND_THE_CONTRACT: &[&str] = &["sign_in_address_change_unconfirmed"];
+
     #[test]
     fn holds_every_code_the_contract_tables_with_its_status() {
         let spec = include_str!("../../../../conformance/spec/errors.md");
@@ -279,7 +283,13 @@ mod tests {
                 "{code}"
             );
         }
-        assert_eq!(rows, FIXED_STATUS.len() + 1);
+        assert_eq!(rows, FIXED_STATUS.len() - BEYOND_THE_CONTRACT.len() + 1);
+        for wire in BEYOND_THE_CONTRACT {
+            assert!(
+                !table.contains(&format!("| `{wire}`")),
+                "{wire} is tabled now"
+            );
+        }
     }
 
     #[test]

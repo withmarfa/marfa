@@ -36,7 +36,7 @@ fn grant(kind: &str, name: &str, level: Level) -> serde_json::Value {
 impl Caller {
     pub(super) fn level_on(&self, axis: Axis, name: &str) -> Level {
         match self {
-            Caller::Local | Caller::Owner(_) => Level::Write,
+            Caller::Local | Caller::Owner(_) | Caller::Server => Level::Write,
             Caller::Key(key) | Caller::App { key, .. } => axis.level(key.grants.map(axis), name),
         }
     }
@@ -82,17 +82,20 @@ impl Caller {
     /// Refuses a caller whose type map does not reach `name` at `level`.
     /// Platform-managed `system.*` types are written by the platform alone.
     pub fn require_type(&self, name: &str, level: Level) -> Result<()> {
-        let Some(key) = self.key() else {
-            return Ok(());
-        };
-        if level == Level::Write && name.split('.').next() == Some("system") {
+        if self.key().is_some() && level == Level::Write && name.split('.').next() == Some("system")
+        {
             return Err(Refusal::new(
                 Code::TypeNotPermitted,
                 "Reserved namespace: platform-managed operations write system.* items; \
                  credentials cannot write them directly.",
             ));
         }
-        let held = Axis::Type.level(key.grants.map(Axis::Type), name);
+        self.require_type_map(name, level)
+    }
+
+    /// Refuses a caller whose type map alone does not reach `name` at `level`.
+    pub(super) fn require_type_map(&self, name: &str, level: Level) -> Result<()> {
+        let held = self.level_on(Axis::Type, name);
         if held >= level {
             return Ok(());
         }

@@ -38,6 +38,14 @@ impl Write {
         }
     }
 
+    /// A write the server makes for itself that audits as `action`.
+    pub const fn server(action: &'static str) -> Write {
+        Write {
+            action: Some(action),
+            for_caller: false,
+        }
+    }
+
     pub const fn own() -> Write {
         Write {
             action: None,

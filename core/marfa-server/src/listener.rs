@@ -29,6 +29,12 @@ pub enum Trust {
     /// caller's address. Believed from any peer: it says nothing reaches this
     /// listener except through that edge.
     EdgeHeader(String),
+    /// A header as `EdgeHeader` names it, believed only from a peer in these
+    /// ranges.
+    EdgeHeaderFrom {
+        header: String,
+        ranges: Vec<IpNet>,
+    },
     /// The ranges of the proxies whose `X-Forwarded-For` is believed.
     Proxies(Vec<IpNet>),
 }
@@ -117,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_is_read_with_or_without_test_hooks_and_the_header_takes_precedence() {
+    fn trust_is_read_with_or_without_test_hooks_and_both_settings_narrow_the_header() {
         let cidrs = ("TRUSTED_PROXY_CIDRS", "10.0.0.0/8");
         let header = ("TRUSTED_PROXY_HEADER", "X-Client");
         let hooks = ("MARFA_TEST_HOOKS", "true");
@@ -126,8 +132,15 @@ mod tests {
         assert_eq!(trust(&[cidrs]), Ok(ranges.clone()));
         assert_eq!(trust(&[cidrs, hooks]), Ok(ranges));
         assert_eq!(
-            trust(&[cidrs, header]),
+            trust(&[header]),
             Ok(Trust::EdgeHeader("x-client".to_string()))
+        );
+        assert_eq!(
+            trust(&[cidrs, header]),
+            Ok(Trust::EdgeHeaderFrom {
+                header: "x-client".to_string(),
+                ranges: proxy_ranges("10.0.0.0/8").unwrap(),
+            })
         );
     }
 

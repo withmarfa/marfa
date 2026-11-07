@@ -23,15 +23,19 @@ pub const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 2,
-        sql: include_str!("migrations/0002_sign_in.sql"),
+        sql: include_str!("migrations/0002_housekeeping.sql"),
     },
     Migration {
         version: 3,
-        sql: include_str!("migrations/0003_oauth.sql"),
+        sql: include_str!("migrations/0003_sign_in.sql"),
     },
     Migration {
         version: 4,
-        sql: include_str!("migrations/0004_passkeys.sql"),
+        sql: include_str!("migrations/0004_oauth.sql"),
+    },
+    Migration {
+        version: 5,
+        sql: include_str!("migrations/0005_passkeys.sql"),
     },
 ];
 

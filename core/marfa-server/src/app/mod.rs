@@ -6,10 +6,14 @@ pub mod audit;
 pub mod auth;
 pub mod catalog;
 pub mod clock;
+pub mod config;
+pub mod consequences;
 pub mod edge_types;
+pub mod edges;
 pub mod events;
 pub mod faults;
 pub mod health;
+pub mod housekeeping;
 pub mod idempotency;
 pub mod instance;
 pub mod items;
@@ -36,6 +40,7 @@ use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
 use health::Health;
+use housekeeping::Housekeeping;
 use keys::{Limiter, Usage};
 
 const READERS: usize = 4;
@@ -51,6 +56,7 @@ pub struct App {
     pub usage: Usage,
     pub key_limit: Limiter,
     pub passwords: Passwords,
+    pub housekeeping: Housekeeping,
     pub telemetry: Telemetry,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
@@ -94,7 +100,7 @@ impl App {
         for id in &loaded.unreadable {
             tracing::error!(type_id = %id, "A stored type does not read, and is kept as it is");
         }
-        Ok(Arc::new(App {
+        let app = Arc::new(App {
             db,
             clock,
             faults,
@@ -104,11 +110,16 @@ impl App {
             usage: Usage::default(),
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
+            housekeeping: Housekeeping::default(),
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
             documents: oauth::clients::Documents::default(),
-        }))
+        });
+        housekeeping::prepare(&app)
+            .await
+            .map_err(|refused| Failure::start(refused.to_string()))?;
+        Ok(app)
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
@@ -119,6 +130,11 @@ impl App {
     /// is the parsed sign-in address.
     pub fn addresses(&self) -> Addresses {
         Addresses::read(&self.settings, self.bound_port.get().copied())
+    }
+
+    /// The addresses `snapshot` would give, judged as the live ones are.
+    pub fn addresses_in(&self, snapshot: Arc<crate::settings::Snapshot>) -> Addresses {
+        Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
     /// Records the public port the server bound, which `PORT=0` leaves to the

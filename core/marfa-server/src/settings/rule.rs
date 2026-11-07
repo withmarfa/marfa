@@ -2,12 +2,16 @@
 
 const BOOLEAN_RULE: &str = "must be true or false (also 1/0, yes/no, on/off)";
 
+/// The largest whole number a JSON number carries without losing a digit. Marfa
+/// serves its numbers as floats, so no setting accepts more.
+pub const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
 pub fn line(name: &str, rule: &str, value: &str) -> String {
     format!("{name} {rule} (got \"{value}\")")
 }
 
 pub fn whole_number(text: &str, min: u64, max: u64) -> Result<u64, String> {
-    let rule = if max == u64::MAX {
+    let rule = if max >= SAFE_INTEGER {
         format!("must be a whole number, {min} or more")
     } else {
         format!("must be a whole number, from {min} to {max}")

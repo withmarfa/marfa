@@ -1,21 +1,37 @@
-//! Where connections come from. [`serve`] takes any source of streams through
-//! axum's `Listener`, so nothing above it owns a socket: a source plugs in by
-//! implementing that trait and [`Source`].
+//! Where connections come from, and how one is held. [`serve`] takes any source
+//! of streams through axum's `Listener`, so nothing above it owns a socket: a
+//! source plugs in by implementing that trait and [`Source`].
 
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::connect_info::Connected;
-use axum::serve::{IncomingStream, Listener};
+use axum::body::Body;
+use axum::extract::ConnectInfo;
+use axum::serve::Listener;
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream, unix};
+use tokio::sync::watch;
+use tokio::task::JoinSet;
+use tower::ServiceExt;
 
 /// Long enough for a server out of file descriptors not to spin, and short
 /// enough to serve again soon after one frees.
 const ACCEPT_PAUSE: Duration = Duration::from_millis(250);
+
+/// How long a connection may take to send one request head, from the moment
+/// the server waits for it. A connection waiting for its next request is held
+/// to the same time.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The network address at the far end of a connection, reaching each request
 /// as connect info. A private socket has none.
@@ -27,22 +43,79 @@ pub trait Source: Listener<Addr: Debug> {
     fn peer(address: &Self::Addr) -> Peer;
 }
 
-impl<L: Source> Connected<IncomingStream<'_, L>> for Peer {
-    fn connect_info(stream: IncomingStream<'_, L>) -> Peer {
-        L::peer(stream.remote_addr())
-    }
-}
-
-/// Serves `router` on `listener` until `stop`, then lets open requests finish.
+/// Serves `router` on `listener` until `stop`. A stop closes every connection
+/// with no request in flight, a partial head included, and waits only for the
+/// requests that are.
 pub async fn serve(
     listener: impl Source,
     router: Router,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
-    let service = router.into_make_service_with_connect_info::<Peer>();
-    axum::serve(listener, service)
-        .with_graceful_shutdown(stop)
-        .await
+    serve_within(listener, router, stop, HEADER_READ_TIMEOUT).await
+}
+
+async fn serve_within<L: Source>(
+    mut listener: L,
+    router: Router,
+    stop: impl Future<Output = ()> + Send + 'static,
+    header_read_timeout: Duration,
+) -> io::Result<()> {
+    let (stopping, _) = watch::channel(false);
+    let mut connections = JoinSet::new();
+    let mut stop = pin!(stop);
+    loop {
+        let (stream, address) = tokio::select! {
+            accepted = listener.accept() => accepted,
+            Some(_) = connections.join_next() => continue,
+            () = &mut stop => break,
+        };
+        let peer = L::peer(&address);
+        let router = router.clone();
+        let asked = Arc::new(AtomicBool::new(false));
+        let service = service_fn({
+            let asked = asked.clone();
+            move |mut request: hyper::Request<Incoming>| {
+                asked.store(true, Ordering::Release);
+                request.extensions_mut().insert(ConnectInfo(peer));
+                router.clone().oneshot(request.map(Body::new))
+            }
+        });
+        let connection = http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(header_read_timeout)
+            .keep_alive(true)
+            .serve_connection(TokioIo::new(stream), service)
+            .with_upgrades();
+        let mut stopped = stopping.subscribe();
+        connections.spawn(async move {
+            let mut connection = pin!(connection);
+            let mut told = false;
+            loop {
+                tokio::select! {
+                    result = connection.as_mut() => {
+                        if let Err(error) = result {
+                            tracing::debug!(error = %error, "A connection ended with an error");
+                        }
+                        break;
+                    }
+                    _ = stopped.wait_for(|stopping| *stopping), if !told => {
+                        // Hyper closes an idle connection at once, but keeps one
+                        // whose first head is only partly read until the header
+                        // timeout, though no request has begun on it.
+                        if !asked.load(Ordering::Acquire) {
+                            break;
+                        }
+                        connection.as_mut().graceful_shutdown();
+                        told = true;
+                    }
+                }
+            }
+        });
+    }
+    drop(listener);
+    stopping.send_replace(true);
+    while connections.join_next().await.is_some() {}
+    Ok(())
 }
 
 fn closed_by_its_caller(error: &io::Error) -> bool {
@@ -141,11 +214,11 @@ mod tests {
     use axum::routing::get;
     use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
-    use tokio::sync::{mpsc, oneshot};
+    use tokio::sync::{Notify, mpsc, oneshot};
     use tokio::time::timeout;
 
-    use super::super::finished;
     use super::super::observe::RequestContext;
+    use super::super::{Routes, finished};
     use super::*;
     use crate::app::App;
     use crate::listener::{Declaration, Transport, Trust, proxy_ranges};
@@ -180,6 +253,10 @@ mod tests {
     }
 
     async fn router(dir: &TempDir, trust: &str) -> Router {
+        router_of(dir, trust, Router::new().route("/who", get(who))).await
+    }
+
+    async fn router_of(dir: &TempDir, trust: &str, routes: Routes) -> Router {
         let database = dir.path().join("marfa.db");
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
@@ -195,8 +272,44 @@ mod tests {
             transport: Transport::Http,
             trust: Trust::Proxies(proxy_ranges(trust).unwrap()),
         };
-        finished(Router::new().route("/who", get(who)), app, declared)
+        finished(routes, app, declared)
     }
+
+    #[derive(Clone)]
+    struct Gate {
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    async fn slow(Extension(gate): Extension<Gate>) -> &'static str {
+        gate.entered.notify_one();
+        gate.release.notified().await;
+        "late"
+    }
+
+    async fn read_response(stream: &mut (impl AsyncReadExt + Unpin)) -> String {
+        let mut bytes = Vec::new();
+        let mut byte = [0];
+        while !bytes.ends_with(b"\r\n\r\n") {
+            assert_eq!(stream.read(&mut byte).await.unwrap(), 1, "closed early");
+            bytes.push(byte[0]);
+        }
+        let head = String::from_utf8(bytes).unwrap();
+        let length = head
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")?
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(0);
+        let mut body = vec![0; length];
+        stream.read_exact(&mut body).await.unwrap();
+        head + &String::from_utf8(body).unwrap()
+    }
+
+    const PARTIAL_HEAD: &[u8] = b"GET /who HTTP/1.1\r\nHost: any";
 
     fn asking(forwarded: &str, keep_alive: bool) -> String {
         let connection = if keep_alive { "keep-alive" } else { "close" };
@@ -312,5 +425,133 @@ mod tests {
         })
         .await;
         assert!(started.elapsed() < ACCEPT_PAUSE);
+    }
+
+    #[tokio::test]
+    async fn a_connection_with_a_partial_head_is_closed_after_the_header_timeout() {
+        let dir = TempDir::new().unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(serve_within(
+            Tcp::new(listener, "test"),
+            router(&dir, "10.0.0.0/8").await,
+            std::future::pending(),
+            Duration::from_millis(200),
+        ));
+        let mut stalled = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stalled.write_all(PARTIAL_HEAD).await.unwrap();
+
+        let started = Instant::now();
+        let mut answer = Vec::new();
+        timeout(Duration::from_secs(5), stalled.read_to_end(&mut answer))
+            .await
+            .expect("the stalled connection was never closed")
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        assert!(!String::from_utf8_lossy(&answer).contains(" 200 "));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_stop_closes_a_partial_head_at_once_on_a_new_or_a_reused_connection() {
+        let dir = TempDir::new().unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (stop, stopping) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve(
+            Tcp::new(listener, "test"),
+            router(&dir, "10.0.0.0/8").await,
+            async move {
+                let _ = stopping.await;
+            },
+        ));
+        let mut stalled = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stalled.write_all(PARTIAL_HEAD).await.unwrap();
+        let mut reused = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        reused
+            .write_all(asking("203.0.113.9", true).as_bytes())
+            .await
+            .unwrap();
+        read_response(&mut reused).await;
+        reused.write_all(PARTIAL_HEAD).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let started = Instant::now();
+        stop.send(()).unwrap();
+        timeout(Duration::from_secs(2), server)
+            .await
+            .expect("the stop waited on a partial head")
+            .unwrap()
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(stalled.read(&mut [0; 16]).await.unwrap(), 0);
+        assert_eq!(reused.read(&mut [0; 16]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_stop_waits_for_a_request_in_flight_and_answers_it_before_closing() {
+        let dir = TempDir::new().unwrap();
+        let gate = Gate {
+            entered: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        };
+        let routes = Router::new()
+            .route("/slow", get(slow))
+            .layer(Extension(gate.clone()));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (stop, stopping) = oneshot::channel::<()>();
+        let mut server = tokio::spawn(serve(
+            Tcp::new(listener, "test"),
+            router_of(&dir, "10.0.0.0/8", routes).await,
+            async move {
+                let _ = stopping.await;
+            },
+        ));
+        let mut open = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        open.write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        gate.entered.notified().await;
+
+        stop.send(()).unwrap();
+        assert!(
+            timeout(Duration::from_millis(300), &mut server)
+                .await
+                .is_err(),
+            "the stop did not wait for the request"
+        );
+        gate.release.notify_one();
+        let answer = read_response(&mut open).await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.ends_with("late"), "{answer}");
+        assert!(answer.to_ascii_lowercase().contains("connection: close"));
+        timeout(Duration::from_secs(2), server)
+            .await
+            .expect("the stop did not end once the request had")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn one_connection_serves_two_requests() {
+        let dir = TempDir::new().unwrap();
+        let (connect, incoming) = mpsc::unbounded_channel();
+        let server = tokio::spawn(serve(
+            Memory(incoming),
+            router(&dir, "10.0.0.0/8").await,
+            std::future::pending(),
+        ));
+        let (mut near, far) = duplex(4096);
+        connect.send((far, Peer(None))).unwrap();
+        for _ in 0..2 {
+            near.write_all(asking("203.0.113.9", true).as_bytes())
+                .await
+                .unwrap();
+            let answer = read_response(&mut near).await;
+            assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+            assert!(answer.ends_with("None"), "{answer}");
+        }
+        server.abort();
     }
 }

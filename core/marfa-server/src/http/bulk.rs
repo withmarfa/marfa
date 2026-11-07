@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use super::answer::{Answer, text_answer};
 use super::body::{Bag, JsonBody, ReadBody, only_declared};
 use super::items::{
-    declared_type, invalid_field, properties_of, tags_of, text_of, time_of, version_of,
+    declared_type, edges_of, invalid_field, properties_of, tags_of, text_of, time_of, version_of,
 };
 use crate::app::App;
 use crate::app::access::Caller;
@@ -21,7 +21,7 @@ use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
 
 const PAGE_FIELDS: [&str; 5] = ["mode", "atomic", "retype", "enable_fanout", "items"];
-const ENTRY_FIELDS: [&str; 11] = [
+const ENTRY_FIELDS: [&str; 12] = [
     "id",
     "type",
     "properties",
@@ -33,6 +33,7 @@ const ENTRY_FIELDS: [&str; 11] = [
     "source_id",
     "version",
     "tags",
+    "edges",
 ];
 const MAX_ENTRIES: usize = 5000;
 
@@ -83,6 +84,7 @@ fn entry_of(mut sent: Map<String, Value>, create_only: bool) -> Result<Entry> {
             version: version_of(&sent)?,
             tier: text_of(&sent, "tier")?,
             tags: sent.get("tags").map(tags_of).transpose()?,
+            edges: edges_of(&sent)?,
             ..Put::default()
         },
         replace,

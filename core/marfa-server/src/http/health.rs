@@ -11,6 +11,7 @@ use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::health::{self, Status};
+use crate::app::housekeeping;
 
 pub async fn answer(State(app): State<Arc<App>>, caller: Option<Caller>, uri: Uri) -> Answer {
     query::only(&uri, &[])?;
@@ -25,5 +26,9 @@ pub async fn answer(State(app): State<Arc<App>>, caller: Option<Caller>, uri: Ur
     } else {
         StatusCode::OK
     };
-    Ok(json_answer(status, &report.to_json(with_errors)))
+    let mut body = report.to_json(with_errors);
+    if with_errors {
+        body["housekeeping"] = housekeeping::attention(&app).await;
+    }
+    Ok(json_answer(status, &body))
 }

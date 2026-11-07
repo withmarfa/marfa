@@ -117,7 +117,10 @@ CREATE TABLE IF NOT EXISTS items (
     link TEXT CHECK (link IS NULL OR length(link) > 0),
     trashed_by_kind TEXT,
     trashed_by_id TEXT,
-    trashed_by_name TEXT
+    trashed_by_name TEXT,
+    trashed_with TEXT,
+    trashed_with_type TEXT,
+    went_with_hosts INTEGER NOT NULL DEFAULT 0 CHECK (went_with_hosts IN (0, 1))
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS items_natural_key
@@ -128,6 +131,27 @@ CREATE INDEX IF NOT EXISTS items_title_key
 CREATE INDEX IF NOT EXISTS items_type_state ON items (type, state);
 CREATE INDEX IF NOT EXISTS items_newest ON items (created_at, id);
 CREATE INDEX IF NOT EXISTS items_bin ON items (created_at, id) WHERE state = 'trashed';
+CREATE INDEX IF NOT EXISTS items_trashed_with ON items (trashed_with)
+    WHERE trashed_with IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS edges (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    source_id TEXT NOT NULL REFERENCES items (id),
+    target_id TEXT NOT NULL REFERENCES items (id),
+    edge_type TEXT NOT NULL,
+    properties BLOB NOT NULL,
+    version INTEGER NOT NULL CHECK (version >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (source_id, target_id, edge_type)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, created_at, id);
+CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type, created_at, id);
+CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type);
+CREATE INDEX IF NOT EXISTS edges_newest ON edges (created_at, id);
+CREATE INDEX IF NOT EXISTS edges_changed ON edges (updated_at, id);
 
 CREATE TABLE IF NOT EXISTS item_tags (
     item_seq INTEGER NOT NULL REFERENCES items (seq),

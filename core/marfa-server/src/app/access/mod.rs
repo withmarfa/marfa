@@ -3,6 +3,7 @@
 //! takes the state it decides on, so a write can make it inside its own
 //! transaction.
 
+mod edges;
 mod items;
 mod levers;
 mod maps;
@@ -206,6 +207,9 @@ pub enum Caller {
         key: Box<Key>,
         grant: Box<oauth::Granted>,
     },
+    /// The server, in the work it does on itself. It outlives any request
+    /// that started the work, so what a job does stands on no credential.
+    Server,
 }
 
 impl Caller {
@@ -215,6 +219,7 @@ impl Caller {
     pub fn current(&self, tx: &Transaction<'_>, at: &str) -> Result<Caller> {
         match self {
             Caller::Local => Ok(Caller::Local),
+            Caller::Server => Ok(Caller::Server),
             Caller::Key(key) => keys::live_by_id(tx, &key.id, at)?
                 .map(|key| Caller::Key(Box::new(key)))
                 .ok_or_else(unauthorized),
@@ -250,14 +255,14 @@ impl Caller {
 
     pub fn key(&self) -> Option<&Key> {
         match self {
-            Caller::Local | Caller::Owner(_) => None,
+            Caller::Local | Caller::Owner(_) | Caller::Server => None,
             Caller::Key(key) | Caller::App { key, .. } => Some(key),
         }
     }
 
     pub fn holds(&self, permission: Permission) -> bool {
         match self {
-            Caller::Local | Caller::Owner(_) => true,
+            Caller::Local | Caller::Owner(_) | Caller::Server => true,
             Caller::Key(key) | Caller::App { key, .. } => key.grants.holds(permission),
         }
     }
@@ -297,7 +302,7 @@ impl Caller {
     /// one decision behind every such door.
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
-            Caller::Local | Caller::Owner(_) => true,
+            Caller::Local | Caller::Owner(_) | Caller::Server => true,
             Caller::Key(key) | Caller::App { key, .. } => {
                 key.id == target.id
                     || key.grants.holds(Permission::KeysManage)
@@ -312,7 +317,7 @@ impl Caller {
     /// What a mint naming no family gives.
     pub fn whole_set(&self) -> Grants {
         match self {
-            Caller::Local | Caller::Owner(_) => Grants::everything(),
+            Caller::Local | Caller::Owner(_) | Caller::Server => Grants::everything(),
             Caller::Key(key) | Caller::App { key, .. } => key.grants.clone(),
         }
     }
@@ -341,7 +346,7 @@ impl Caller {
     /// Whether this caller could give a key `source`.
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
-            Caller::Local | Caller::Owner(_) => true,
+            Caller::Local | Caller::Owner(_) | Caller::Server => true,
             Caller::Key(key) | Caller::App { key, .. } => key.grants.may_grant(&key.source, source),
         }
     }
@@ -410,6 +415,7 @@ impl Caller {
     pub fn audit_id(&self) -> String {
         match self {
             Caller::Local => "local:process".to_string(),
+            Caller::Server => "server".to_string(),
             Caller::Key(key) | Caller::App { key, .. } => key.id.clone(),
             Caller::Owner(session) => format!("owner:{}", session.id),
         }
@@ -419,6 +425,7 @@ impl Caller {
     pub fn actor(&self) -> Value {
         match self {
             Caller::Local => json!({ "kind": "local", "id": "local", "name": "Local command" }),
+            Caller::Server => json!({ "kind": "server", "id": "server", "name": "Marfa" }),
             Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
             Caller::Owner(session) => {
                 json!({ "kind": "browser", "id": session.id, "name": session.name() })

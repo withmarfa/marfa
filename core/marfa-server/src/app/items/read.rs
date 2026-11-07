@@ -2,7 +2,7 @@
 //! the caller and the row as that transaction sees them, and hydrates from the
 //! same snapshot, so nothing it answers is newer than what it judged.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Days, SecondsFormat, Utc};
@@ -14,28 +14,32 @@ use super::plan::{self, Act, Asked, Gate};
 use super::rows::Position;
 use super::{
     Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
+    with_blocks,
 };
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
+use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION};
 use crate::app::refusal::{Refusal, Result};
 
 const TITLES_PER_NAME: i64 = 20;
 const FIRST_PAGE: i64 = 50;
+const MAX_TAKES: usize = 100;
+const MAX_NEIGHBORS: usize = 100;
 const NAME_SEARCH_BATCH: i64 = 200;
 /// How long the bin keeps an item until the instance's settings say.
 const RETENTION_DAYS: u64 = 60;
 
 /// One read: its transaction, and its caller as that transaction holds it.
-struct Reader<'a, 'c> {
-    tx: &'a Transaction<'c>,
-    caller: Caller,
-    catalog: Arc<Catalog>,
+pub(crate) struct Reader<'a, 'c> {
+    pub tx: &'a Transaction<'c>,
+    pub caller: Caller,
+    pub catalog: Arc<Catalog>,
     faults: &'a Faults,
 }
 
-async fn reading<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
+pub(crate) async fn reading<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
@@ -68,7 +72,7 @@ impl Reader<'_, '_> {
             .ok_or_else(not_found)
     }
 
-    fn hydrating(&self) {
+    pub(crate) fn hydrating(&self) {
         self.faults.hold_blocking(HOLD_READ_HYDRATION);
     }
 
@@ -128,6 +132,37 @@ fn version_at(cursor: &str) -> Result<i64> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Detail {
     pub versions: bool,
+    pub backrefs: bool,
+    pub neighbors: bool,
+}
+
+/// The items at the far ends of `far_ends` a detail may carry, up to the cap,
+/// and whether any went past it.
+fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
+    let mut held = Vec::new();
+    let mut truncated = false;
+    for id in far_ends {
+        let Some(row) = rows::by_id(read.tx, id)?.filter(|row| {
+            row.state != "trashed"
+                && !super::is_system(&row.type_id)
+                && read.caller.may_read_type(&row.type_id)
+        }) else {
+            continue;
+        };
+        if held.len() == MAX_NEIGHBORS {
+            truncated = true;
+            break;
+        }
+        held.push(format!(
+            "{{\"item\":{},\"metadata\":{}}}",
+            row.answered(read.tx, &read.caller)?,
+            metadata_for(read.tx, &row, &read.caller)?
+        ));
+    }
+    Ok(format!(
+        ",\"neighbors\":[{}],\"neighbors_truncated\":{truncated}",
+        held.join(",")
+    ))
 }
 
 pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> Result<String> {
@@ -139,9 +174,39 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
         } else {
             String::new()
         };
+        let outbound = edges::hydrate(
+            read.tx,
+            &read.caller,
+            &read.catalog,
+            &row.id,
+            Reach::Outbound,
+        )?;
+        let mut far_ends = outbound.far_ends;
+        let backrefs = if include.backrefs {
+            let inbound = edges::hydrate(
+                read.tx,
+                &read.caller,
+                &read.catalog,
+                &row.id,
+                Reach::Inbound,
+            )?;
+            for id in inbound.far_ends {
+                if !far_ends.contains(&id) {
+                    far_ends.push(id);
+                }
+            }
+            format!(",\"backrefs\":{}", inbound.text)
+        } else {
+            String::new()
+        };
+        let neighbors = if include.neighbors {
+            neighbors_of(read, &far_ends)?
+        } else {
+            String::new()
+        };
         Ok(format!(
-            "{{\"item\":{},\"metadata\":{}{versions}}}",
-            row.answered(read.tx)?,
+            "{{\"item\":{},\"metadata\":{}{versions}{backrefs}{neighbors}}}",
+            with_blocks(row.answered(read.tx, &read.caller)?, &outbound.text),
             metadata_for(read.tx, &row, &read.caller)?
         ))
     })
@@ -204,11 +269,12 @@ pub async fn bulk_get(
         let mut items = Vec::with_capacity(visible.len());
         let mut metadata = Vec::new();
         for row in &visible {
-            let mut text = row.answered(read.tx)?;
+            let mut text = if include.edges {
+                row.hydrated(read.tx, &read.caller, &read.catalog)?
+            } else {
+                row.answered(read.tx, &read.caller)?
+            };
             text.pop();
-            if include.edges {
-                text.push_str(",\"edges\":{}");
-            }
             if include.extensions {
                 let held =
                     extensions_text(read.tx, row, |name| read.caller.may_read_extension(name))?;
@@ -343,6 +409,7 @@ pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Resu
         let gate = Gate {
             tx: read.tx,
             caller: &read.caller,
+            catalog: &read.catalog,
             claim: None,
             server_own: false,
         };
@@ -351,20 +418,42 @@ pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Resu
             .map(|id| Asked { id, version: None })
             .collect();
         let plan = plan::plan(&gate, Act::Bin, &asked)?;
+        let shown: HashMap<&str, &Item> = plan
+            .moving
+            .iter()
+            .map(|moving| &moving.item)
+            .filter(|item| read.caller.may_read_type(&item.type_id))
+            .map(|item| (item.id.as_str(), item))
+            .collect();
         let items: Vec<Value> = plan
-            .items
+            .named
             .iter()
             .map(|item| {
-                json!({
+                let beneath: Vec<&Item> = plan
+                    .beneath
+                    .get(&item.id)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| shown.get(id.as_str()).copied())
+                    .collect();
+                let mut entry = json!({
                     "id": item.id,
                     "type": item.type_id,
                     "version": item.version,
-                    "takes": [],
-                    "count": 1,
-                })
+                    "takes": beneath
+                        .iter()
+                        .take(MAX_TAKES)
+                        .map(|row| json!({ "id": row.id, "type": row.type_id, "version": row.version }))
+                        .collect::<Vec<Value>>(),
+                    "count": beneath.len() + 1,
+                });
+                if beneath.len() > MAX_TAKES {
+                    entry["truncated"] = Value::Bool(true);
+                }
+                entry
             })
             .collect();
-        Ok(json!({ "items": items, "count": plan.items.len(), "digest": plan.digest }).to_string())
+        Ok(json!({ "items": items, "count": shown.len(), "digest": plan.digest }).to_string())
     })
     .await
 }
@@ -378,11 +467,11 @@ pub struct Listing {
     pub cursor: Option<String>,
 }
 
-fn position_cursor(scope: &str, position: &Position) -> String {
+pub(crate) fn position_cursor(scope: &str, position: &Position) -> String {
     hex::encode(format!("{scope}\0{}\0{}", position.0, position.1))
 }
 
-fn position_at(cursor: &str, scope: &str) -> Result<Position> {
+pub(crate) fn position_at(cursor: &str, scope: &str) -> Result<Position> {
     let refused = || Refusal::validation("The cursor does not belong to this listing.");
     let text = hex::decode(cursor)
         .ok()
@@ -412,7 +501,6 @@ impl Reader<'_, '_> {
         } else {
             NAME_SEARCH_BATCH
         };
-        let rules = &self.catalog.rules;
         let mut page = Vec::new();
         'filling: loop {
             let batch = rows::newest(
@@ -427,7 +515,11 @@ impl Reader<'_, '_> {
                 .last()
                 .map(|row| (row.created_at.clone(), row.id.clone()));
             for row in batch {
-                if q.is_empty() || name_of(rules, &row)?.to_lowercase().contains(&q) {
+                if q.is_empty()
+                    || name_of(self.tx, &self.catalog, &row)?
+                        .to_lowercase()
+                        .contains(&q)
+                {
                     page.push(row);
                     if page.len() as i64 > listing.limit {
                         break 'filling;
@@ -453,7 +545,7 @@ pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<S
         let (page, next) = read.named_page(listing, false)?;
         let data = page
             .iter()
-            .map(|row| summary_of(&read.catalog.rules, row))
+            .map(|row| summary_of(read.tx, &read.catalog, row))
             .collect::<Result<Vec<Value>>>()?;
         Ok(json!({ "data": data, "next_cursor": next }).to_string())
     })
@@ -476,7 +568,7 @@ pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String>
         let data = page
             .iter()
             .map(|row| {
-                let mut summary = summary_of(&read.catalog.rules, row)?;
+                let mut summary = summary_of(read.tx, &read.catalog, row)?;
                 summary["trashed_at"] = json!(row.trashed_at);
                 summary["trashed_by"] = json!(row.trashed_by);
                 summary["eligible_for_deletion_at"] = json!(eligible_at(row.trashed_at.as_deref()));
@@ -571,12 +663,11 @@ pub async fn lookup(
             {
                 continue;
             }
-            let mut text = row.answered(read.tx)?;
-            if edges {
-                text.pop();
-                text.push_str(",\"edges\":{}}");
-            }
-            data.push(text);
+            data.push(if edges {
+                row.hydrated(read.tx, &read.caller, &read.catalog)?
+            } else {
+                row.answered(read.tx, &read.caller)?
+            });
         }
         let tombstones = match keys.filter(|_| readable) {
             Some(keys) => rows::tombstones(read.tx, &type_id, keys)?,

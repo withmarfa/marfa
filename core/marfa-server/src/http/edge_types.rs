@@ -42,7 +42,7 @@ pub async fn delete(
 ) -> Answer {
     caller.require_door(SchemaKind::EdgeTypes, Door::Change)?;
     query::only(&uri, &["force"])?;
-    query::flag(&uri, "force")?;
-    edge_types::delete(&app, &caller, id).await?;
+    let force = query::flag(&uri, "force")?.unwrap_or(false);
+    edge_types::delete(&app, &caller, id, force).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

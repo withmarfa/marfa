@@ -54,7 +54,7 @@ fn well_formed(value: &str) -> bool {
 
 fn parse(text: &str) -> Option<Held> {
     let mut held = Held::default();
-    for line in text.lines() {
+    for line in text.lines().rev().skip_while(|line| line.is_empty()) {
         let (name, value) = line.split_once('=')?;
         let slot = match name {
             SALT_LINE => &mut held.api_key_salt,
@@ -300,6 +300,46 @@ mod tests {
             let line = refusal(open(none(), &database(&dir), false));
             assert!(line.contains(path.to_str().unwrap()), "{line}");
             assert!(!line.contains("aaaa"), "{line}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn only_line_endings_and_blank_lines_at_the_end_are_forgiven() {
+        let dir = TempDir::new().unwrap();
+        let path = secrets(&dir);
+        let filled = open(none(), &database(&dir), false).unwrap();
+        let whole = fs::read_to_string(&path).unwrap();
+        let bare = whole.trim_end();
+        let spread = whole.replace('\n', "\r\n");
+        let write = |text: &str| {
+            fs::write(&path, text).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(PRIVATE_FILE)).unwrap();
+        };
+        for text in [
+            bare.to_string(),
+            format!("{whole}\n"),
+            format!("{whole}\n\n"),
+            format!("{whole}\r\n"),
+            spread.clone(),
+            format!("{spread}\r\n"),
+        ] {
+            write(&text);
+            let again = open(none(), &database(&dir), false).unwrap();
+            assert_eq!(again.api_key_salt, filled.api_key_salt, "{text:?}");
+            assert_eq!(again.auth_secret, filled.auth_secret, "{text:?}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        }
+        for text in [
+            format!("\n{whole}"),
+            whole.replacen('\n', "\n\n", 1),
+            format!("{whole} \n"),
+            format!("{bare}\r"),
+            format!("{bare} \n"),
+            "\n".to_string(),
+        ] {
+            write(&text);
+            refusal(open(none(), &database(&dir), false));
             assert_eq!(fs::read_to_string(&path).unwrap(), text);
         }
     }

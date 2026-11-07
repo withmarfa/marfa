@@ -2,6 +2,7 @@
 //! reach is decided in `access`.
 
 mod limit;
+pub mod reap;
 mod request;
 mod secret;
 mod usage;

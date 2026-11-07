@@ -45,6 +45,29 @@ pub async fn name(app: &App) -> Result<String> {
     Ok(name.unwrap_or_else(|| DEFAULT_NAME.to_string()))
 }
 
+/// The display name a write set, if one is set.
+pub fn stored_name(tx: &Transaction<'_>) -> Result<Option<String>> {
+    get(tx, NAME)
+}
+
+/// Sets the display name, or with `None` returns it to the default.
+pub fn set_name(tx: &Transaction<'_>, name: Option<&str>) -> Result<()> {
+    match name {
+        Some(name) => {
+            tx.execute(
+                "INSERT INTO instance (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![NAME, name],
+            )?;
+        }
+        None => {
+            tx.execute("DELETE FROM instance WHERE key = ?1", [NAME])?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the instance has been claimed, as this transaction sees it.
 pub fn is_claimed(tx: &Transaction<'_>) -> Result<bool> {
     Ok(get(tx, CLAIMED_AT)?.is_some())
 }

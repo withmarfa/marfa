@@ -1,11 +1,15 @@
 //! The record of what was done, written in the transaction of the write it
 //! records.
 
+mod expiry;
+
 use rusqlite::{Row, ToSql, Transaction, params, params_from_iter};
 use serde_json::{Map, Value};
 
 use super::access::Caller;
 use super::refusal::{Refusal, Result};
+
+pub use expiry::expire;
 
 const HOUSEKEEPING: [&str; 12] = [
     "items.trash_purged",

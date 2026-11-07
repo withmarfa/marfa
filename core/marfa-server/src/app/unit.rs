@@ -88,8 +88,13 @@ impl App {
     {
         let caller = caller.clone();
         let clock = self.clock.clone();
+        let write = if matches!(caller, Caller::Server) {
+            Write::server(action)
+        } else {
+            Write::caller(action)
+        };
         self.db
-            .write(Write::caller(action), move |tx| {
+            .write(write, move |tx| {
                 let at = clock.stamp();
                 let caller = caller.current(tx, &at)?;
                 job(&Unit {

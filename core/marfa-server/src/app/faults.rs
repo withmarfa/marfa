@@ -4,12 +4,19 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use serde::Serialize;
 use tokio::sync::watch;
 
+use super::housekeeping;
+
 const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
+const MAX_DEADLINE_MS: u64 = 2_147_483_647;
+
+/// What a fault set on a housekeeping job is named beneath.
+const JOB_POINT: &str = "housekeeping:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -58,6 +65,7 @@ points! {
     HOLD_WRITE = Hold "write" Write;
     HOLD_READ_HYDRATION = Hold "read-hydration" None;
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
+    HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     FAIL_LOCK = Fail "lock" Nth;
     FAIL_AUDIT = Fail "audit" Write;
     FAIL_COMMIT = Fail "commit" Write;
@@ -81,6 +89,13 @@ impl Volume {
     }
 }
 
+/// How a `fail:housekeeping:<job>` counts, which every job shares.
+const FAIL_JOB: &Point = &Point {
+    kind: Kind::Fail,
+    name: "housekeeping:<job>",
+    argument: Argument::Nth,
+};
+
 /// Which reach of a point a counted fault acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Aim {
@@ -95,7 +110,7 @@ struct Armed {
     aim: Option<Aim>,
     seen: u32,
     fired: u32,
-    free_bytes: Option<u64>,
+    number: Option<u64>,
     gate: watch::Sender<bool>,
     waiting: Arc<AtomicU64>,
     held_when_answered: Option<Vec<String>>,
@@ -181,9 +196,45 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     }
 }
 
+/// Judges a `hold`, `release` or `fail` on a housekeeping job. A target refuses
+/// a job it does not run.
+fn judge_job(
+    kind: &str,
+    job: &str,
+    arg: Option<&str>,
+) -> Result<(Option<Aim>, Option<u64>), String> {
+    if !housekeeping::is_job(job) {
+        return Err(format!("no job is named {job}"));
+    }
+    match (kind, arg) {
+        ("fail", _) if !housekeeping::runs_statements(job) => {
+            Err(format!("{job} runs no database statement"))
+        }
+        ("fail", _) => Ok((aim(FAIL_JOB, arg)?, None)),
+        ("hold" | "release", None) => Ok((None, None)),
+        ("hold" | "release", Some(_)) => Err(format!("{kind}:{JOB_POINT}{job} takes no argument")),
+        _ => Err(format!("{kind} is not a fault on a job")),
+    }
+}
+
+fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
+    if !housekeeping::is_job(job) {
+        return Err(format!("no job is named {job}"));
+    }
+    arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
+        .ok_or_else(|| {
+            format!("a deadline takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}")
+        })
+}
+
 /// Reads a name and argument into what arming needs, or says why not.
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
+    if let Some(job) = rest.strip_prefix(JOB_POINT) {
+        return judge_job(kind, job, arg);
+    }
     match kind {
         "hold" | "fail" => {
             let kind = if kind == "hold" {
@@ -213,7 +264,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 .ok_or("a free fault takes a whole number of bytes")?;
             Ok((None, Some(bytes)))
         }
-        "deadline" => Err(format!("no job is named {rest}")),
+        "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job> \
              or free:<volume>"
@@ -238,13 +289,13 @@ impl Faults {
     /// Arms a fault, or starts it again if it is armed already. A hold's
     /// waiters stay held. A refused fault is never armed.
     pub fn set(&self, name: &str, arg: Option<&str>) -> Result<(), String> {
-        let (aim, free_bytes) = judge(name, arg)?;
+        let (aim, number) = judge(name, arg)?;
         let mut armed = self.armed();
         let arg = arg.map(str::to_string);
         if let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) {
             fault.arg = arg;
             fault.aim = aim;
-            fault.free_bytes = free_bytes;
+            fault.number = number;
             fault.seen = 0;
             fault.fired = 0;
             fault.held_when_answered = None;
@@ -255,7 +306,7 @@ impl Faults {
                 aim,
                 seen: 0,
                 fired: 0,
-                free_bytes,
+                number,
                 gate: watch::Sender::new(false),
                 waiting: Arc::default(),
                 held_when_answered: None,
@@ -292,10 +343,10 @@ impl Faults {
     /// caller. An uncounted hold selects every caller.
     fn selected(
         &self,
-        point: &Point,
+        point: &str,
         action: Option<&str>,
     ) -> Option<(watch::Receiver<bool>, Waiting)> {
-        let name = format!("hold:{}", point.name);
+        let name = format!("hold:{point}");
         let mut armed = self.armed();
         let fault = armed.iter_mut().find(|fault| fault.name == name)?;
         if let Some(aim) = &fault.aim {
@@ -317,14 +368,22 @@ impl Faults {
 
     /// Waits here while a hold selects this caller.
     pub async fn hold(&self, point: &Point, action: Option<&str>) {
-        if let Some((mut gate, _waiting)) = self.selected(point, action) {
+        if let Some((mut gate, _waiting)) = self.selected(point.name, action) {
+            let _ = gate.wait_for(|open| *open).await;
+        }
+    }
+
+    /// Waits here while `hold:housekeeping:<job>` stands.
+    pub async fn hold_job(&self, job: &str) {
+        let point = format!("{JOB_POINT}{job}");
+        if let Some((mut gate, _waiting)) = self.selected(&point, None) {
             let _ = gate.wait_for(|open| *open).await;
         }
     }
 
     /// As [`Faults::hold`], from a blocking thread inside the runtime.
     pub fn hold_blocking(&self, point: &Point) {
-        if let Some((mut gate, _waiting)) = self.selected(point, None) {
+        if let Some((mut gate, _waiting)) = self.selected(point.name, None) {
             let _ = tokio::runtime::Handle::current()
                 .block_on(gate.wait_for(|open| *open))
                 .map(|_| ());
@@ -333,7 +392,16 @@ impl Faults {
 
     /// Counts a reach of a `fail` point and says whether it acts now.
     pub fn fail(&self, point: &Point, action: Option<&str>) -> bool {
-        let name = format!("fail:{}", point.name);
+        self.fail_named(point.name, action)
+    }
+
+    /// Whether `fail:housekeeping:<job>` acts on this run.
+    pub fn fail_job(&self, job: &str) -> bool {
+        self.fail_named(&format!("{JOB_POINT}{job}"), None)
+    }
+
+    fn fail_named(&self, point: &str, action: Option<&str>) -> bool {
+        let name = format!("fail:{point}");
         let mut armed = self.armed();
         let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) else {
             return false;
@@ -356,12 +424,22 @@ impl Faults {
         true
     }
 
+    /// The deadline `deadline:<job>` gives a run of the job.
+    pub fn deadline(&self, job: &str) -> Option<Duration> {
+        let name = format!("deadline:{job}");
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == name)
+            .and_then(|fault| fault.number)
+            .map(Duration::from_millis)
+    }
+
     /// The free space a fault says the volume has.
     pub fn free(&self, volume: Volume) -> Option<u64> {
         self.armed()
             .iter()
             .find(|fault| fault.name == volume.name())
-            .and_then(|fault| fault.free_bytes)
+            .and_then(|fault| fault.number)
     }
 
     /// Called as a `GET /health` is admitted, before it reads anything.
@@ -437,6 +515,21 @@ mod tests {
         assert!(refused("hold:write", Some("<action>@<n>")));
         assert!(refused("hold:write", Some("Item@1")));
         assert!(refused("hold:write", Some("item@")));
+    }
+
+    #[test]
+    fn takes_a_job_only_by_a_name_this_build_runs() {
+        assert!(refused("hold:housekeeping:no-such-job", None));
+        assert!(refused("release:housekeeping:no-such-job", None));
+        assert!(refused("fail:housekeeping:no-such-job", None));
+        assert!(refused("fail:housekeeping:heartbeat", None));
+        assert!(refused("deadline:trash-purge", None));
+        assert!(refused("deadline:trash-purge", Some("0")));
+        assert!(refused("deadline:trash-purge", Some("2147483648")));
+        assert!(!refused("hold:housekeeping:trash-purge", None));
+        assert!(!refused("release:housekeeping:trash-purge", None));
+        assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
+        assert!(!refused("deadline:trash-purge", Some("300")));
     }
 
     #[test]
