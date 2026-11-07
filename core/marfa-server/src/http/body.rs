@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{FromRequest, Request, State};
-use axum::http::{HeaderMap, header};
+use axum::http::{Extensions, HeaderMap, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body::{Frame, SizeHint};
@@ -16,15 +16,18 @@ use marfa_rules::{integers, json_text};
 use serde_json::{Map, Value, json};
 
 use super::answer::{Stopped, refusal_answer};
+use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
 use crate::app::refusal::{Code, Refusal};
+use crate::listener::Transport;
 use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
 const BULK_PATH: &str = "/items/bulk";
 const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const CONFIG_PATH: &str = "/config";
 
 /// A request's body, held on both sides of the routes.
 ///
@@ -96,7 +99,7 @@ impl FromRequest<Arc<App>> for JsonBody {
 
     async fn from_request(request: Request, app: &Arc<App>) -> Result<JsonBody, Stopped> {
         let (parts, body) = request.into_parts();
-        let limit = cap_on(app, parts.uri.path());
+        let limit = cap_on(app, parts.uri.path(), &parts.extensions);
         Ok(JsonBody {
             headers: parts.headers,
             body,
@@ -105,11 +108,21 @@ impl FromRequest<Arc<App>> for JsonBody {
     }
 }
 
-fn cap_on(app: &App, path: &str) -> usize {
+fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
     if path == BULK_PATH {
         return BULK_REQUEST_BYTES;
     }
-    usize::try_from(app.settings.live().get(MAX_REQUEST_BYTES)).unwrap_or(usize::MAX)
+    let local = extensions
+        .get::<RequestContext>()
+        .is_some_and(|context| context.transport == Transport::LocalSocket);
+    // The stored cap can be too small for the body that would raise it, and
+    // the local command is the way back from that.
+    let cap = if local && path == CONFIG_PATH {
+        MAX_REQUEST_BYTES.default_value()
+    } else {
+        app.settings.live().get(MAX_REQUEST_BYTES)
+    };
+    usize::try_from(cap).unwrap_or(usize::MAX)
 }
 
 fn is_json(content_type: &str) -> bool {
@@ -310,7 +323,7 @@ fn ill_formed(pointer: String) -> Refusal {
 /// sent it and under whatever `Content-Type`. A body declared over the cap is
 /// left to its operation, which answers the credential first.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let limit = cap_on(&app, request.uri().path());
+    let limit = cap_on(&app, request.uri().path(), request.extensions());
     if request.body().is_end_stream() || declared_length(request.headers()) > Some(limit) {
         return next.run(request).await;
     }

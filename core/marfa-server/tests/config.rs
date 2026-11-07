@@ -8,9 +8,9 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::access::Caller;
-use marfa_server::app::{App, instance};
+use marfa_server::app::{App, instance, stored};
 use marfa_server::db::Write;
-use marfa_server::http::control;
+use marfa_server::http::{control, public};
 use marfa_server::settings::registry::MAX_REQUEST_BYTES;
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
@@ -21,6 +21,7 @@ struct Instance {
     _dir: TempDir,
     app: Arc<App>,
     control: Router,
+    public: Router,
 }
 
 struct Reply {
@@ -62,12 +63,37 @@ impl Instance {
         Instance {
             _dir: dir,
             control: control(app.clone()),
+            public: public(app.clone()),
             app,
         }
     }
 
     async fn call(&self, method: Method, path: &str, body: Option<Value>) -> Reply {
-        let mut builder = Request::builder().method(method).uri(path);
+        let builder = Request::builder().method(method).uri(path);
+        self.send(&self.control, builder, body).await
+    }
+
+    /// A key holding `config.manage`, which is less than the owner.
+    async fn manager(&self) -> String {
+        let body = json!({ "label": "m", "source": "m", "permissions": ["config.manage"] });
+        let minted = self.call(Method::POST, "/keys", Some(body)).await;
+        minted.body["key"].as_str().unwrap().to_string()
+    }
+
+    async fn as_key(&self, key: &str, method: Method, body: Value) -> Reply {
+        let builder = Request::builder()
+            .method(method)
+            .uri("/config")
+            .header(header::AUTHORIZATION, format!("Bearer {key}"));
+        self.send(&self.public, builder, Some(body)).await
+    }
+
+    async fn send(
+        &self,
+        doors: &Router,
+        mut builder: axum::http::request::Builder,
+        body: Option<Value>,
+    ) -> Reply {
         let body = match body {
             Some(body) => {
                 builder = builder.header(header::CONTENT_TYPE, "application/json");
@@ -75,8 +101,7 @@ impl Instance {
             }
             None => Body::empty(),
         };
-        let response = self
-            .control
+        let response = doors
             .clone()
             .oneshot(builder.body(body).unwrap())
             .await
@@ -97,6 +122,30 @@ impl Instance {
 
     async fn config(&self) -> Value {
         self.call(Method::GET, "/config", None).await.body
+    }
+
+    /// Leaves a row in the table that its setting no longer reads.
+    async fn spoil(&self, key: &'static str, text: &'static str) {
+        self.app
+            .db
+            .write(Write::own(), move |tx| {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                    [key, text],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let rows = self.app.db.read(stored::rows).await.unwrap();
+        self.app.settings.apply_stored(&rows);
+    }
+
+    async fn row(&self, key: &str) -> Option<String> {
+        let rows = self.app.db.read(stored::rows).await.unwrap();
+        rows.into_iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, text)| text)
     }
 }
 
@@ -215,15 +264,14 @@ async fn two_patches_at_once_both_land() {
 #[tokio::test]
 async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling_does_not() {
     let instance = Instance::start(&[]).await;
-    // The first write of the setting needs no confirmation, even once claimed.
+    let before_claim = instance
+        .patch(json!({ "sign_in_address": "https://a.example" }))
+        .await;
+    assert_eq!(before_claim.status, StatusCode::OK, "{}", before_claim.text);
+    assert_eq!(before_claim.body["addresses"], json!(["https://a.example"]));
     instance::claim(&instance.app, &Caller::Local)
         .await
         .unwrap();
-    let first = instance
-        .patch(json!({ "sign_in_address": "https://a.example" }))
-        .await;
-    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
-    assert_eq!(first.body["addresses"], json!(["https://a.example"]));
 
     let same = instance
         .patch(json!({ "sign_in_address": "HTTPS://A.Example:443/" }))
@@ -273,14 +321,130 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
 }
 
 #[tokio::test]
-async fn an_address_check_says_what_would_happen_and_writes_nothing() {
+async fn the_first_stored_sign_in_address_of_a_claimed_instance_asks_first() {
     let instance = Instance::start(&[]).await;
     instance::claim(&instance.app, &Caller::Local)
         .await
         .unwrap();
+    let body = json!({ "sign_in_address": "https://a.example" });
+    let asked = instance.patch(body.clone()).await;
+    assert_eq!(asked.code(), "sign_in_address_change_unconfirmed");
+    assert_eq!(instance.row("sign_in_address").await, None);
+
+    let checked = instance
+        .call(Method::POST, "/config/address-check", Some(body))
+        .await;
+    assert_eq!(checked.body["requires_confirmation"], true);
+
+    let loopback = instance.app.addresses().sign_in().origin().to_string();
+    let unmoved = instance.patch(json!({ "sign_in_address": loopback })).await;
+    assert_eq!(unmoved.status, StatusCode::OK, "{}", unmoved.text);
+}
+
+#[tokio::test]
+async fn only_direct_authority_moves_the_sign_in_address() {
+    let instance = Instance::start(&[]).await;
+    let key = instance.manager().await;
+    let a = "https://a.example";
+
+    let confirmed = json!({ "sign_in_address": a, "confirm_sign_in_address_change": true });
+    let first = instance.as_key(&key, Method::PATCH, confirmed).await;
+    assert_eq!(first.status, StatusCode::FORBIDDEN, "{}", first.text);
+    assert_eq!(first.code(), "forbidden");
+    assert_eq!(instance.row("sign_in_address").await, None);
+    assert_eq!(instance.row("addresses").await, None);
+
+    let shape = json!({ "sign_in_address": "marfa.example" });
+    let shape = instance.as_key(&key, Method::PATCH, shape).await;
+    assert_eq!(shape.code(), "validation_error", "{}", shape.text);
+
+    let local = instance.patch(json!({ "sign_in_address": a })).await;
+    assert_eq!(local.status, StatusCode::OK, "{}", local.text);
+
+    let tidier = json!({ "sign_in_address": "HTTPS://A.Example:443/" });
+    let tidier = instance.as_key(&key, Method::PATCH, tidier).await;
+    assert_eq!(tidier.status, StatusCode::OK, "{}", tidier.text);
+
+    let list = json!({ "addresses": [a, "https://b.example"] });
+    let list = instance.as_key(&key, Method::PATCH, list).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.text);
+
+    let moved = json!({ "sign_in_address": "https://b.example" });
+    for (method, body) in [
+        (Method::PATCH, moved),
+        (Method::PATCH, json!({ "sign_in_address": null })),
+        (Method::PUT, json!({})),
+    ] {
+        let refused = instance.as_key(&key, method, body).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    }
+    assert_eq!(instance.app.addresses().sign_in().origin(), a);
+}
+
+#[tokio::test]
+async fn a_write_that_would_overwrite_an_unreadable_address_list_must_name_it() {
+    let instance = Instance::start(&[]).await;
+    instance.spoil("addresses", "not a list").await;
+
+    let a = "https://a.example";
+    for (method, body) in [
+        (Method::PATCH, json!({ "sign_in_address": a })),
+        (Method::PUT, json!({ "sign_in_address": a })),
+        (Method::PUT, json!({})),
+    ] {
+        let refused = instance.call(method, "/config", Some(body)).await;
+        assert_eq!(refused.code(), "validation_error", "{}", refused.text);
+        assert_eq!(refused.error_paths(), ["addresses"]);
+    }
+    let elsewhere = instance.patch(json!({ "name": "Kept" })).await;
+    assert_eq!(elsewhere.status, StatusCode::OK, "{}", elsewhere.text);
+    assert_eq!(
+        instance.row("addresses").await.as_deref(),
+        Some("not a list")
+    );
+
+    let mended = instance.patch(json!({ "addresses": [a] })).await;
+    assert_eq!(mended.status, StatusCode::OK, "{}", mended.text);
+    assert_eq!(mended.body["addresses"], json!([a]));
+    assert!(instance.app.settings.live().unreadable().is_empty());
+}
+
+#[tokio::test]
+async fn a_cap_too_small_for_any_body_is_mended_on_the_control_socket() {
+    let instance = Instance::start(&[]).await;
+    let key = instance.manager().await;
+    let set = instance.patch(json!({ "max_request_bytes": 2 })).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+
+    let mending = json!({ "max_request_bytes": 1_048_576 });
+    let public = instance.as_key(&key, Method::PATCH, mending.clone()).await;
+    assert_eq!(
+        public.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        public.text
+    );
+
+    let past_the_default = json!({ "name": "n".repeat(1_048_576) });
+    let refused = instance.patch(past_the_default).await;
+    assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(instance.app.settings.live().get(MAX_REQUEST_BYTES), 2);
+
+    let mended = instance.patch(mending.clone()).await;
+    assert_eq!(mended.status, StatusCode::OK, "{}", mended.text);
+    let public = instance.as_key(&key, Method::PATCH, mending).await;
+    assert_eq!(public.status, StatusCode::OK, "{}", public.text);
+}
+
+#[tokio::test]
+async fn an_address_check_says_what_would_happen_and_writes_nothing() {
+    let instance = Instance::start(&[]).await;
     instance
         .patch(json!({ "sign_in_address": "https://a.example" }))
         .await;
+    instance::claim(&instance.app, &Caller::Local)
+        .await
+        .unwrap();
     let held = instance.config().await;
     let audited = audit_rows(&instance).await;
 
@@ -325,25 +489,7 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
     let hook = "https://hooks.example/token-that-must-not-print";
     let instance = Instance::start(&[("API_KEY_SALT", secret), ("ERROR_WEBHOOK_URL", hook)]).await;
 
-    instance
-        .app
-        .db
-        .write(Write::own(), |tx| {
-            tx.execute(
-                "INSERT INTO settings (key, value) VALUES ('audit_retention_days', 'soon')",
-                [],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    let rows = instance
-        .app
-        .db
-        .read(marfa_server::app::stored::rows)
-        .await
-        .unwrap();
-    instance.app.settings.apply_stored(&rows);
+    instance.spoil("audit_retention_days", "soon").await;
 
     let listed = instance.call(Method::GET, "/config/settings", None).await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);

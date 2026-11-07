@@ -119,6 +119,13 @@ impl<T> Clone for Setting<T> {
 
 impl<T> Copy for Setting<T> {}
 
+impl<T: Kind> Setting<T> {
+    /// The registry's own value, whatever a seed or a row says.
+    pub fn default_value(self) -> T {
+        T::from_value(&self.entry.default_value()).expect("a setting reads as its rule's kind")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Whole(u64),

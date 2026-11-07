@@ -245,6 +245,8 @@ struct Plan {
     ops: Vec<(String, Option<String>)>,
     name: Option<Option<String>>,
     touched: Vec<&'static str>,
+    /// The body changes the row of `addresses` without naming it.
+    rewrites_addresses: bool,
     before: Rows,
     after: Rows,
 }
@@ -326,6 +328,8 @@ impl Plan {
             None if request.mode == Mode::Put => Some(None),
             None => None,
         };
+        let rewrites_addresses =
+            ops.contains_key(ADDRESSES.entry.key) && !request.names(ADDRESSES.entry.key);
         let mut after = before.clone();
         for (key, text) in &ops {
             match text {
@@ -337,13 +341,29 @@ impl Plan {
             ops: ops.into_iter().collect(),
             name,
             touched,
+            rewrites_addresses,
             before,
             after,
         }
     }
 
+    /// A row that does not read reads as empty, so a change built on it would
+    /// lose every address it held.
+    fn refuse_unread_addresses(&self, app: &App) -> Result<()> {
+        let key = ADDRESSES.entry.key;
+        let before = app.settings.candidate(&pairs(&self.before));
+        if self.rewrites_addresses && before.unreadable().contains(&key) {
+            return Err(invalid(vec![(
+                key.to_string(),
+                "no longer reads, so it must be set whole".to_string(),
+            )]));
+        }
+        Ok(())
+    }
+
     /// Refuses a change that breaks a rule across settings.
     fn judge(&self, app: &App) -> Result<Snapshot> {
+        self.refuse_unread_addresses(app)?;
         let after = app.settings.candidate(&pairs(&self.after));
         let breaches = together::judge(&after, &self.touched, &app.settings.start);
         if breaches.is_empty() {
@@ -366,17 +386,11 @@ impl Plan {
         let before = app.addresses_in(Arc::new(app.settings.candidate(&pairs(&self.before))));
         let after = app.addresses_in(Arc::new(app.settings.candidate(&pairs(&self.after))));
         let consequences = consequences::of_change(tx, &before, &after)?;
-        let claimed = instance::is_claimed(tx)?;
-        let had_one = self
-            .before
-            .get(SIGN_IN_ADDRESS.entry.key)
-            .is_some_and(|text| !text.is_empty());
-        // Provisional: a claimed instance that already holds a sign-in address
-        // asks first. Change it here if the rule changes.
-        let confirm = claimed && had_one && before.sign_in() != after.sign_in();
+        let sign_in_moves = before.sign_in() != after.sign_in();
         Ok(Moved {
             consequences,
-            confirm,
+            sign_in_moves,
+            confirm: sign_in_moves && instance::is_claimed(tx)?,
             sign_in: after.sign_in(),
             all: after.all(),
         })
@@ -385,6 +399,7 @@ impl Plan {
 
 struct Moved {
     consequences: Vec<Consequence>,
+    sign_in_moves: bool,
     confirm: bool,
     sign_in: addresses::Address,
     all: Vec<addresses::Address>,
@@ -462,6 +477,9 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let plan = Plan::of(&request, before);
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
+                if moved.sign_in_moves {
+                    unit.caller.require_direct()?;
+                }
                 if moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));
                 }
