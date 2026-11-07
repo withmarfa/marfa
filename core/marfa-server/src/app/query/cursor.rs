@@ -29,6 +29,11 @@ impl Secret {
         Ok(tag)
     }
 
+    /// A value only this instance can work out from `text`.
+    pub fn keyed(&self, scope: &str, text: &str) -> Result<String> {
+        Ok(hex::encode(self.tag(scope, text.as_bytes())?))
+    }
+
     pub fn issue(&self, scope: &str, payload: &Json) -> Result<String> {
         let payload = payload.to_string().into_bytes();
         let tag = self.tag(scope, &payload)?;

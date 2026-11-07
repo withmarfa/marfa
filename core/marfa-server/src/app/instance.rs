@@ -63,6 +63,13 @@ pub async fn cursor_secret(db: &Db) -> Result<Secret> {
     Ok(Secret(text.into_bytes()))
 }
 
+/// The same secret, read inside a transaction.
+pub fn secret(tx: &Transaction<'_>) -> Result<Secret> {
+    get(tx, SECRET_KEY)?
+        .map(|text| Secret(text.into_bytes()))
+        .ok_or_else(|| Refusal::internal("the cursor secret was not kept"))
+}
+
 pub async fn name(app: &App) -> Result<String> {
     let name = app.db.read(|tx| get(tx, NAME)).await?;
     Ok(name.unwrap_or_else(|| DEFAULT_NAME.to_string()))

@@ -310,6 +310,57 @@ async fn a_read_is_one_snapshot_while_a_write_commits() {
 }
 
 #[tokio::test]
+async fn a_read_of_a_database_in_memory_is_one_snapshot_too() {
+    let mut memory = options(Path::new("unused"), ONE);
+    memory.path = DatabasePath::Memory;
+    let db = Arc::new(
+        Db::open(&memory, Arc::default())
+            .map_err(|f| f.message)
+            .unwrap(),
+    );
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    let (tell, told) = mpsc::channel::<()>();
+    let (started, reading) = tokio::sync::oneshot::channel();
+    let read = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            db.read(move |tx| {
+                let count = |tx: &Transaction<'_>| -> rusqlite::Result<i64> {
+                    tx.query_row("SELECT count(*) FROM notes", [], |row| row.get(0))
+                };
+                let before = count(tx)?;
+                let _ = started.send(());
+                let _ = told.recv();
+                Ok((before, count(tx)?))
+            })
+            .await
+        })
+    };
+    reading.await.unwrap();
+    let held_back = db.write(WRITE, |tx| add(tx, 2)).await;
+    tell.send(()).unwrap();
+    assert_eq!(read.await.unwrap().unwrap(), (1, 1));
+    assert_eq!(held_back.unwrap_err().code, Code::WriteContention);
+    db.write(WRITE, |tx| add(tx, 2)).await.unwrap();
+    assert_eq!(ids(&db).await, [1, 2]);
+}
+
+#[tokio::test]
+async fn a_path_outside_ascii_opens_as_the_same_file_again() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("caf\u{e9} 100%.db");
+    let db = open(&file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+
+    let again = open(&file);
+    assert_eq!(ids(&again).await, [1]);
+    again.close().await;
+    let names = std::fs::read_dir(dir.path()).unwrap().count();
+    assert_eq!(names, 1, "a second file was made beside the first");
+}
+
+#[tokio::test]
 async fn an_update_runs_only_what_the_file_lacks_and_keeps_a_copy() {
     let place = folder();
     let db = open(&place.file);

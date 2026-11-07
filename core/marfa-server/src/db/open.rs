@@ -3,6 +3,7 @@
 
 use std::fs::File;
 use std::io::Read;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -43,10 +44,9 @@ impl Target {
         match path {
             DatabasePath::File(path) => Target::File(path.clone()),
             DatabasePath::Uri(uri) => Target::Uri(uri.clone()),
-            DatabasePath::Memory => Target::Memory(format!(
-                "file:marfa-{}?mode=memory&cache=shared",
-                uuid::Uuid::now_v7()
-            )),
+            DatabasePath::Memory => {
+                Target::Memory(format!("file:/marfa-{}?vfs=memdb", uuid::Uuid::now_v7()))
+            }
         }
     }
 
@@ -70,9 +70,9 @@ impl Target {
 /// A `file:` URI for a path, with what a URI reserves escaped.
 fn file_uri(path: &Path, query: &str) -> String {
     let mut uri = String::from("file:");
-    for byte in path.to_string_lossy().bytes() {
+    for &byte in path.as_os_str().as_bytes() {
         match byte {
-            b'%' | b'?' | b'#' => uri.push_str(&format!("%{byte:02X}")),
+            b'%' | b'?' | b'#' | 0x80.. => uri.push_str(&format!("%{byte:02X}")),
             _ => uri.push(byte as char),
         }
     }
@@ -145,9 +145,6 @@ fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     conn.busy_timeout(options.busy_budget)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
-    if matches!(options.path, DatabasePath::Memory) {
-        conn.pragma_update(None, "read_uncommitted", true)?;
-    }
     Ok(())
 }
 

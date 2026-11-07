@@ -137,21 +137,24 @@ pub struct Detail {
 }
 
 /// The items at the far ends of `far_ends` a detail may carry, up to the cap,
-/// and whether any went past it.
+/// whether any went past it, and how many the caller may not read.
 fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
     let mut held = Vec::new();
     let mut truncated = false;
+    let mut omitted = 0;
     for id in far_ends {
-        let Some(row) = rows::by_id(read.tx, id)?.filter(|row| {
-            row.state != "trashed"
-                && !super::is_system(&row.type_id)
-                && read.caller.may_read_type(&row.type_id)
-        }) else {
+        let Some(row) = rows::by_id(read.tx, id)?
+            .filter(|row| row.state != "trashed" && !super::is_system(&row.type_id))
+        else {
             continue;
         };
+        if !read.caller.may_read_type(&row.type_id) {
+            omitted += 1;
+            continue;
+        }
         if held.len() == MAX_NEIGHBORS {
             truncated = true;
-            break;
+            continue;
         }
         held.push(format!(
             "{{\"item\":{},\"metadata\":{}}}",
@@ -160,7 +163,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
         ));
     }
     Ok(format!(
-        ",\"neighbors\":[{}],\"neighbors_truncated\":{truncated}",
+        ",\"neighbors\":[{}],\"neighbors_omitted\":{omitted},\"neighbors_truncated\":{truncated}",
         held.join(",")
     ))
 }

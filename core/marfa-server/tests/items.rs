@@ -11,6 +11,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use marfa_rules::conflict::copy_id;
 use marfa_server::app::App;
 use marfa_server::http::{control, public, serve_public};
 use marfa_server::settings::{Environment, Settings};
@@ -1230,4 +1231,55 @@ async fn a_key_that_may_only_read_and_a_state_nothing_has_move_nothing() {
     // The witness: the same transition lands for a key that may write.
     let moved = instance.call(&writer, Method::POST, &moving, binning).await;
     assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+}
+
+#[tokio::test]
+async fn a_row_placed_at_a_copys_id_cannot_take_the_losing_edit() {
+    let marfa = Instance::start().await;
+    let (key_id, token) = marfa.key("copies", json!({ "core.note": "write" })).await;
+    let note = |body: &str, id: Option<&str>| {
+        let mut made = json!({ "type": "core.note", "properties": { "body": body } });
+        if let Some(id) = id {
+            made["id"] = json!(id);
+        }
+        made
+    };
+    let made = marfa
+        .call(&token, Method::POST, "/items", note("first", None))
+        .await
+        .json();
+    let id = made["item"]["id"].as_str().unwrap().to_string();
+    let path = format!("/items/{id}");
+    let winner = json!({ "properties": { "body": "winner" }, "version": 1 });
+    let won = marfa.call(&token, Method::PATCH, &path, winner).await;
+    assert_eq!(won.status, StatusCode::OK, "{}", won.text);
+
+    let guessed = copy_id(&id, 1, &format!("{key_id}\0retry"));
+    let placed = marfa
+        .call(
+            &token,
+            Method::POST,
+            "/items",
+            note("unrelated", Some(&guessed)),
+        )
+        .await;
+    assert_eq!(placed.status, StatusCode::CREATED, "{}", placed.text);
+
+    let loser = json!({ "properties": { "body": "the losing edit" }, "version": 1 });
+    let sent = request(
+        Method::PATCH,
+        &format!("{path}?conflict=auto"),
+        Some(&token),
+        Some(loser.to_string()),
+        Some("retry"),
+    );
+    let resolved = send(marfa.public.clone(), sent).await;
+    assert_eq!(resolved.status, StatusCode::OK, "{}", resolved.text);
+    let answer = resolved.json();
+    let copy = answer["conflict_resolution"]["conflicted_copy_id"]
+        .as_str()
+        .unwrap();
+    assert_ne!(copy, guessed);
+    let kept = marfa.get(&token, &format!("/items/{copy}")).await.json();
+    assert_eq!(kept["item"]["properties"]["body"], "the losing edit");
 }

@@ -28,6 +28,7 @@ use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::idempotency::{self, Claim, Need};
+use crate::app::instance;
 use crate::app::query::VIEW_TYPE;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
@@ -1276,7 +1277,12 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             .map_err(|error| self.invalid(error, None))?;
         let properties = rules.coerced_properties(&row.type_id, &properties);
         let id = match self.claim {
-            Some(claim) => conflict::copy_id(&row.id, named, &claim.attempt()),
+            // A caller may mint any id, so the id must be one it cannot work
+            // out, or a row it placed there would pass for this attempt's copy.
+            Some(claim) => {
+                let attempt = instance::secret(tx)?.keyed("conflicted-copy", &claim.attempt())?;
+                conflict::copy_id(&row.id, named, &attempt)
+            }
             None => Uuid::now_v7().to_string(),
         };
         if let Some(held) = rows::by_id(tx, &id)? {

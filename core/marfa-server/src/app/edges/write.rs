@@ -477,7 +477,7 @@ impl<'c> Writing<'_, '_, 'c> {
         if let Some(held) = &held {
             return Err(Refusal::new(
                 Code::IdReused,
-                format!("Edge id {} already names another edge", held.id),
+                format!("Edge id {} already names a different edge", held.id),
             )
             .with_detail("existing_id", held.id.as_str()));
         }
