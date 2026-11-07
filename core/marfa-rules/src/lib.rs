@@ -6,6 +6,7 @@ pub mod builtin;
 pub mod catalog;
 pub mod conflict;
 pub mod display;
+pub mod edges;
 pub mod error;
 pub mod filter;
 pub mod grammar;
