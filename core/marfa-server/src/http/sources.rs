@@ -47,9 +47,13 @@ pub async fn update(
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
-    let code = named_code(&uri)?;
-    caller.require_may_name(&code)?;
-    let change = Change::from_body(&body.object(&FIELDS).await?)?;
+    let named = named_code(&uri);
+    if let Ok(code) = &named {
+        caller.require_may_name(code)?;
+    }
+    let sent = body.object(&FIELDS).await?;
+    let code = named?;
+    let change = Change::from_body(&sent)?;
     let source = sources::update(&app, &caller, code, change).await?;
     Ok(json_answer(StatusCode::OK, &source))
 }

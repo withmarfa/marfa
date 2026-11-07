@@ -1,9 +1,17 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// The process's environment as read once. A blank value counts as unset.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Environment {
     values: BTreeMap<String, String>,
+}
+
+/// Names only, since some of the values are secrets.
+impl fmt::Debug for Environment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.values.keys()).finish()
+    }
 }
 
 impl Environment {

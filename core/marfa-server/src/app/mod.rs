@@ -1,6 +1,7 @@
 //! What the server does. Nothing here names an HTTP type.
 
 pub mod access;
+pub mod addresses;
 pub mod audit;
 pub mod catalog;
 pub mod clock;
@@ -18,14 +19,15 @@ pub mod stored;
 pub mod types;
 pub mod unit;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
 
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
-use crate::settings::Settings;
+use crate::settings::{Accepted, Settings};
+use addresses::Addresses;
 use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
@@ -45,11 +47,13 @@ pub struct App {
     pub usage: Usage,
     pub key_limit: Limiter,
     catalog: Arc<ArcSwap<Catalog>>,
+    bound_port: OnceLock<u16>,
 }
 
 impl App {
-    /// Opens the database and takes in what it holds.
-    pub async fn start(settings: Settings) -> Result<Arc<App>, Failure> {
+    /// Opens the secrets and the database, and takes in what it holds.
+    pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
+        let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::new(Faults::default());
         let options = Options {
@@ -66,9 +70,7 @@ impl App {
             .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
-        settings
-            .apply_stored(&rows)
-            .map_err(|refused| Failure::start(refused.to_string()))?;
+        settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         health::prepare_blobs(&start.blob_path)?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
@@ -95,11 +97,24 @@ impl App {
             usage: Usage::default(),
             key_limit: Limiter::default(),
             catalog,
+            bound_port: OnceLock::new(),
         }))
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
         self.catalog.clone()
+    }
+
+    /// The instance's addresses as they stand now. `app.addresses().sign_in()`
+    /// is the parsed sign-in address.
+    pub fn addresses(&self) -> Addresses {
+        Addresses::read(&self.settings, self.bound_port.get().copied())
+    }
+
+    /// Records the public port the server bound, which `PORT=0` leaves to the
+    /// operating system.
+    pub fn record_bound_port(&self, port: u16) {
+        let _ = self.bound_port.set(port);
     }
 
     pub fn contract(&self) -> u32 {

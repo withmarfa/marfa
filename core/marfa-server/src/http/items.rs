@@ -673,8 +673,8 @@ pub async fn set_metadata(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        check_item_id(&id)?;
         let sent = only_declared(body.object(Bag::Properties)?, &TAG_FIELDS)?;
+        check_item_id(&id)?;
         let tags = sent
             .get("tags")
             .map(tags_of)
@@ -715,8 +715,8 @@ pub async fn add_tags(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         let version = named_version(&uri)?;
-        check_item_id(&id)?;
         let sent = only_declared(body.object(Bag::Properties)?, &TAG_FIELDS)?;
+        check_item_id(&id)?;
         let Some(tags) = sent.get("tags") else {
             return Err(missing_field("tags"));
         };
@@ -780,8 +780,8 @@ pub async fn set_extension(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        check_item_id(&id)?;
         let data = body.object(Bag::Whole)?;
+        check_item_id(&id)?;
         body.refuse_inexact_numbers(Bag::Whole)?;
         let change = Change::SetExtension {
             id,

@@ -1,21 +1,15 @@
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::Environment;
 use super::rule;
+use super::secrets::Given;
 use crate::listener::{self, Declaration, Trust};
 
 const MAX_CLOCK_OFFSET_MS: u64 = 3_153_600_000_000;
 const MAX_I32: u64 = 2_147_483_647;
 const MIN_AUTH_SECRET: usize = 32;
-const LOCAL_SALT: &str = "marfa-local-key-salt";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NodeEnv {
-    Production,
-    Development,
-    Test,
-}
 
 /// Where the database lives, as `SQLITE_PATH` names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,28 +30,37 @@ impl DatabasePath {
         }
     }
 
+    /// The database's file, unless it is held in memory.
+    pub fn file(&self) -> Option<PathBuf> {
+        match self {
+            DatabasePath::File(path) => Some(path.clone()),
+            DatabasePath::Uri(uri) => {
+                let uri = uri.trim_start_matches("file:");
+                let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
+                let in_memory = path.is_empty()
+                    || path == ":memory:"
+                    || query
+                        .split('&')
+                        .any(|option| option == "mode=memory" || option == "vfs=memdb");
+                (!in_memory).then(|| PathBuf::from(path))
+            }
+            DatabasePath::Memory => None,
+        }
+    }
+
     /// The folder the database's files sit in.
     pub fn folder(&self) -> PathBuf {
-        let beside = |path: &Path| {
-            path.parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or(Path::new("."))
-                .to_path_buf()
-        };
-        match self {
-            DatabasePath::File(path) => beside(path),
-            DatabasePath::Uri(uri) => {
-                let path = uri.trim_start_matches("file:");
-                beside(Path::new(path.split('?').next().unwrap_or(path)))
-            }
-            DatabasePath::Memory => PathBuf::from("."),
-        }
+        self.file()
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
     }
 }
 
-/// Everything fixed when the process starts.
-pub struct Start {
-    pub node_env: NodeEnv,
+/// Everything fixed when the process starts, but for its secrets.
+pub struct Fixed {
     pub port: u16,
     pub listen_host: Option<String>,
     /// Never stored: its trust describes the network in front of this port,
@@ -73,7 +76,32 @@ pub struct Start {
     pub free_disk_bytes: Option<u64>,
     pub busy_budget: Duration,
     pub blob_path: PathBuf,
+}
+
+/// Everything fixed when the process starts. Reaching one means its secrets
+/// are filled in.
+pub struct Start {
+    fixed: Fixed,
     pub api_key_salt: String,
+    pub auth_secret: String,
+}
+
+impl Start {
+    pub(super) fn new(fixed: Fixed, api_key_salt: String, auth_secret: String) -> Start {
+        Start {
+            fixed,
+            api_key_salt,
+            auth_secret,
+        }
+    }
+}
+
+impl Deref for Start {
+    type Target = Fixed;
+
+    fn deref(&self) -> &Fixed {
+        &self.fixed
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,23 +174,25 @@ impl Reader<'_> {
     }
 }
 
-impl Start {
+impl Fixed {
+    /// Whether test hooks are on. A value outside its rule counts as off, and
+    /// [`Fixed::read`] refuses it.
+    pub(super) fn hooks_on(environment: &Environment) -> bool {
+        environment
+            .get("MARFA_TEST_HOOKS")
+            .is_some_and(|text| rule::boolean(text).unwrap_or(false))
+    }
+
     /// Reads every setting, adding a line for each one outside its rule.
-    pub(super) fn read(environment: &Environment, problems: &mut Vec<String>) -> Option<Start> {
+    pub(super) fn read(
+        environment: &Environment,
+        problems: &mut Vec<String>,
+    ) -> Option<(Fixed, Given)> {
         let mut reader = Reader {
             environment,
             problems,
             failed: false,
         };
-        let node_env = reader
-            .take("NODE_ENV", |text| {
-                rule::one_of(text, &["production", "development", "test"]).map(|name| match name {
-                    "production" => NodeEnv::Production,
-                    "test" => NodeEnv::Test,
-                    _ => NodeEnv::Development,
-                })
-            })
-            .unwrap_or(NodeEnv::Development);
         let port = reader.whole("PORT", 0, 65_535).unwrap_or(8600) as u16;
         let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
@@ -184,8 +214,10 @@ impl Start {
         let busy_budget = reader
             .whole("SQLITE_BUSY_BUDGET_MS", 0, MAX_I32)
             .unwrap_or(5_000);
-        let salt = reader.secret("API_KEY_SALT", 1);
-        reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET);
+        let given = Given {
+            api_key_salt: reader.secret("API_KEY_SALT", 1),
+            auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),
+        };
 
         let database =
             DatabasePath::read(environment.get("SQLITE_PATH").unwrap_or("./data/marfa.db"));
@@ -194,8 +226,7 @@ impl Start {
             .map(PathBuf::from)
             .unwrap_or_else(|| database.folder().join("control").join("marfa.sock"));
         let failed = reader.failed;
-        (!failed).then(|| Start {
-            node_env,
+        let fixed = Fixed {
             port,
             listen_host: environment.get("MARFA_LISTEN_HOST").map(str::to_string),
             public_listener: Declaration::public(trust),
@@ -209,12 +240,11 @@ impl Start {
             free_disk_bytes,
             busy_budget: Duration::from_millis(busy_budget),
             blob_path: PathBuf::from(environment.get("BLOB_PATH").unwrap_or("./data/blobs")),
-            api_key_salt: salt.unwrap_or_else(|| LOCAL_SALT.to_string()),
-        })
+        };
+        (!failed).then_some((fixed, given))
     }
 
-    /// The rules that compare settings or hold only in production, once every
-    /// setting has parsed.
+    /// The rules that compare settings, once every setting has parsed.
     pub(super) fn check_together(&self, environment: &Environment, problems: &mut Vec<String>) {
         if !self.test_hooks {
             let hooked = |name: &'static str| environment.get(name).map(|value| (name, value));
@@ -229,16 +259,6 @@ impl Start {
                 .chain(others.into_iter().filter_map(hooked))
             {
                 problems.push(rule::line(name, "needs MARFA_TEST_HOOKS to be true", value));
-            }
-        }
-        if self.node_env == NodeEnv::Production {
-            if self.test_hooks {
-                problems.push("MARFA_TEST_HOOKS must not be true in production".to_string());
-            }
-            for name in ["API_KEY_SALT", "MARFA_AUTH_SECRET", "MARFA_AUTH_BASE_URL"] {
-                if environment.get(name).is_none() {
-                    problems.push(format!("{name} is required in production"));
-                }
             }
         }
     }

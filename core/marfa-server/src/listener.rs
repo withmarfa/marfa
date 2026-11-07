@@ -88,7 +88,7 @@ mod tests {
 
     fn trust(pairs: &[(&str, &str)]) -> Result<Trust, Refused> {
         Settings::read(Environment::from_pairs(pairs))
-            .map(|settings| settings.start.public_listener.trust.clone())
+            .map(|accepted| accepted.fixed().public_listener.trust.clone())
     }
 
     #[test]
