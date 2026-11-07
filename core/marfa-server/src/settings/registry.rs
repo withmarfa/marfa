@@ -417,6 +417,39 @@ mod tests {
     }
 
     #[test]
+    fn a_json_value_is_read_by_the_kind_its_rule_names() {
+        let read = |entry: &Entry, value: Json| entry.row_text_of_json(&value);
+        assert_eq!(
+            read(MAX_REQUEST_BYTES.entry, Json::from(2048)),
+            Ok("2048".into())
+        );
+        assert_eq!(
+            read(MAX_REQUEST_BYTES.entry, Json::from(2048.0)),
+            Ok("2048".into())
+        );
+        for wrong in [
+            Json::from("30"),
+            Json::from(1.5),
+            Json::from(-1),
+            Json::from(9_007_199_254_740_993_u64),
+            Json::from(1e30),
+            Json::Null,
+        ] {
+            assert!(
+                read(MAX_REQUEST_BYTES.entry, wrong.clone()).is_err(),
+                "{wrong}"
+            );
+        }
+        assert!(read(RATE_LIMIT_ENABLED.entry, Json::from("true")).is_err());
+        assert_eq!(
+            read(RATE_LIMIT_ENABLED.entry, Json::from(false)),
+            Ok("false".into())
+        );
+        assert!(read(ADDRESSES.entry, Json::from("https://a.example")).is_err());
+        assert!(read(ADDRESSES.entry, serde_json::json!([1])).is_err());
+    }
+
+    #[test]
     fn text_reads_as_written() {
         let entry = Entry {
             key: "region",
