@@ -61,18 +61,31 @@ pub struct Entry<'a> {
 }
 
 pub fn record(tx: &Transaction<'_>, at: &str, caller: &Caller, entry: Entry<'_>) -> Result<()> {
+    record_from(tx, at, Some(caller), None, entry)
+}
+
+/// An entry that may have no caller, as a sign-in has none yet, and may name
+/// the address it came from.
+pub fn record_from(
+    tx: &Transaction<'_>,
+    at: &str,
+    caller: Option<&Caller>,
+    client_ip: Option<&str>,
+    entry: Entry<'_>,
+) -> Result<()> {
     tx.execute(
         "INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type, \
-         resource_id, details) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         resource_id, client_ip, details) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             uuid::Uuid::now_v7().to_string(),
             at,
-            caller.audit_id(),
-            caller.actor().to_string(),
+            caller.map(Caller::audit_id),
+            caller.map(|caller| caller.actor().to_string()),
             entry.action,
             kind_of(entry.action),
             entry.resource_type,
             entry.resource_id,
+            client_ip,
             entry.details.map(|details| details.to_string()),
         ],
     )?;

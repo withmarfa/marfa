@@ -17,6 +17,7 @@ use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 pub use limit::Limiter;
 pub use request::{MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
+pub use secret::hash as digest_of;
 pub use usage::Usage;
 
 const SELECT: &str = "SELECT k.*, (SELECT json_group_array(source) FROM \
@@ -296,6 +297,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
     let key = app
         .write(caller, "key.create", move |unit| {
             let caller = &unit.caller;
+            caller.require_recent(&unit.at)?;
             caller.require(Permission::KeysMint)?;
             if request.levers.is_some() {
                 caller.require(Permission::ConfigManage)?;
@@ -338,6 +340,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
 /// Replaces what an update names, and answers the key as it now stands.
 pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> Result<Key> {
     app.write(caller, "key.update", move |unit| {
+        unit.caller.require_recent(&unit.at)?;
         unit.caller.require_key_door()?;
         let mut key = reached(unit.tx(), &unit.caller, &id, &unit.at)?;
         let grants = request.families.over(&key.grants);
@@ -376,6 +379,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
 /// Ends a key at once: the next request bearing it finds it revoked.
 pub async fn revoke(app: &App, caller: &Caller, id: String) -> Result<()> {
     app.write(caller, "key.revoke", move |unit| {
+        unit.caller.require_recent(&unit.at)?;
         unit.caller.require_key_door()?;
         let key = reached(unit.tx(), &unit.caller, &id, &unit.at)?;
         unit.tx().execute(

@@ -2,8 +2,9 @@
 
 pub mod answer;
 mod audit;
+mod auth;
 pub mod body;
-mod caller;
+pub mod caller;
 mod control;
 mod edge_types;
 mod health;
@@ -149,6 +150,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(schema_doors())
         .merge(key_doors(app))
         .merge(item_doors())
+        .merge(auth::owner_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
@@ -168,10 +170,11 @@ fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
 }
 
 pub fn public(app: Arc<App>) -> Router {
-    finished(shared(app.clone()), app, Transport::Http)
+    let routes = shared(app.clone()).merge(auth::doors());
+    finished(routes, app, Transport::Http)
 }
 
-async fn no_store(request: Request, next: Next) -> Response {
+pub(crate) async fn no_store(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response
         .headers_mut()
@@ -182,7 +185,10 @@ async fn no_store(request: Request, next: Next) -> Response {
 pub fn control(app: Arc<App>) -> Router {
     let mut routes = shared(app.clone())
         .route("/_control/setup/status", get(control::setup_status))
-        .route("/_control/setup/claim", post(control::setup_claim));
+        .route("/_control/setup/claim", post(control::setup_claim))
+        .route("/_control/setup/code", post(control::setup_code))
+        .route("/_control/setup/ticket", post(control::setup_ticket))
+        .route("/_control/owner/recover", post(control::recover_owner));
     if app.settings.start.test_hooks {
         routes = routes
             .route(

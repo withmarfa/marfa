@@ -518,7 +518,7 @@ pub fn url_value(text: &str) -> Option<String> {
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
 // HTML's broader email shape. Keep its accepted neighbours here too.
-fn email(text: &str) -> bool {
+pub fn email(text: &str) -> bool {
     let Some((local, domain)) = text.split_once('@') else {
         return false;
     };

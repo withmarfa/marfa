@@ -3,13 +3,13 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::App;
-use super::access::Caller;
-use super::refusal::{Code, Refusal, Result};
+use super::refusal::{Refusal, Result};
 use crate::db::{Db, Write};
 
 const ID: &str = "id";
 const NAME: &str = "name";
 const CLAIMED_AT: &str = "claimed_at";
+const OWNER_ID: &str = "owner_id";
 const DEFAULT_NAME: &str = "Marfa";
 
 fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
@@ -45,23 +45,19 @@ pub async fn name(app: &App) -> Result<String> {
     Ok(name.unwrap_or_else(|| DEFAULT_NAME.to_string()))
 }
 
-pub async fn claimed(app: &App) -> Result<bool> {
-    let claimed_at = app.db.read(|tx| get(tx, CLAIMED_AT)).await?;
-    Ok(claimed_at.is_some())
+pub fn is_claimed(tx: &Transaction<'_>) -> Result<bool> {
+    Ok(get(tx, CLAIMED_AT)?.is_some())
 }
 
-/// Marks the instance as claimed, once.
-pub async fn claim(app: &App, caller: &Caller) -> Result<()> {
-    let instance = app.instance_id.clone();
-    app.write(caller, "owner.claimed", move |unit| {
-        unit.caller.require_direct()?;
-        if !insert(unit.tx(), CLAIMED_AT, &unit.at)? {
-            return Err(Refusal::new(
-                Code::OwnerExists,
-                "This instance has been claimed.",
-            ));
-        }
-        unit.audit("instance", &instance, None)
-    })
-    .await
+pub fn owner_id(tx: &Transaction<'_>) -> Result<Option<String>> {
+    get(tx, OWNER_ID)
+}
+
+/// Marks the instance as claimed by `owner_id`, once. The mark outlasts the
+/// owner's own rows, so losing them never reopens a claim.
+pub fn mark_claimed(tx: &Transaction<'_>, at: &str, owner_id: &str) -> Result<bool> {
+    if !insert(tx, CLAIMED_AT, at)? {
+        return Ok(false);
+    }
+    insert(tx, OWNER_ID, owner_id)
 }

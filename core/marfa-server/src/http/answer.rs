@@ -99,6 +99,13 @@ pub fn refusal_answer(refusal: &Refusal) -> Response {
         "x-error-code",
         HeaderValue::from_static(refusal.code.wire()),
     );
+    let wait = refusal
+        .details
+        .as_ref()
+        .and_then(|details| details.get("retry_after").and_then(Value::as_i64));
+    if let Some(seconds) = wait {
+        headers.insert(header::RETRY_AFTER, HeaderValue::from(seconds));
+    }
     response.extensions_mut().insert(Page {
         code: refusal.code,
         message: refusal.message.to_string(),

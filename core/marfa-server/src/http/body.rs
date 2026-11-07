@@ -157,6 +157,28 @@ impl JsonBody {
             .is_some_and(is_json)
     }
 
+    pub fn declares_form(&self) -> bool {
+        self.headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .to_ascii_lowercase()
+                    .starts_with("application/x-www-form-urlencoded")
+            })
+    }
+
+    /// A browser form's fields, the first of any sent twice.
+    pub async fn form(self) -> Result<Map<String, Value>, Stopped> {
+        let mut fields = Map::new();
+        for (name, value) in form_urlencoded::parse(&self.bytes().await?) {
+            fields
+                .entry(name.into_owned())
+                .or_insert_with(|| value.into_owned().into());
+        }
+        Ok(fields)
+    }
+
     /// The body as it was sent, for an operation that must see it before it
     /// judges it.
     pub async fn read(self) -> Result<ReadBody, Stopped> {

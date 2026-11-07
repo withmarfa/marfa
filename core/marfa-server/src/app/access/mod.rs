@@ -11,11 +11,14 @@ mod schema;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use super::auth::session::{self, Session};
 use super::keys::{self, Key};
 use super::refusal::{Code, Refusal, Result};
 pub use levers::Levers;
 pub use maps::{Axis, Level, Map};
 pub use schema::{Door, SchemaKind};
+
+const SIGN_IN_AGAIN: &str = "Sign in again to perform this operation";
 
 macro_rules! permissions {
     ($($variant:ident = $wire:literal;)*) => {
@@ -187,13 +190,15 @@ pub struct Change<'a> {
     pub narrow_only: bool,
 }
 
-/// What is asking. A signed-in app or a browser session is another variant,
-/// answering these same questions from what it holds.
+/// What is asking. A signed-in app is another variant, answering these same
+/// questions from what it holds.
 #[derive(Clone, Debug)]
 pub enum Caller {
     /// The private local command, on the control socket with no credential.
     Local,
     Key(Box<Key>),
+    /// The owner, in a browser.
+    Owner(Box<Session>),
 }
 
 impl Caller {
@@ -206,23 +211,45 @@ impl Caller {
             Caller::Key(key) => keys::live_by_id(tx, &key.id, at)?
                 .map(|key| Caller::Key(Box::new(key)))
                 .ok_or_else(unauthorized),
+            Caller::Owner(session) => session::live_by_id(tx, &session.id, session::now_of(at)?)?
+                .map(|session| Caller::Owner(Box::new(session)))
+                .ok_or_else(unauthorized),
         }
     }
 
     pub fn is_direct(&self) -> bool {
-        matches!(self, Caller::Local)
+        matches!(self, Caller::Local | Caller::Owner(_))
+    }
+
+    /// The browser session behind this caller, if there is one.
+    pub fn session(&self) -> Option<&Session> {
+        match self {
+            Caller::Owner(session) => Some(session),
+            _ => None,
+        }
+    }
+
+    /// Refuses a browser session made more than five minutes before `at`. No
+    /// other caller has a sign-in to go stale.
+    pub fn require_recent(&self, at: &str) -> Result<()> {
+        match self.session() {
+            Some(session) if !session.is_recent(session::now_of(at)?) => {
+                Err(Refusal::new(Code::Forbidden, SIGN_IN_AGAIN))
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn key(&self) -> Option<&Key> {
         match self {
-            Caller::Local => None,
+            Caller::Local | Caller::Owner(_) => None,
             Caller::Key(key) => Some(key),
         }
     }
 
     pub fn holds(&self, permission: Permission) -> bool {
         match self {
-            Caller::Local => true,
+            Caller::Local | Caller::Owner(_) => true,
             Caller::Key(key) => key.grants.holds(permission),
         }
     }
@@ -262,7 +289,7 @@ impl Caller {
     /// one decision behind every such door.
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
-            Caller::Local => true,
+            Caller::Local | Caller::Owner(_) => true,
             Caller::Key(key) => {
                 key.id == target.id
                     || key.grants.holds(Permission::KeysManage)
@@ -277,7 +304,7 @@ impl Caller {
     /// What a mint naming no family gives.
     pub fn whole_set(&self) -> Grants {
         match self {
-            Caller::Local => Grants::everything(),
+            Caller::Local | Caller::Owner(_) => Grants::everything(),
             Caller::Key(key) => key.grants.clone(),
         }
     }
@@ -306,7 +333,7 @@ impl Caller {
     /// Whether this caller could give a key `source`.
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
-            Caller::Local => true,
+            Caller::Local | Caller::Owner(_) => true,
             Caller::Key(key) => key.grants.may_grant(&key.source, source),
         }
     }
@@ -376,6 +403,7 @@ impl Caller {
         match self {
             Caller::Local => "local:process".to_string(),
             Caller::Key(key) => key.id.clone(),
+            Caller::Owner(session) => format!("owner:{}", session.id),
         }
     }
 
@@ -384,6 +412,9 @@ impl Caller {
         match self {
             Caller::Local => json!({ "kind": "local", "id": "local", "name": "Local command" }),
             Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
+            Caller::Owner(session) => {
+                json!({ "kind": "browser", "id": session.id, "name": session.name() })
+            }
         }
     }
 }

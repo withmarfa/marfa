@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::app::App;
+use crate::app::auth::claim;
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -108,6 +109,9 @@ pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     if let Some(port) = port {
         app.record_bound_port(port);
     }
+    claim::announce_at_start(&app)
+        .await
+        .map_err(|refusal| Failure::start(refusal.message.to_string()))?;
     let mut servers = JoinSet::new();
     listen(&mut servers, &app, public, private, &stopping);
     tracing::info!("Private control socket listening");

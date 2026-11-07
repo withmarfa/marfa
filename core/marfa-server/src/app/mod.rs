@@ -3,6 +3,7 @@
 pub mod access;
 pub mod addresses;
 pub mod audit;
+pub mod auth;
 pub mod catalog;
 pub mod clock;
 pub mod edge_types;
@@ -28,6 +29,7 @@ use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
 use crate::settings::{Accepted, Settings};
 use addresses::Addresses;
+use auth::password::Passwords;
 use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
@@ -46,6 +48,7 @@ pub struct App {
     pub health: Health,
     pub usage: Usage,
     pub key_limit: Limiter,
+    pub passwords: Passwords,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
 }
@@ -96,6 +99,7 @@ impl App {
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
+            passwords: Passwords::default(),
             catalog,
             bound_port: OnceLock::new(),
         }))

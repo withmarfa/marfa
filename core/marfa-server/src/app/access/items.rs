@@ -48,6 +48,11 @@ impl Caller {
                 id: key.id.clone(),
                 name: printable(&key.label),
             },
+            Caller::Owner(session) => Writer {
+                kind: "browser".to_string(),
+                id: session.id.clone(),
+                name: printable(&session.name()),
+            },
         }
     }
 
@@ -58,6 +63,7 @@ impl Caller {
             Caller::Local => "local".to_string(),
             Caller::Key(key) if key.oauth_client_id.is_some() => key.source.clone(),
             Caller::Key(key) => key.id.clone(),
+            Caller::Owner(session) => format!("owner:{}", session.id),
         }
     }
 
@@ -98,7 +104,7 @@ impl Caller {
     /// The source a write that names none is stamped with.
     pub fn own_source(&self) -> &str {
         match self {
-            Caller::Local => "unknown",
+            Caller::Local | Caller::Owner(_) => "unknown",
             Caller::Key(key) => &key.source,
         }
     }

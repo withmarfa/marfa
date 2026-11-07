@@ -41,7 +41,7 @@ pub fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-pub fn request(record: &Request<'_>) {
+fn write_line(record: &impl Serialize) {
     let Ok(mut line) = serde_json::to_vec(record) else {
         return;
     };
@@ -49,4 +49,18 @@ pub fn request(record: &Request<'_>) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(&line);
     let _ = out.flush();
+}
+
+pub fn request(record: &Request<'_>) {
+    write_line(record);
+}
+
+/// A warning for whoever reads this server's own output, written past
+/// `tracing` so that nothing listening there can carry it elsewhere.
+pub fn local_only(message: &str) {
+    write_line(&serde_json::json!({
+        "timestamp": now(),
+        "level": "WARN",
+        "message": message,
+    }));
 }

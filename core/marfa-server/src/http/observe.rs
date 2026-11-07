@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{MatchedPath, Request, State};
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -38,6 +38,8 @@ impl Transport {
 #[derive(Default)]
 pub struct Notes {
     pub key_id: OnceLock<String>,
+    /// The cookie that carries on a session whose use this request recorded.
+    pub renewal: OnceLock<HeaderValue>,
     route: OnceLock<String>,
 }
 
@@ -122,6 +124,15 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
 
     if wants_html {
         offer_page(&mut response);
+    }
+    let unanswered = !response.headers().contains_key(header::SET_COOKIE);
+    if let Some(cookie) = notes.renewal.get()
+        && unanswered
+        && response.status() != StatusCode::UNAUTHORIZED
+    {
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, cookie.clone());
     }
     let headers = response.headers_mut();
     headers.insert(
