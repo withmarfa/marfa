@@ -169,6 +169,8 @@
     if (!webauthn || !window.PublicKeyCredential) return;
     for (const button of document.querySelectorAll("[data-passkey]")) {
       button.hidden = false;
+      const group = button.closest("[data-passkey-group]");
+      if (group) group.hidden = false;
       button.addEventListener("click", () => {
         void webauthn[button.dataset.passkey](button);
       });

@@ -7,7 +7,7 @@
 <div class="field">
 <label for="user_code">Code</label>
 <input id="user_code" class="code" type="text" name="user_code" value="{{ view.user_code }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="code-problem"{% endif %}{% if invalid_code %} aria-invalid="true"{% endif %}>
+{% if show_lifetime %}<p class="hint">Codes end after 10 minutes.</p>{% endif %}
 </div>
 <button type="submit" class="button primary wide">Continue</button>
 </form>
-{% if show_lifetime %}<p class="small">Codes end after 10 minutes.</p>{% endif %}
