@@ -144,11 +144,11 @@ jobs:
   # writes the table to the job summary. A figure over its ceiling fails the
   # night unless it is listed in KNOWN_OVER (conformance/src/utils/scale/
   # figures.ts) against an open issue.
-  # Hosted runners vary by more than the ceilings allow, so each step first
-  # takes a reading of the host's speed, with no Marfa code. When the night's
-  # median is well over its reference, a figure over a time ceiling is shown as
-  # not judged and does not fail the night. Errors, a missing measurement,
-  # memory and size still fail it, and with no readings every figure is judged.
+  # Hosted runners vary by more than the ceilings allow, so the night's own
+  # `seed_rate` says how slow the host was. When a whole seed ran well under a
+  # fast night's rate, a figure over a time ceiling is shown as not judged, up
+  # to a bound, and does not fail the night. Errors, a missing measurement,
+  # memory and size still fail it, and a partial seed excuses nothing.
   scale:
     name: Scale
     timeout-minutes: 180

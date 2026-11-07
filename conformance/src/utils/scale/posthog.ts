@@ -50,8 +50,10 @@ export function benchmarkEvent(
     items: file.items,
     passed: verdict.passed,
     failed_count: failedCount(file),
-    slow_runner: verdict.slowRunner.length > 0,
+    runner_factor: verdict.runnerFactor,
+    slow_runner: verdict.slowRunner,
     not_judged_count: verdict.notJudged.length,
+    not_judged: verdict.notJudged.join(", "),
   };
   for (const figure of file.figures) {
     // A figure that took no measurement has no value to send: its zero would

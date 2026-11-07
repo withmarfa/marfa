@@ -4,10 +4,11 @@
  */
 import {
   explainedBySlowRunner,
+  isSlowRunner,
   KNOWN_OVER,
-  MIN_PROBE_READINGS,
-  PROBE_REFERENCE_MS,
-  slowRunner,
+  NOT_JUDGED_MARGIN,
+  runnerFactor,
+  SEED_RATE_REFERENCE,
   SLOW_RUNNER_FACTOR,
   type Figure,
   type Fragment,
@@ -98,8 +99,9 @@ export interface Verdict {
   failedFigures: string[];
   /** Over a time ceiling on a slow runner: shown, and failing nothing. */
   notJudged: string[];
-  /** Why the runner counts as slow tonight; empty when it does not. */
-  slowRunner: string[];
+  /** How many times slower than a fast night the seed ran; null when it cannot say. */
+  runnerFactor: number | null;
+  slowRunner: boolean;
   missingSteps: string[];
   problems: string[];
 }
@@ -117,7 +119,7 @@ export function verdictOf(
   file: FiguresFile,
   known: Readonly<Record<string, number>> = KNOWN_OVER,
 ): Verdict {
-  const reasons = slowRunner(file.figures);
+  const factor = runnerFactor(file.figures);
   const missed = file.figures.filter(
     (figure) => !figure.passed && knownOverIssue(figure, known) === null,
   );
@@ -133,7 +135,8 @@ export function verdictOf(
       file.problems.length === 0,
     failedFigures,
     notJudged: missed.filter(isNotJudged).map((figure) => figure.name),
-    slowRunner: reasons,
+    runnerFactor: factor,
+    slowRunner: isSlowRunner(factor),
     missingSteps: file.missingSteps,
     problems: file.problems,
   };
@@ -288,23 +291,25 @@ function verdictCell(
   return figure.ceiling === null ? "recorded" : "pass";
 }
 
+/** How the night's seed compares with a fast night's. */
+export function slowRunnerReason(factor: number): string {
+  return `factor ${factor.toFixed(2)}: the seed reached ${(SEED_RATE_REFERENCE / factor).toFixed(1)} items a second, against ${SEED_RATE_REFERENCE} on a fast night`;
+}
+
 /** Whether every ceiling was judged tonight, and if not, which were not and why. */
-function runnerLine(figures: readonly Figure[], verdict: Verdict): string {
-  if (verdict.slowRunner.length > 0) {
-    const missed =
-      verdict.notJudged.length > 0
-        ? `A figure over a time ceiling is not judged tonight: ${verdict.notJudged.join(", ")}.`
-        : "Every ceiling was judged.";
-    return `**Slow runner:** ${verdict.slowRunner.join("; ")}, over the ${SLOW_RUNNER_FACTOR} times that counts as slow. ${missed} A figure with errors or no measurement, a memory or size figure and \`seed_errors\` are judged as on any night.`;
+function runnerLine(verdict: Verdict): string {
+  const factor = verdict.runnerFactor;
+  if (factor === null) {
+    return "Runner: the seed left no whole rate, so every ceiling was judged.";
   }
-  const probed = figures.some(
-    (figure) =>
-      figure.name in PROBE_REFERENCE_MS &&
-      (figure.samples ?? 0) >= MIN_PROBE_READINGS,
-  );
-  return probed
-    ? "Runner: normal speed, so every ceiling was judged."
-    : "Runner: the probe left too few readings, so every ceiling was judged.";
+  if (!verdict.slowRunner) {
+    return `Runner: normal speed (factor ${factor.toFixed(2)}), so every ceiling was judged.`;
+  }
+  const missed =
+    verdict.notJudged.length > 0
+      ? `Not judged tonight: ${verdict.notJudged.join(", ")}.`
+      : "Every ceiling was judged.";
+  return `**Slow runner:** ${slowRunnerReason(factor)}, over the ${SLOW_RUNNER_FACTOR} that counts as slow. ${missed} A figure over a time ceiling is not judged up to ${(factor * NOT_JUDGED_MARGIN).toFixed(2)} times that ceiling, and fails past it. A figure with errors or no measurement, a memory or size figure and \`seed_errors\` are judged as on any night.`;
 }
 
 /** The Markdown the run's summary shows. */
@@ -329,7 +334,7 @@ export function renderSummary(
   lines.push(
     `${headline} ${size}, commit \`${tonight.commit}\`, profile ${tonight.profile}.`,
     "",
-    runnerLine(tonight.figures, verdict),
+    runnerLine(verdict),
     "",
   );
 

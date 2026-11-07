@@ -29,12 +29,12 @@ import {
   mergeFragments,
   parseFiguresFile,
   renderSummary,
+  slowRunnerReason,
   verdictOf,
   type FiguresFile,
 } from "../../src/utils/scale/report.js";
 import type { Fragment } from "../../src/utils/scale/figures.js";
 import { log, readFragment, REPORTS_DIR, targetItems } from "./context.js";
-import { probeFragmentOfTheNight } from "./probe.js";
 
 /** One id for every night, so the event is a series and not a person. */
 const DISTINCT_ID = "marfa-nightly-benchmarks";
@@ -168,7 +168,6 @@ export async function finish(): Promise<void> {
     const part = readFragment(step, true);
     if (part !== null) partial.push(part);
   }
-  whole.push(probeFragmentOfTheNight());
   const file = mergeFragments(
     whole,
     {
@@ -197,9 +196,9 @@ export function judge(): void {
   }
   const file = JSON.parse(readFileSync(FIGURES_FILE, "utf8")) as FiguresFile;
   const verdict = verdictOf(file);
-  if (verdict.notJudged.length > 0) {
+  if (verdict.notJudged.length > 0 && verdict.runnerFactor !== null) {
     console.log(
-      `::warning::Slow runner (${verdict.slowRunner.join("; ")}): not judged: ${verdict.notJudged.join(", ")}.`,
+      `::warning::Slow runner (${slowRunnerReason(verdict.runnerFactor)}): not judged: ${verdict.notJudged.join(", ")}.`,
     );
   }
   if (verdict.passed) {

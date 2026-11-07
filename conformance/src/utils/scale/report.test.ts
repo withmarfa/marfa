@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   CEILINGS,
   KNOWN_OVER,
-  MIN_PROBE_READINGS,
-  PROBE_REFERENCE_MS,
   NOT_JUDGED_MARGIN,
+  SEED_RATE_REFERENCE,
   SLOW_RUNNER_FACTOR,
   distribution,
   fragmentOf,
@@ -109,7 +108,8 @@ describe("the verdict", () => {
       passed: true,
       failedFigures: [],
       notJudged: [],
-      slowRunner: [],
+      runnerFactor: null,
+      slowRunner: false,
       missingSteps: [],
       problems: [],
     });
@@ -191,15 +191,14 @@ describe("the verdict", () => {
   });
 });
 
-/** A night's readings of the probes, this many times their references. */
-function probesAt(cpuTimes: number, diskTimes = 1, readings = 5) {
-  const of = (name: keyof typeof PROBE_REFERENCE_MS, times: number) =>
-    distribution(
-      name,
-      "ms",
-      Array.from({ length: readings }, () => PROBE_REFERENCE_MS[name] * times),
-    );
-  return [of("runner_cpu_probe", cpuTimes), of("runner_disk_probe", diskTimes)];
+/** A whole seed's figures, for a runner this many times slower than a fast night. */
+function seedAt(factor: number) {
+  return [
+    scalar("items_target", "count", 250_000),
+    scalar("items_seeded", "count", 250_000),
+    scalar("seed_errors", "count", 0),
+    scalar("seed_rate", "per_s", SEED_RATE_REFERENCE / factor),
+  ];
 }
 
 const overTime = () => scalar("server_restart", "ms", 3_000);
@@ -208,24 +207,21 @@ describe("the verdict on a slow runner", () => {
   const verdictWith = (...figures: ReturnType<typeof scalar>[]) =>
     verdictOf(fileWith(figures), {});
 
-  it("fails a figure over a time ceiling on a normal runner", () => {
-    const verdict = verdictWith(...probesAt(1), overTime());
+  it("fails a figure over a time ceiling on a fast night", () => {
+    const verdict = verdictWith(...seedAt(1), overTime());
     expect(verdict.failedFigures).toEqual(["server_restart"]);
     expect(verdict.notJudged).toEqual([]);
+    expect(verdict.slowRunner).toBe(false);
     expect(verdict.passed).toBe(false);
   });
 
-  it("does not judge the same figure on a slow runner", () => {
-    const verdict = verdictWith(...probesAt(2), overTime());
+  it("does not judge the same figure on a slow night, within the bound", () => {
+    const verdict = verdictWith(...seedAt(2), overTime());
     expect(verdict.failedFigures).toEqual([]);
     expect(verdict.notJudged).toEqual(["server_restart"]);
+    expect(verdict.runnerFactor).toBeCloseTo(2);
+    expect(verdict.slowRunner).toBe(true);
     expect(verdict.passed).toBe(true);
-  });
-
-  it("takes a slow disk alone for a slow runner", () => {
-    const verdict = verdictWith(...probesAt(1, 2), overTime());
-    expect(verdict.notJudged).toEqual(["server_restart"]);
-    expect(verdict.slowRunner.join()).toMatch(/disk/);
   });
 
   it.each([
@@ -233,15 +229,38 @@ describe("the verdict on a slow runner", () => {
     ["a distribution's p95", distribution("get_item", "ms", steady(70))],
     ["a quiet watch's CPU", scalar("folder_watch_cpu", "cpu_s_per_min", 2)],
   ])("does not judge %s over its ceiling", (_label, figure) => {
-    expect(verdictWith(...probesAt(2), figure).notJudged).toEqual([
-      figure.name,
+    expect(verdictWith(...seedAt(2), figure).notJudged).toEqual([figure.name]);
+  });
+
+  it("fails a figure past its bound, and leaves one at the bound unjudged", () => {
+    const limit = 2_000 * 2 * NOT_JUDGED_MARGIN;
+    const past = scalar("server_restart", "ms", limit + 1);
+    expect(verdictWith(...seedAt(2), past).failedFigures).toEqual([
+      "server_restart",
     ]);
+    const at = scalar("server_restart", "ms", limit);
+    expect(verdictWith(...seedAt(2), at).notJudged).toEqual(["server_restart"]);
+  });
+
+  it("holds a quiet watch's CPU to the same bound", () => {
+    const past = scalar("folder_watch_cpu", "cpu_s_per_min", 4.1);
+    expect(verdictWith(...seedAt(2), past).failedFigures).toEqual([
+      "folder_watch_cpu",
+    ]);
+  });
+
+  it("calls a factor of exactly 1.25 normal, and one just over it slow", () => {
+    const at = verdictWith(...seedAt(SLOW_RUNNER_FACTOR), overTime());
+    expect(at.runnerFactor).toBe(SLOW_RUNNER_FACTOR);
+    expect(at.slowRunner).toBe(false);
+    expect(at.failedFigures).toEqual(["server_restart"]);
+    const over = verdictWith(...seedAt(SLOW_RUNNER_FACTOR + 0.01), overTime());
+    expect(over.notJudged).toEqual(["server_restart"]);
   });
 
   it.each([
     ["a memory figure", scalar("rss_at_rest", "MB", 400)],
     ["a ratio", scalar("bulk_page_ratio", "ratio", 3)],
-    ["seed errors", scalar("seed_errors", "count", 3_000)],
     [
       "a time figure with errors",
       distribution("get_item", "ms", steady(70), { errors: 1 }),
@@ -257,14 +276,14 @@ describe("the verdict on a slow runner", () => {
     ],
     ["a time figure with no value", scalar("server_restart", "ms", Number.NaN)],
   ])("still fails %s", (_label, figure) => {
-    const verdict = verdictWith(...probesAt(2), figure);
+    const verdict = verdictWith(...seedAt(2), figure);
     expect(verdict.failedFigures).toEqual([figure.name]);
     expect(verdict.passed).toBe(false);
   });
 
   it("still fails a time figure with no value once the file has been written and read", () => {
     const written = fileWith([
-      ...probesAt(2),
+      ...seedAt(2),
       scalar("server_restart", "ms", Number.NaN),
     ]);
     const read = JSON.parse(JSON.stringify(written)) as FiguresFile;
@@ -272,91 +291,69 @@ describe("the verdict on a slow runner", () => {
   });
 
   it("still names a step that left no figures", () => {
-    const file = fileWith([...probesAt(2), overTime()], {
+    const file = fileWith([...seedAt(2), overTime()], {
       missingSteps: ["bulk"],
     });
     expect(verdictOf(file, {}).passed).toBe(false);
   });
 
-  it("judges as normal when the probe left no figures, excusing nothing", () => {
-    const verdict = verdictWith(overTime());
-    expect(verdict.slowRunner).toEqual([]);
-    expect(verdict.failedFigures).toEqual(["server_restart"]);
-    expect(verdict.notJudged).toEqual([]);
-  });
+  it.each(["seed_rate", "items_seeded", "items_target", "seed_errors"])(
+    "excuses nothing when the seed left no %s",
+    (name) => {
+      const seed = seedAt(2).filter((figure) => figure.name !== name);
+      const verdict = verdictWith(...seed, overTime());
+      expect(verdict.runnerFactor).toBeNull();
+      expect(verdict.failedFigures).toEqual(["server_restart"]);
+      expect(verdict.notJudged).toEqual([]);
+    },
+  );
 
-  it("judges as normal on fewer readings than the probe needs", () => {
-    const few = probesAt(2, 2, MIN_PROBE_READINGS - 1);
-    expect(verdictWith(...few, overTime()).failedFigures).toEqual([
-      "server_restart",
-    ]);
-    // The witness: one more reading makes it a slow runner.
-    const enough = probesAt(2, 2, MIN_PROBE_READINGS);
-    expect(verdictWith(...enough, overTime()).notJudged).toEqual([
-      "server_restart",
-    ]);
-  });
-
-  it("does not take a slow disk as the reason for a quiet watch's CPU", () => {
-    const cpu = scalar("folder_watch_cpu", "cpu_s_per_min", 2);
-    expect(verdictWith(...probesAt(1, 2), cpu).failedFigures).toEqual([
-      "folder_watch_cpu",
-    ]);
-    // The witness: a slow CPU does explain it.
-    expect(verdictWith(...probesAt(2, 1), cpu).notJudged).toEqual([
-      "folder_watch_cpu",
-    ]);
-  });
-
-  it("fails a figure further over its ceiling than the runner's slowness explains", () => {
-    const limit = 2_000 * 2 * NOT_JUDGED_MARGIN;
-    const past = scalar("server_restart", "ms", limit + 1);
-    expect(verdictWith(...probesAt(2), past).failedFigures).toEqual([
-      "server_restart",
-    ]);
-    // The witness: at the bound it is put down to the runner.
-    const at = scalar("server_restart", "ms", limit);
-    expect(verdictWith(...probesAt(2), at).notJudged).toEqual([
-      "server_restart",
-    ]);
-  });
-
-  it("calls a median that exactly meets the factor normal, and one just over it slow", () => {
-    const at = verdictWith(...probesAt(SLOW_RUNNER_FACTOR), overTime());
-    expect(at.slowRunner).toEqual([]);
-    expect(at.failedFigures).toEqual(["server_restart"]);
-    const over = verdictWith(
-      ...probesAt(SLOW_RUNNER_FACTOR + 0.01),
-      overTime(),
+  it("excuses nothing when the seed fell short of its target", () => {
+    const short = seedAt(2).map((figure) =>
+      figure.name === "items_seeded"
+        ? scalar("items_seeded", "count", 249_999)
+        : figure,
     );
-    expect(over.notJudged).toEqual(["server_restart"]);
+    const verdict = verdictWith(...short, overTime());
+    expect(verdict.runnerFactor).toBeNull();
+    expect(verdict.failedFigures).toEqual(["server_restart"]);
   });
 
-  it("judges by the median, so noise on a minority of readings excuses nothing", () => {
-    const reference = PROBE_REFERENCE_MS.runner_cpu_probe;
-    const noisy = distribution("runner_cpu_probe", "ms", [
-      reference,
-      reference,
-      reference,
-      reference * 9,
-      reference * 9,
-    ]);
-    expect(verdictWith(noisy, overTime()).failedFigures).toEqual([
-      "server_restart",
-    ]);
+  it("fails seed errors and excuses nothing beside them", () => {
+    const errored = seedAt(2).map((figure) =>
+      figure.name === "seed_errors"
+        ? scalar("seed_errors", "count", 3_000)
+        : figure,
+    );
+    const verdict = verdictWith(...errored, overTime());
+    expect(verdict.runnerFactor).toBeNull();
+    expect(verdict.failedFigures).toEqual(["seed_errors", "server_restart"]);
+  });
+
+  it.each([
+    ["zero", 0],
+    ["no number", Number.NaN],
+  ])("excuses nothing on a seed rate of %s", (_label, rate) => {
+    const seed = seedAt(2).map((figure) =>
+      figure.name === "seed_rate" ? { ...figure, value: rate } : figure,
+    );
+    const read = JSON.parse(JSON.stringify(fileWith([...seed, overTime()])));
+    const verdict = verdictOf(read as FiguresFile, {});
+    expect(verdict.runnerFactor).toBeNull();
+    expect(verdict.failedFigures).toContain("server_restart");
   });
 
   it("keeps the issue of a listed figure ahead of the slow runner", () => {
-    const file = fileWith([...probesAt(2), overTime()]);
+    const file = fileWith([...seedAt(2), overTime()]);
     const known = { server_restart: 2609 };
     expect(verdictOf(file, known).notJudged).toEqual([]);
     expect(renderSummary(file, null, known)).toContain("over, #2609 open");
   });
 
-  it("says plainly in the summary which figures were not judged and why", () => {
+  it("says plainly in the summary what the factor was and what was not judged", () => {
     const text = renderSummary(
       fileWith([
-        ...probesAt(2),
+        ...seedAt(2),
         overTime(),
         distribution("get_item", "ms", steady(10)),
       ]),
@@ -364,8 +361,11 @@ describe("the verdict on a slow runner", () => {
       {},
     );
     expect(text).toContain("Passed, with 1 time figure not judged.");
-    expect(text).toMatch(/\*\*Slow runner:\*\*.*CPU probe.*2\.00 times/);
-    expect(text).toMatch(/not judged tonight: server_restart/);
+    expect(text).toMatch(
+      /\*\*Slow runner:\*\* factor 2\.00: the seed reached 124\.0 items a second, against 248/,
+    );
+    expect(text).toMatch(/Not judged tonight: server_restart\./);
+    expect(text).toMatch(/up to 4\.00 times that ceiling/);
     expect(text).toMatch(
       /\| server_restart \| 3000\.0 ms \| none \| none \| 2000\.0 ms \| not judged: slow runner \|/,
     );
@@ -374,7 +374,7 @@ describe("the verdict on a slow runner", () => {
 
   it("fails the summary's headline when a judged figure fails on a slow runner", () => {
     const text = renderSummary(
-      fileWith([...probesAt(2), overTime(), scalar("rss_at_rest", "MB", 400)]),
+      fileWith([...seedAt(2), overTime(), scalar("rss_at_rest", "MB", 400)]),
       null,
       {},
     );
@@ -383,16 +383,15 @@ describe("the verdict on a slow runner", () => {
     expect(text).toContain("not judged: slow runner");
   });
 
-  it("says every ceiling was judged on a normal runner, and when the probe left no readings", () => {
-    const normal = renderSummary(fileWith(probesAt(1)), null, {});
-    expect(normal).toMatch(/Runner: normal speed, so every ceiling was judged/);
+  it("says every ceiling was judged on a fast night, and when the seed left no whole rate", () => {
+    const normal = renderSummary(fileWith(seedAt(1)), null, {});
+    expect(normal).toMatch(
+      /Runner: normal speed \(factor 1\.00\), so every ceiling was judged/,
+    );
     expect(normal).not.toContain("Slow runner");
-    for (const figures of [[], probesAt(2, 2, MIN_PROBE_READINGS - 1)]) {
-      const text = renderSummary(fileWith(figures), null, {});
-      expect(text).toMatch(
-        /Runner: the probe left too few readings, so every ceiling was judged/,
-      );
-    }
+    expect(renderSummary(fileWith([]), null, {})).toMatch(
+      /Runner: the seed left no whole rate, so every ceiling was judged/,
+    );
   });
 });
 

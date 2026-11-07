@@ -134,6 +134,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   // the figures claim, so any error fails the night.
   seed_rate: recorded,
   seed_errors: { ceiling: 0, issue: null },
+  items_target: recorded,
   items_seeded: recorded,
   parent_of_edges: recorded,
   about_edges: recorded,
@@ -142,10 +143,6 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   db_size: recorded,
   wal_size: recorded,
   rows_items: recorded,
-
-  // How fast the runner itself is tonight, measured with no Marfa code.
-  runner_cpu_probe: recorded,
-  runner_disk_probe: recorded,
 };
 
 /**
@@ -163,17 +160,13 @@ export const KNOWN_OVER: Readonly<Record<string, number>> = {
 };
 
 /**
- * What a probe's median reads on a hosted runner of ordinary speed: the CPU
- * probe's whole loop, and the disk probe's time for one synced write.
- * PROVISIONAL: reasoned from a laptop's reading, since nothing had yet recorded
- * these on a hosted runner. Replace them with what a dispatched run reads.
+ * Items a second a whole seed reaches on a fast night. Hosted runners differ by
+ * more than the ceilings allow, and a fixed CPU or disk loop does not show it:
+ * nights that seeded at the same pace read 280 to 852 ms on one such loop.
  */
-export const PROBE_REFERENCE_MS = {
-  runner_cpu_probe: 1_200,
-  runner_disk_probe: 5,
-} as const;
+export const SEED_RATE_REFERENCE = 248;
 
-/** A median over this many times its reference makes the runner slow. */
+/** A runner more than this many times slower than a fast night is slow. */
 export const SLOW_RUNNER_FACTOR = 1.25;
 
 /**
@@ -183,45 +176,31 @@ export const SLOW_RUNNER_FACTOR = 1.25;
  */
 export const NOT_JUDGED_MARGIN = 2;
 
-/** The fewest readings a median may rest on: one is noise, not a slow night. */
-export const MIN_PROBE_READINGS = 3;
-
-type ProbeName = keyof typeof PROBE_REFERENCE_MS;
-
-const PROBE_LABEL: Record<ProbeName, string> = {
-  runner_cpu_probe: "CPU probe",
-  runner_disk_probe: "disk probe",
-};
-
-const PROBE_NAMES = Object.keys(PROBE_REFERENCE_MS) as ProbeName[];
-
 /**
- * How many times its reference a probe read tonight, when that makes the runner
- * slow; null when it does not, or when too few readings say so. A probe that
- * crashed therefore excuses nothing.
+ * How many times slower than a fast night tonight's seed ran; null when the
+ * seed cannot say, since a partial seed's rate proves nothing.
+ *
+ * A regression in bulk writes lowers `seed_rate` too, so it can excuse the time
+ * figures up to their bound. Those figures still show in the summary.
  */
-function slowFactor(
-  figures: readonly Figure[],
-  name: ProbeName,
-): number | null {
-  const probe = figures.find((figure) => figure.name === name);
-  const median = probe?.p50 ?? null;
-  if (median === null || (probe?.samples ?? 0) < MIN_PROBE_READINGS)
+export function runnerFactor(figures: readonly Figure[]): number | null {
+  const reading = (name: string) => {
+    const value = figures.find((figure) => figure.name === name)?.value;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const rate = reading("seed_rate");
+  const seeded = reading("items_seeded");
+  const target = reading("items_target");
+  const errors = reading("seed_errors");
+  if (rate === null || seeded === null || target === null || errors === null) {
     return null;
-  const factor = median / PROBE_REFERENCE_MS[name];
-  return factor > SLOW_RUNNER_FACTOR ? factor : null;
+  }
+  if (rate <= 0 || seeded < target || errors > 0) return null;
+  return SEED_RATE_REFERENCE / rate;
 }
 
-/** Why tonight's runner is slow, one reason per probe over its limit. */
-export function slowRunner(figures: readonly Figure[]): string[] {
-  return PROBE_NAMES.flatMap((name) => {
-    const factor = slowFactor(figures, name);
-    if (factor === null) return [];
-    const reference = PROBE_REFERENCE_MS[name];
-    return [
-      `the ${PROBE_LABEL[name]}'s median was ${(factor * reference).toFixed(1)} ms, ${factor.toFixed(2)} times its reference of ${reference} ms`,
-    ];
-  });
+export function isSlowRunner(factor: number | null): factor is number {
+  return factor !== null && factor > SLOW_RUNNER_FACTOR;
 }
 
 /** What a slower host costs more of: wall time, and the CPU time of the same work. */
@@ -242,23 +221,15 @@ export function overTimeCeilingAlone(figure: Figure): boolean {
   );
 }
 
-/**
- * Whether tonight's runner explains this figure's miss. CPU time grows only
- * with a slow CPU, so a slow disk does not excuse it. The bound keeps a
- * regression that loads the disk between steps from excusing itself whole.
- */
+/** Whether tonight's runner explains this figure's miss, up to the bound. */
 export function explainedBySlowRunner(
   figure: Figure,
   figures: readonly Figure[],
 ): boolean {
-  if (!overTimeCeilingAlone(figure)) return false;
-  const probes: readonly ProbeName[] =
-    figure.unit === "cpu_s_per_min" ? ["runner_cpu_probe"] : PROBE_NAMES;
-  const factors = probes.flatMap((name) => slowFactor(figures, name) ?? []);
-  if (factors.length === 0) return false;
+  const factor = runnerFactor(figures);
+  if (!isSlowRunner(factor) || !overTimeCeilingAlone(figure)) return false;
   return (
-    figure.value <=
-    (figure.ceiling as number) * Math.max(...factors) * NOT_JUDGED_MARGIN
+    figure.value <= (figure.ceiling as number) * factor * NOT_JUDGED_MARGIN
   );
 }
 
