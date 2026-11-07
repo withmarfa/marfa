@@ -3340,8 +3340,13 @@ mod tests {
     #[test]
     fn a_finished_hydration_has_nothing_to_ask_of_read_only() {
         let server = Scripted::start();
-        let core = hydrated_copy(&server);
+        let (core, _) = pinned_copy(&server, 0);
         let every = std::time::Duration::from_secs(60);
+        store::meta_delete(&core.conn().unwrap(), store::META_READ_ONLY_READ).unwrap();
+        assert!(store::read_only_owed(&core.conn().unwrap(), every).unwrap());
+
+        hydrate(&core).unwrap();
+
         assert!(!store::read_only_owed(&core.conn().unwrap(), every).unwrap());
     }
 
