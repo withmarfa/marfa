@@ -117,10 +117,11 @@ fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
         .is_some_and(|context| context.transport == Transport::LocalSocket);
     // The stored cap can be too small for the body that would raise it, and
     // the local command is the way back from that.
+    let live = app.settings.live().get(MAX_REQUEST_BYTES);
     let cap = if local && path == CONFIG_PATH {
-        MAX_REQUEST_BYTES.default_value()
+        live.max(MAX_REQUEST_BYTES.default_value())
     } else {
-        app.settings.live().get(MAX_REQUEST_BYTES)
+        live
     };
     usize::try_from(cap).unwrap_or(usize::MAX)
 }
