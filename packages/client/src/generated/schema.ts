@@ -1981,7 +1981,7 @@ export interface paths {
         };
         /**
          * Get the instance
-         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
+         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2784,7 +2784,7 @@ export interface components {
             /** @description The values whose groups the view leaves out. */
             hidden?: (string | number | boolean | null)[];
         };
-        /** @description An instance: its identity, build, contract version and features. */
+        /** @description An instance: its identity, build, contract version, features and request size. */
         InstanceDescription: {
             /** @description The instance's display name. Defaults to `Marfa`. */
             name: string;
@@ -2798,6 +2798,8 @@ export interface components {
             contract: number;
             /** @description The features the instance serves, such as `items` and `webhooks`. */
             features: string[];
+            /** @description The largest body, in bytes, the instance takes in an ordinary JSON request. A larger one is answered `413 request_too_large`. Bulk writes, blob uploads and a few other operations have their own limits. */
+            max_request_bytes: number;
         };
         /** @description An error response. */
         ValidationErrorRefusal: {

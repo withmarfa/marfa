@@ -2,7 +2,7 @@
 
 What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, how it compresses its answers, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
-`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
+`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract`, `features` and `max_request_bytes`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
 ## Needs attention
 
@@ -57,6 +57,14 @@ When a request starts or wakes background work, the server MUST evaluate that wo
 When `GET /` is answered with the description, the server MUST give it an `instance_id` that is a UUIDv7.
 
 **Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `› describes itself at the root`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
+
+### `instance/request-limit-at-root`
+
+When `GET /` is answered with the description, the server MUST give it a `max_request_bytes` equal to the request cap, which is 1048576 unless `MARFA_MAX_REQUEST_BYTES` sets another.
+
+**Reason:** the root needs no credential, so a device can learn the limit before it sends a body the server would close the connection on. A size is no secret.
+
+**Tests:** `compliance/instance.test.ts › describes itself at the root`, `compliance/request-limit.test.ts › names at the root a lowered request cap and refuses a body past it`, `› names at the root a raised request cap and reads a body past the default`.
 
 ### `instance/id-at-config`
 

@@ -565,6 +565,7 @@ export function createApp(
       instance_id: instanceId,
       contract: servedContractVersion(),
       features,
+      max_request_bytes: config.maxRequestBytes,
     };
     return c.json(description);
   });

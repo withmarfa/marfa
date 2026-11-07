@@ -1319,6 +1319,11 @@
               "type": "string"
             },
             "description": "The features the instance serves, such as `items` and `webhooks`."
+          },
+          "max_request_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The largest body, in bytes, the instance takes in an ordinary JSON request. A larger one is answered `413 request_too_large`. Bulk writes, blob uploads and a few other operations have their own limits."
           }
         },
         "required": [
@@ -1326,9 +1331,10 @@
           "version",
           "instance_id",
           "contract",
-          "features"
+          "features",
+          "max_request_bytes"
         ],
-        "description": "An instance: its identity, build, contract version and features."
+        "description": "An instance: its identity, build, contract version, features and request size."
       },
       "ValidationErrorRefusal": {
         "type": "object",
@@ -58489,7 +58495,7 @@
           "Instance"
         ],
         "summary": "Get the instance",
-        "description": "Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
+        "description": "Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.",
         "responses": {
           "200": {
             "description": "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
