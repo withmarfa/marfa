@@ -93,7 +93,7 @@ fn is_edge_field(field: &str, catalog: &Catalog) -> bool {
         field
             .strip_prefix(open)
             .and_then(|rest| rest.strip_suffix(']'))
-            .is_some_and(|edge_type| catalog.edge_type(edge_type).is_some())
+            .is_some_and(|edge_type| catalog.edge_kind(edge_type).is_some())
     })
 }
 

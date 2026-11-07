@@ -130,6 +130,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS items_link ON items (type, link) WHERE link IS
 CREATE INDEX IF NOT EXISTS items_title_key
     ON items (title_key, id) WHERE title_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS items_type_state ON items (type, state);
+CREATE INDEX IF NOT EXISTS items_source_type ON items (source, type);
 CREATE INDEX IF NOT EXISTS items_newest ON items (created_at, id);
 CREATE INDEX IF NOT EXISTS items_bin ON items (created_at, id) WHERE state = 'trashed';
 CREATE INDEX IF NOT EXISTS items_trashed_with ON items (trashed_with)

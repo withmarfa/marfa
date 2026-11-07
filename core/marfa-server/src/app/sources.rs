@@ -8,6 +8,8 @@ use serde_json::{Map, Value, json};
 
 use super::App;
 use super::access::Caller;
+use super::items::reading;
+use super::query;
 use super::refusal::{Code, Refusal, Result};
 
 const MAX_UNITS: usize = 200;
@@ -170,36 +172,35 @@ fn held(tx: &Transaction<'_>, at: &str) -> Result<Vec<String>> {
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
-    let caller = caller.clone();
     let at = app.clock.stamp();
-    app.db
-        .read(move |tx| {
-            let caller = caller.current(tx, &at)?;
-            held(tx, &at)?
-                .iter()
-                .filter(|code| caller.sees_source(code))
-                .map(|code| describe(tx, code, &at))
-                .collect()
-        })
-        .await
+    reading(app, caller, move |read| {
+        let mut codes = query::carried(read)?;
+        codes.extend(
+            held(read.tx, &at)?
+                .into_iter()
+                .filter(|code| read.caller.sees_source(code)),
+        );
+        codes
+            .iter()
+            .map(|code| describe(read.tx, code, &at))
+            .collect()
+    })
+    .await
 }
 
 pub async fn read(app: &App, caller: &Caller, code: String) -> Result<Value> {
-    let caller = caller.clone();
     let at = app.clock.stamp();
-    app.db
-        .read(move |tx| {
-            let caller = caller.current(tx, &at)?;
-            if caller.sees_source(&code) {
-                describe(tx, &code, &at)
-            } else {
-                Err(Refusal::new(
-                    Code::SourceNotFound,
-                    format!("No source {code} is visible to this credential."),
-                ))
-            }
-        })
-        .await
+    reading(app, caller, move |read| {
+        if read.caller.sees_source(&code) || query::carries(read, &code)? {
+            describe(read.tx, &code, &at)
+        } else {
+            Err(Refusal::new(
+                Code::SourceNotFound,
+                format!("No source {code} is visible to this credential."),
+            ))
+        }
+    })
+    .await
 }
 
 pub async fn update(app: &App, caller: &Caller, code: String, change: Change) -> Result<Value> {

@@ -13,6 +13,7 @@ mod listing;
 mod order;
 mod reach;
 mod search;
+mod sources;
 mod views;
 
 pub use compile::{Ask, Filter, States};
@@ -20,6 +21,7 @@ pub use cursor::{SECRET_KEY, Secret};
 pub use listing::{By, Listing, list, stats};
 pub use order::Sort;
 pub use search::{Search, search};
+pub(crate) use sources::{carried, carries};
 pub use views::{VIEW_TYPE, ViewPage, view_items};
 
 #[cfg(test)]
