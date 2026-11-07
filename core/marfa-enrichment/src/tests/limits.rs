@@ -223,3 +223,35 @@ fn a_cell_repeated_by_the_million_is_read_once() {
     let file = zip(&[("content.xml", content.as_bytes())]);
     assert_eq!(text(&file, ODS), "T\nx");
 }
+
+#[test]
+fn damaged_files_are_refused_or_read_and_never_end_the_caller() {
+    let files = [
+        (fixture("sample.docx"), DOCX),
+        (fixture("sample.xlsx"), XLSX),
+        (own_fixture("sample.xls"), "application/vnd.ms-excel"),
+        (fixture("sample.png"), "image/png"),
+        (fixture("sample.webp"), "image/webp"),
+        (fixture("sample.jpg"), "image/jpeg"),
+        (fixture("sample.gif"), "image/gif"),
+    ];
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for (original, mime) in &files {
+        for _ in 0..150 {
+            let mut bytes = original.clone();
+            for _ in 0..=next() % 8 {
+                let at = (next() % bytes.len() as u64) as usize;
+                bytes[at] = next() as u8;
+            }
+            // `calamine` panics on some damaged `.xls` files, which `read_here`
+            // turns into a refusal.
+            let _ = read_here(&bytes, mime, &options());
+        }
+    }
+}

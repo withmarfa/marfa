@@ -55,9 +55,16 @@ fn text_is_cut_between_characters_and_says_so() {
 
 #[test]
 fn a_type_with_no_reader_is_unsupported() {
+    for mime in ["application/octet-stream", "audio/mpeg", "application/pdf"] {
+        assert_eq!(
+            refusal(b"MZ", mime, &options()),
+            Refusal::Unsupported,
+            "{mime}"
+        );
+    }
     assert_eq!(
-        refusal(b"{}", "application/json", &options()),
-        Refusal::Unsupported
+        text(br#"{"quokka": 1}"#, "application/json"),
+        r#"{"quokka": 1}"#
     );
     assert_eq!(
         refusal(b"{\\rtf1", "text/rtf", &options()),

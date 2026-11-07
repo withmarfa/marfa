@@ -220,3 +220,11 @@ fn a_book_gives_its_chapters_in_the_order_of_its_spine() {
         "chapter two\nchapter one"
     );
 }
+
+#[test]
+fn a_binary_workbook_gives_every_sheet_with_its_dates() {
+    assert_eq!(
+        text(&own_fixture("sample.xls"), "application/vnd.ms-excel"),
+        "Ledger\nQuokka ledger 42.5\n2018-09-20 7\nSecond\nquokkasecondsheet"
+    );
+}

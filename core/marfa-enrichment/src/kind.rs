@@ -73,7 +73,17 @@ impl Kind {
             "application/vnd.oasis.opendocument.spreadsheet"
             | "application/vnd.oasis.opendocument.spreadsheet-template" => Self::Sheet(Sheet::Ods),
             _ if bare.starts_with("image/") => Self::Image,
-            _ if bare.starts_with("text/") => Self::Text,
+            // Anything else that is text to read: a person searches a source
+            // file, a log or a data file by the words in it.
+            "application/json"
+            | "application/xml"
+            | "application/yaml"
+            | "application/x-yaml"
+            | "application/toml"
+            | "application/x-ndjson" => Self::Text,
+            _ if bare.starts_with("text/") || bare.ends_with("+json") || bare.ends_with("+xml") => {
+                Self::Text
+            }
             _ => return None,
         })
     }
