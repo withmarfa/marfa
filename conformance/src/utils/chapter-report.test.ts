@@ -165,6 +165,16 @@ describe("the chapter report", () => {
     ]);
   });
 
+  it("refuses to place requests when two files ran at the same time", () => {
+    const overlapping = {
+      "/suites/a.test.ts": { start: 10, end: 30 },
+      "/suites/b.test.ts": { start: 20, end: 40 },
+    };
+    expect(() => sortFailedFiles(run, [], overlapping, operations)).toThrow(
+      "ran at the same time",
+    );
+  });
+
   it("counts a control door as lacking only if no request in the run reached it", () => {
     const at = new Date(1_500).toISOString();
     const records = log([

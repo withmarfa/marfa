@@ -340,6 +340,21 @@ function lackingDoors(
     .map(([name, times]) => `${name} (${String(times)})`);
 }
 
+/** Two files at once leave a request belonging to either of them. */
+function assertOneAtATime(windows: FileWindows): void {
+  const ordered = Object.entries(windows).sort(
+    ([, a], [, b]) => a.start - b.start,
+  );
+  for (const [index, [file, window]] of ordered.entries()) {
+    const next = ordered[index + 1];
+    if (next !== undefined && next[1].start < window.end) {
+      throw new Error(
+        `${file} and ${next[0]} ran at the same time, so a request cannot be placed in a file; run with VITEST_MAX_WORKERS=1`,
+      );
+    }
+  }
+}
+
 /**
  * Sorts the failed files. A file that reached an operation the target has no
  * route for is one a door would change; it may also fail for other reasons,
@@ -352,6 +367,7 @@ export function sortFailedFiles(
   windows: FileWindows,
   operations: readonly Operation[],
 ): FailedFile[] {
+  assertOneAtATime(windows);
   const served = new Set(
     logs.flatMap((log) =>
       log.records
