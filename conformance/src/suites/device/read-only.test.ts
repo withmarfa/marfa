@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { bindingHarness } from "./binding.shared.js";
 import {
+  type BindingHarness,
   type Harness,
   hydratedHarness,
   scriptHydration,
@@ -30,10 +32,13 @@ const NOTE = { type: "core.note", source: "connector.calendar" };
 const MINUTE = 60;
 
 let harness: Harness | undefined;
+let bound: BindingHarness | undefined;
 
 afterEach(async () => {
   await harness?.stop();
+  await bound?.stop();
   harness = undefined;
+  bound = undefined;
 });
 
 function withStore(path: string, change: (store: DatabaseSync) => void): void {
@@ -405,5 +410,20 @@ describe("an item's read_only in a working copy", () => {
     const row = await device.get("n1");
     expect(row.ok && row.value.properties.title).toBe("edited");
     expect(row.ok && row.value.read_only).toBe(true);
+  });
+
+  it("answers read_only to a binding as the server gave it", async () => {
+    bound = await bindingHarness("read-only-binding", {
+      rows: {
+        "core.note": [
+          { item: { id: "held", read_only: true } },
+          { item: { id: "open", read_only: false } },
+        ],
+      },
+    });
+    const held = await bound.device.get("held");
+    expect(held.ok && held.value?.readOnly).toBe(true);
+    const open = await bound.device.get("open");
+    expect(open.ok && open.value?.readOnly).toBe(false);
   });
 });

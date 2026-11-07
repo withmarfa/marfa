@@ -4778,7 +4778,7 @@ When an app reads a row from a working copy, a device MUST answer the `read_only
 
 **Reason:** an app shows a read-only item as not editable from its copy, online or not.
 
-**Tests:** `device/read-only.test.ts › takes read_only from a hydration and from a later frame`.
+**Tests:** `device/read-only.test.ts › takes read_only from a hydration and from a later frame`, `› answers read_only to a binding as the server gave it`.
 
 ### `device/read-only-unanswered`
 

@@ -27,6 +27,7 @@ export interface BindingItem {
   state: string;
   version: number;
   tags: string[];
+  readOnly: boolean;
 }
 
 export interface BindingHydrateReport {
