@@ -21,6 +21,7 @@ clap.workspace = true
 getrandom = "0.4"
 hex.workspace = true
 hmac = "0.13"
+http-body = "1"
 http-body-util = "0.1"
 libc = "0.2"
 marfa-rules.workspace = true

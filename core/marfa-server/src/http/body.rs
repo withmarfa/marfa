@@ -1,12 +1,17 @@
 //! A JSON body, read only once the handler has checked what comes before it.
 
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{FromRequest, Request, State};
 use axum::http::{HeaderMap, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use http_body::{Frame, SizeHint};
+use http_body_util::BodyExt;
 use marfa_rules::{integers, json_text};
 use serde_json::{Map, Value, json};
 
@@ -15,6 +20,68 @@ use crate::app::App;
 use crate::app::items::write::ruled;
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::MAX_REQUEST_BYTES;
+
+const LINGER: Duration = Duration::from_secs(5);
+const LINGER_BYTES: usize = 64 * 1024 * 1024;
+
+/// A request's body, held on both sides of the routes.
+///
+/// A socket closed with bytes still arriving resets, and a reset can take an
+/// answer already sent with it, so a refusal that leaves a body unread would
+/// reach a client as a failed connection. `finish` keeps reading in the
+/// background, which leaves the answer free to go out at once.
+#[derive(Clone)]
+pub struct Shared(Arc<Mutex<Body>>);
+
+impl Shared {
+    pub fn new(body: Body) -> Shared {
+        Shared(Arc::new(Mutex::new(body)))
+    }
+
+    fn held(&self) -> MutexGuard<'_, Body> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn finish(mut self) {
+        if self.is_end_stream() {
+            return;
+        }
+        tokio::spawn(async move {
+            let discard = async {
+                let mut read = 0;
+                while read < LINGER_BYTES {
+                    match self.frame().await {
+                        Some(Ok(frame)) => {
+                            read += frame.data_ref().map_or(0, Bytes::len);
+                        }
+                        _ => break,
+                    }
+                }
+            };
+            let _ = tokio::time::timeout(LINGER, discard).await;
+        });
+    }
+}
+
+impl HttpBody for Shared {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        Pin::new(&mut *self.held()).poll_frame(context)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.held().is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.held().size_hint()
+    }
+}
 
 pub struct JsonBody {
     headers: HeaderMap,

@@ -12,6 +12,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use super::answer::{Page, asks_for_html};
+use super::body::Shared;
 use super::page;
 use crate::app::App;
 use crate::app::refusal::Code;
@@ -87,11 +88,10 @@ fn offer_page(response: &mut Response) {
     );
 }
 
-pub async fn observe(
-    State(observed): State<Observed>,
-    mut request: Request,
-    next: Next,
-) -> Response {
+pub async fn observe(State(observed): State<Observed>, request: Request, next: Next) -> Response {
+    let (parts, body) = request.into_parts();
+    let body = Shared::new(body);
+    let mut request = Request::from_parts(parts, Body::new(body.clone()));
     let started = Instant::now();
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
@@ -115,6 +115,7 @@ pub async fn observe(
     });
 
     let mut response = next.run(request).await;
+    body.finish();
 
     if wants_html {
         offer_page(&mut response);
