@@ -349,7 +349,7 @@ describe("search cursor", () => {
     for (const changed of [
       `q=${word}%20other`,
       `q=${word}&type=core.note`,
-      `q=${word}&state=active`,
+      `q=${word}&state=archived`,
       `q=${word}&include=system`,
       `q=${word}&tags=${encodeURIComponent(`tag-${ctx.runId}`)}`,
       `q=${word}&filter=${encodeURIComponent(`source neq "other"`)}`,

@@ -90,7 +90,7 @@ const doors: Door[] = [
     who: "management",
     max: 200,
     size: 50,
-    path: () => `/audit?resource_id=${trail}&action=item.tag`,
+    path: () => "/audit",
   },
   {
     door: "GET /webhooks/{id}/deliveries",
