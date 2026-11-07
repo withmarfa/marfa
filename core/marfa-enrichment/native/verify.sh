@@ -328,7 +328,10 @@ read_cases() {
   check refuse-not-a-zip 1 "refused: the file is malformed" $R read "$f/not-a-zip.docx"
   check refuse-truncated-docx 1 "refused: the file is malformed" $R read "$f/truncated-package.docx"
   check refuse-not-a-workbook 1 "refused: the file is malformed" $R read "$f/not-a-workbook.xls"
-  check refuse-over-limit 1 "refused: the file is past a limit" $R read "$f/sample.txt" --max-memory 100
+  # A file larger than the limit is refused before any reader starts. A limit below what
+  # the reader itself holds as it starts is no reader at all: it never sent its first frame.
+  check refuse-over-limit 1 "refused: the file is past a limit" $R read "$f/sample.gif" --max-memory 100
+  check refuse-limit-below-the-reader 1 "refused: no reader could start" $R read "$f/sample.txt" --max-memory 100
   # What the child holds, from the proof program: the limits the parent set.
   # An emulator may run a program without honoring its filter, and then says so.
   local sandbox_wants="sandbox: Full"
