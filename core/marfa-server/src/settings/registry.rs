@@ -78,6 +78,9 @@ macro_rules! registry {
 registry! {
     MAX_REQUEST_BYTES: u64 = "MARFA_MAX_REQUEST_BYTES", Rule::Whole { min: 1, max: u64::MAX }, "1048576";
     DISK_RESERVE_BYTES: u64 = "MARFA_DISK_RESERVE_BYTES", Rule::Whole { min: 0, max: u64::MAX }, "134217728";
+    RATE_LIMIT_ENABLED: bool = "RATE_LIMIT_ENABLED", Rule::Boolean, "true";
+    RATE_LIMIT_KEYS_REQUESTS: u64 = "RATE_LIMIT_KEYS_REQUESTS", Rule::Whole { min: 1, max: u64::MAX }, "200";
+    RATE_LIMIT_WINDOW_MS: u64 = "RATE_LIMIT_WINDOW_MS", Rule::Whole { min: 1, max: u64::MAX }, "60000";
 }
 
 fn parse(entry: &Entry, text: &str) -> Result<Value, String> {

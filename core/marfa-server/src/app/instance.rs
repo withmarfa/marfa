@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::App;
+use super::access::Caller;
 use super::refusal::{Code, Refusal, Result};
 use crate::db::{Db, Write};
 
@@ -50,18 +51,17 @@ pub async fn claimed(app: &App) -> Result<bool> {
 }
 
 /// Marks the instance as claimed, once.
-pub async fn claim(app: &App) -> Result<()> {
-    let now = app.clock.stamp();
-    app.db
-        .write(Write::own(), move |tx| {
-            if insert(tx, CLAIMED_AT, &now)? {
-                Ok(())
-            } else {
-                Err(Refusal::new(
-                    Code::OwnerExists,
-                    "This instance has been claimed.",
-                ))
-            }
-        })
-        .await
+pub async fn claim(app: &App, caller: &Caller) -> Result<()> {
+    let instance = app.instance_id.clone();
+    app.write(caller, "owner.claimed", move |unit| {
+        unit.caller.require_direct()?;
+        if !insert(unit.tx(), CLAIMED_AT, &unit.at)? {
+            return Err(Refusal::new(
+                Code::OwnerExists,
+                "This instance has been claimed.",
+            ));
+        }
+        unit.audit("instance", &instance, None)
+    })
+    .await
 }

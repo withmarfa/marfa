@@ -1,15 +1,18 @@
 //! The only place that names axum.
 
 pub mod answer;
+mod audit;
 pub mod body;
 mod caller;
 mod control;
 mod health;
 pub mod json;
+mod keys;
 pub mod observe;
 mod page;
 mod query;
 mod root;
+mod sources;
 mod test_hooks;
 
 use std::future::Future;
@@ -20,7 +23,7 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Router, serve};
 use tokio::net::{TcpListener, UnixListener};
 use tower_http::catch_panic::CatchPanicLayer;
@@ -52,11 +55,23 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     response
 }
 
-fn shared() -> Routes {
+fn key_doors(app: Arc<App>) -> Routes {
+    Router::new()
+        .route("/keys", post(keys::mint).get(keys::list))
+        .route("/keys/current", get(keys::current))
+        .route("/keys/{id}", patch(keys::update).delete(keys::revoke))
+        .route_layer(from_fn_with_state(app, keys::limited))
+}
+
+fn shared(app: Arc<App>) -> Routes {
     Router::new()
         .route("/", get(root::describe))
         .route("/health", get(health::answer))
         .route("/openapi.json", get(root::document))
+        .route("/audit", get(audit::list))
+        .route("/sources", get(sources::list))
+        .route("/source", get(sources::read).patch(sources::update))
+        .merge(key_doors(app))
 }
 
 fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
@@ -74,7 +89,7 @@ fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
 }
 
 pub fn public(app: Arc<App>) -> Router {
-    finished(shared(), app, Transport::Http)
+    finished(shared(app.clone()), app, Transport::Http)
 }
 
 async fn no_store(request: Request, next: Next) -> Response {
@@ -86,10 +101,9 @@ async fn no_store(request: Request, next: Next) -> Response {
 }
 
 pub fn control(app: Arc<App>) -> Router {
-    let mut routes = shared()
+    let mut routes = shared(app.clone())
         .route("/_control/setup/status", get(control::setup_status))
-        .route("/_control/setup/claim", post(control::setup_claim))
-        .route("/keys", post(control::mint_key));
+        .route("/_control/setup/claim", post(control::setup_claim));
     if app.settings.start.test_hooks {
         routes = routes
             .route(

@@ -1,12 +1,16 @@
 //! What the server does. Nothing here names an HTTP type.
 
+pub mod access;
+pub mod audit;
 pub mod clock;
 pub mod faults;
 pub mod health;
 pub mod instance;
 pub mod keys;
 pub mod refusal;
+pub mod sources;
 pub mod stored;
+pub mod unit;
 
 use std::sync::Arc;
 
@@ -17,17 +21,20 @@ use crate::settings::Settings;
 use clock::Clock;
 use faults::Faults;
 use health::Health;
+use keys::{Limiter, Usage};
 
 const READERS: usize = 4;
 
 /// The state every request shares.
 pub struct App {
     pub db: Db,
-    pub clock: Clock,
+    pub clock: Arc<Clock>,
     pub faults: Arc<Faults>,
     pub settings: Settings,
     pub instance_id: String,
     pub health: Health,
+    pub usage: Usage,
+    pub key_limit: Limiter,
 }
 
 impl App {
@@ -56,11 +63,13 @@ impl App {
         health::prepare_blobs(&start.blob_path)?;
         Ok(Arc::new(App {
             db,
-            clock: Clock::new(start.clock_offset_ms),
+            clock: Arc::new(Clock::new(start.clock_offset_ms)),
             faults,
             settings,
             instance_id,
             health: Health::default(),
+            usage: Usage::default(),
+            key_limit: Limiter::default(),
         }))
     }
 

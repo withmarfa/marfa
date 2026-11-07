@@ -292,8 +292,8 @@ fn a_request_nothing_serves_is_answered_in_the_envelope() {
     assert_eq!(status(&wrong_method), 404);
     assert!(has_code(&wrong_method, "not_found"), "{wrong_method}");
 
-    let keys_in_public = server.public(&request("POST", "/keys", b"{}"));
-    assert_eq!(status(&keys_in_public), 404);
+    let no_credential = server.public(&request("POST", "/keys", b"{}"));
+    assert_eq!(status(&no_credential), 401);
 
     let head = server.public(&request("HEAD", "/health", b""));
     assert_eq!(status(&head), 200);

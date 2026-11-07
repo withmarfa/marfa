@@ -5,11 +5,17 @@ use axum::http::Uri;
 
 use crate::app::refusal::{Refusal, Result};
 
+/// The query's names and values, decoded.
+pub fn pairs(uri: &Uri) -> Result<Vec<(String, String)>> {
+    let Query(pairs) = Query::<Vec<(String, String)>>::try_from_uri(uri)
+        .map_err(|_| Refusal::validation("The query string could not be read."))?;
+    Ok(pairs)
+}
+
 /// Refuses a key outside `allowed`. A key that begins with `_` is a caller's
 /// own, and passes.
 pub fn only(uri: &Uri, allowed: &[&str]) -> Result<()> {
-    let Query(pairs) = Query::<Vec<(String, String)>>::try_from_uri(uri)
-        .map_err(|_| Refusal::validation("The query string could not be read."))?;
+    let pairs = pairs(uri)?;
     let mut unknown: Vec<&str> = pairs
         .iter()
         .map(|(key, _)| key.as_str())
