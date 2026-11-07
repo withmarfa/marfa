@@ -50,7 +50,7 @@ DROP INDEX IF EXISTS items_state;
 CREATE INDEX IF NOT EXISTS items_tier ON items (tier);
 -- What `read_only::refresh` asks of the whole copy: which sources and types it
 -- holds, and whether any row of one differs from the server's, answered from
--- the index however many rows each holds.
+-- the index without reading the rows.
 CREATE INDEX IF NOT EXISTS items_read_only ON items (source, type, read_only);
 
 CREATE TABLE IF NOT EXISTS edges (

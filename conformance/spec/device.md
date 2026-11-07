@@ -4792,7 +4792,7 @@ Where a device holds no answer from the server for a row's `read_only`, a device
 
 When a device has finished a catch-up, or holds a stream at the server's head, and 15 minutes or more have gone by since it last read `read_only`, a device MUST read one row of each `source` and `type` it holds and hold every row of them to the answer.
 
-**Reason:** no event and no version tells a copy that the server's answer changed, and one row answers for all those that share its `source` and `type`, so what this costs does not grow with the rows a copy holds.
+**Reason:** no event and no version tells a copy that the server's answer changed, and one row answers for all those that share its `source` and `type`, so what a copy asks the server does not grow with the rows it holds.
 
 **Tests:** `device/read-only.test.ts › holds every row of a source and type to one row's answer, with no event`, `› asks nothing within 15 minutes of its last read, and asks again after them`, `› holds rows to the answer once a held stream reaches the head`.
 

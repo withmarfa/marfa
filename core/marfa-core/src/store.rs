@@ -2480,7 +2480,8 @@ pub(crate) fn mark_synced(conn: &Connection) -> Result<(), CoreError> {
     meta_set(conn, META_SYNCED_AT, &iso_at(crate::clock::system_time()))
 }
 
-/// Records that the rows the copy holds are as the server answers them.
+/// Records when the copy last asked the server for `read_only`, whatever
+/// the answer covered.
 pub(crate) fn mark_read_only_read(conn: &Connection) -> Result<(), CoreError> {
     let at = crate::clock::system_time()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2508,7 +2509,7 @@ pub(crate) fn read_only_owed(
 }
 
 /// One row of each source and type the copy holds that the server can answer:
-/// one it has taken, outside the bin (`items/bulk-get-omits`).
+/// one it has taken (`items/bulk-get-omits`), outside the bin (`items/bulk-get`).
 pub(crate) fn read_only_samples(conn: &Connection) -> Result<Vec<String>, CoreError> {
     let mut statement = conn.prepare_cached(
         "SELECT (SELECT id FROM items AS row

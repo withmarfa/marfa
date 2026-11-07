@@ -197,7 +197,8 @@ impl Serialize for Change {
 /// `store.saved` or `watch.failed`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
-    /// An event the stream applied, by the event's type.
+    /// An event the stream applied, by the event's type, or a change to the
+    /// copy no event brought, by the type of event that would have.
     Applied(String),
     /// A stream it opened read a catalog that differs from the one held.
     CatalogChanged,

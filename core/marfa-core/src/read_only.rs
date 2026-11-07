@@ -9,8 +9,9 @@
 //!
 //! So a copy asks, every so often, what the server answers for one row of each
 //! source and type it holds, and holds every row of that source and type to
-//! it (`device/read-only-refresh`). What that costs grows with how many of
-//! those the copy holds, never with its rows.
+//! it (`device/read-only-refresh`). What it asks the server grows with how
+//! many of those the copy holds, never with its rows; finding them reads the
+//! `items_read_only` index, whose length is the copy's rows.
 
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
