@@ -570,3 +570,22 @@ async fn a_commit_that_failed_reads_the_live_settings_again_from_the_database() 
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn the_root_answers_the_request_cap_as_it_stands_with_no_restart() {
+    let instance = Instance::start(&[]).await;
+    let cap = |reply: Reply| reply.body["max_request_bytes"].clone();
+
+    let before = instance.call(Method::GET, "/", None).await;
+    assert_eq!(
+        cap(before),
+        json!(instance.app.settings.live().get(MAX_REQUEST_BYTES))
+    );
+
+    let set = instance.patch(json!({ "max_request_bytes": 2048 })).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+    assert_eq!(
+        cap(instance.call(Method::GET, "/", None).await),
+        json!(2048)
+    );
+}

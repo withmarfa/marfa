@@ -11,6 +11,7 @@ use super::answer::{Answer, asks_for_html, json_answer};
 use super::{page, query};
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
+use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const DOCUMENT: &str = include_str!("../../../../openapi.json");
 
@@ -45,6 +46,7 @@ async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
             "instance_id": app.instance_id,
             "contract": app.contract(),
             "features": [],
+            "max_request_bytes": app.settings.live().get(MAX_REQUEST_BYTES),
         }),
     ))
 }
