@@ -330,10 +330,11 @@ fn declared_type(body: &Map<String, Value>) -> Result<Option<String>> {
 }
 
 fn put_of(body: &ReadBody) -> Result<Put> {
-    let mut sent = only_declared(body.object(Bag::Properties)?, &CREATE_FIELDS)?;
-    let Some(type_id) = declared_type(&sent)? else {
+    let object = body.object(Bag::Properties)?;
+    let Some(type_id) = declared_type(&object)? else {
         return Err(missing_field("type"));
     };
+    let mut sent = only_declared(object, &CREATE_FIELDS)?;
     body.refuse_inexact_numbers(Bag::Properties)?;
     let properties = properties_of(&mut sent)?;
     let id = text_of(&sent, "id")?;
