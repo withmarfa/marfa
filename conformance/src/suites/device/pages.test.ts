@@ -14,7 +14,11 @@ import type {
   Outcome,
   QueuedWrite,
 } from "../../device/protocol.js";
-import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
+import {
+  CONTRACT_HEADER,
+  type Answer,
+  type RecordedRequest,
+} from "../../device/scripted-server.js";
 import {
   folderHarness,
   hydratedHarness,
@@ -515,42 +519,6 @@ describe("creates in pages", () => {
     );
     expect(second.verdicts.every((entry) => entry.replayed)).toBe(true);
     expect(door.items.size).toBe(51);
-  });
-
-  it("refuses nothing of a page past the request limit that loses its connection, and sends each write the next drain", async () => {
-    const made = await start("pages-long-page-lost");
-    harness = made.harness;
-    const { door } = made;
-    const notes: QueuedWrite[] = [];
-    for (let at = 0; at < 50; at += 1)
-      notes.push(
-        value(
-          await harness.device.create({
-            type: "core.note",
-            properties: { title: `Note ${at}`, body: "x".repeat(25_000) },
-          }),
-        ),
-      );
-    let bytes = 0;
-    door.page = (request) => {
-      bytes = request.body.length;
-      return { kind: "drop" };
-    };
-
-    const first = await drain(harness);
-
-    expect(bytes).toBeGreaterThan(1_048_576);
-    expect(first.undelivered).toBe(50);
-    expect(first.verdicts.filter((entry) => entry.verdict !== null)).toEqual(
-      [],
-    );
-
-    door.page = () => undefined;
-    const second = await drain(harness);
-
-    expect(second.verdicts.map((entry) => entry.verdict)).toEqual(
-      notes.map(() => "accepted"),
-    );
   });
 
   it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
@@ -1128,8 +1096,11 @@ describe("a folder's first sync", () => {
       (JSON.parse(request.body) as { properties: { title?: string } })
         .properties.title === title;
 
-    /** A folder whose creates titled `dropped` lose their connection. */
-    async function dropping(name: string, dropped: string) {
+    /** A folder of notes and long texts, its creates answered by `creating`. */
+    async function sized(
+      name: string,
+      creating?: (answer: Answer, request: RecordedRequest) => Answer,
+    ) {
       folder = await folderHarness(name, {
         settings: { query: { types: ["core.note", large] } },
         catalog: typeCatalog([
@@ -1139,15 +1110,12 @@ describe("a folder's first sync", () => {
           }),
         ]),
       });
-      scriptFolderWrites(folder, {
-        creating: (answer, request) =>
-          titled(request, dropped) ? { kind: "drop" } : answer,
-      });
+      scriptFolderWrites(folder, { creating });
       return folder;
     }
 
     it("asks to close the connection of a body past the limit and no other", async () => {
-      const held = await dropping("request-limit-connection", "Nothing");
+      const held = await sized("request-limit-connection");
       put(
         held,
         "Large.md",
@@ -1165,6 +1133,38 @@ describe("a folder's first sync", () => {
       expect(
         held.server.requests.some((request) => titled(request, "Small")),
       ).toBe(true);
+    });
+
+    it("takes a 413 whose body cannot be read as the refusal it is", async () => {
+      const held = await sized("request-limit-unread", (answer, request) =>
+        titled(request, "Large")
+          ? {
+              kind: "bytes",
+              status: 413,
+              body: Buffer.from('{"error":{"code":"request_too_large"}}'),
+              cut: 3,
+              headers: { [CONTRACT_HEADER]: String(held.server.contract) },
+            }
+          : answer,
+      );
+      put(
+        held,
+        "Large.md",
+        `---\ntype: ${large}\ntitle: Large\n---\n${'"'.repeat(600_000)}\n`,
+      );
+
+      const pushed = await held.folder.push();
+
+      expect(pushed.ok, JSON.stringify(pushed).slice(0, 400)).toBe(true);
+      expect(
+        pushed.ok &&
+          pushed.value.drain.verdicts
+            .filter((entry) => entry.kind === "create_item")
+            .map((entry) => [entry.verdict, entry.reason]),
+      ).toEqual([["refused", "request_too_large"]]);
+      expect(
+        held.server.requests.filter((request) => titled(request, "Large")),
+      ).toHaveLength(1);
     });
   });
 });

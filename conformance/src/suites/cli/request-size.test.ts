@@ -20,9 +20,13 @@ import { Cli, requireBinary } from "./harness.js";
 /**
  * A file within a body field's length that encodes past what the real server
  * takes in one request. The server closes the connection on it with the rest
- * unread, so how much of its answer a device hears depends on timing, which
- * only a real server and a real socket show.
+ * unread, so whether a device hears its `413` on a given send depends on
+ * timing, which only a real server and a real socket show. A send that hears
+ * nothing ends the pass and goes again on the next push.
  */
+
+// Far more than the sends it takes to hear each `413`, which is one or two.
+const PUSHES = 20;
 
 let server: FreshServer | undefined;
 let cli: Cli;
@@ -78,8 +82,7 @@ it(
     for (const title of small)
       writeFileSync(join(files, `${title}.md`), note(title, "A small file."));
 
-    const pushed = await cli.run(["--json", "folders", "push", files]);
-    const report = JSON.parse(pushed.stdout) as {
+    type Report = {
       drain: {
         undelivered: number;
         verdicts: {
@@ -88,24 +91,26 @@ it(
           reason?: string | null;
         }[];
       };
-      scan: { flagged: { path: string; flag: string; reason: string }[] };
     };
+    const refused: (string | null | undefined)[] = [];
+    let waiting = Number.POSITIVE_INFINITY;
+    for (let push = 0; push < PUSHES && waiting > 0; push += 1) {
+      const pushed = await cli.run(["--json", "folders", "push", files]);
+      const { drain } = JSON.parse(pushed.stdout) as Report;
+      refused.push(
+        ...drain.verdicts
+          .filter(
+            (entry) =>
+              entry.kind === "create_item" && entry.verdict === "refused",
+          )
+          .map((entry) => entry.reason),
+      );
+      waiting = drain.undelivered;
+      expect(pushed.code, pushed.stderr).toBe(waiting > 0 ? 3 : 0);
+    }
 
-    // How much of the server's answer a device hears depends on timing: a
-    // large file is refused where the `413` arrived, and waits where the
-    // close destroyed it, and a device claims no refusal it did not hear.
-    const refused = report.drain.verdicts.filter(
-      (entry) =>
-        entry.verdict === "refused" && entry.reason === "request_too_large",
-    );
-    const unheard = report.scan.flagged.filter(
-      (file) => file.flag === "not_sent",
-    );
-    expect(refused.length + unheard.length).toBe(large.size);
-    expect(report.drain.undelivered).toBe(unheard.length);
-    expect(pushed.code, pushed.stderr).toBe(unheard.length > 0 ? 3 : 0);
-    for (const file of unheard)
-      expect(file.reason).toContain("may be over the server's request size");
+    expect(waiting).toBe(0);
+    expect(refused).toEqual([...large.keys()].map(() => "request_too_large"));
 
     const listed = await client.listItems({ type: "core.note", limit: 100 });
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
@@ -119,7 +124,7 @@ it(
         note(title, body),
       );
 
-    // Put right, the file goes, whichever way it was held.
+    // Put right, the file goes.
     writeFileSync(join(files, "Quotes.md"), note("Quotes", "Now short."));
     await cli.run(["--json", "folders", "push", files]);
     const after = await client.listItems({ type: "core.note", limit: 100 });

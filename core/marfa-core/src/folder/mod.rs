@@ -172,7 +172,7 @@ fn near_limit(key: &str, text: &str) -> Option<Flagged> {
         path: key.to_string(),
         flag: "size",
         reason: format!(
-            "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that a server on its default size does not take it, and the file is held",
+            "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that the server refuses it request_too_large and the file is held",
             size * 100 / REQUEST_LIMIT
         ),
         item: None,

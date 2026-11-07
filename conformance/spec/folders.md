@@ -6860,41 +6860,11 @@ When a folder push scans a document with a size warning, the CLI MUST say the pa
 
 ### `folders/refused-create-said`
 
-While a file is held under `folders/lost-row-unchanged-held` and the queue keeps the refusal of its create, a device MUST name that refusal in the reason `folders status` gives.
+While a file is held under `folders/lost-row-unchanged-held` and the queue keeps the server's refusal of its create, a device MUST name that refusal in the reason `folders status` gives.
 
 **Reason:** "bound to an item this copy no longer holds" does not tell a person that the server refused the file, or why.
 
 **Tests:** `device/folders-contract-b.test.ts › preserves a document after a request-too-large %s refusal`.
-
-### `folders/not-sent-said`
-
-While a file's write has met no answer with a body larger than 1048576 bytes, or is blocked `failing_alone`, a device MUST report the file in `folders status` with the flag `not_sent` and a reason saying why it did not go and what sends it again.
-
-**Reason:** the write has no refusal to show, so without this the file reads as waiting with nothing the matter. The reason names the likely cause, the server's request size, and claims no refusal it did not hear.
-
-**Tests:** `device/cut-off.test.ts › sets a long write aside with nothing else queued, once a read answers and it is cut off again`, `› reports a file that did not go in what a push says and in its status`, `cli/request-size.test.ts › holds a file past the request size with its reason and sends the files beside it`.
-
-### `folders/not-sent-held`
-
-While a file's write is blocked `failing_alone`, a device MUST report the file in `folders status` as `held`.
-
-**Tests:** `device/cut-off.test.ts › sets a long write aside with nothing else queued, once a read answers and it is cut off again`.
-
-### `folders/not-sent-pushed`
-
-When a push ends with a file `folders status` flags `not_sent`, a device MUST list that file in the push's `flagged` with the same reason.
-
-**Reason:** a file set aside is sent by no later push, so its reason would otherwise reach the person only through a command they have no cause to run.
-
-**Tests:** `device/cut-off.test.ts › reports a file that did not go in what a push says and in its status`.
-
-### `folders/changed-file-replaces-not-sent`
-
-When a scan finds a file changed whose write status flags `not_sent`, a device MUST withdraw that write, reading its row back first, and send the file as it now is.
-
-**Reason:** an edit queued behind the write could only wait on it, so a file made smaller would stay stuck behind the bytes that could not go. The read keeps a row the server did commit, and the change goes as an edit of it. Where the server cannot be read, the edit waits behind the write until a later change.
-
-**Tests:** `device/cut-off.test.ts › sends a file as it now is when it changes after its long write was set aside`, `› sends a file as it now is when it changes while its long write still waits`, `› keeps the item a long write committed when the file changes, and sends the change as an edit`.
 
 ### `folders/request-too-large-bytes-kept`
 

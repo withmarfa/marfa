@@ -11,9 +11,7 @@ use super::{
 };
 use crate::Result;
 use crate::catalog::Catalog;
-use crate::error::CoreError;
-use crate::http::REQUEST_LIMIT;
-use crate::model::{BlockedReason, ItemState, QueuedWrite, Verdict, WriteKind};
+use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileStatus {
@@ -97,74 +95,14 @@ impl FileStatus {
     }
 }
 
-/// The flag of a file a write of which keeps failing with no refusal to show.
-const NOT_SENT: &str = "not_sent";
-
-/// Why `row` has not gone, where it was sent and met no answer past the
-/// request size, or was set aside: a person reads this, not the queue.
-fn not_sent_reason(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<Option<String>> {
-    let set_aside = row.blocked_reason() == Some(BlockedReason::FailingAlone);
-    let Some(failure) = row
-        .last_failure
-        .as_ref()
-        .filter(|_| row.verdict.is_none() || set_aside)
-    else {
-        return Ok(None);
-    };
-    let bytes = crate::store::payload_of(conn, &row.id)?.len();
-    let why = if failure.status.is_none() && bytes > REQUEST_LIMIT {
-        crate::drain::cut_off_reason(bytes)
-    } else if set_aside {
-        format!(
-            "it met {} each time while the server took other requests",
-            failure.describe()
-        )
-    } else {
-        return Ok(None);
-    };
-    Ok(Some(if set_aside {
-        format!(
-            "{why}, so it is set aside and not sent again until the file changes, or `marfa device release --db .marfa/core.sqlite {}` is run from the folder",
-            row.id
-        )
-    } else {
-        format!("{why}; the next push sends it again")
-    }))
-}
-
 impl Folder {
-    /// The files a queued write of which has not gone and shows no refusal,
-    /// with why, for what a push says.
-    pub(super) fn not_sent(&self) -> Result<Vec<Flagged>> {
-        let conn = self.core.conn()?;
-        let mut reasons = HashMap::new();
-        for row in crate::store::waiting_writes(&conn)? {
-            if let (Some(item), Some(reason)) = (&row.item_id, not_sent_reason(&conn, &row)?) {
-                reasons.insert(item.clone(), reason);
-            }
-        }
-        if reasons.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(state::every_bound(&conn)?
-            .into_iter()
-            .filter_map(|bound| {
-                Some(Flagged {
-                    reason: reasons.get(&bound.item_id)?.clone(),
-                    path: bound.path,
-                    flag: NOT_SENT,
-                    item: None,
-                })
-            })
-            .collect())
-    }
-
-    /// What the server refused the create of `item_id` as, while the queue
-    /// keeps that refusal.
+    /// What the server answered the create of `item_id` with, while the queue
+    /// keeps that refusal. A create refused unsent has a device's reason, not
+    /// the server's.
     fn refused_create(&self, item_id: &str) -> Result<Option<String>> {
         let rows = crate::store::read_writes(
             &*self.core.conn()?,
-            "WHERE item_id = ?1 AND kind = ?2 AND verdict = ?3",
+            "WHERE item_id = ?1 AND kind = ?2 AND verdict = ?3 AND sent = 1",
             [
                 item_id,
                 WriteKind::CreateItem.as_str(),
@@ -172,28 +110,6 @@ impl Folder {
             ],
         )?;
         Ok(rows.into_iter().next_back().and_then(|row| row.reason))
-    }
-
-    /// A changed file takes the place of the write of it that could not be
-    /// sent: an edit behind that write could only wait on it. Read back
-    /// first, so a write the server did commit stays. Where the server cannot
-    /// be read the edit waits behind the write, and the next change tries
-    /// again.
-    pub(super) fn withdraw_not_sent(&self, item_id: &str) -> Result<()> {
-        let rows = crate::store::waiting_writes_for_item(&*self.core.conn()?, item_id)?;
-        for row in rows {
-            if not_sent_reason(&*self.core.conn()?, &row)?.is_none() {
-                continue;
-            }
-            match self.core.withdraw_unsent(&row.id) {
-                Ok(_) => {}
-                Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => {
-                    return Err(error);
-                }
-                Err(error) => crate::telemetry::degraded!(&error),
-            }
-        }
-        Ok(())
     }
 
     /// Writes nothing, so a store opened without holding it answers it.
@@ -477,12 +393,6 @@ impl Folder {
                 || row.target_id.as_deref() == Some(bound.item_id.as_str())
         }) {
             named.push(self.wait_of(row));
-            if let Some(reason) = not_sent_reason(&*self.core.conn()?, row)? {
-                if row.blocked_reason() == Some(BlockedReason::FailingAlone) {
-                    return Ok(entry.because(NOT_SENT, reason));
-                }
-                entry = entry.because(NOT_SENT, reason);
-            }
             if row.verdict == Some(Verdict::Dead) {
                 entry = entry.because(
                     "dead",
@@ -778,6 +688,41 @@ mod tests {
                 .unwrap(),
         };
         (dir, writing, folder)
+    }
+
+    #[test]
+    fn only_a_create_the_server_answered_names_a_refusal_of_the_server() {
+        let (dir, folder) = super::super::tests::scanned_folder();
+        std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+        folder.scan().unwrap();
+        let create = store::read_writes(
+            &folder.core.conn().unwrap(),
+            "WHERE kind = ?1",
+            [WriteKind::CreateItem.as_str()],
+        )
+        .unwrap()
+        .remove(0);
+        let item = create.item_id.clone().unwrap();
+        let reason = "the upload it waits for was refused";
+        store::record_verdict(
+            &folder.core.conn().unwrap(),
+            &create.id,
+            &store::Answered {
+                verdict: Verdict::Refused,
+                reason: Some(reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(folder.refused_create(&item).unwrap(), None);
+
+        // The witness: the same row, once it went out, is the server's answer.
+        store::mark_sent(&folder.core.conn().unwrap(), &create.id).unwrap();
+        assert_eq!(
+            folder.refused_create(&item).unwrap().as_deref(),
+            Some(reason)
+        );
     }
 
     #[test]

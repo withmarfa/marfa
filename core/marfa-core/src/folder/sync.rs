@@ -132,10 +132,9 @@ impl Folder {
     fn send_only_observed(&self) -> Result<SendReport> {
         let hydrated = self.resume()?;
         let settings = self.send_settings_edit()?;
-        let mut scan = self.scan_keeping_files()?;
+        let scan = self.scan_keeping_files()?;
         let mut rebuilt = None;
         let drain = self.drain_rebuilding(&mut rebuilt)?;
-        scan.flagged.extend(self.not_sent()?);
         Ok(SendReport {
             hydrated,
             settings,
@@ -159,7 +158,7 @@ impl Folder {
         let hydrated = self.resume()?;
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
-        let mut scan = self.scan()?;
+        let scan = self.scan()?;
         let mut rebuilt = None;
         let mut drain = self.drain_rebuilding(&mut rebuilt)?;
         let catch_up = match self.catch_up() {
@@ -193,7 +192,6 @@ impl Folder {
                 pull = Some(again);
             }
         }
-        scan.flagged.extend(self.not_sent()?);
         Ok(SyncReport {
             hydrated,
             settings,
