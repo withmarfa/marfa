@@ -428,6 +428,11 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
     Ok(purging)
 }
 
+/// What purging `row` takes with it, for a door that has judged the row.
+pub(super) fn walked_purge(gate: &Gate<'_, '_>, row: Item) -> Result<Vec<Purging>> {
+    purge_walk(gate, &[row])
+}
+
 fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     let named = asked
         .iter()

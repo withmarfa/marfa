@@ -13,15 +13,19 @@ pub mod idempotency;
 pub mod instance;
 pub mod items;
 pub mod keys;
+pub mod query;
 pub mod refusal;
+mod reindex;
 pub mod sources;
 pub mod stored;
 pub mod types;
 pub mod unit;
+pub mod views;
 
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use tokio::sync::Notify;
 
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
@@ -32,6 +36,7 @@ use clock::Clock;
 use faults::Faults;
 use health::Health;
 use keys::{Limiter, Usage};
+use query::Secret;
 
 const READERS: usize = 4;
 
@@ -45,6 +50,8 @@ pub struct App {
     pub health: Health,
     pub usage: Usage,
     pub key_limit: Limiter,
+    pub cursor_secret: Secret,
+    pub reindexing: Arc<Notify>,
     catalog: Arc<ArcSwap<Catalog>>,
 }
 
@@ -71,6 +78,7 @@ impl App {
             .apply_stored(&rows)
             .map_err(|refused| Failure::start(refused.to_string()))?;
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
+        let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         health::prepare_blobs(&start.blob_path)?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
@@ -86,17 +94,21 @@ impl App {
         for id in &loaded.unreadable {
             tracing::error!(type_id = %id, "A stored type does not read, and is kept as it is");
         }
-        Ok(Arc::new(App {
+        let app = Arc::new(App {
             db,
             clock,
             faults,
             settings,
             instance_id,
+            cursor_secret,
+            reindexing: Arc::new(Notify::new()),
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
             catalog,
-        }))
+        });
+        reindex::start(&app);
+        Ok(app)
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {

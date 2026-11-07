@@ -5,6 +5,7 @@
 //! the checks, the version step, the audit entry and the event.
 
 pub mod bulk;
+mod index;
 mod plan;
 mod read;
 mod rows;
@@ -27,7 +28,7 @@ pub use read::{
     Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, detail, extension, extensions,
     history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
-pub(crate) use read::{Reader, position_at, position_cursor, reading};
+pub(crate) use read::{Reader, listed, listed_rows, position_at, position_cursor, reading};
 pub(crate) use write::settle_late_part;
 
 const UNTITLED: &str = "Untitled";
@@ -380,7 +381,7 @@ fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Val
     }))
 }
 
-fn is_system(type_id: &str) -> bool {
+pub(crate) fn is_system(type_id: &str) -> bool {
     type_id.split('.').next() == Some("system")
 }
 
@@ -459,6 +460,20 @@ pub fn held_names(tx: &Transaction<'_>, types: &[String], names: &[String]) -> R
         return Ok(Vec::new());
     }
     rows::held_names(tx, types, names)
+}
+
+/// Makes the search index agree with `after`, for each type whose searchable
+/// fields it changes: what fits a page now, the rest by [`reindex_page`].
+pub fn reindex_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Result<()> {
+    index::queue_changed(tx, before, after)?;
+    index::reindex_page(tx, after, index::REINDEX_PAGE)?;
+    Ok(())
+}
+
+/// Reindexes one page of what a type's change queued, answering whether more
+/// is left.
+pub fn reindex_page(tx: &Transaction<'_>, rules: &Rules) -> Result<bool> {
+    index::reindex_page(tx, rules, index::REINDEX_PAGE)
 }
 
 /// Makes the title keys of the items of `types` agree with `after`, for each

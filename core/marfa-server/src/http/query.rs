@@ -15,11 +15,16 @@ pub fn pairs(uri: &Uri) -> Result<Vec<(String, String)>> {
 /// Refuses a key outside `allowed`. A key that begins with `_` is a caller's
 /// own, and passes.
 pub fn only(uri: &Uri, allowed: &[&str]) -> Result<()> {
+    only_where(uri, |key| allowed.contains(&key))
+}
+
+/// As [`only`], for an operation whose keys follow a pattern.
+pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
     let pairs = pairs(uri)?;
     let mut unknown: Vec<&str> = pairs
         .iter()
         .map(|(key, _)| key.as_str())
-        .filter(|key| !key.starts_with('_') && !allowed.contains(key))
+        .filter(|key| !key.starts_with('_') && !allowed(key))
         .collect();
     if unknown.is_empty() {
         return Ok(());
