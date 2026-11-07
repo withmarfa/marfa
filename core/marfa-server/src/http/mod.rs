@@ -13,6 +13,7 @@ mod keys;
 mod lookup;
 pub mod observe;
 mod page;
+pub mod pages;
 mod query;
 mod root;
 mod sources;

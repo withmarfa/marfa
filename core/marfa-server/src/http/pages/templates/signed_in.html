@@ -1,0 +1,9 @@
+<h1>You're signed in</h1>
+<p class="lede">Signed in as <bdi>{{ view.email }}</bdi>.</p>
+<div class="actions">
+<a class="button primary" href="{{ view.continue_to }}">Continue</a>
+<form method="post" action="/auth/sign-out" data-change data-then="/auth/sign-in">
+<button type="submit" class="button">Sign out</button>
+<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+</form>
+</div>
