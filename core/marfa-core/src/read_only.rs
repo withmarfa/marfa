@@ -15,10 +15,10 @@
 //! rows.
 //!
 //! An answer can move every row of a copy, and the first look after an upgrade
-//! does, so it moves them a page at a time and a read of the copy gets through
-//! between two pages. The look counts as made only after the last page: one
-//! that fails, is stopped or dies midway leaves the copy owing a look, and that
-//! look finishes the rows left.
+//! moves every read-only one, so a look moves them a page at a time and a read
+//! of the copy gets through between two pages. The look counts as made only
+//! after the last page: one that fails, is stopped or dies midway leaves the
+//! copy owing a look, and that look finishes the rows left.
 
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
@@ -41,9 +41,10 @@ const ROWS_ASKED: usize = 3;
 /// not fair, so one taken again at once could go on shutting a read out.
 const BETWEEN_PAGES: Duration = Duration::from_millis(1);
 
-/// Where `every` has gone by since the copy last did, holds its rows to what
-/// the server answers now, adding the rows it changed to `held`, which stands
-/// however the look ends. `http` is the one the sync runs under its reach.
+/// Where `pace.read_only_every` has gone by since the copy last did, holds its
+/// rows to what the server answers now, adding the rows it changed to `held`,
+/// which stands however the look ends. `http` is the one the sync runs under
+/// its reach.
 pub(crate) fn refresh(
     core: &Core,
     context: &Context,
