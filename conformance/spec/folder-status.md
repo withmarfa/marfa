@@ -6,6 +6,8 @@
 
 When an authenticated sign-in that can read a `system.folder` submits a valid report to `PUT /folders/{id}/status`, the server MUST answer `200` with `accepted`, the latest stored `sequence`, and its `received_at`.
 
+**Reason:** the server stores and sums a report's counts and problem codes without judging them; what they mean is a device's to state, in `folders/report-pending-uploads`, `folders/report-pending-downloads`, `folders/report-paused-removals`, `folders/report-refused-files`, `folders/report-held-files` and the statements beside them.
+
 **Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`.
 
 ### `folder-status/read-only-report`
@@ -34,21 +36,35 @@ When an authenticated caller that reads some type cannot read the `system.folder
 
 ### `folder-status/credential-required`
 
-When an unauthenticated caller asks for `GET /folders/{id}/status`, the server MUST answer `401 unauthorized`.
+When an unauthenticated caller asks for `GET /folders/{id}/status` or `PUT /folders/{id}/status`, the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`.
 
 ### `folder-status/invalid-id`
 
-When `GET /folders/{id}/status` names a malformed folder ID, the server MUST answer `400 invalid_id`.
+When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid report, names a malformed folder ID, the server MUST answer `400 invalid_id`.
 
 **Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`.
 
 ### `folder-status/missing-folder`
 
-When `PUT /folders/{id}/status` names an ID that is not a `system.folder`, the server MUST answer `404 item_not_found`.
+When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid report, names an ID that is not a `system.folder`, the server MUST answer `404 item_not_found` to the owner, a private local command, and a credential that reads some type.
 
-**Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`.
+**Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`, `› answers item_not_found to the owner and a local command for an ID that holds no folder`.
+
+### `folder-status/revoked-folder`
+
+While a `system.folder` is `revoked`, the server MUST accept a valid report to `PUT /folders/{id}/status` from a sign-in that can read the folder.
+
+**Reason:** a `system.*` item is `active` or `revoked` and never `trashed` (`items/system-lifecycle`), so this is the one state a folder leaves `active` for.
+
+**Tests:** `compliance/folder-status.test.ts › keeps taking and answering reports for a revoked folder`.
+
+### `folder-status/store-id-format`
+
+If `PUT /folders/{id}/status` names a `folder_store_id` other than 1 through 128 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/folder-status.test.ts › takes a copy ID of 1 to 128 letters, digits, hyphens and underscores and refuses any other`.
 
 ### `folder-status/missing-field`
 
@@ -112,6 +128,24 @@ When an authenticated caller that can read a `system.folder` asks for `GET /fold
 
 **Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`.
 
+### `folder-status/sign-in-order`
+
+When `GET /folders/{id}/status` answers, the server MUST order `sign_ins` by `sign_in.kind` as `app`, `browser`, then `key`, and within a kind by ascending `sign_in.id`.
+
+**Tests:** `compliance/folder-status.test.ts › orders sign-ins by kind and ID and total problems as they first appear`.
+
+### `folder-status/copy-order`
+
+When `GET /folders/{id}/status` answers, the server MUST order each sign-in's `copies` by latest `received_at` first, and copies with the same `received_at` by ascending `folder_store_id`.
+
+**Tests:** `compliance/folder-status.test.ts › orders copies by latest receipt, and copies received together by copy ID`.
+
+### `folder-status/total-problem-order`
+
+When `GET /folders/{id}/status` answers, the server MUST order `totals.problems` by where each code first appears among the `problems` of current sign-ins' copies, read in the order of `sign_ins` and `copies`.
+
+**Tests:** `compliance/folder-status.test.ts › orders sign-ins by kind and ID and total problems as they first appear`.
+
 ### `folder-status/current-totals`
 
 When `GET /folders/{id}/status` returns totals, the server MUST sum only reports whose canonical sign-ins still stand.
@@ -146,9 +180,17 @@ When an app grant is revoked, the server MUST retain its latest folder-copy repo
 
 ### `folder-status/local-report`
 
-When a private local command submits `PUT /folders/{id}/status`, the server MUST answer `403 forbidden`.
+When a private local command submits a valid report to `PUT /folders/{id}/status` for a `system.folder`, the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/folder-status.test.ts › allows a local command to read but refuses a report without a sign-in`.
+
+### `folder-status/local-report-order`
+
+If a private local command's `PUT /folders/{id}/status` holds an invalid report, names a malformed ID, or names an ID that is not a `system.folder`, then the server MUST answer the `400` or `404 item_not_found` that refusal carries and not `403 forbidden`.
+
+**Reason:** a local command learns a report or ID is wrong before it learns it has no sign-in to report under. The refusals are `folder-status/missing-field`, `folder-status/privacy`, `folder-status/invalid-id` and `folder-status/missing-folder`.
+
+**Tests:** `compliance/folder-status.test.ts › refuses a local command's invalid report and missing folder before its lack of a sign-in`.
 
 ### `folder-status/local-read`
 
@@ -195,3 +237,65 @@ When the server exports a portable item archive, the server MUST exclude operati
 When a credential that reads no type asks for `GET /folders/{id}/status` or `PUT /folders/{id}/status`, the server MUST answer `403 type_not_permitted`.
 
 **Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`.
+
+## Folder inventory
+
+### `folder-status/inventory`
+
+When the owner or a private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
+
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+
+### `folder-status/inventory-summary`
+
+When `GET /folders` returns a folder summary, the server MUST include only `id`, `title`, and `created_at`.
+
+**Reason:** the console lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
+
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+
+### `folder-status/inventory-title`
+
+When `GET /folders` returns a folder summary, the server MUST answer `title` as the stored title with surrounding whitespace removed and each inner run of whitespace collapsed to one space, or `Untitled folder` when no text is left.
+
+**Tests:** `compliance/folder-status.test.ts › lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+
+### `folder-status/inventory-limit`
+
+When the owner or a private local command asks for `GET /folders`, the server MUST answer at most `limit` folders, 50 when `limit` is absent.
+
+**Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
+
+### `folder-status/inventory-limit-range`
+
+If the owner or a private local command names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Reason:** a `limit` above 200 is refused here, where `search-and-filters/limit-listing-capped` caps one on `GET /items`.
+
+**Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
+
+### `folder-status/inventory-cursor`
+
+When the owner or a private local command sends back the `next_cursor` of a page of `GET /folders`, the server MUST answer the page that follows it, so that walking to the end delivers every active folder exactly once.
+
+**Reason:** this is `search-and-filters/cursor-continues` and `search-and-filters/cursor-last-page` for this listing, whose page has the shape `search-and-filters/page-envelope` gives every list.
+
+**Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
+
+### `folder-status/inventory-cursor-invalid`
+
+If the owner or a private local command sends `GET /folders` a `cursor` that is malformed or that another ordering issued, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
+
+### `folder-status/inventory-authority`
+
+When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+
+### `folder-status/inventory-authentication`
+
+When an unauthenticated caller asks for `GET /folders`, the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.

@@ -1675,6 +1675,64 @@ describe("where a file sits", () => {
     expect(idIn(harness, "Plain.md")).toBe(plain);
   });
 
+  it("reports each item a pull could not write as one pending download, and as a held file unless its bytes were absent", async () => {
+    const bytes = Buffer.from("the bytes this file item names\n");
+    const placed = await placedHarness(
+      "placement-report",
+      [
+        {
+          id: "01a00000-0000-7000-8000-0000000016r1",
+          title: "Control",
+          path: "control.md",
+        },
+        {
+          id: "01a00000-0000-7000-8000-0000000016r2",
+          title: "Escaping",
+          path: "a/../e.md",
+        },
+        {
+          id: "01a00000-0000-7000-8000-0000000016r3",
+          title: "Picture",
+          path: "picture.png",
+        },
+        {
+          id: "01a00000-0000-7000-8000-0000000016r4",
+          type: "core.file",
+          title: "broken.txt",
+          properties: {
+            title: "broken.txt",
+            blob_ref: hashOf(bytes),
+            mime_type: "text/plain",
+          },
+        },
+      ],
+      { query: { types: ["core.note", "core.file"] } },
+    );
+    harness = placed.harness;
+    scriptBlob(harness.server, bytes, Buffer.from("not those bytes\n"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.pull?.flagged.map((file) => [file.path, file.flag]).sort(),
+    ).toEqual([
+      ["a/../e.md", "outside"],
+      ["broken.txt", "absent"],
+      ["picture.png", "unsuited"],
+    ]);
+    const status = `/folders/${harness.settings.id}/status`;
+    const report = harness.server.requests
+      .filter(
+        (request) => request.method === "PUT" && request.pathname === status,
+      )
+      .map((request) => JSON.parse(request.body) as Record<string, unknown>)
+      .at(-1);
+    expect(report).toMatchObject({
+      pending_downloads: 3,
+      problems: [{ code: "held_file", count: 2 }],
+    });
+  });
+
   it("reads no other edge to the folder as a placement", async () => {
     const edges = new EdgeDoor();
     // One file's default edge is refused, the other's already held.

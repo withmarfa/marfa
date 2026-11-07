@@ -1018,7 +1018,7 @@ When a client follows `next_cursor` through a `GET /items` listing sorted by a p
 
 The rows of one page and the key that continues them are in `search-and-filters/page-envelope`.
 
-This section holds the pages of `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default` and `inbound-webhooks/deliveries-limit-default`.
+This section holds the pages of `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default`, `inbound-webhooks/deliveries-limit-default` and `folder-status/inventory-limit`.
 
 ### `search-and-filters/limit-listing-default`
 

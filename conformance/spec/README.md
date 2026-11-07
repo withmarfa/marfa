@@ -12,7 +12,7 @@ The contract has two halves.
 
 **The server's half** says what the server answers over HTTP. The server is the source. `pnpm check:statuses` holds what it answers to its OpenAPI document, so where the two disagree, one of them is fixed.
 
-- `folder-status.md`: folder-copy sync reports, their canonical sign-ins, receipt ages, and current and historical totals.
+- `folder-status.md`: folder-copy sync reports, their canonical sign-ins, receipt ages, current and historical totals, and the folder inventory.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
 - `views.md`: views, the saved lists of items written as `system.view`, their query, sort and group, the operations that create, change and delete them, and the one that lists their items.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
