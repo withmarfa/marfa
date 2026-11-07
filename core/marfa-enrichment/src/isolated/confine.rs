@@ -123,33 +123,27 @@ extern "C" fn end_without_a_report(signal: libc::c_int) {
 }
 
 /// A crash here is a bad file doing what was expected, so on macOS it does not go to
-/// the crash reporter, which would leave a report on the owner's disk for each one.
-/// A process that dies of `abort` is reported whatever its exception ports say, so the
-/// signals the reporter watches end the process themselves. A stack overflow leaves no
-/// stack to run a handler on, and for that the ports are cleared.
+/// the crash reporter, which would leave a report on the owner's disk for each one. The
+/// signals the reporter watches end the process themselves, on a stack of their own: a
+/// stack overflow leaves none to run on.
 #[cfg(target_os = "macos")]
 fn no_crash_reports() {
-    /// `EXC_MASK_ALL`.
-    const ALL_EXCEPTIONS: u32 = 0x1bfe;
-    /// `EXCEPTION_DEFAULT`.
-    const DEFAULT_BEHAVIOR: libc::c_int = 1;
-    /// `THREAD_STATE_NONE`, which differs by architecture.
-    #[cfg(target_arch = "aarch64")]
-    const NO_THREAD_STATE: libc::c_int = 5;
-    #[cfg(target_arch = "x86_64")]
-    const NO_THREAD_STATE: libc::c_int = 13;
+    const SIGNAL_STACK_BYTES: usize = 64 * 1024;
 
-    unsafe extern "C" {
-        static mach_task_self_: libc::c_uint;
-        fn task_set_exception_ports(
-            task: libc::c_uint,
-            exception_mask: u32,
-            new_port: libc::c_uint,
-            behavior: libc::c_int,
-            new_flavor: libc::c_int,
-        ) -> libc::c_int;
-    }
+    let stack = Box::leak(vec![0u8; SIGNAL_STACK_BYTES].into_boxed_slice());
+    let stack = libc::stack_t {
+        ss_sp: stack.as_mut_ptr().cast(),
+        ss_size: stack.len(),
+        ss_flags: 0,
+    };
+    // SAFETY: the stack is leaked, so it lasts as long as the process.
+    unsafe { libc::sigaltstack(&raw const stack, std::ptr::null_mut()) };
+
     let handler = end_without_a_report as extern "C" fn(libc::c_int);
+    // SAFETY: all zeroes is a valid sigaction, with an empty mask.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = handler as libc::sighandler_t;
+    action.sa_flags = libc::SA_ONSTACK;
     for signal in [
         libc::SIGABRT,
         libc::SIGBUS,
@@ -160,17 +154,7 @@ fn no_crash_reports() {
         libc::SIGTRAP,
     ] {
         // SAFETY: the handler calls only _exit.
-        unsafe { libc::signal(signal, handler as libc::sighandler_t) };
-    }
-    // SAFETY: a null port removes this task's handlers, and touches nothing else.
-    unsafe {
-        task_set_exception_ports(
-            mach_task_self_,
-            ALL_EXCEPTIONS,
-            0,
-            DEFAULT_BEHAVIOR,
-            NO_THREAD_STATE,
-        );
+        unsafe { libc::sigaction(signal, &raw const action, std::ptr::null_mut()) };
     }
 }
 

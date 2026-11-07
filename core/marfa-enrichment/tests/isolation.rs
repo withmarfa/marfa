@@ -575,7 +575,6 @@ mod faults {
         crashes_naming("abort", "SIGABRT")
     }
 
-    /// It has no stack left, so it ends by the kernel's hand whatever handler is set.
     pub(super) fn a_stack_overflow_is_a_crash_named_by_its_signal() -> Result<(), Failed> {
         crashes_naming("stack-overflow", "SIG")
     }

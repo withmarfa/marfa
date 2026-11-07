@@ -98,7 +98,7 @@ A file the reader cannot take apart is `Refusal::Malformed`. A parser that panic
 | --- | --- | --- |
 | Hard deadline | Parent kills the group. The child's watchdog and `RLIMIT_CPU` stand behind it. | The same. |
 | Parent gone | The watchdog sees the parent's id change and ends the child, within 50 ms. | The same. |
-| No core file, no file written, few descriptors | `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`. | The same, and a crash writes no report in the owner's logs: the signals the crash reporter watches end the child with `128` plus the signal as its exit code, which the parent reads as the signal, and its exception ports are cleared for a stack overflow, which leaves no stack for a handler. |
+| No core file, no file written, few descriptors | `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`. | The same, and a crash writes no report in the owner's logs: the signals the crash reporter watches end the child with `128` plus the signal as its exit code, which the parent reads as the signal. |
 | Memory | Parent reads resident memory less shared pages from `/proc` every 10 ms. `RLIMIT_AS` stands behind it, at `max_memory_bytes` plus 256 MiB plus the program's size, and still holds when `/proc` is not mounted. | Parent reads the physical footprint every 10 ms. Nothing stands behind it: `setrlimit(RLIMIT_AS)` fails with `EINVAL`. |
 | Files | Landlock: read-only to the OCR data folder, nothing else. | `sandbox_init`: the same. |
 | Network | Landlock denies TCP from ABI 4. UDP stays open: Landlock has no rule for it. | `sandbox_init` denies all of it. |
