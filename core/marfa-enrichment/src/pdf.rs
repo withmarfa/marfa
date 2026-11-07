@@ -14,15 +14,21 @@ pub(crate) fn read(
     Err(crate::Refusal::Unsupported)
 }
 
-/// PDFium writes `U+0002` where a word is hyphenated at a line end, then the line
-/// break. The mark and the break go, and the two halves join; any other `U+0002`
-/// goes alone. Line endings become `\n`.
+/// PDFium writes `U+0002` for two things. Where a word is hyphenated at a line
+/// end it writes the mark in place of the hyphen, with or without a line break
+/// after it, and the two halves join. Where a font maps its space glyph to a
+/// character PDFium cannot name, it writes the mark between every two words, and
+/// a page of that has more marks than real spaces: each mark is then a space.
+/// Line endings become `\n`.
 #[cfg_attr(not(feature = "native"), allow(dead_code))]
 fn clean(text: &str) -> String {
+    let marks = text.matches('\u{2}').count();
+    let between_words = marks > text.matches(' ').count();
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            '\u{2}' if between_words => out.push(' '),
             '\u{2}' => {
                 if chars.peek() == Some(&'\r') {
                     chars.next();
@@ -237,8 +243,14 @@ mod tests {
 
     #[test]
     fn a_hyphenated_line_end_joins_the_word() {
-        assert_eq!(clean("inter\u{2}\r\nnational"), "international");
-        assert_eq!(clean("inter\u{2}\nnational"), "international");
+        assert_eq!(
+            clean("an inter\u{2}\r\nnational word"),
+            "an international word"
+        );
+        assert_eq!(
+            clean("an inter\u{2}\nnational word"),
+            "an international word"
+        );
     }
 
     #[test]
@@ -247,8 +259,23 @@ mod tests {
     }
 
     #[test]
-    fn a_stray_mark_goes_without_joining_anything_else() {
-        assert_eq!(clean("a\u{2}b"), "ab");
-        assert_eq!(clean("a\u{2}"), "a");
+    fn a_mark_in_the_middle_of_a_word_joins_it_when_the_page_has_real_spaces() {
+        assert_eq!(
+            clean("a learn\u{2}ing residual function with FAA\u{2}approved"),
+            "a learning residual function with FAAapproved"
+        );
+    }
+
+    #[test]
+    fn a_page_with_a_mark_between_every_word_has_spaces_instead() {
+        assert_eq!(
+            clean("The\u{2}degree\u{2}to\u{2}which\u{2}\r\nNext"),
+            "The degree to which \nNext"
+        );
+    }
+
+    #[test]
+    fn a_mark_at_the_very_end_leaves_nothing_behind() {
+        assert_eq!(clean("a b\u{2}"), "a b");
     }
 }
