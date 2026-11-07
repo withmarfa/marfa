@@ -45,5 +45,6 @@ url = "2"
 uuid.workspace = true
 
 [dev-dependencies]
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

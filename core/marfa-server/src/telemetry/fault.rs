@@ -93,7 +93,7 @@ impl Fault {
         }
     }
 
-    /// The frames, outermost call last, with what the machinery of reporting
+    /// The frames, the fault's own first, with what the machinery of reporting
     /// and of panicking put above the fault left out. Resolving reads the
     /// binary's debug information, so this belongs on a thread of its own.
     pub fn frames(&self) -> Option<Vec<Frame>> {
@@ -108,54 +108,165 @@ impl Fault {
                     .name()
                     .map_or_else(|| "<unknown>".to_string(), |name| name.to_string());
                 let (function, module) = split(&function);
+                let filename = symbol
+                    .filename()
+                    .map(|path| tidy_path(&path.display().to_string()));
                 Frame {
                     in_app: module
                         .as_deref()
-                        .is_some_and(|module| module.starts_with("marfa_")),
+                        .is_some_and(|module| module.starts_with("marfa_"))
+                        || filename
+                            .as_deref()
+                            .is_some_and(|path| path.starts_with("marfa-")),
                     function,
                     module,
-                    filename: symbol.filename().map(|path| path.display().to_string()),
+                    filename,
                     line: symbol.lineno(),
                     column: symbol.colno(),
                 }
             })
             .collect();
-        let first = frames
+        let lead = frames
             .iter()
-            .position(|frame| !is_machinery(frame))
-            .unwrap_or(0);
-        frames.drain(..first);
+            .position(|frame| frame.in_app && !is_own(frame))
+            .unwrap_or(frames.len());
+        let cut = frames[..lead]
+            .iter()
+            .rposition(is_machinery)
+            .map_or(0, |last| last + 1);
+        frames.drain(..cut);
+        frames.retain(|frame| !THREAD_STARTERS.contains(&frame.function.as_str()));
         frames.truncate(MAX_FRAMES);
         Some(frames)
     }
 }
 
-/// `a::b::name::h0123456789abcdef` as its name and the path before it.
+/// A symbol as its function and the path of the module or type that holds it.
+/// Generic arguments, the compiler's crate disambiguators (`[5d97c59e5e5fafcc]`)
+/// and the trailing hash are left out.
 fn split(symbol: &str) -> (String, Option<String>) {
-    let trimmed = match symbol.rsplit_once("::h") {
+    let mut plain = String::with_capacity(symbol.len());
+    let mut rest = symbol;
+    while let Some(open) = rest.find('[') {
+        match rest[open..].find(']') {
+            Some(close)
+                if rest[open + 1..open + close]
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit()) =>
+            {
+                plain.push_str(&rest[..open]);
+                rest = &rest[open + close + 1..];
+            }
+            _ => break,
+        }
+    }
+    plain.push_str(rest);
+    let plain = match plain.rsplit_once("::h") {
         Some((head, hash)) if hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()) => {
-            head
+            head.to_string()
         }
-        _ => symbol,
+        _ => plain,
     };
-    match trimmed.rsplit_once("::") {
-        Some((module, name)) if !name.starts_with('{') => {
-            (name.to_string(), Some(module.to_string()))
+
+    let mut parts: Vec<&str> = Vec::new();
+    let (mut depth, mut from, bytes) = (0usize, 0usize, plain.as_bytes());
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'<' => depth += 1,
+            b'>' if at > 0 && bytes[at - 1] != b'-' => depth = depth.saturating_sub(1),
+            b':' if depth == 0 && bytes.get(at + 1) == Some(&b':') => {
+                // `name::<A, B>` writes the arguments of a generic as a segment.
+                if parts.is_empty() || !plain[from..at].starts_with('<') {
+                    parts.push(&plain[from..at]);
+                }
+                from = at + 2;
+                at += 1;
+            }
+            _ => {}
         }
-        Some((module, _)) => (
-            trimmed.to_string(),
-            Some(module.split("::{").next().unwrap_or(module).to_string()),
-        ),
-        None => (trimmed.to_string(), None),
+        at += 1;
+    }
+    if parts.is_empty() || !plain[from..].starts_with('<') {
+        parts.push(&plain[from..]);
+    }
+
+    let last = parts.pop().unwrap_or_default();
+    let function = if last.starts_with('{')
+        && let Some(owner) = parts.pop()
+    {
+        format!("{}::{last}", generic_free(owner))
+    } else {
+        generic_free(last).to_string()
+    };
+    let module = (!parts.is_empty()).then(|| type_path(&parts.join("::")));
+    (function, module)
+}
+
+/// A source path without the machine it was built on: a workspace file by its
+/// crate, the standard library by `rustc/`, and a dependency by its crate.
+fn tidy_path(path: &str) -> String {
+    if let Some(at) = path.find("/core/marfa-") {
+        return path[at + "/core/".len()..].to_string();
+    }
+    if let Some(rest) = path.strip_prefix("/rustc/") {
+        return format!(
+            "rustc/{}",
+            rest.split_once('/').map_or(rest, |(_, tail)| tail)
+        );
+    }
+    match path.split_once("/registry/src/") {
+        Some((_, rest)) => rest
+            .split_once('/')
+            .map_or(rest, |(_, tail)| tail)
+            .to_string(),
+        None => path.to_string(),
     }
 }
 
+/// A name without the arguments of a generic.
+fn generic_free(name: &str) -> &str {
+    if name.starts_with('<') {
+        name
+    } else {
+        name.split('<').next().unwrap_or(name)
+    }
+}
+
+/// The path of a type written `<path::Type as Trait>` or `<path::Type<A>>`.
+fn type_path(module: &str) -> String {
+    let inner = module.trim_start_matches('<');
+    inner
+        .split(['<', '>', ' '])
+        .next()
+        .unwrap_or(inner)
+        .to_string()
+}
+
+/// Frames of the operating system that start a thread, which say nothing of
+/// the fault.
+const THREAD_STARTERS: [&str; 4] = ["__pthread_exit", "thread_start", "start_thread", "clone"];
+
+/// A frame of the code that takes the stack.
+fn is_own(frame: &Frame) -> bool {
+    frame
+        .module
+        .as_deref()
+        .is_some_and(|module| module.starts_with("marfa_server::telemetry::fault"))
+        || frame.filename.as_deref() == Some("marfa-server/src/telemetry/fault.rs")
+}
+
+/// A frame of what takes the stack or panics, which lies above the fault.
 fn is_machinery(frame: &Frame) -> bool {
     let module = frame.module.as_deref().unwrap_or("");
-    let own = module.starts_with("marfa_server::telemetry::fault");
-    own || module.starts_with("backtrace")
+    let file = frame.filename.as_deref().unwrap_or("");
+    is_own(frame)
+        || module.starts_with("backtrace")
         || module.starts_with("std::panicking")
         || module.starts_with("core::panicking")
+        || file.starts_with("backtrace-")
+        || file.ends_with("library/std/src/panicking.rs")
+        || file.ends_with("library/core/src/panicking.rs")
         || frame.function == "rust_begin_unwind"
         || frame.function == "__rustc::rust_begin_unwind"
 }
@@ -267,19 +378,41 @@ mod tests {
             )
         );
         assert_eq!(split("main"), ("main".to_string(), None));
+        assert_eq!(
+            split(
+                "<<marfa_server[bd6f45b987bdf421]::db::writer::Writer>::submit<marfa_server\
+                 [bd6f45b987bdf421]::app::items::write::Done>::{closure#0} as core\
+                 [663bb9e1522ba5ef]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}"
+            ),
+            (
+                "call_once::{shim:vtable#0}".to_string(),
+                Some("marfa_server::db::writer::Writer".to_string())
+            )
+        );
+        assert_eq!(
+            split(
+                "<marfa_server[bd6f45b987bdf421]::app::refusal::Refusal as core[663bb9e1522ba5ef]::convert::From<rusqlite[d2a5067f61221f4]::error::Error>>::from"
+            ),
+            (
+                "from".to_string(),
+                Some("marfa_server::app::refusal::Refusal".to_string())
+            )
+        );
     }
 
     #[test]
-    fn a_stack_is_taken_only_while_a_sink_wants_one() {
-        capture_stacks(false);
-        assert!(Fault::internal("x").frames().is_none());
-        capture_stacks(true);
-        let frames = Fault::internal("x").frames().expect("a stack");
-        capture_stacks(false);
-        assert!(!frames.is_empty());
-        assert!(
-            frames.iter().all(|frame| !is_machinery(frame)),
-            "{frames:#?}"
+    fn a_path_names_no_machine() {
+        assert_eq!(
+            tidy_path("/home/x/work/core/marfa-server/src/app/mod.rs"),
+            "marfa-server/src/app/mod.rs"
+        );
+        assert_eq!(
+            tidy_path("/rustc/48a229ceaefd/library/std/src/panic.rs"),
+            "rustc/library/std/src/panic.rs"
+        );
+        assert_eq!(
+            tidy_path("/u/.cargo/registry/src/index.crates.io-1949/tokio-1.0.0/src/lib.rs"),
+            "tokio-1.0.0/src/lib.rs"
         );
     }
 }

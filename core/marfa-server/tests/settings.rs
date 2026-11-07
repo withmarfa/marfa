@@ -150,7 +150,10 @@ fn a_stale_shell_is_ignored_and_warned_of_by_name_alone() {
         .env("NODE_ENV", "production");
     let log = Server::start(command).stop();
 
-    let warnings: Vec<_> = log.lines().filter(|line| line.contains("WARN")).collect();
+    let warnings: Vec<_> = log
+        .lines()
+        .filter(|line| line.contains("\"level\":\"warn\""))
+        .collect();
     for (name, key) in [
         ("MARFA_MAX_REQUEST_BYTES", "max_request_bytes"),
         ("RATE_LIMIT_ENABLED", "rate_limit_enabled"),
@@ -222,7 +225,9 @@ fn a_row_that_does_not_read_keeps_the_server_up_and_stays() {
     let public = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
     assert_eq!(status(&exchange(public, "GET", "/", "", "")), 200);
     let log = server.stop();
-    let errors = log.lines().filter(|line| line.contains("ERROR"));
+    let errors = log
+        .lines()
+        .filter(|line| line.contains("\"level\":\"error\""));
     assert_eq!(
         errors
             .filter(|line| line.contains("max_request_bytes"))

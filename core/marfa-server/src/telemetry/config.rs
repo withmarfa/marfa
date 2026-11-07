@@ -68,7 +68,8 @@ impl Notice {
 
 #[derive(Clone)]
 pub struct Config {
-    /// `OTEL_SDK_DISABLED` is `true`: nothing is exported or sent.
+    /// `OTEL_SDK_DISABLED` is `true`: no trace, log record or exception report.
+    /// The error webhook is not telemetry and stays as configured.
     pub off: bool,
     pub service: String,
     /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`.
@@ -216,18 +217,10 @@ impl Config {
             logs: logs.filter(|_| !off),
             ratio,
             exceptions,
-            webhook: webhook.filter(|_| !off),
+            webhook,
             environment: environment_name,
             notices,
         }
-    }
-
-    /// Whether anything at all is on.
-    pub fn any(&self) -> bool {
-        self.traces.is_some()
-            || self.logs.is_some()
-            || self.exceptions.is_some()
-            || self.webhook.is_some()
     }
 }
 
@@ -295,7 +288,12 @@ mod tests {
     fn nothing_is_on_when_nothing_is_set() {
         let (config, problems) = read(&[]);
         assert!(problems.is_empty());
-        assert!(!config.any());
+        assert!(
+            config.traces.is_none()
+                && config.logs.is_none()
+                && config.exceptions.is_none()
+                && config.webhook.is_none()
+        );
         assert_eq!(config.service, "marfa-server");
         assert_eq!(config.environment, "production");
         assert_eq!(config.ratio, 0.05);
@@ -313,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_sdk_turns_everything_off_and_says_nothing() {
+    fn a_disabled_sdk_turns_off_every_export_but_the_webhook_and_says_nothing() {
         let (config, problems) = read(&[
             ("OTEL_SDK_DISABLED", "TRUE"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
@@ -322,7 +320,9 @@ mod tests {
             ("ERROR_WEBHOOK_URL", "http://127.0.0.1:9/errors"),
         ]);
         assert!(problems.is_empty());
-        assert!(config.off && !config.any());
+        assert!(config.off);
+        assert!(config.traces.is_none() && config.logs.is_none() && config.exceptions.is_none());
+        assert!(config.webhook.is_some());
         assert!(config.notices.is_empty());
     }
 

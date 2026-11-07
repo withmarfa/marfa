@@ -134,3 +134,54 @@ impl<S: Subscriber> Layer<S> for Logs {
         logger.emit(record);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::*;
+
+    #[test]
+    fn a_record_carries_its_message_and_the_listed_fields_and_nothing_else() {
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let logs = Logs::default();
+        logs.connect(&provider);
+        let subscriber = tracing_subscriber::registry().with(logs.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::error!(
+                request_id = "r-1",
+                error = "Database operation failed (SQLITE_ERROR)",
+                status = 500u64,
+                path = "/items/title-of-a-private-note",
+                title = "a private title",
+                api_key = "marfa_k2_secret",
+                "Unhandled error"
+            );
+        });
+        let records = exporter.get_emitted_logs().unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0].record;
+        assert!(matches!(
+            record.body(),
+            Some(AnyValue::String(body)) if body.as_str() == "Unhandled error"
+        ));
+        let keys: Vec<String> = record
+            .attributes_iter()
+            .map(|(key, _)| key.as_str().to_string())
+            .collect();
+        assert_eq!(keys, ["request_id", "error", "status"]);
+        assert_eq!(record.severity_text(), Some("ERROR"));
+    }
+
+    #[test]
+    fn a_layer_with_no_provider_does_nothing() {
+        let logs = Logs::default();
+        assert!(!logs.is_on());
+        let subscriber = tracing_subscriber::registry().with(logs);
+        tracing::subscriber::with_default(subscriber, || tracing::error!("nobody listens"));
+    }
+}

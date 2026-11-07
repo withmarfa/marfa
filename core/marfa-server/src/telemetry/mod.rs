@@ -268,3 +268,26 @@ fn annotate(span: &mut Span, done: &Finished<'_>) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stack_is_taken_only_while_a_sink_wants_one_and_starts_at_the_fault() {
+        fault::capture_stacks(false);
+        assert!(Fault::internal("x").frames().is_none());
+        fault::capture_stacks(true);
+        let frames = Fault::internal("x").frames().expect("a stack");
+        fault::capture_stacks(false);
+        let first = frames.first().expect("a frame");
+        assert!(
+            first.function.contains("a_stack_is_taken")
+                || first
+                    .module
+                    .as_deref()
+                    .is_some_and(|module| module.contains("telemetry::tests")),
+            "{frames:#?}"
+        );
+    }
+}

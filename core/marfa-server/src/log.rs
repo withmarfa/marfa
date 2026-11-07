@@ -25,11 +25,7 @@ pub fn logs() -> &'static Logs {
 
 pub fn init() {
     let lines = fmt::layer()
-        .json()
-        .flatten_event(true)
-        .with_current_span(false)
-        .with_span_list(false)
-        .with_target(false)
+        .event_format(Lines)
         .with_writer(std::io::stdout)
         .with_filter(filter_fn(|metadata| metadata.target() != REQUEST_TARGET));
     let _ = tracing_subscriber::registry()
@@ -37,6 +33,65 @@ pub fn init() {
         .with(logs().clone())
         .with(LevelFilter::INFO)
         .try_init();
+}
+
+/// A log record as one JSON object: `timestamp`, a lowercase `level`,
+/// `message`, and the event's own fields beside them.
+struct Lines;
+
+struct Collect(serde_json::Map<String, serde_json::Value>);
+
+impl tracing::field::Visit for Collect {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.0.insert(field.name().into(), value.into());
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.0.insert(field.name().into(), value.into());
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.0.insert(field.name().into(), value.into());
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        self.0.insert(field.name().into(), value.into());
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.0.insert(field.name().into(), value.into());
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0
+            .insert(field.name().into(), format!("{value:?}").into());
+    }
+}
+
+impl<S, N> fmt::FormatEvent<S, N> for Lines
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    N: for<'a> fmt::FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _: &fmt::FmtContext<'_, S, N>,
+        mut writer: fmt::format::Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let mut record = Collect(serde_json::Map::new());
+        record.0.insert("timestamp".into(), now_micros().into());
+        record.0.insert(
+            "level".into(),
+            event.metadata().level().as_str().to_lowercase().into(),
+        );
+        event.record(&mut record);
+        writeln!(writer, "{}", serde_json::Value::Object(record.0))
+    }
+}
+
+fn now_micros() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
 /// One request's record, written once its answer is ready.

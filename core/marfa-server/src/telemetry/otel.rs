@@ -52,7 +52,7 @@ impl HttpClient for Blocking {
         Self: 'b,
     {
         let (parts, body) = request.into_parts();
-        let request = Request::from_parts(parts, body.to_vec());
+        let request = Request::from_parts(parts, plain_integers(&body));
         let sent = self.agent.run(request);
         Box::pin(async move {
             let mut response = sent?;
@@ -63,6 +63,35 @@ impl HttpClient for Blocking {
             *out.headers_mut() = response.headers().clone();
             Ok(out)
         })
+    }
+}
+
+/// The exporter writes every 64-bit integer as a string, as the protobuf JSON
+/// mapping says. A collector reads either, but an attribute that is a whole
+/// number is a number to most readers, so an `intValue` that a double holds
+/// exactly is sent as one.
+fn plain_integers(body: &[u8]) -> Vec<u8> {
+    fn walk(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::String(digits)) = map.get("intValue")
+                    && let Ok(whole) = digits.parse::<i64>()
+                    && whole.unsigned_abs() <= 1 << 53
+                {
+                    map.insert("intValue".into(), whole.into());
+                }
+                map.values_mut().for_each(walk);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(mut parsed) => {
+            walk(&mut parsed);
+            serde_json::to_vec(&parsed).unwrap_or_else(|_| body.to_vec())
+        }
+        Err(_) => body.to_vec(),
     }
 }
 
@@ -251,5 +280,142 @@ impl<P: SpanProcessor> SpanProcessor for Tail<P> {
 
     fn set_resource(&mut self, resource: &Resource) {
         self.next.set_resource(resource);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::SystemTime;
+
+    use opentelemetry::InstrumentationScope;
+    use opentelemetry::trace::{SpanContext, TraceFlags, TraceState};
+
+    use super::*;
+
+    #[derive(Debug, Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    impl SpanProcessor for Recorder {
+        fn on_start(&self, _: &mut Span, _: &opentelemetry::Context) {}
+
+        fn on_end(&self, span: SpanData) {
+            self.0.lock().unwrap().push(span.name.to_string());
+        }
+
+        fn force_flush(&self) -> OTelSdkResult {
+            Ok(())
+        }
+
+        fn shutdown_with_timeout(&self, _: Duration) -> OTelSdkResult {
+            Ok(())
+        }
+    }
+
+    const TRACE: u128 = 1 << 127;
+
+    fn span(trace: u128, name: &str, parent: Option<u64>, failed: bool) -> SpanData {
+        SpanData {
+            span_context: SpanContext::new(
+                TraceId::from_bytes(trace.to_be_bytes()),
+                SpanId::from_bytes(1u64.to_be_bytes()),
+                TraceFlags::SAMPLED,
+                false,
+                TraceState::default(),
+            ),
+            parent_span_id: parent
+                .map_or(SpanId::INVALID, |id| SpanId::from_bytes(id.to_be_bytes())),
+            parent_span_is_remote: false,
+            span_kind: opentelemetry::trace::SpanKind::Internal,
+            name: name.to_string().into(),
+            start_time: SystemTime::now(),
+            end_time: SystemTime::now(),
+            attributes: Vec::new(),
+            dropped_attributes_count: 0,
+            events: Default::default(),
+            links: Default::default(),
+            status: if failed {
+                Status::error("failed")
+            } else {
+                Status::Unset
+            },
+            instrumentation_scope: InstrumentationScope::builder("t").build(),
+        }
+    }
+
+    fn tail(sampler: Sampler) -> (Tail<Recorder>, Recorder) {
+        let recorder = Recorder::default();
+        (Tail::new(recorder.clone(), sampler), recorder)
+    }
+
+    fn names(recorder: &Recorder) -> Vec<String> {
+        recorder.0.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn a_trace_the_ratio_keeps_goes_through_whole() {
+        let (tail, seen) = tail(Sampler::On);
+        tail.on_end(span(TRACE, "child", Some(7), false));
+        tail.on_end(span(TRACE, "root", None, false));
+        assert_eq!(names(&seen), ["child", "root"]);
+    }
+
+    #[test]
+    fn a_trace_without_an_error_is_dropped_when_the_ratio_keeps_none() {
+        let (tail, seen) = tail(Sampler::Off);
+        tail.on_end(span(TRACE, "child", Some(7), false));
+        tail.on_end(span(TRACE, "root", None, false));
+        assert!(names(&seen).is_empty());
+        assert!(tail.traces.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_error_releases_the_spans_held_for_it_and_every_span_after() {
+        let (tail, seen) = tail(Sampler::Off);
+        tail.on_end(span(TRACE, "before", Some(7), false));
+        tail.on_end(span(TRACE, "failed", Some(7), true));
+        tail.on_end(span(TRACE, "after", Some(7), false));
+        tail.on_end(span(TRACE, "root", None, false));
+        assert_eq!(names(&seen), ["before", "failed", "after", "root"]);
+        assert!(tail.traces.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_root_that_fails_exports_the_held_spans() {
+        let (tail, seen) = tail(Sampler::Off);
+        tail.on_end(span(TRACE, "child", Some(7), false));
+        tail.on_end(span(TRACE, "root", None, true));
+        assert_eq!(names(&seen), ["child", "root"]);
+    }
+
+    #[test]
+    fn at_most_the_limit_of_spans_are_held_for_a_trace() {
+        let (tail, seen) = tail(Sampler::Off);
+        for number in 0..MAX_HELD_SPANS + 100 {
+            tail.on_end(span(TRACE, &format!("held-{number}"), Some(7), false));
+        }
+        tail.on_end(span(TRACE, "failed", None, true));
+        assert_eq!(names(&seen).len(), MAX_HELD_SPANS + 1);
+    }
+
+    #[test]
+    fn traces_are_decided_apart() {
+        let (tail, seen) = tail(Sampler::Off);
+        let other = TRACE | 1;
+        tail.on_end(span(TRACE, "a-child", Some(7), false));
+        tail.on_end(span(other, "b-child", Some(7), false));
+        tail.on_end(span(other, "b-failed", Some(7), true));
+        tail.on_end(span(TRACE, "a-root", None, false));
+        assert_eq!(names(&seen), ["b-child", "b-failed"]);
+    }
+
+    #[test]
+    fn a_whole_number_attribute_is_sent_as_a_number() {
+        let body = br#"{"a":[{"key":"k","value":{"intValue":"500"}},{"key":"big","value":{"intValue":"9007199254740993"}},{"key":"s","value":{"stringValue":"500"}}]}"#;
+        let sent: serde_json::Value = serde_json::from_slice(&plain_integers(body)).unwrap();
+        assert_eq!(sent["a"][0]["value"]["intValue"], 500);
+        assert_eq!(sent["a"][1]["value"]["intValue"], "9007199254740993");
+        assert_eq!(sent["a"][2]["value"]["stringValue"], "500");
+        assert_eq!(plain_integers(b"not json"), b"not json");
     }
 }
