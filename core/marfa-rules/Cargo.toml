@@ -11,6 +11,7 @@ base64.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 unicode-normalization = "0.1"
 url = "2"
 ryu = "1"

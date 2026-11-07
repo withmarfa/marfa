@@ -4,12 +4,14 @@
 
 pub mod builtin;
 pub mod catalog;
+pub mod conflict;
 pub mod display;
 pub mod error;
 pub mod filter;
 pub mod grammar;
 pub mod integers;
 pub mod js;
+pub mod json_text;
 pub mod names;
 pub mod query;
 pub mod schema;

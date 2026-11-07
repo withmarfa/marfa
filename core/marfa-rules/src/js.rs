@@ -119,6 +119,27 @@ pub fn object_order(object: &Map<String, Value>) -> Map<String, Value> {
     ordered
 }
 
+/// `value` with every object in it in [`object_order`].
+fn in_object_order(value: &Value) -> Value {
+    match value {
+        Value::Object(members) => Value::Object(
+            object_order(members)
+                .iter()
+                .map(|(name, member)| (name.clone(), in_object_order(member)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(in_object_order).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The text a store holds for `object`: every number in the digits it is
+/// served in and every object in the order it is served in, so reading it
+/// back needs no second pass.
+pub fn canonical(object: &Map<String, Value>) -> String {
+    json(&in_object_order(&Value::Object(object.clone())))
+}
+
 /// An array index as ECMAScript defines one: the canonical decimal of an
 /// integer below 2^32 - 1.
 fn array_index(key: &str) -> Option<u32> {
@@ -183,6 +204,17 @@ mod tests {
             r#"{"list":[100000000000000000000,0.0000015,1e+21,12,-3,1.5],"n":{"m":100000000000000000000}}"#
         );
         assert_eq!(json(&json!("a\"b")), r#""a\"b""#);
+    }
+
+    #[test]
+    fn canonical_text_prints_numbers_and_orders_names_at_every_depth() {
+        let parsed: Value =
+            serde_json::from_str(r#"{"b":1.0,"2":{"z":1e3,"1":-0.0},"a":[{"10":1.5e300,"9":0}]}"#)
+                .unwrap();
+        assert_eq!(
+            canonical(parsed.as_object().unwrap()),
+            r#"{"2":{"1":0,"z":1000},"b":1,"a":[{"9":0,"10":1.5e+300}]}"#
+        );
     }
 
     #[test]

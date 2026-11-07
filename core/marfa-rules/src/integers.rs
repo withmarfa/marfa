@@ -100,13 +100,46 @@ pub fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), RuleError>
 /// already a float once parsed. Text that is not JSON is left to the caller's
 /// own parse.
 pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
+    match inexact_integers(text, None, true).into_iter().next() {
+        Some((path, source)) => Err(refusal(&path, &source)),
+        None => Ok(()),
+    }
+}
+
+/// Refuses each whole number that a float would change in the member `bag` of
+/// `text`, a JSON object, or in all of it where `bag` is `None`. A path is
+/// named from inside the bag.
+pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), RuleError> {
+    let found = inexact_integers(text, bag, false);
+    if found.is_empty() {
+        return Ok(());
+    }
+    let fields: Vec<FieldError> = found
+        .iter()
+        .map(|(path, source)| {
+            FieldError::new(path.join("."), field_code::INEXACT_INTEGER, message(source))
+        })
+        .collect();
+    let listed: Vec<String> = found
+        .iter()
+        .map(|(path, source)| refusal_message(path, source))
+        .collect();
+    Err(RuleError::new(
+        Code::InvalidProperties,
+        format!("Invalid properties: {}", listed.join("; ")),
+    )
+    .with_fields(fields))
+}
+
+fn inexact_integers(text: &str, bag: Option<&str>, first: bool) -> Vec<(Vec<String>, String)> {
+    let mut found = Vec::new();
     let bytes = text.as_bytes();
     if !bytes
         .windows(MIN_DIGITS)
         .any(|window| window.iter().all(u8::is_ascii_digit))
         && !bytes.windows(2).any(|window| window == b"-0")
     {
-        return Ok(());
+        return found;
     }
     // One frame per open container: an object's current member name, or an
     // array's current index.
@@ -151,11 +184,21 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
                     .iter()
                     .position(|b| !matches!(b, b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9'))
                     .map_or(bytes.len(), |length| at + length);
-                let token = &text[at..end];
+                let token = text.get(at..end).unwrap_or("");
                 let whole = token.strip_prefix('-').unwrap_or(token);
                 if !whole.is_empty() && whole.bytes().all(|b| b.is_ascii_digit()) && !kept(token) {
-                    let path: Vec<String> = frames.iter().map(|(_, name)| name.clone()).collect();
-                    return Err(refusal(&path, token));
+                    let mut path = frames.iter().map(|(_, name)| name.clone());
+                    let inside: Option<Vec<String>> = match bag {
+                        None => Some(path.collect()),
+                        Some(bag) => (frames.len() > 1 && path.next().as_deref() == Some(bag))
+                            .then(|| path.collect()),
+                    };
+                    if let Some(inside) = inside {
+                        found.push((inside, token.to_string()));
+                        if first {
+                            return found;
+                        }
+                    }
                 }
                 at = end - 1;
             }
@@ -163,7 +206,7 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
         }
         at += 1;
     }
-    Ok(())
+    found
 }
 
 #[cfg(test)]
@@ -211,6 +254,19 @@ mod tests {
             assert!(!kept(source), "{source}");
         }
         assert!(!kept(&"9".repeat(400)));
+    }
+
+    #[test]
+    fn a_bag_is_judged_alone_and_each_path_is_named_from_inside_it() {
+        let text = r#"{"version": 9007199254740993, "properties": {"a": [1, 1152921504606846976], "b": -0}, "capture_latitude": -0}"#;
+        let refused = refuse_inexact_integers_in(text, Some("properties")).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["a.1", "b"]);
+        assert!(
+            refuse_inexact_integers_in(r#"{"version": -0, "properties": {}}"#, Some("properties"))
+                .is_ok()
+        );
+        assert!(refuse_inexact_integers_in(r#"{"a": -0}"#, None).is_err());
     }
 
     #[test]
