@@ -298,7 +298,11 @@ export function operationsOf(document: {
   });
 }
 
-/** Where the harness reaches the target outside the published document. */
+/**
+ * Where the harness reaches the target outside the published document. A
+ * refusal here is often the test's point, as a test hook refused on the HTTP
+ * listener is, so a door counts as lacking only if the run never reached it.
+ */
 const CONTROL_DOORS = "/_control/";
 
 export interface FailedFile {
@@ -313,13 +317,17 @@ export interface FailedFile {
 
 function lackingDoors(
   records: readonly RequestRecord[],
+  served: ReadonlySet<string>,
   operations: readonly Operation[],
 ): string[] {
   const lacking = new Map<string, number>();
   for (const record of records) {
     if (record.route !== undefined) continue;
+    const asked = `${record.method} ${record.path}`;
     const name = record.path.startsWith(CONTROL_DOORS)
-      ? `${record.method} ${record.path}`
+      ? served.has(asked)
+        ? undefined
+        : asked
       : operations.find(
           (operation) =>
             operation.method === record.method &&
@@ -344,6 +352,13 @@ export function sortFailedFiles(
   windows: FileWindows,
   operations: readonly Operation[],
 ): FailedFile[] {
+  const served = new Set(
+    logs.flatMap((log) =>
+      log.records
+        .filter((record) => record.route !== undefined)
+        .map((record) => `${record.method} ${record.path}`),
+    ),
+  );
   return run.files
     .filter((file) => file.failed)
     .map((file) => {
@@ -366,7 +381,7 @@ export function sortFailedFiles(
         file: file.file,
         failedTests: outcomes.failed,
         blockedTests: outcomes.blocked,
-        lacking: lackingDoors(records, operations),
+        lacking: lackingDoors(records, served, operations),
         firstMessage: (file.messages[0] ?? "").split("\n")[0] ?? "",
       };
     });

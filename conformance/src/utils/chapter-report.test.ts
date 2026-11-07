@@ -165,6 +165,22 @@ describe("the chapter report", () => {
     ]);
   });
 
+  it("counts a control door as lacking only if no request in the run reached it", () => {
+    const at = new Date(1_500).toISOString();
+    const records = log([
+      { timestamp: at, method: "GET", path: "/_control/test/clock" },
+      { timestamp: at, method: "GET", path: "/_control/missing" },
+      {
+        timestamp: new Date(9_000).toISOString(),
+        method: "GET",
+        path: "/_control/test/clock",
+        route: "/_control/test/clock",
+      },
+    ]);
+    const [a] = sortFailedFiles(run, [{ records }], windows, operations);
+    expect(a?.lacking).toEqual(["GET /_control/missing (1)"]);
+  });
+
   it("places a fixture's own server by when its log was kept, whatever its clock said", () => {
     const records = log([
       {
