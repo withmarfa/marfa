@@ -12,7 +12,7 @@ use super::pkce;
 use super::resource::{Refused, at_token};
 use super::scope::{OFFLINE_ACCESS, ScopeSet, first_uncovered};
 use super::signed_link::has_repeat;
-use super::store::{self, AccessToken, Client, DeviceStatus, RefreshToken, ms_of, scopes_text};
+use super::store::{self, AccessToken, Client, DeviceStatus, RefreshToken, ms_of};
 use super::tokens::{new_access_token, new_refresh_token};
 use super::{ACCESS_TOKEN_SECONDS, Answered, MS_PER_SECOND, Problem, REFRESH_TOKEN_SECONDS};
 use crate::app::App;
@@ -165,7 +165,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
     answer.insert("access_token".to_string(), json!(access));
     answer.insert("token_type".to_string(), json!("Bearer"));
     answer.insert("expires_in".to_string(), json!(ACCESS_TOKEN_SECONDS));
-    answer.insert("scope".to_string(), json!(scopes_text(issue.scopes)));
+    answer.insert("scope".to_string(), json!(issue.scopes.to_text()));
     if issue.refresh {
         let refresh = new_refresh_token()?;
         store::insert_refresh_token(

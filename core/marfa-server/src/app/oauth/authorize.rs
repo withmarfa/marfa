@@ -14,7 +14,7 @@ use super::redirect::Destination;
 use super::resource::{self, at_authorize};
 use super::scope::{ScopeSet, first_uncovered, narrow, needs_recent_sign_in};
 use super::signed_link::{self, Refused, Verified, has_repeat};
-use super::store::{self, Client, Code, Consent, ms_of, scopes_text};
+use super::store::{self, Client, Code, Consent, ms_of};
 use super::tokens::new_authorization_code;
 use super::{Answered, CODE_SECONDS, MS_PER_SECOND, Problem, issuer};
 use crate::app::App;
@@ -75,7 +75,7 @@ impl Asked {
         .into_iter()
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
-        params.push(("scope".to_string(), scopes_text(scope)));
+        params.push(("scope".to_string(), scope.to_text()));
         if let Some(state) = &self.state {
             params.push(("state".to_string(), state.clone()));
         }
