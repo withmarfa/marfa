@@ -134,6 +134,25 @@ impl Instance {
             .await
     }
 
+    async fn binned(&self, count: usize) -> Vec<String> {
+        let mut ids = Vec::with_capacity(count);
+        for _ in 0..count {
+            let id = self.note().await;
+            let path = format!("/items/{id}");
+            self.ok(Method::DELETE, &path, Value::Null).await;
+            ids.push(id);
+        }
+        ids
+    }
+
+    async fn sql(&self, statements: String) {
+        self.app
+            .db
+            .write(Write::own(), move |tx| Ok(tx.execute_batch(&statements)?))
+            .await
+            .unwrap();
+    }
+
     fn forward(&self, ms: u64) {
         self.app.clock.advance(ms).unwrap();
     }
@@ -444,6 +463,59 @@ async fn trash_purge_removes_edges_and_the_parts_that_went_with_a_host() {
     assert_eq!(instance.count(&left), 0);
     assert_eq!(instance.count("SELECT count(*) FROM edges"), 0);
     assert_eq!(instance.state(&other), "active");
+}
+
+#[tokio::test]
+async fn trash_purge_walks_past_rows_it_cannot_take_and_tries_them_on_the_next_run() {
+    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let held = instance.binned(201).await;
+    let last_held = instance.count("SELECT max(seq) FROM items");
+    instance.forward(HOUR);
+    let behind = instance.binned(2).await;
+    instance
+        .sql(format!(
+            "CREATE TRIGGER held BEFORE DELETE ON items WHEN OLD.seq <= {last_held} \
+             BEGIN SELECT RAISE(ABORT, 'held'); END"
+        ))
+        .await;
+    instance.forward(2 * DAY);
+
+    let first = instance.run("trash-purge").await;
+    assert_eq!(first, json!({ "deleted": 2, "passed_over": 201 }));
+    assert_eq!(instance.state(&held[0]), "trashed");
+    let gone = format!("SELECT count(*) FROM items WHERE id = '{}'", behind[1]);
+    assert_eq!(instance.count(&gone), 0);
+    let job = instance.job("trash-purge").await;
+    assert_eq!(job["next_run_at"], job["last_finished_at"]);
+
+    let second = instance.run("trash-purge").await;
+    assert_eq!(second, json!({ "deleted": 0, "passed_over": 201 }));
+    let job = instance.job("trash-purge").await;
+    assert_ne!(job["next_run_at"], job["last_finished_at"]);
+
+    instance.sql("DROP TRIGGER held".to_string()).await;
+    assert_eq!(instance.run("trash-purge").await, json!({ "deleted": 200 }));
+}
+
+#[tokio::test]
+async fn trash_purge_ends_in_error_when_every_row_fails_with_one() {
+    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let held = instance.binned(2).await;
+    instance
+        .sql(
+            "CREATE TABLE gone (x); \
+             CREATE TRIGGER broken BEFORE DELETE ON items BEGIN INSERT INTO gone VALUES (1); END; \
+             DROP TABLE gone"
+                .to_string(),
+        )
+        .await;
+    instance.forward(2 * DAY);
+
+    let ended = housekeeping::run_now(&instance.app, "trash-purge")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "error", "{:?}", ended.result);
+    assert_eq!(instance.state(&held[0]), "trashed");
 }
 
 #[tokio::test]

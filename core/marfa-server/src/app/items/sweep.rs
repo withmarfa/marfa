@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rusqlite::{Transaction, params};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::super::App;
 use super::super::access::Caller;
@@ -17,16 +17,28 @@ use super::rows;
 use super::write::announce;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
-/// Items one run removes. A run that leaves more runs again at once.
+/// Rows one write takes. A run ends with the first write that removes any,
+/// and a run that leaves more runs again at once.
 const BATCH: i64 = 200;
 
-fn binned_before(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<Vec<String>> {
+/// Where a run has reached in the bin, by `trashed_at` and `id`. What it could
+/// not take stays behind it, so the next batch starts past it.
+type Position = (String, String);
+
+fn binned_after(
+    tx: &Transaction<'_>,
+    before: &str,
+    after: &Position,
+    limit: i64,
+) -> Result<Vec<Position>> {
     let mut statement = tx.prepare_cached(
-        "SELECT id FROM items WHERE state = 'trashed' AND trashed_at < ?1 \
-         ORDER BY trashed_at, id LIMIT ?2",
+        "SELECT trashed_at, id FROM items WHERE state = 'trashed' AND trashed_at < ?1 \
+         AND (trashed_at, id) > (?2, ?3) ORDER BY trashed_at, id LIMIT ?4",
     )?;
     Ok(statement
-        .query_map(params![before, limit], |row| row.get(0))?
+        .query_map(params![before, after.0, after.1, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<rusqlite::Result<_>>()?)
 }
 
@@ -49,19 +61,27 @@ pub(super) fn alone(
     }
 }
 
-struct Purged {
+/// Whether what stopped a row says the store failed, and not that this row
+/// cannot go: a constraint holds that row back and leaves every other one free.
+fn is_actual_error(stopped: &Refusal) -> bool {
+    stopped.code.status() >= 500 && stopped.cause != Some("SQLITE_CONSTRAINT")
+}
+
+#[derive(Default)]
+struct Batch {
     deleted: usize,
-    left: bool,
+    refused: usize,
+    failed: usize,
+    first_error: Option<Refusal>,
+    /// Where the next batch starts, while there can be one.
+    next: Option<Position>,
 }
 
 /// One batch, inside the write that removes it: the retention is read here, so
 /// a retention raised or set to zero during a run holds for what has not gone.
-fn purge_batch(unit: &Unit<'_, '_>, app: &App) -> Result<Purged> {
+fn purge_batch(unit: &Unit<'_, '_>, app: &App, after: &Position) -> Result<Batch> {
     let Some(before) = cutoff(app, TRASH_RETENTION_DAYS, DAY_MS) else {
-        return Ok(Purged {
-            deleted: 0,
-            left: false,
-        });
+        return Ok(Batch::default());
     };
     let tx = unit.tx();
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
@@ -71,17 +91,19 @@ fn purge_batch(unit: &Unit<'_, '_>, app: &App) -> Result<Purged> {
         catalog: &catalog,
         claim: None,
     };
-    let chosen = binned_before(tx, &before, BATCH + 1)?;
-    let left = chosen.len() as i64 > BATCH;
-    let mut deleted = 0;
-    let mut first_refusal = None;
-    for id in chosen.iter().take(BATCH as usize) {
-        // A part goes with its host, so a row chosen here can have gone already.
-        if rows::by_id(tx, id)?.is_none() {
-            continue;
-        }
+    let chosen = binned_after(tx, &before, after, BATCH + 1)?;
+    let taken = &chosen[..chosen.len().min(BATCH as usize)];
+    let mut batch = Batch {
+        next: taken.last().filter(|_| chosen.len() > taken.len()).cloned(),
+        ..Batch::default()
+    };
+    for (_, id) in taken {
         let mut gone = 0;
-        let refused = alone(tx, || {
+        let stopped = alone(tx, || {
+            // A part goes with its host, so a row chosen here can have gone already.
+            if rows::by_id(tx, id)?.is_none() {
+                return Ok(());
+            }
             let asked = Asked {
                 id: id.clone(),
                 version: None,
@@ -97,46 +119,71 @@ fn purge_batch(unit: &Unit<'_, '_>, app: &App) -> Result<Purged> {
             gone = purging.len();
             Ok(())
         })?;
-        match refused {
-            None => deleted += gone,
-            Some(refused) => {
-                tracing::error!(item = %id, error = %refused, "An item could not be purged");
-                first_refusal.get_or_insert(refused);
+        match stopped {
+            None => batch.deleted += gone,
+            Some(stopped) => {
+                tracing::error!(item = %id, error = %stopped, "An item could not be purged");
+                if is_actual_error(&stopped) {
+                    batch.failed += 1;
+                    batch.first_error.get_or_insert(stopped);
+                } else {
+                    batch.refused += 1;
+                }
             }
         }
     }
-    match first_refusal {
-        Some(refused) if deleted == 0 => return Err(refused),
-        _ => {}
-    }
-    if deleted > 0 {
+    if batch.deleted > 0 {
         unit.audit_set(
             "item",
-            Some(json!({ "deleted": deleted, "before": before })),
+            Some(json!({ "deleted": batch.deleted, "before": before })),
         )?;
     }
-    Ok(Purged { deleted, left })
+    Ok(batch)
 }
 
-pub async fn trash_purge(app: Arc<App>, _run: Run) -> Result<Report> {
+fn result(deleted: usize, passed_over: usize) -> Value {
+    let mut result = json!({ "deleted": deleted });
+    if passed_over > 0 {
+        result["passed_over"] = passed_over.into();
+    }
+    result
+}
+
+pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
     let Some(before) = cutoff(&app, TRASH_RETENTION_DAYS, DAY_MS) else {
-        return Ok(Report::done(json!({ "deleted": 0 })));
+        return Ok(Report::done(result(0, 0)));
     };
     let due = app
         .db
-        .read(move |tx| Ok(!binned_before(tx, &before, 1)?.is_empty()))
+        .read(move |tx| Ok(!binned_after(tx, &before, &Position::default(), 1)?.is_empty()))
         .await?;
     if !due {
-        return Ok(Report::done(json!({ "deleted": 0 })));
+        return Ok(Report::done(result(0, 0)));
     }
-    let live = app.clone();
-    let purged = app
-        .write(&Caller::Server, "items.trash_purged", move |unit| {
-            purge_batch(unit, &live)
-        })
-        .await?;
-    Ok(Report {
-        result: json!({ "deleted": purged.deleted }),
-        again: purged.deleted > 0 && purged.left,
-    })
+    let (mut refused, mut failed, mut first_error) = (0, 0, None);
+    let mut after = Position::default();
+    loop {
+        let live = app.clone();
+        let batch = app
+            .write(&Caller::Server, "items.trash_purged", move |unit| {
+                purge_batch(unit, &live, &after)
+            })
+            .await?;
+        refused += batch.refused;
+        failed += batch.failed;
+        first_error = first_error.or(batch.first_error);
+        match batch.next {
+            Some(next) if batch.deleted == 0 && run.go_on().await => after = next,
+            next => {
+                if let (0, 0, Some(error)) = (batch.deleted, refused, first_error) {
+                    return Err(error);
+                }
+                let passed_over = refused + failed;
+                return Ok(Report {
+                    result: result(batch.deleted, passed_over),
+                    again: batch.deleted > 0 && (next.is_some() || passed_over > 0),
+                });
+            }
+        }
+    }
 }
