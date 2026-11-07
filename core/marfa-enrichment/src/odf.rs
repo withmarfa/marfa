@@ -160,7 +160,14 @@ impl<'s> Walker<'s> {
             return;
         }
         match e.local_name().into_inner() {
-            "p" | "h" if !empty => self.paragraphs += 1,
+            "p" | "h" if !empty => {
+                // A note or a comment keeps its paragraphs inside the one they
+                // interrupt, so the words before it must not run into its own.
+                if self.paragraphs > 0 {
+                    self.sink.break_line();
+                }
+                self.paragraphs += 1;
+            }
             "s" => self.sink.separate(),
             "tab" => self.sink.separate(),
             "line-break" => self.sink.break_line(),

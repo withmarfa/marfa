@@ -153,6 +153,17 @@ fn an_opendocument_text_gives_its_body_and_its_page_headers() {
 }
 
 #[test]
+fn a_note_inside_an_opendocument_paragraph_does_not_run_into_the_words_around_it() {
+    let content = format!(
+        r#"<office:document-content {ODF}><office:body><office:text><text:p>Other<office:annotation><text:p>quokkanote</text:p></office:annotation>text</text:p><text:p>after</text:p></office:text></office:body></office:document-content>"#
+    );
+    assert_eq!(
+        text(&zip(&[("content.xml", content.as_bytes())]), ODT),
+        "Other\nquokkanote\ntext\nafter"
+    );
+}
+
+#[test]
 fn an_opendocument_presentation_and_spreadsheet_give_their_cells_and_slides() {
     let slides = format!(
         r#"<office:document-content {ODF}><office:body><office:presentation><draw:page xmlns:draw="d"><text:p>slideone</text:p></draw:page><draw:page xmlns:draw="d"><text:p>slidetwo</text:p></draw:page></office:presentation></office:body></office:document-content>"#
