@@ -109,7 +109,8 @@ fn targets<'r>(
         .map(|r| r.target.as_str())
 }
 
-/// Word: the body, then footnotes, endnotes, comments, headers and footers.
+/// Word: the body, then footnotes, endnotes, comments, headers, footers and the
+/// text of diagrams.
 pub(crate) fn read_docx(package: &mut Package<'_>, sink: &mut Sink) -> Result<(), Refusal> {
     let main = main_part(package, "word/document.xml")?;
     if !package.has(&main) {
@@ -118,7 +119,14 @@ pub(crate) fn read_docx(package: &mut Package<'_>, sink: &mut Sink) -> Result<()
     let relationships = package.relationships(&main)?;
     read_part(package, &main, WORD_TEXT, sink)?;
     let mut read = HashSet::new();
-    for kind in ["footnotes", "endnotes", "comments", "header", "footer"] {
+    for kind in [
+        "footnotes",
+        "endnotes",
+        "comments",
+        "header",
+        "footer",
+        "diagramData",
+    ] {
         for target in targets(&relationships, kind) {
             if read.insert(target) {
                 read_part(package, target, WORD_TEXT, sink)?;

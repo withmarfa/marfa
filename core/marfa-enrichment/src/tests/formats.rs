@@ -53,6 +53,12 @@ fn a_word_document_gives_every_place_it_keeps_text() {
         part("word/footnotes.xml", "footnotes", "quokkafootnote"),
         part("word/endnotes.xml", "endnotes", "quokkaendnote"),
         part("word/comments.xml", "comments", "quokkacomment"),
+        (
+            "word/diagrams/data1.xml".to_owned(),
+            format!(
+                r#"<dgm:dataModel xmlns:dgm="g" xmlns:a="{A}"><a:p><a:r><a:t>quokkadiagram</a:t></a:r></a:p></dgm:dataModel>"#
+            ),
+        ),
     ];
     let relationships = rels(&[
         ("a", "header", "header1.xml"),
@@ -60,6 +66,7 @@ fn a_word_document_gives_every_place_it_keeps_text() {
         ("c", "footnotes", "footnotes.xml"),
         ("d", "endnotes", "endnotes.xml"),
         ("e", "comments", "comments.xml"),
+        ("f", "diagramData", "diagrams/data1.xml"),
     ]);
     let root = rels(&[("rId1", "officeDocument", "word/document.xml")]);
     let mut parts: Vec<(&str, &[u8])> = vec![
@@ -79,6 +86,7 @@ fn a_word_document_gives_every_place_it_keeps_text() {
         "quokkafootnote",
         "quokkaendnote",
         "quokkacomment",
+        "quokkadiagram",
     ] {
         assert!(shown.contains(wanted), "{wanted} in {shown:?}");
     }
