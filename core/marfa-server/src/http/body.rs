@@ -25,6 +25,8 @@ const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
 const BULK_PATH: &str = "/items/bulk";
 const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const REGISTER_PATH: &str = "/auth/oauth2/register";
+const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
 
 /// A request's body, held on both sides of the routes.
 ///
@@ -108,6 +110,9 @@ impl FromRequest<Arc<App>> for JsonBody {
 fn cap_on(app: &App, path: &str) -> usize {
     if path == BULK_PATH {
         return BULK_REQUEST_BYTES;
+    }
+    if path == REGISTER_PATH {
+        return REGISTER_REQUEST_BYTES;
     }
     usize::try_from(app.settings.live().get(MAX_REQUEST_BYTES)).unwrap_or(usize::MAX)
 }
@@ -196,6 +201,16 @@ impl JsonBody {
             declared,
             bytes: self.bytes().await?,
         })
+    }
+
+    /// A form's fields in order, with every repeat kept. Any other body has
+    /// none.
+    pub async fn form_pairs(self) -> Result<Vec<(String, String)>, Stopped> {
+        if !self.declares_form() {
+            return Ok(Vec::new());
+        }
+        let bytes = self.bytes().await?;
+        Ok(form_urlencoded::parse(&bytes).into_owned().collect())
     }
 
     /// The body as a JSON object holding no key outside `allowed`.

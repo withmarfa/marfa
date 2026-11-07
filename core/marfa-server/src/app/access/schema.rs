@@ -37,7 +37,7 @@ impl Caller {
     pub(super) fn level_on(&self, axis: Axis, name: &str) -> Level {
         match self {
             Caller::Local | Caller::Owner(_) => Level::Write,
-            Caller::Key(key) => axis.level(key.grants.map(axis), name),
+            Caller::Key(key) | Caller::App { key, .. } => axis.level(key.grants.map(axis), name),
         }
     }
 
@@ -82,7 +82,7 @@ impl Caller {
     /// Refuses a caller whose type map does not reach `name` at `level`.
     /// Platform-managed `system.*` types are written by the platform alone.
     pub fn require_type(&self, name: &str, level: Level) -> Result<()> {
-        let Caller::Key(key) = self else {
+        let Some(key) = self.key() else {
             return Ok(());
         };
         if level == Level::Write && name.split('.').next() == Some("system") {

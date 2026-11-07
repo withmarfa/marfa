@@ -212,6 +212,42 @@ fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
 }
 
+/// A redirect URI that [`is_registered`] passed, and so the only thing an
+/// authorization answer may send a browser to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Destination(String);
+
+impl Destination {
+    pub fn of(registered: &[String], requested: &str) -> Option<Destination> {
+        is_registered(registered, requested).then(|| Destination(requested.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The address that carries `pairs` and, by RFC 9207, the `issuer`, to
+    /// the app. A registered URI may hold a query of its own, which stays.
+    pub fn with(&self, pairs: &[(&str, &str)], issuer: &str) -> String {
+        let mut query = form_urlencoded::Serializer::new(String::new());
+        query.extend_pairs(pairs);
+        query.append_pair("iss", issuer);
+        let joiner = if self.0.contains('?') { '&' } else { '?' };
+        format!("{}{joiner}{}", self.0, query.finish())
+    }
+}
+
+/// Where a redirect URI sends a person, as a page may name it: the host the
+/// parser read, never the text, or the scheme of a private-use URI. A loopback
+/// URI goes nowhere but this machine, so it names none.
+pub fn shown_destination(uri: &str) -> Option<String> {
+    let url = Url::parse(uri).ok()?;
+    if on_the_loopback(&url) {
+        return None;
+    }
+    Some(url.host_str().unwrap_or(url.scheme()).to_string())
+}
+
 /// `keys-and-oauth/page-origin-serialized`: scheme, lowercase host and port,
 /// with the scheme's default port left out. Only a web page has one, so
 /// anything but `https` answers none.
@@ -238,6 +274,48 @@ pub fn web_origins(kind: AppKind, uris: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_destination_is_only_a_uri_the_client_registered() {
+        let registered = ["https://app.example/back".to_string()];
+        assert!(Destination::of(&registered, "https://evil.example/back").is_none());
+        let destination = Destination::of(&registered, "https://app.example/back").unwrap();
+        assert_eq!(
+            destination.with(
+                &[("code", "a b"), ("state", "&x=1")],
+                "https://m.example/auth"
+            ),
+            "https://app.example/back?code=a+b&state=%26x%3D1&iss=https%3A%2F%2Fm.example%2Fauth"
+        );
+    }
+
+    #[test]
+    fn a_destination_keeps_a_registered_query() {
+        let registered = ["https://app.example/back?tenant=1".to_string()];
+        let destination = Destination::of(&registered, &registered[0]).unwrap();
+        assert_eq!(
+            destination.with(&[("code", "c")], "i"),
+            "https://app.example/back?tenant=1&code=c&iss=i"
+        );
+    }
+
+    #[test]
+    fn a_shown_destination_comes_from_the_parser() {
+        assert_eq!(
+            shown_destination("https://APP.example:8443/back").as_deref(),
+            Some("app.example")
+        );
+        assert_eq!(
+            shown_destination("https://user@app.example/back").as_deref(),
+            Some("app.example")
+        );
+        assert_eq!(
+            shown_destination("com.example.app:/callback").as_deref(),
+            Some("com.example.app")
+        );
+        assert_eq!(shown_destination("http://127.0.0.1:9/callback"), None);
+        assert_eq!(shown_destination("http://localhost/callback"), None);
+    }
     use proptest::prelude::*;
 
     fn list(uris: &[&str]) -> Vec<String> {

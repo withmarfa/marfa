@@ -12,6 +12,14 @@ const MINUTE_MS: i64 = 60_000;
 const ACCOUNT_ADDRESS: &str = "sign-in-account-address";
 const ACCOUNT: &str = "sign-in-account";
 const SETUP_ADDRESS: &str = "instance-claim-address";
+const DEVICE_ADDRESS: &str = "device-user-code-address";
+const DEVICE_INSTANCE: &str = "device-user-code-instance";
+const DEVICE_OWNER: &str = "device-user-code-owner";
+const DEVICE_OWNER_INSTANCE: &str = "device-user-code-owner-instance";
+const DOCUMENT_ADDRESS: &str = "client-document-address";
+const DOCUMENT_INSTANCE: &str = "client-document-instance";
+/// The key of a count every address or every owner shares.
+const ALL: &str = "all";
 /// An address nothing could name shares this one count.
 const NO_ADDRESS: &str = "unknown";
 const MAX_ACCOUNT_CHARS: usize = 254;
@@ -76,6 +84,61 @@ pub fn setup_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     }]
 }
 
+/// The counts of a device code lookup made without an owner's own session.
+pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
+    [
+        Lane {
+            family: DEVICE_ADDRESS,
+            key: bucket(address),
+            limit: 10,
+            window_ms: 15 * MINUTE_MS,
+        },
+        Lane {
+            family: DEVICE_INSTANCE,
+            key: ALL.to_string(),
+            limit: 100,
+            window_ms: 15 * MINUTE_MS,
+        },
+    ]
+}
+
+/// The counts of a lookup made by the claimed owner's live session, whichever
+/// address or session it came from.
+pub fn device_owner_lanes(user_id: &str) -> [Lane; 2] {
+    [
+        Lane {
+            family: DEVICE_OWNER,
+            key: user_id.to_string(),
+            limit: 10,
+            window_ms: 15 * MINUTE_MS,
+        },
+        Lane {
+            family: DEVICE_OWNER_INSTANCE,
+            key: ALL.to_string(),
+            limit: 100,
+            window_ms: 15 * MINUTE_MS,
+        },
+    ]
+}
+
+/// The counts of a metadata document fetched for a client not yet stored.
+pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
+    [
+        Lane {
+            family: DOCUMENT_ADDRESS,
+            key: bucket(address),
+            limit: 10,
+            window_ms: MINUTE_MS,
+        },
+        Lane {
+            family: DOCUMENT_INSTANCE,
+            key: ALL.to_string(),
+            limit: 30,
+            window_ms: MINUTE_MS,
+        },
+    ]
+}
+
 fn stamp(ms: i64) -> String {
     DateTime::<Utc>::from_timestamp_millis(ms)
         .unwrap_or_default()
@@ -105,8 +168,20 @@ fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i
 /// the latest end among the lanes the next attempt would meet spent.
 pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option<i64>> {
     tx.execute(
-        "DELETE FROM rate_limit_windows WHERE expires_at <= ?1 AND family IN (?2, ?3, ?4)",
-        params![stamp(now_ms), ACCOUNT_ADDRESS, ACCOUNT, SETUP_ADDRESS],
+        "DELETE FROM rate_limit_windows WHERE expires_at <= ?1 AND family IN \
+         (?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            stamp(now_ms),
+            ACCOUNT_ADDRESS,
+            ACCOUNT,
+            SETUP_ADDRESS,
+            DEVICE_ADDRESS,
+            DEVICE_INSTANCE,
+            DEVICE_OWNER,
+            DEVICE_OWNER_INSTANCE,
+            DOCUMENT_ADDRESS,
+            DOCUMENT_INSTANCE,
+        ],
     )?;
     let mut refused = false;
     let mut end = None;

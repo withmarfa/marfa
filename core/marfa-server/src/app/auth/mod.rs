@@ -30,7 +30,7 @@ pub struct Visit {
 }
 
 impl Visit {
-    fn client_ip(&self) -> Option<String> {
+    pub(crate) fn client_ip(&self) -> Option<String> {
         self.address.map(|address| address.to_string())
     }
 }

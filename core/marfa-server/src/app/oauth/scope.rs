@@ -84,13 +84,6 @@ impl Verb {
             _ => None,
         }
     }
-
-    const fn level(self) -> Level {
-        match self {
-            Verb::Read => Level::Read,
-            Verb::Write => Level::Write,
-        }
-    }
 }
 
 /// One part of the metadata layer a scope can name alone.
@@ -635,8 +628,8 @@ pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
 }
 
 /// `keys-and-oauth/approval-types-beyond`: whether every literal of `chosen`
-/// is one `named` wrote, or a type the page offered that a named all-data
-/// scope covers.
+/// is a type the page offered that an all-data scope of `named` covers. Pass
+/// `named` narrowed: what a request named and could not have is not covered.
 pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> bool {
     let all_data: ScopeSet = named
         .literals()
@@ -645,12 +638,11 @@ pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> b
         .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.is_all_data()))
         .collect();
     chosen.literals().iter().all(|literal| {
-        named.contains(literal)
-            || matches!(
-                Scope::parse(literal),
-                Some(Scope::Type { pattern, .. })
-                    if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
-            )
+        matches!(
+            Scope::parse(literal),
+            Some(Scope::Type { pattern, .. })
+                if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
+        )
     })
 }
 
@@ -1053,9 +1045,24 @@ mod tests {
         for (held, added, name, expected) in [
             ("*:write", "core.*:read", "core.note", Level::Write),
             ("core.*:read", "*:write", "core.note", Level::Write),
-            ("*:write core.*:read", "*:write core.*:read", "core.note", Level::Read),
-            ("*:write core.*:read", "core.note:write", "core.task", Level::Read),
-            ("core.note:write", "*:write core.*:read", "core.task", Level::Read),
+            (
+                "*:write core.*:read",
+                "*:write core.*:read",
+                "core.note",
+                Level::Read,
+            ),
+            (
+                "*:write core.*:read",
+                "core.note:write",
+                "core.task",
+                Level::Read,
+            ),
+            (
+                "core.note:write",
+                "*:write core.*:read",
+                "core.task",
+                Level::Read,
+            ),
             ("*:read", "content:read", "system.connection", Level::Read),
             ("content:read", "*:read", "system.connection", Level::Read),
             ("*:read", "content:write", "system.connection", Level::Read),
@@ -1068,7 +1075,11 @@ mod tests {
             );
         }
         assert_eq!(
-            combined(&set("core.note:read"), &set("core.note:write offline_access")).to_text(),
+            combined(
+                &set("core.note:read"),
+                &set("core.note:write offline_access")
+            )
+            .to_text(),
             "core.note:read core.note:write offline_access"
         );
     }
@@ -1076,11 +1087,31 @@ mod tests {
     #[test]
     fn the_read_named_beside_a_write_stays_for_every_kind_of_level() {
         for (approved, named, expected) in [
-            ("core.note:write", "core.note:read core.note:write", "core.note:write core.note:read"),
-            ("content:write", "content:read content:write", "content:write content:read"),
-            ("edge.*:write", "edge.*:read edge.*:write", "edge.*:write edge.*:read"),
-            ("metadata:write", "metadata:read metadata:write", "metadata:write metadata:read"),
-            ("profile.name:write", "profile.name:read profile.name:write", "profile.name:write profile.name:read"),
+            (
+                "core.note:write",
+                "core.note:read core.note:write",
+                "core.note:write core.note:read",
+            ),
+            (
+                "content:write",
+                "content:read content:write",
+                "content:write content:read",
+            ),
+            (
+                "edge.*:write",
+                "edge.*:read edge.*:write",
+                "edge.*:write edge.*:read",
+            ),
+            (
+                "metadata:write",
+                "metadata:read metadata:write",
+                "metadata:write metadata:read",
+            ),
+            (
+                "profile.name:write",
+                "profile.name:read profile.name:write",
+                "profile.name:write profile.name:read",
+            ),
             ("core.note:write", "core.note:write", "core.note:write"),
             ("keys.mint", "keys.mint core.note:read", "keys.mint"),
         ] {
@@ -1125,7 +1156,6 @@ mod tests {
         let offered = ["core.note", "core.page"];
         let named = set("*:read schema.write");
         assert!(chosen_within(&named, &set("core.note:read"), &offered));
-        assert!(chosen_within(&named, &set("schema.write"), &offered));
         assert!(chosen_within(
             &set("*:write"),
             &set("core.note:write core.page:read"),

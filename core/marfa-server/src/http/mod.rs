@@ -14,6 +14,7 @@ mod items;
 mod keys;
 pub mod listening;
 mod lookup;
+mod oauth;
 pub mod observe;
 mod page;
 pub mod pages;
@@ -219,7 +220,9 @@ pub fn public(app: Arc<App>) -> Router {
 
 /// The public doors, for a listener that declares itself.
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
-    let routes = shared(app.clone()).merge(auth::doors());
+    let routes = shared(app.clone())
+        .merge(auth::doors())
+        .merge(oauth::doors());
     finished(routes, app, listener)
 }
 

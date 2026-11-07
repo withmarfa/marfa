@@ -10,12 +10,10 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use url::form_urlencoded;
 
-use super::scope::ScopeSet;
 use crate::app::refusal::{Refusal, Result};
 
 const SIG: &str = "sig";
 const EXP: &str = "exp";
-const SCOPE: &str = "scope";
 
 /// RFC 8707 lets a request name several audiences. RFC 6749 section 3.1 lets
 /// no other parameter repeat, and two readers of a repeat can each take a
@@ -154,20 +152,6 @@ pub fn verify(query: &str, now: i64, secret: &str) -> std::result::Result<Verifi
         params: signed,
         exp,
     })
-}
-
-/// The same link naming `scopes` in place of what it named, good until the
-/// same moment. The caller has already held `scopes` to what the link allows
-/// (`scope::chosen_within`): nothing here widens or checks them.
-pub fn with_scope(link: &Verified, scopes: &ScopeSet, secret: &str) -> Result<String> {
-    let mut params: Params = link
-        .params
-        .iter()
-        .filter(|(key, _)| key != SCOPE)
-        .cloned()
-        .collect();
-    params.push((SCOPE.to_string(), scopes.to_text()));
-    sign(&params, link.exp, secret)
 }
 
 #[cfg(test)]
@@ -362,25 +346,6 @@ mod tests {
         let verified = verify(&query, NOW, SECRET).expect("verified");
         assert_eq!(verified.params, params());
         assert_eq!(verified.exp, NOW + 600);
-    }
-
-    #[test]
-    fn a_narrowing_signs_again_with_the_same_end() {
-        let verified = verify(&link(), NOW, SECRET).expect("verified");
-        let narrowed =
-            with_scope(&verified, &ScopeSet::parse("core.note:read"), SECRET).expect("a signature");
-        let again = verify(&narrowed, NOW, SECRET).expect("verified");
-        assert_eq!(again.exp, verified.exp);
-        assert_eq!(again.get("scope"), Some("core.note:read"));
-        assert_eq!(again.get("client_id"), Some("abc"));
-        assert_eq!(
-            again
-                .params
-                .iter()
-                .filter(|(key, _)| key == "scope")
-                .count(),
-            1
-        );
     }
 
     proptest! {

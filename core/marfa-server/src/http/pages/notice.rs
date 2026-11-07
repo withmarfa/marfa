@@ -51,6 +51,26 @@ impl Notice {
         )
     }
 
+    /// A device code a person approved.
+    pub fn device_approved(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "Device connected",
+            "Go back to your device to continue.",
+        )
+    }
+
+    /// A device code a person turned down.
+    pub fn device_denied(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "Device not connected",
+            "Your device was not given access.",
+        )
+    }
+
     pub fn signed_out(instance_name: &str) -> Notice {
         Notice {
             link: Some(Link {

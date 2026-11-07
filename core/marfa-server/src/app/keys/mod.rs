@@ -19,6 +19,7 @@ pub use limit::Limiter;
 pub use request::{MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 pub use secret::hash as digest_of;
 pub use usage::Usage;
+pub(crate) use usage::{COALESCE_MS, queue as queue_use};
 
 const SELECT: &str = "SELECT k.*, (SELECT json_group_array(source) FROM \
      (SELECT source FROM api_key_sources WHERE key_id = k.id ORDER BY position)) AS claims \

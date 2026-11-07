@@ -54,6 +54,7 @@ pub struct App {
     pub telemetry: Telemetry,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
+    pub(crate) documents: oauth::clients::Documents,
 }
 
 impl App {
@@ -106,6 +107,7 @@ impl App {
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
+            documents: oauth::clients::Documents::default(),
         }))
     }
 
