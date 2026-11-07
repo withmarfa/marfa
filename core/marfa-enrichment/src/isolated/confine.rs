@@ -35,10 +35,10 @@ fn lower(resource: LimitKind, soft: u64, hard: u64) {
     unsafe { libc::setrlimit(resource, &raw const limit) };
 }
 
-#[cfg(target_os = "linux")]
-type LimitKind = libc::__rlimit_resource_t;
-#[cfg(not(target_os = "linux"))]
-type LimitKind = libc::c_int;
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(super) type LimitKind = libc::__rlimit_resource_t;
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub(super) type LimitKind = libc::c_int;
 
 /// Everything that needs no number from the parent: no core file, no file written, no
 /// descriptor of the parent's kept.

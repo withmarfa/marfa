@@ -260,8 +260,7 @@ impl Watched {
         Ok(watched)
     }
 
-    /// Runs until the child ends or has to be ended. `stdin` stays open throughout:
-    /// its closing is how a child knows the parent has gone.
+    /// Runs until the child ends or has to be ended.
     fn run(
         &mut self,
         mut feed: [&[u8]; 2],
@@ -359,6 +358,7 @@ impl Watched {
                 match stdin.write(part) {
                     Ok(0) => {
                         *feed = [&[], &[]];
+                        self.stdin = None;
                         return;
                     }
                     Ok(written) => *part = &part[written..],
@@ -368,11 +368,13 @@ impl Watched {
                     // decides the result.
                     Err(_) => {
                         *feed = [&[], &[]];
+                        self.stdin = None;
                         return;
                     }
                 }
             }
         }
+        self.stdin = None;
     }
 
     /// Reads what is there now, and notes each pipe that has closed.

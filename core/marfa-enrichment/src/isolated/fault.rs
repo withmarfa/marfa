@@ -7,6 +7,8 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
+use super::confine::LimitKind;
+
 const MARK: &[u8] = b"MARFA-ENRICHMENT-FAULT:";
 
 /// The longest fault, in bytes. What follows a name on its first line is its argument.
@@ -192,7 +194,7 @@ fn report() -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn limits() -> [(&'static str, libc::__rlimit_resource_t); 5] {
+fn limits() -> [(&'static str, LimitKind); 5] {
     [
         ("core", libc::RLIMIT_CORE),
         ("cpu", libc::RLIMIT_CPU),
@@ -203,7 +205,7 @@ fn limits() -> [(&'static str, libc::__rlimit_resource_t); 5] {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn limits() -> [(&'static str, libc::c_int); 4] {
+fn limits() -> [(&'static str, LimitKind); 4] {
     [
         ("core", libc::RLIMIT_CORE),
         ("cpu", libc::RLIMIT_CPU),

@@ -190,24 +190,31 @@ fn two_hundred_reads_eight_at_a_time() -> Result<(), Failed> {
     let next = AtomicUsize::new(0);
     let wrong = AtomicUsize::new(0);
     let most_descriptors = AtomicUsize::new(0);
+    // Joined by hand: the end of a scope waits for the closures, not for the threads
+    // to be gone, and they are counted next.
     std::thread::scope(|scope| {
-        for _ in 0..AT_ONCE {
-            scope.spawn(|| {
-                loop {
-                    let index = next.fetch_add(1, Ordering::SeqCst);
-                    if index >= READS {
-                        break;
-                    }
-                    let words = format!("file number {index}");
-                    match read_text(&words) {
-                        Ok(reading) if reading.text == words => {}
-                        _ => {
-                            wrong.fetch_add(1, Ordering::SeqCst);
+        let workers: Vec<_> = (0..AT_ONCE)
+            .map(|_| {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::SeqCst);
+                        if index >= READS {
+                            break;
                         }
+                        let words = format!("file number {index}");
+                        match read_text(&words) {
+                            Ok(reading) if reading.text == words => {}
+                            _ => {
+                                wrong.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
+                        most_descriptors.fetch_max(open_descriptors(), Ordering::SeqCst);
                     }
-                    most_descriptors.fetch_max(open_descriptors(), Ordering::SeqCst);
-                }
-            });
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("a worker");
         }
     });
     check(wrong.load(Ordering::SeqCst) == 0, || {
@@ -627,8 +634,16 @@ mod faults {
         unsafe { std::env::remove_var("MARFA_NOT_FOR_A_CHILD") };
 
         check(word(&report, "descriptors")? == "0,1,2", || report.clone())?;
-        check(word(&report, "environment")?.is_empty(), || report.clone())?;
-        check(word(&report, "directory")? == "/", || report.clone())?;
+        // CoreFoundation, when linked, sets this one in its own process as it starts.
+        let inherited = word(&report, "environment")?
+            .split(',')
+            .filter(|name| !name.is_empty() && *name != "__CF_USER_TEXT_ENCODING")
+            .count();
+        check(inherited == 0, || report.clone())?;
+        // The sandbox on macOS refuses `getcwd` itself.
+        if cfg!(target_os = "linux") {
+            check(word(&report, "directory")? == "/", || report.clone())?;
+        }
         check(word(&report, "core")? == "0/0", || report.clone())?;
         check(word(&report, "fsize")? == "0/0", || report.clone())?;
         check(word(&report, "nofile")? == "16/16", || report.clone())?;

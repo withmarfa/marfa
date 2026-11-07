@@ -28,7 +28,7 @@ const CHILD_ARG: &str = "--marfa-enrichment-child";
 const EXIT_OVER_MEMORY: i32 = 71;
 /// A child's watchdog ended it at the deadline.
 const EXIT_DEADLINE: i32 = 72;
-/// A child found its stdin closed: the parent is gone.
+/// A child found its parent gone, or stdin closed before the whole file arrived.
 const EXIT_PARENT_GONE: i32 = 73;
 /// A child was started with arguments or a request it cannot read.
 const EXIT_BAD_REQUEST: i32 = 74;

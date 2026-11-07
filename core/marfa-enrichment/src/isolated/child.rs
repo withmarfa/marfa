@@ -17,6 +17,9 @@ unsafe extern "C" {
     fn marfa_exit_when_new_fails(code: libc::c_int);
 }
 
+/// How often the watchdog looks for its parent.
+const WATCHDOG_TICK: Duration = Duration::from_millis(50);
+
 fn exit(code: i32) -> ! {
     // SAFETY: _exit ends the process at once. Nothing is left to clean up, and running
     // the destructors of C++ code that may be damaged is a way to crash after answering.
@@ -33,6 +36,8 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
     let Some((time_ms, memory)) = numbers(arguments) else {
         exit(EXIT_BAD_REQUEST);
     };
+    // SAFETY: getppid takes nothing and cannot fail.
+    let parent = unsafe { libc::getppid() };
     let started = Instant::now();
     let time_limit = Duration::from_millis(time_ms);
     confine::let_go_of_what_was_inherited();
@@ -43,9 +48,8 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
         marfa_exit_when_new_fails(EXIT_OVER_MEMORY)
     };
 
-    // Standard input is never closed here: it stays open until the parent has its
-    // answer, so the watchdog can tell that the parent has gone.
-    // SAFETY: descriptor 0 is the pipe from the parent, and ManuallyDrop keeps it open.
+    // SAFETY: descriptor 0 is the pipe from the parent, and ManuallyDrop keeps its
+    // number in use, so nothing the reader opens can land on it.
     let mut stdin = ManuallyDrop::new(unsafe { File::from_raw_fd(0) });
     let request = read_request(&mut stdin);
     let options = request.options();
@@ -55,7 +59,7 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
     // it comes before the watchdog: an unconfined thread beside code a file may have
     // taken over would be no confinement at all.
     let sandbox = confine::deny_files_and_network(data_dir.as_deref());
-    start_watchdog(started + time_limit);
+    start_watchdog(started + time_limit, parent);
     confine::start_no_more_processes();
 
     let bytes = read_bytes(&mut stdin, request.len);
@@ -108,26 +112,19 @@ fn read_bytes(stdin: &mut File, len: u64) -> Result<Vec<u8>, Refusal> {
     Ok(bytes)
 }
 
-/// Ends the process at the deadline, or as soon as the parent has gone. The parent
-/// holds the other end of stdin until it has finished, and the kernel closes that end
-/// however the parent ends. Waiting for `POLLHUP` is one sleeping call: asking for no
-/// events, the bytes still in the pipe do not wake it.
-fn start_watchdog(deadline: Instant) {
+/// Ends the process at the deadline, or soon after the parent has gone. A closed pipe
+/// cannot tell it: `poll` on macOS never reports the far end of a pipe closing unless
+/// asked for input, and input here belongs to the main thread.
+fn start_watchdog(deadline: Instant, parent: libc::pid_t) {
     let watch = move || {
-        let mut stdin = libc::pollfd {
-            fd: 0,
-            events: 0,
-            revents: 0,
-        };
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 exit(EXIT_DEADLINE);
             }
-            let millis = libc::c_int::try_from(left.as_millis() + 1).unwrap_or(libc::c_int::MAX);
-            // SAFETY: `stdin` is one initialized entry, and that is the count passed.
-            let count = unsafe { libc::poll(&raw mut stdin, 1, millis) };
-            if count > 0 {
+            std::thread::sleep(left.min(WATCHDOG_TICK));
+            // SAFETY: getppid takes nothing and cannot fail.
+            if unsafe { libc::getppid() } != parent {
                 exit(EXIT_PARENT_GONE);
             }
         }
