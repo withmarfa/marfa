@@ -256,7 +256,7 @@ const INTERVAL: Rule = Rule::Whole {
 
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1048576", "The largest request body the server accepts, in bytes.";
-    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space kept back, in bytes. Writes that would use it are refused.";
+    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space below which health reports the disk as degraded, in bytes.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true", "Whether requests made with a key are limited.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "200", "How many requests one key may make in each window.";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "60000", "How long one rate-limit window lasts, in milliseconds.";
@@ -269,7 +269,7 @@ registry! {
     VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";
     VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "500", "The most versions kept for one item.";
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
-    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", Some("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "1000", "A housekeeping interval.";
+    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", Some("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
     AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", Some("AUDIT_CLEANUP_INTERVAL_MS"), INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
     EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
     FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
