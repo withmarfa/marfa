@@ -176,7 +176,7 @@ When a key sends `GET /views/{id}/items` for a view it can read, the server MUST
 
 The server MUST list in a view the items that match its `query`: the named `types` with their subtypes, the named `state` (active and archived when absent), the named `tier` (both when absent), and the `filter`.
 
-**Tests:** `compliance/views-items.test.ts › lists active and archived items by default, and the states a view names`, `› lists the types a view names with their subtypes, and narrows by its filter`, `› sorts by type, state, tier and tags`.
+**Tests:** `compliance/views-items.test.ts › lists active and archived items by default, and the states a view names`, `› lists the types a view names with their subtypes, and narrows by its filter`, `› sorts by type, state, tier and tags`, `compliance/filter-grammar.test.ts › meets a view's own default of active and archived, so state eq archived selects in a view`.
 
 ### `views/items-system`
 

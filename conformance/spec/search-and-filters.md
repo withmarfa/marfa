@@ -464,15 +464,15 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 ## Filter grammar
 
-`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists`. Numbers on properties are `search-and-filters/filter-numeric`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
+`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
 
 ### `search-and-filters/filter-doors`
 
-The server MUST hold the `filter` of `GET /items`, `GET /items/stats` and `GET /search`, the `filter` inside the filter of `POST /items/bulk-actions`, and a view's and a folder's `query.filter` to one grammar.
+The server MUST hold the `filter` of `GET /items`, `GET /items/stats` and `GET /search`, the `filter` inside the filter of `POST /items/bulk-actions`, and a view's and a folder's `query.filter` to one grammar, except that a folder's `query.filter` refuses every `backref` condition (`items/folder-setting-followable`).
 
 **Reason:** an expression a client learned at one door then selects the same rows, or draws the same refusal, at every other.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects the same rows by one expression at each door`, `› refuses %s at each door with validation_error`, `› answers an edge term the same on the doors beyond the listing`.
+**Tests:** `compliance/filter-grammar.test.ts › selects the same rows by one expression at each door`, `› refuses %s at each door with validation_error`, `› answers an edge term the same on the doors beyond the listing`, `› takes a backref term in a view and refuses it in a folder`.
 
 ### `search-and-filters/filter-unknown-field`
 
@@ -488,7 +488,7 @@ If a `filter` names an operator other than `eq`, `neq`, `gt`, `gte`, `lt`, `lte`
 
 ### `search-and-filters/filter-malformed`
 
-If a `filter` holds a field with no operator, an operator that takes a value with none, a value in a form `search-and-filters/filter-value-forms` does not name, a string with no closing quote, two conditions with no join, a join other than upper-case `AND` or `OR`, a join with no condition after it, or a line break outside a string, then the server MUST answer `400 validation_error`.
+If a `filter` holds a field with no operator, an operator that takes a value with none, a value after `exists` or `not_exists`, a value in a form `search-and-filters/filter-value-forms` does not name, a string with no closing quote, two conditions with no join, a join other than upper-case `AND` or `OR`, a join with no condition after it, a parenthesis, or a line break outside a string, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
 
@@ -502,9 +502,9 @@ If a view's or a folder's `query.filter` holds no value or only blanks, then the
 
 ### `search-and-filters/filter-value-forms`
 
-The server MUST take as the value of a condition a double-quoted string, `true`, `false`, or a number written in digits with an optional leading `-` and an optional fraction after a `.`.
+When the value of a condition in a `filter` is a double-quoted string, `true`, `false`, or a number written as digits with an optional leading `-` and an optional `.` that may have no digits after it, the server MUST read it as that string, boolean or number.
 
-**Reason:** `1e5`, `.5` and `+5` are not numbers here, and a bare word is not a string.
+**Reason:** this says how a value may be written and leaves to each field whether it takes that kind of value, so `5.` reads as `5`. `1e5`, `.5` and `+5` are not numbers here, and a bare word is not a string (`search-and-filters/filter-malformed`).
 
 **Tests:** `compliance/filter-grammar.test.ts › takes a quoted string, a number and a boolean`, `› refuses %s at each door with validation_error`.
 
@@ -522,9 +522,9 @@ When a `filter` joins conditions with `OR`, the server MUST select the rows at l
 
 ### `search-and-filters/filter-or-narrows`
 
-When a request names a `filter` joined with `OR` beside another key that narrows, the server MUST select only the rows both the key and the `filter` select.
+When `GET /items`, `GET /items/stats` or `GET /search` names a `filter` joined with `OR` beside another key that narrows, other than an `edge[<edge type>]` or `backref[<edge type>]` key (`search-and-filters/filter-or-shorthand`), the server MUST select only the rows both the key and the `filter` select.
 
-**Tests:** `compliance/filter-grammar.test.ts › narrows by the request's other keys what OR selects`.
+**Tests:** `compliance/filter-grammar.test.ts › narrows by the request's other keys what OR selects, on the listing, the stats and the search`.
 
 ### `search-and-filters/filter-text-compare`
 
@@ -694,12 +694,6 @@ When `GET /items/stats` names no `state` and its `filter` holds a `state` term, 
 
 **Tests:** `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
-### `search-and-filters/filter-state-view`
-
-When a view names no `query.state` and its `query.filter` holds a `state` term, the server MUST list only the `active` and `archived` items that the term selects.
-
-**Tests:** `compliance/filter-grammar.test.ts › meets a view's own default of active and archived, so state eq archived selects in a view`.
-
 ### `search-and-filters/filter-question-mark`
 
 When a value in a `filter` expression, a `tags` parameter or the value of a `backref[<edge type>]` parameter of `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` holds a `?`, the server MUST match the `?` as that character and as nothing else.
@@ -744,9 +738,7 @@ When `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backr
 
 ### `search-and-filters/filter-shorthand-length`
 
-When `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count `<key> eq "<value>"` for each such key, and each `AND` that joins it, toward the 2,048 UTF-16 code units of `search-and-filters/filter-over-length`.
-
-**Reason:** the server joins a shorthand to the `filter` (`search-and-filters/filter-or-shorthand`) and judges them as one expression.
+When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count the length of ` AND <key> eq "<value>"`, with a space either side of `AND`, for each such key toward the 2,048 UTF-16 code units of `search-and-filters/filter-over-length`.
 
 **Tests:** `compliance/filter-grammar.test.ts › counts an edge key's clause and its AND toward the 2,048 code units`.
 
@@ -758,11 +750,11 @@ If a `filter` on `GET /items` or `GET /search` joins conditions with both `AND` 
 
 ### `search-and-filters/filter-or-shorthand`
 
-If `GET /items` carries an `edge[<edge type>]` or `backref[<edge type>]` key and a `filter` that uses `OR`, then the server MUST answer `400 validation_error`.
+If `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backref[<edge type>]` key and a `filter` that uses `OR`, then the server MUST answer `400 validation_error`.
 
-**Reason:** the server joins a shorthand to the `filter` with `AND`, so the two cannot form one expression.
+**Reason:** the shorthand is joined to the `filter` with `AND`, so the two cannot form one expression.
 
-**Tests:** `compliance/validation.test.ts › refuses a filter that uses OR beside an edge shorthand, which joins it with AND`.
+**Tests:** `compliance/validation.test.ts › refuses a filter that uses OR beside an edge shorthand, which joins it with AND`, `compliance/filter-grammar.test.ts › refuses OR beside an edge key and a backref key, and takes them beside AND`.
 
 ### `search-and-filters/shorthand-backslash`
 
@@ -1465,6 +1457,12 @@ When `GET /items/stats` names no `state`, the server MUST count the rows of ever
 **Reason:** the default answer is the breakdown across the states, so the listing's own default of `active` does not apply.
 
 **Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `› answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`, `compliance/state-default.test.ts › a named state and the sentinel still reach every row`.
+
+### `search-and-filters/stats-empty-group`
+
+When no row that `GET /items/stats` counts falls in a state or a type, the server MUST leave that state or type out of the counts, and not answer it as `0`.
+
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
 ### `search-and-filters/stats-equals-listing`
 

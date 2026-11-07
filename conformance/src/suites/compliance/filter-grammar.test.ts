@@ -215,7 +215,7 @@ describe("every door that takes a filter", () => {
     ]);
   });
 
-  it.each([
+  const refused: [string, string][] = [
     ["a lower-case and", 'source eq "a" and source eq "b"'],
     ["a lower-case or", 'source eq "a" or source eq "b"'],
     ["an unterminated string", 'source eq "a'],
@@ -239,7 +239,13 @@ describe("every door that takes a filter", () => {
     ["a number with an exponent", "properties.rank eq 1e5"],
     ["a number with no leading digit", "properties.rank eq .5"],
     ["a number with a plus sign", "properties.rank eq +5"],
-  ])(
+    ["a value after exists", 'tags exists "a"'],
+    ["a value after not_exists", "properties.n not_exists 5"],
+    ["a parenthesis", "(properties.n eq 5)"],
+    ["AND mixed with OR", 'source eq "a" AND source eq "b" OR source eq "c"'],
+  ];
+
+  it.each(refused)(
     "refuses %s at each door with validation_error",
     async (_label, filter) => {
       for (const door of doors()) {
@@ -249,6 +255,26 @@ describe("every door that takes a filter", () => {
       }
     },
   );
+
+  it("takes a backref term in a view and refuses it in a folder", async () => {
+    const term = `backref[about] eq "01920000-0000-7000-8000-000000000000"`;
+    const view = await client.createView({
+      title: `backref ${marker}`,
+      query: { filter: term },
+    });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    trackView(ctx, view.data.item.id);
+
+    const folder = await client.createFolder({
+      title: `backref ${marker}`,
+      query: { filter: term },
+    });
+    expect(folder.status, JSON.stringify(folder.data)).toBe(400);
+    expect(folder.error?.error.code).toBe("validation_error");
+    const details = folder.error?.error.details as
+      { errors?: { path: string }[] } | undefined;
+    expect(details?.errors?.[0]?.path).toBe("query.filter");
+  });
 
   it("refuses a filter of only blanks, naming it at each door", async () => {
     for (const blanks of ["", "   ", " \t "]) {
@@ -328,6 +354,22 @@ describe("the limits of a filter", () => {
       expect(backref.error?.error.code).toBe("validation_error");
     });
 
+    it("refuses OR beside an edge key and a backref key, and takes them beside AND", async () => {
+      const or = 'type eq "core.note" OR type eq "core.bookmark"';
+      const and = 'type eq "core.note" AND state eq "active"';
+      for (const name of ["edge[about]", "backref[about]"]) {
+        const key = `${enc(name)}=${target}`;
+        // The witnesses: the OR alone and the AND with the key are taken.
+        expect((await asked(`filter=${enc(or)}`)).status, name).toBe(200);
+        expect((await asked(`${key}&filter=${enc(and)}`)).status, name).toBe(
+          200,
+        );
+        const refused = await asked(`${key}&filter=${enc(or)}`);
+        expect(refused.status, `${name} beside OR`).toBe(400);
+        expect(refused.error?.error.code).toBe("validation_error");
+      }
+    });
+
     it("counts an edge key's clause and its AND toward the 2,048 code units", async () => {
       const added = ` AND edge[about] eq "${target}"`.length;
       const shorthand = `${enc("edge[about]")}=${target}`;
@@ -368,6 +410,7 @@ describe("a value in a filter", () => {
     expect(await among("properties.held eq -1.5", group)).toEqual([negative]);
     expect(await among("properties.held eq 7", group)).toEqual([whole]);
     expect(await among("properties.held eq 7.0", group)).toEqual([whole]);
+    expect(await among("properties.held eq 7.", group)).toEqual([whole]);
     expect(await among("properties.held eq true", group)).toEqual([yes]);
     expect(await among("properties.held eq false", group)).toEqual([no]);
   });
@@ -389,7 +432,7 @@ describe("the joins of a filter", () => {
     );
   });
 
-  it("narrows by the request's other keys what OR selects", async () => {
+  it("narrows by the request's other keys what OR selects, on the listing, the stats and the search", async () => {
     const note = await seed({ a: `narrow-${marker}` });
     const entity = await seed(
       { name: `narrow-${marker}`, a: `narrow-${marker}` },
@@ -405,6 +448,20 @@ describe("the joins of a filter", () => {
       limit: 100,
     });
     expect(r.data.data.map((item) => item.id)).toEqual([note]);
+
+    const stats = await client.rawRequest<Record<string, number>>(
+      `/items/stats?source=${enc(ctx.source)}&type=core.note&filter=${enc(filter)}`,
+    );
+    expect(stats.status, JSON.stringify(stats.error)).toBe(200);
+    expect(stats.data).toEqual({ active: 1 });
+    const found = await client.search(marker, {
+      source: ctx.source,
+      type: "core.note",
+      filter,
+      limit: 100,
+    });
+    expect(found.ok, JSON.stringify(found.error)).toBe(true);
+    expect(found.data.data.map((hit) => hit.item.id)).toEqual([note]);
   });
 });
 
@@ -549,6 +606,29 @@ describe("contains and starts_with", () => {
     expect(await among('type contains "NOTE"', group)).toEqual(
       sorted(...group),
     );
+    expect(await among('type starts_with "CORE.no"', group)).toEqual(
+      sorted(...group),
+    );
+  });
+
+  it("selects by id, state and source_id as it does by a property", async () => {
+    const path = `Grammar/${marker}/Deep`;
+    const held = await seed({}, { source_id: path });
+    const archived = await seed({}, { state: "archived" });
+    const group = [held, archived];
+    const anyState = async (filter: string): Promise<string[]> =>
+      (await listed(filter, "any")).filter((id) => group.includes(id));
+
+    expect(await anyState(`id contains "${held.slice(-12)}"`)).toEqual([held]);
+    expect(await anyState(`id starts_with "${archived}"`)).toEqual([archived]);
+    expect(await anyState('state contains "RCHIV"')).toEqual([archived]);
+    expect(await anyState('state starts_with "arch"')).toEqual([archived]);
+    expect(await anyState('state starts_with "act"')).toEqual([held]);
+    expect(await anyState(`source_id contains "/${marker}/"`)).toEqual([held]);
+    expect(await anyState(`source_id starts_with "grammar/${marker}"`)).toEqual(
+      [held],
+    );
+    expect(await anyState('source_id starts_with "Other"')).toEqual([]);
   });
 
   it("folds ASCII case and no other", async () => {
@@ -715,6 +795,21 @@ describe("an edge term and a backref term", () => {
         `/items/stats?${fullForm}`,
       );
       expect(countedByFull.data).toEqual({ active: rows.length });
+    }
+  });
+
+  it("selects by an edge eq term and a backref eq term on every door as the listing does", async () => {
+    const edgeTerm = `edge[about] eq "${anchor}" AND properties.role eq "to anchor"`;
+    const backrefTerm = `backref[about] eq "${toAnchor}" AND properties.role eq "anchor"`;
+    for (const [term, rows] of [
+      [edgeTerm, [toAnchor]],
+      [backrefTerm, [anchor]],
+    ] as const) {
+      expect(await listed(term), term).toEqual(rows);
+      expect(await searched(term), term).toEqual(rows);
+      expect(await bulkSelected(term), term).toEqual(rows);
+      expect(await viewed(term), term).toEqual(rows);
+      expect(await counted(term), term).toEqual({ active: 1 });
     }
   });
 
