@@ -55,6 +55,7 @@ fn shared() -> Routes {
     Router::new()
         .route("/", get(root::describe))
         .route("/health", get(health::answer))
+        .route("/openapi.json", get(root::document))
 }
 
 fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {

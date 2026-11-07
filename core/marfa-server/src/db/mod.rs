@@ -5,6 +5,8 @@ pub mod migrate;
 mod open;
 mod reader;
 mod schema;
+#[cfg(test)]
+mod tests;
 pub mod volume;
 mod writer;
 

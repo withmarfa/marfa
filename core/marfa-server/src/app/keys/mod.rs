@@ -183,7 +183,7 @@ pub async fn mint(app: &App, body: &Map<String, Value>) -> Result<(Key, String)>
     let hash = secret::hash(&app.settings.start.api_key_salt, &plain)?;
     let stored = key.clone();
     app.db
-        .write(Write::caller("key.mint"), move |tx| {
+        .write(Write::caller("key.create"), move |tx| {
             insert(tx, &stored, &hash)
         })
         .await?;

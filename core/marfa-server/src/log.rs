@@ -3,6 +3,7 @@
 
 use std::io::Write;
 
+use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 
 pub fn init() {
@@ -33,6 +34,11 @@ pub struct Request<'a> {
     pub key_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<&'a str>,
+}
+
+/// A record's time. The wall clock's, so a moved test clock cannot misplace it.
+pub fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 pub fn request(record: &Request<'_>) {

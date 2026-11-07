@@ -11,6 +11,13 @@ use super::answer::{Answer, asks_for_html, escape_html, json_answer};
 use super::query;
 use crate::app::{App, instance};
 
+const DOCUMENT: &str = include_str!("../../../../openapi.json");
+
+/// `GET /openapi.json`: the published document, whole.
+pub async fn document() -> Response {
+    ([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response()
+}
+
 fn page(name: &str) -> String {
     let name = escape_html(name);
     format!(

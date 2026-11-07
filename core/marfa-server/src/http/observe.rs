@@ -138,7 +138,7 @@ pub async fn observe(
         .get("x-error-code")
         .and_then(|value| value.to_str().ok());
     log::request(&log::Request {
-        timestamp: &observed.app.clock.stamp(),
+        timestamp: &log::now(),
         request_id: &request_id,
         method: &method,
         transport: observed.transport.name(),
