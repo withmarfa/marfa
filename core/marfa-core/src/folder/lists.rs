@@ -131,7 +131,7 @@ struct DotName {
 
 impl DotName {
     fn is_match(&self, name: &str) -> bool {
-        self.original.is_match(name) || self.folded.is_match(&crate::names::folded(name))
+        self.original.is_match(name) || self.folded.is_match(&marfa_rules::names::folded(name))
     }
 }
 
@@ -209,7 +209,7 @@ impl Lists {
     /// with `/` between its names.
     pub fn takes(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        let folded = crate::names::folded(&path);
+        let folded = marfa_rules::names::folded(&path);
         if [self.machine, self.secrets, &self.ignore]
             .into_iter()
             .any(|list| hit(list, &path, &folded, false))
@@ -236,14 +236,19 @@ impl Lists {
 
     pub(super) fn secret(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        hit(self.secrets, &path, &crate::names::folded(&path), false)
+        hit(
+            self.secrets,
+            &path,
+            &marfa_rules::names::folded(&path),
+            false,
+        )
     }
 
     /// A secret's name is refused file by file, so a package named like one is
     /// still reported.
     pub(super) fn enters(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
-        let folded = crate::names::folded(&path);
+        let folded = marfa_rules::names::folded(&path);
         if hit(self.machine, &path, &folded, true) || hit(&self.ignore, &path, &folded, true) {
             return false;
         }
@@ -542,7 +547,7 @@ fn folded_with(ch: char) -> &'static [char] {
             })
         {
             folds
-                .entry(crate::names::folded(&cased.to_string()))
+                .entry(marfa_rules::names::folded(&cased.to_string()))
                 .or_default()
                 .push(cased);
         }
@@ -559,7 +564,7 @@ fn folded_with(ch: char) -> &'static [char] {
         folds
     });
     folds
-        .get(&crate::names::folded(&ch.to_string()))
+        .get(&marfa_rules::names::folded(&ch.to_string()))
         .map_or(&[], Vec::as_slice)
 }
 
@@ -578,7 +583,7 @@ fn folded_pattern(pattern: &str) -> String {
     let mut literal = String::new();
     let mut chars = pattern.chars().peekable();
     let flush = |result: &mut String, literal: &mut String| {
-        result.push_str(&crate::names::folded(literal));
+        result.push_str(&marfa_rules::names::folded(literal));
         literal.clear();
     };
     while let Some(ch) = chars.next() {

@@ -527,8 +527,13 @@ mod tests {
             let conn = core.conn().unwrap();
             store::pin(&conn, "p").unwrap();
             let row = store::testing::note("x", "x", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty())
-                .unwrap();
+            store::put_server_item(
+                &conn,
+                &row,
+                Some(&[]),
+                &marfa_rules::catalog::Catalog::empty(),
+            )
+            .unwrap();
             set_listed(&conn, "x", true).unwrap();
         }
         let data = |v| {
@@ -1113,7 +1118,7 @@ mod tests {
                 &conn,
                 &baseline,
                 Some(&[]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             set_listed(&conn, "x", true).unwrap();
@@ -1168,7 +1173,7 @@ mod tests {
                 &conn,
                 &baseline,
                 Some(&[]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             set_listed(&conn, "x", true).unwrap();
@@ -1196,7 +1201,7 @@ mod tests {
                 &conn,
                 &baseline,
                 Some(&[]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             store::lay_waiting_writes_over(&conn, "x", &|_| Default::default()).unwrap();

@@ -2,12 +2,12 @@ use rusqlite::{Connection, params_from_iter};
 use serde_json::Value;
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::filter;
 use crate::model::{SearchFilters, SearchHit};
 use crate::query;
-use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_expression, snippet_html};
 use crate::store::{self, Unreadable};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_expression, snippet_html};
 
 pub(crate) fn search(
     conn: &Connection,
@@ -104,10 +104,10 @@ pub(crate) fn search_where(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::Indexing;
     use crate::model::{ItemState, Tier};
     use crate::store;
     use crate::store::testing::*;
+    use marfa_rules::catalog::Indexing;
 
     fn search(
         conn: &Connection,
@@ -163,29 +163,48 @@ mod tests {
         store::upsert_item(&conn, &archived, None, &Indexing::default()).unwrap();
 
         let default = SearchFilters::default();
-        let hits = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 10).unwrap();
+        let hits = search(
+            &conn,
+            &crate::catalog::load(&conn).unwrap(),
+            "zeb",
+            &default,
+            10,
+        )
+        .unwrap();
         let ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
         // The title and the tag hold one match in three words each, so they
         // tie and the id breaks it; the body's is one in four.
         assert_eq!(ids, vec!["tag", "title", "body"]);
         assert_eq!(
-            search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 2)
-                .unwrap()
-                .len(),
+            search(
+                &conn,
+                &crate::catalog::load(&conn).unwrap(),
+                "zeb",
+                &default,
+                2
+            )
+            .unwrap()
+            .len(),
             2
         );
         assert_eq!(hits[0].score, hits[1].score);
         assert!(hits[0].score > hits[2].score);
         assert!(hits[2].snippet.contains("<mark>zebra</mark>"));
         assert!(
-            search(&conn, &Catalog::load(&conn).unwrap(), "", &default, 10)
-                .unwrap()
-                .is_empty()
+            search(
+                &conn,
+                &crate::catalog::load(&conn).unwrap(),
+                "",
+                &default,
+                10
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
             search(
                 &conn,
-                &Catalog::load(&conn).unwrap(),
+                &crate::catalog::load(&conn).unwrap(),
                 "nothing crossing",
                 &default,
                 10
@@ -198,11 +217,17 @@ mod tests {
             states: Some(vec![ItemState::Archived]),
             ..Default::default()
         };
-        let ids: Vec<String> = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &filed, 10)
-            .unwrap()
-            .into_iter()
-            .map(|hit| hit.item.id)
-            .collect();
+        let ids: Vec<String> = search(
+            &conn,
+            &crate::catalog::load(&conn).unwrap(),
+            "zeb",
+            &filed,
+            10,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.item.id)
+        .collect();
         assert_eq!(ids, vec!["filed"]);
 
         let everything = SearchFilters {
@@ -211,7 +236,7 @@ mod tests {
         };
         let mut ids: Vec<String> = search(
             &conn,
-            &Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
             "zeb",
             &everything,
             10,
@@ -241,7 +266,7 @@ mod tests {
         .unwrap();
         let hits = search(
             &conn,
-            &Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
             "numbat",
             &SearchFilters::default(),
             10,
@@ -266,7 +291,7 @@ mod tests {
             item.tier = Some(tier.into());
             store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
         }
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let found = |filters: SearchFilters| -> Vec<String> {
             let mut ids: Vec<String> = search(&conn, &catalog, "zebra", &filters, 10)
                 .unwrap()

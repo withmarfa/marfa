@@ -13,10 +13,10 @@ use super::{Folder, bytes_of, fields, state};
 use crate::body::resolve::{self, Names, is_id};
 use crate::body::rule;
 use crate::body::text::{self, Typed};
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Edit, ItemState, Subject, Verdict};
 use crate::{Based, Body, Result, store};
+use marfa_rules::catalog::Catalog;
 
 /// The meta key of a rewrite this folder queued, by its write's id, so the
 /// next pull settles it.
@@ -54,7 +54,7 @@ impl Folder {
             if links.is_empty() {
                 return Ok(changed);
             }
-            (links, Catalog::load(&conn)?)
+            (links, crate::catalog::load(&conn)?)
         };
         let mut names = None;
         for (host, links) in links {

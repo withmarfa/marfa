@@ -14,8 +14,6 @@ use marfa_rules::catalog::{
 use marfa_rules::display::ItemDisplay;
 use marfa_rules::wire::{WireCatalog, WireEdgeType};
 
-pub use marfa_rules::catalog::{End, TypeField, WrittenAt};
-
 /// A server's two catalogs as it lists them now, each type resolved as the
 /// copy's own reads resolve it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -53,7 +51,6 @@ fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {
         ))),
     }
 }
-
 
 fn type_not_found(id: &str) -> CoreError {
     CoreError::NotFound {
@@ -100,9 +97,7 @@ pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
 }
 
 pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
-    store::catalog_scope(conn, |conn| {
-        resolved(id, &held_types(conn)?, &load(conn)?)
-    })
+    store::catalog_scope(conn, |conn| resolved(id, &held_types(conn)?, &load(conn)?))
 }
 
 fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
@@ -137,7 +132,6 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
         }
     })
 }
-
 
 /// The catalog the copy holds, with the request limit the server last said.
 pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
@@ -274,14 +268,41 @@ impl CatalogExt for Catalog {
     }
 }
 
+/// An edge type as the held rows read, built without a store.
+#[cfg(test)]
+pub(crate) fn edge_type_for_tests(
+    id: &str,
+    reverse_name: Option<&str>,
+    written_at: marfa_rules::catalog::End,
+    cardinality: &str,
+) -> EdgeType {
+    EdgeType {
+        id: id.into(),
+        label: id.into(),
+        reverse_label: id.into(),
+        description: None,
+        cardinality: cardinality.into(),
+        reverse_name: reverse_name.map(str::to_string),
+        written_at: written_at.into(),
+        source_type_constraints: vec!["*".into()],
+        target_type_constraints: vec!["*".into()],
+        cascade_on_delete: "orphan".into(),
+        properties: Vec::new(),
+        shipped: false,
+        acyclic: false,
+        flat: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use marfa_rules::catalog::WrittenAt;
+    use serde_json::json;
 
     fn held(types: serde_json::Value, edge_types: serde_json::Value) -> Connection {
         let conn = store::open_in_memory().unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(types).unwrap(),
             edge_types: serde_json::from_value(edge_types).unwrap(),
         };
@@ -467,7 +488,7 @@ mod tests {
             json!({ "type": "string", "label": "Status" })
         );
 
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = load(&conn).unwrap();
         let fields = catalog.status_fields();
         let named: Vec<(&str, usize)> = fields
             .iter()
@@ -503,7 +524,7 @@ mod tests {
             ]),
             serde_json::json!([]),
         );
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = load(&conn).unwrap();
         let hints = |id: &str| {
             (
                 catalog.title_field(id).map(str::to_string),
@@ -566,7 +587,7 @@ mod tests {
             ]),
             serde_json::json!([]),
         );
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = load(&conn).unwrap();
         let item = |r#type: &str, properties: serde_json::Value| Item {
             id: "i".into(),
             r#type: r#type.into(),
@@ -646,7 +667,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("core.sqlite");
             let writing = store::open(&path).unwrap();
-            let catalog = |field: &str| crate::wire::WireCatalog {
+            let catalog = |field: &str| marfa_rules::wire::WireCatalog {
                 types: serde_json::from_value(serde_json::json!([{
                     "id": "acme.note", "fields": {field: {"type": "string"}},
                     "display_hints": {"title_field": field}
@@ -696,7 +717,7 @@ mod tests {
     #[test]
     fn public_catalog_reads_nest_without_finishing_the_callers_transaction() {
         let core = crate::Core::open_in_memory(None).unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
@@ -739,7 +760,7 @@ mod tests {
     #[test]
     fn a_catalog_that_cannot_be_written_whole_writes_nothing() {
         let conn = store::open_in_memory().unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.base" }])).unwrap(),
             edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
         };
@@ -774,7 +795,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
             edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
         };
@@ -848,7 +869,7 @@ mod tests {
                 }
             }))
             .unwrap();
-            let catalog = crate::wire::WireCatalog {
+            let catalog = marfa_rules::wire::WireCatalog {
                 types: serde_json::from_value(serde_json::json!([{ "id": "acme.new" }])).unwrap(),
                 edge_types: if fail_release {
                     Vec::new()
@@ -903,7 +924,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
             edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
         };
@@ -926,7 +947,7 @@ mod tests {
             serde_json::json!([]),
         );
         conn.execute_batch("CREATE TEMP TRIGGER abort_catalog BEFORE INSERT ON edge_types BEGIN SELECT RAISE(ROLLBACK, 'catalog aborted'); END;").unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
             edge_types: vec![serde_json::json!({ "id": "references" })],
         };
@@ -968,7 +989,7 @@ mod tests {
             store::meta_set(conn, "outer_scope", "uncommitted")?;
             store::replace_catalog(
                 conn,
-                &crate::wire::WireCatalog {
+                &marfa_rules::wire::WireCatalog {
                     types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }]))
                         .unwrap(),
                     edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
@@ -1017,7 +1038,7 @@ mod tests {
     #[test]
     fn the_version_moves_when_either_catalog_changes_and_only_then() {
         let conn = store::open_in_memory().unwrap();
-        let catalog = |reverse: &str| crate::wire::WireCatalog {
+        let catalog = |reverse: &str| marfa_rules::wire::WireCatalog {
             types: Vec::new(),
             edge_types: vec![serde_json::json!({
                 "id": "mentor-of", "label": "Mentees", "reverse_label": "Mentors",
@@ -1059,7 +1080,7 @@ mod tests {
     #[test]
     fn a_held_edge_type_without_its_labels_reads_with_the_ones_the_server_makes() {
         let conn = store::open_in_memory().unwrap();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: Vec::new(),
             edge_types: vec![
                 serde_json::json!({

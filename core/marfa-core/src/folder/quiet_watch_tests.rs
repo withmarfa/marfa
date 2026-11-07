@@ -638,7 +638,7 @@ fn a_deleted_file_held_for_a_name_two_items_have_goes_to_the_bin() {
                 &folder.core.conn().unwrap(),
                 &crate::store::testing::note(ELSEWHERE, "Same", "", "2026-01-01T00:00:00Z"),
                 None,
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             std::fs::write(dir.path().join("Same.md"), "same\n").unwrap();
@@ -698,7 +698,7 @@ fn a_deleted_held_file_comes_back_once_another_device_adds_a_name_to_its_line() 
             &conn,
             &crate::store::testing::note(C, "C", "", "2026-01-01T00:00:00Z"),
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         crate::store::put_server_edge(
@@ -729,7 +729,7 @@ fn a_deleted_held_file_goes_to_the_bin_once_its_link_target_appears() {
         &folder.core.conn().unwrap(),
         &crate::store::testing::note(B, "B", "", "2026-01-01T00:00:00Z"),
         None,
-        &crate::catalog::Catalog::empty(),
+        &marfa_rules::catalog::Catalog::empty(),
     )
     .unwrap();
     past_the_grace(&folder, "A.md");

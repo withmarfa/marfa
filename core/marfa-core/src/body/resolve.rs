@@ -9,11 +9,11 @@ use serde_json::{Map, Value};
 
 use super::embed::FILE_TYPE;
 use super::text::Typed;
-use crate::catalog::Catalog;
 use crate::folder::fields;
 use crate::http::{TITLE_LOOKUP_NAMES, TITLE_LOOKUP_UNITS, TitledItem};
-use crate::names::{folded, name_of, title_of};
 use crate::{Core, Result, store};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::names::{folded, name_of, title_of};
 
 /// Where the files of items sit, which a name may name by path or file name:
 /// a folder's files on disk, or the placements a working copy holds.
@@ -764,7 +764,7 @@ mod tests {
         let target = note("Target");
         let titled = note(&target);
         let conn = core.conn().unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let answers = |text: &str, id: &str| {
             answers_to(&conn, &catalog, &crate::body::rule::Placements, text, id).unwrap()
         };
@@ -783,8 +783,8 @@ mod tests {
         dir: &std::path::Path,
         titles: &[&str],
     ) -> std::sync::Arc<Core> {
-        use crate::catalog::Indexing;
         use crate::store::testing::wire_item;
+        use marfa_rules::catalog::Indexing;
         let core = crate::stop_tests::copy_in_keyed(server, dir, "k");
         for (at, title) in titles.iter().enumerate() {
             let row = wire_item(
@@ -840,7 +840,7 @@ mod tests {
     }
 
     fn catalog_of(core: &Core) -> Catalog {
-        Catalog::load(&core.conn().unwrap()).unwrap()
+        crate::catalog::load(&core.conn().unwrap()).unwrap()
     }
 
     #[test]

@@ -49,10 +49,7 @@ pub fn display(
 
 /// The name an item takes from its effective `display_hints.title_field`,
 /// `title` or `name` alone, or none where none of them holds text.
-pub fn title_name(
-    properties: &Map<String, Value>,
-    title_field: Option<&str>,
-) -> Option<String> {
+pub fn title_name(properties: &Map<String, Value>, title_field: Option<&str>) -> Option<String> {
     let mut tried: Vec<&str> = Vec::with_capacity(3);
     [title_field, Some("title"), Some("name")]
         .into_iter()

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::Catalog;
 use crate::catch_up::Pending;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery, Registration, Replacement};
@@ -15,8 +14,10 @@ use crate::model::{
 use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata, WirePage};
+use crate::wire::{WireEdge, WireEdgeBlock, WireItemWithMetadata, WirePage};
 use crate::{Core, Result};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::wire::WireCatalog;
 
 const HEAD_ATTEMPTS: usize = 3;
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -147,7 +148,7 @@ struct EarlyPins {
 /// again, a pin the answer left out included. The listings still count a row
 /// they bring as theirs once, which the early mark lets them tell.
 fn take_pins(tx: &rusqlite::Connection, pins: &EarlyPins) -> Result<()> {
-    let catalog = Catalog::load(tx)?;
+    let catalog = crate::catalog::load(tx)?;
     for id in &pins.ids {
         crate::reach::set_early(tx, id)?;
     }
@@ -455,7 +456,7 @@ fn attempt(
             // from the start, as each row that arrives does.
             lay_queue_over(
                 &tx,
-                &Catalog::load(&tx)?,
+                &crate::catalog::load(&tx)?,
                 edge_types,
                 Some(&store::credential_digest(&http.authorization())),
             )?;
@@ -463,7 +464,7 @@ fn attempt(
                 Some(counts) => store::meta_set(
                     &tx,
                     store::META_ITEMS_EXPECTED,
-                    &expected(&Catalog::load(&tx)?, types, counts).to_string(),
+                    &expected(&crate::catalog::load(&tx)?, types, counts).to_string(),
                 )?,
                 None => store::meta_delete(&tx, store::META_ITEMS_EXPECTED)?,
             }
@@ -489,7 +490,7 @@ fn attempt(
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
-            Catalog::load(&conn)?
+            crate::catalog::load(&conn)?
         };
         let Some((item_from, edge_from)) = reached.indices(&listings, edge_types) else {
             return Ok(Attempt::Again(HydrateRestart::SliceChanged));
@@ -723,7 +724,7 @@ fn attempt(
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            let catalog = Catalog::load(&tx)?;
+            let catalog = crate::catalog::load(&tx)?;
             lay_queue_over(
                 &tx,
                 &catalog,
@@ -1303,9 +1304,10 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
         let name = raw.trim();
-        if name != store::EVERY_TYPE && !type_pattern(name)? {
+        if name != store::EVERY_TYPE && !marfa_rules::grammar::type_pattern(name)? {
             return Err(CoreError::Invalid(format!(
-                "not a type to declare: {raw:?}; {GRAMMAR}, or a namespace under .*"
+                "not a type to declare: {raw:?}; {}, or a namespace under .*",
+                marfa_rules::grammar::GRAMMAR
             )));
         }
         if !declared.iter().any(|seen| seen == name) {
@@ -1820,7 +1822,7 @@ mod tests {
                 let conn = core.conn().unwrap();
                 store::replace_catalog(
                     &conn,
-                    &crate::wire::WireCatalog {
+                    &marfa_rules::wire::WireCatalog {
                         types: vec![store::testing::wire_type("core.note", None, Some("title"))],
                         edge_types: vec![],
                     },
@@ -1830,7 +1832,7 @@ mod tests {
                     &conn,
                     &store::testing::note("damaged", "original", "body", "2026-01-01T00:00:00Z"),
                     Some(&[]),
-                    &crate::catalog::Catalog::load(&conn).unwrap(),
+                    &crate::catalog::load(&conn).unwrap(),
                 )
                 .unwrap();
                 conn.execute(
@@ -2604,12 +2606,12 @@ mod tests {
         let core = copy(server);
         {
             let conn = core.conn().unwrap();
-            store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+            store::replace_catalog(&conn, &marfa_rules::builtin::catalog().unwrap()).unwrap();
             store::put_server_item(
                 &conn,
                 &store::testing::note("first", "first", "body", "2026-01-01T00:00:00Z"),
                 Some(&[]),
-                &crate::catalog::Catalog::load(&conn).unwrap(),
+                &crate::catalog::load(&conn).unwrap(),
             )
             .unwrap();
         }
@@ -2909,7 +2911,11 @@ mod tests {
     fn a_copy_filling_up_reports_the_rows_its_listings_brought_apart_from_pins_and_the_queue() {
         let server = Scripted::start();
         let core = copy(&server);
-        store::replace_catalog(&core.conn().unwrap(), &crate::builtin::catalog().unwrap()).unwrap();
+        store::replace_catalog(
+            &core.conn().unwrap(),
+            &marfa_rules::builtin::catalog().unwrap(),
+        )
+        .unwrap();
         core.create_item(&crate::Draft {
             r#type: "core.note".into(),
             properties: serde_json::from_value(json!({"title": "waiting", "body": "unsent"}))

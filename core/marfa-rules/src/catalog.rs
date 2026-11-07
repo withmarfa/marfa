@@ -30,7 +30,6 @@ pub struct CatalogEntry {
     pub definitions: Map<String, Value>,
 }
 
-
 impl CatalogEntry {
     /// The entry for a type as a server lists it.
     pub fn from_wire(held: &WireType) -> CatalogEntry {
@@ -881,7 +880,6 @@ pub fn lineage_of(held: &HashMap<String, Map<String, Value>>, id: &str) -> Optio
     Some(lineage)
 }
 
-
 /// The four properties search reads whether or not a type declares them,
 /// as the server's index does. A thumbnail may not take one of these names.
 pub const CORE_TEXT_FIELDS: [&str; 4] = ["title", "body", "description", "name"];
@@ -1004,7 +1002,10 @@ impl Catalog {
             && status.group_of(value).is_none()
         {
             let words: Vec<&str> = status.words.iter().map(|(word, _)| word.as_str()).collect();
-            let message = format!("Must be a status word the type declares: {}", words.join(", "));
+            let message = format!(
+                "Must be a status word the type declares: {}",
+                words.join(", ")
+            );
             return Err(RuleError::new(
                 Code::InvalidProperties,
                 format!("{}: {message}", status.name),
@@ -1389,7 +1390,11 @@ impl Catalog {
         indexing
     }
 
-    fn nearest<'a, T>(&'a self, type_id: &str, read: impl Fn(&'a CatalogEntry) -> Option<T>) -> Option<T> {
+    fn nearest<'a, T>(
+        &'a self,
+        type_id: &str,
+        read: impl Fn(&'a CatalogEntry) -> Option<T>,
+    ) -> Option<T> {
         let mut current = type_id;
         for _ in 0..MAX_PARENT_WALK {
             let entry = self.entries.get(current)?;
@@ -1478,12 +1483,14 @@ mod tests {
             .validate_properties(type_id, &properties, false)
             .err()
             .map(|refusal| match refusal {
-                error if matches!(error.code, Code::ValidationError | Code::InvalidProperties) => error
-                    .message
-                    .split(':')
-                    .next()
-                    .unwrap_or_default()
-                    .to_string(),
+                error if matches!(error.code, Code::ValidationError | Code::InvalidProperties) => {
+                    error
+                        .message
+                        .split(':')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                }
                 other => panic!("expected a validation refusal, got {other:?}"),
             })
     }
@@ -1652,15 +1659,13 @@ mod tests {
     fn a_create_is_held_in_the_order_the_server_answers_it() {
         // The server answers this create `zeta, alpha, mid, beta, extra1,
         // extra0`.
-        let types = held(
-            serde_json::json!([
-                { "id": "acme.parent",
-                  "fields": { "zeta": { "type": "string" }, "alpha": { "type": "string" } } },
-                { "id": "acme.child", "parent": "acme.parent",
-                  "fields": { "mid": { "type": "string" }, "beta": { "type": "string" },
-                              "alpha": { "type": "string", "description": "again" } } }
-            ]),
-        );
+        let types = held(serde_json::json!([
+            { "id": "acme.parent",
+              "fields": { "zeta": { "type": "string" }, "alpha": { "type": "string" } } },
+            { "id": "acme.child", "parent": "acme.parent",
+              "fields": { "mid": { "type": "string" }, "beta": { "type": "string" },
+                          "alpha": { "type": "string", "description": "again" } } }
+        ]));
         let catalog = Catalog::from_wire(&types, None);
         let sent: Map<String, Value> = serde_json::from_value(serde_json::json!({
             "extra1": "x", "beta": "b", "alpha": "a", "extra0": "y", "zeta": "z", "mid": "m"
@@ -1687,13 +1692,11 @@ mod tests {
 
     #[test]
     fn a_held_array_field_and_the_universal_ones_judge_their_elements() {
-        let types = held(
-            serde_json::json!([
-                { "id": "acme.base",
-                  "fields": { "to": { "type": "array", "items_type": "string" } } },
-                { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
-            ]),
-        );
+        let types = held(serde_json::json!([
+            { "id": "acme.base",
+              "fields": { "to": { "type": "array", "items_type": "string" } } },
+            { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
+        ]));
         let catalog = Catalog::from_wire(&types, None);
         let judge = |properties: Value| {
             let properties: Map<String, Value> = serde_json::from_value(properties).unwrap();
@@ -1722,14 +1725,12 @@ mod tests {
 
     #[test]
     fn a_create_holds_its_nulls_as_the_server_does() {
-        let types = held(
-            serde_json::json!([
-                { "id": "acme.base",
-                  "fields": { "title": { "type": "string" },
-                              "body": { "type": "string", "required": true } } },
-                { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
-            ]),
-        );
+        let types = held(serde_json::json!([
+            { "id": "acme.base",
+              "fields": { "title": { "type": "string" },
+                          "body": { "type": "string", "required": true } } },
+            { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
+        ]));
         let catalog = Catalog::from_wire(&types, None);
         let sent: Map<String, Value> = serde_json::from_value(serde_json::json!({
             "title": null, "body": null, "links": null, "attachments": null, "extra": null
@@ -1747,16 +1748,14 @@ mod tests {
 
     #[test]
     fn a_url_member_of_an_entry_is_kept_trimmed_as_a_url_field_is() {
-        let types = held(
-            serde_json::json!([
-                { "id": "acme.page",
-                  "fields": {
-                    "links": { "type": "array", "items_type": "object",
-                      "items_fields": { "u": { "type": "url" }, "v": { "type": "string" } } },
-                    "plain": { "type": "array", "items_type": "object" }
-                  } }
-            ]),
-        );
+        let types = held(serde_json::json!([
+            { "id": "acme.page",
+              "fields": {
+                "links": { "type": "array", "items_type": "object",
+                  "items_fields": { "u": { "type": "url" }, "v": { "type": "string" } } },
+                "plain": { "type": "array", "items_type": "object" }
+              } }
+        ]));
         let catalog = Catalog::from_wire(&types, None);
         let sent = serde_json::from_value::<Map<String, Value>>(serde_json::json!({
             "links": [
@@ -1790,28 +1789,26 @@ mod tests {
 
     #[test]
     fn indexing_resolves_declared_string_fields_through_the_parents() {
-        let types = held(
-            serde_json::json!([
-                { "id": "acme.base",
-                  "fields": {
-                    "blurb": { "type": "string" },
-                    "secret": { "type": "string", "searchable": false },
-                    "title": { "type": "string", "searchable": false },
-                    "count": { "type": "integer" },
-                    "cover": { "type": "thumbnail" }
-                  },
-                  "display_hints": { "title_field": "blurb" } },
-                { "id": "acme.leaf", "parent": "acme.base",
-                  "fields": {
-                    "secret": { "type": "string" },
-                    "blurb": { "type": "string", "searchable": false },
-                    "note": { "type": "string" },
-                    "body": { "type": "string", "searchable": false }
-                  } },
-                { "id": "acme.orphan", "parent": "acme.absent",
-                  "fields": { "own": { "type": "string" } } }
-            ]),
-        );
+        let types = held(serde_json::json!([
+            { "id": "acme.base",
+              "fields": {
+                "blurb": { "type": "string" },
+                "secret": { "type": "string", "searchable": false },
+                "title": { "type": "string", "searchable": false },
+                "count": { "type": "integer" },
+                "cover": { "type": "thumbnail" }
+              },
+              "display_hints": { "title_field": "blurb" } },
+            { "id": "acme.leaf", "parent": "acme.base",
+              "fields": {
+                "secret": { "type": "string" },
+                "blurb": { "type": "string", "searchable": false },
+                "note": { "type": "string" },
+                "body": { "type": "string", "searchable": false }
+              } },
+            { "id": "acme.orphan", "parent": "acme.absent",
+              "fields": { "own": { "type": "string" } } }
+        ]));
         let catalog = Catalog::from_wire(&types, None);
         assert_eq!(
             catalog.indexing("acme.base"),

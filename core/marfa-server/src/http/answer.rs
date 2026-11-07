@@ -8,7 +8,6 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::json;
 use crate::app::refusal::{Code, Refusal};
 
 const CLIENT_CLOSED: u16 = 499;
@@ -37,7 +36,7 @@ pub struct Page {
 }
 
 pub fn json_answer(status: StatusCode, value: &impl Serialize) -> Response {
-    match json::to_vec(value) {
+    match marfa_rules::js::to_vec(value) {
         Ok(bytes) => {
             let mut response = Response::new(Body::from(bytes));
             *response.status_mut() = status;
@@ -66,7 +65,7 @@ fn envelope(refusal: &Refusal) -> Value {
 pub fn refusal_answer(refusal: &Refusal) -> Response {
     let status =
         StatusCode::from_u16(refusal.code.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let bytes = json::to_vec(&envelope(refusal)).unwrap_or_default();
+    let bytes = marfa_rules::js::to_vec(&envelope(refusal)).unwrap_or_default();
     let mut response = Response::new(Body::from(bytes));
     *response.status_mut() = status;
     let headers = response.headers_mut();

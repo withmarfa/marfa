@@ -434,5 +434,6 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
 
 /// Whether `id` is a key's ID at all, which a door judges before looking.
 pub fn check_id(id: &str) -> Result<()> {
-    marfa_core::rules::id("id", id).map_err(|_| Refusal::validation("id is not a valid key ID."))
+    marfa_rules::validation::id("id", id)
+        .map_err(|_| Refusal::validation("id is not a valid key ID."))
 }

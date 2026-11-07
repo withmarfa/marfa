@@ -13,9 +13,9 @@ use super::{
 use crate::Result;
 use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolve_reference};
 use crate::body::text::{self, Typed};
-use crate::catalog::Catalog;
-use crate::catalog::{EdgeType, End, WrittenAt};
 use crate::model::{Edge, EdgeDraft, EdgeEdit, EdgeOp, Item};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::catalog::{EdgeType, End, WrittenAt};
 
 /// A file's links and lines, read once every file in the scan is bound.
 pub(super) struct EdgeWork {
@@ -57,7 +57,7 @@ impl EdgeWork {
         names.retain(|name| {
             !self
                 .refused_lookups
-                .contains_key(&crate::names::folded(name.trim()))
+                .contains_key(&marfa_rules::names::folded(name.trim()))
         });
         names
     }
@@ -1097,7 +1097,7 @@ impl Folder {
         {
             return Ok(resolved);
         }
-        let key = crate::names::folded(text.trim());
+        let key = marfa_rules::names::folded(text.trim());
         let resolved = match unresolved.known.get(&key) {
             Some(why) => Resolved::Unanswered(why.clone()),
             None => resolver.resolve(text)?,

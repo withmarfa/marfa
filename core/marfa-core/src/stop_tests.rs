@@ -563,7 +563,7 @@ pub(crate) fn note(id: Option<&str>) -> crate::Draft {
 
 pub(crate) fn holding_a_catalog(core: &Core) {
     let conn = core.conn().unwrap();
-    store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+    store::replace_catalog(&conn, &marfa_rules::builtin::catalog().unwrap()).unwrap();
 }
 
 /// Takes every connection and answers none, as a server still being reached

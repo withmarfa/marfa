@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::edge_types::EdgeTypes;
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Item, ItemState, Tier};
+use marfa_rules::catalog::Catalog;
 
 pub const ID_FIELD: &str = "marfa_id";
 
@@ -56,7 +56,7 @@ impl Own {
             tier: item.tier,
             tags,
             state: item.state,
-            occurred_at: crate::time::projected(&item.occurred_at),
+            occurred_at: marfa_rules::time::projected(&item.occurred_at),
         }
     }
 }
@@ -135,7 +135,7 @@ pub struct Read {
 /// so a file carries it as the property `type` and the item keeps its own.
 pub fn names_type(value: &Value) -> Result<bool, CoreError> {
     match value {
-        Value::String(named) => crate::hydrate::type_id(named.trim()),
+        Value::String(named) => Ok(marfa_rules::grammar::type_id(named.trim())?),
         _ => Ok(false),
     }
 }
@@ -180,7 +180,7 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
                 read.lines.occurred_at = Some(
                     value
                         .as_str()
-                        .and_then(|time| crate::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                        .and_then(|time| marfa_rules::time::normalize(time, OCCURRED_AT_FIELD).ok())
                         .ok_or_else(|| {
                             format!("{OCCURRED_AT_FIELD} is a date or a date and time, not {value}")
                         })?,
@@ -262,7 +262,9 @@ pub fn lines_of(
     if item.state == ItemState::Archived {
         lines.insert(STATE_FIELD.into(), Value::String("archived".into()));
     }
-    if crate::time::projected(&item.occurred_at) != crate::time::projected(&item.created_at) {
+    if marfa_rules::time::projected(&item.occurred_at)
+        != marfa_rules::time::projected(&item.created_at)
+    {
         lines.insert(
             OCCURRED_AT_FIELD.into(),
             Value::String(item.occurred_at.clone()),
@@ -331,7 +333,7 @@ pub(super) fn presentation(
             VERSION_FIELD => super::version_named(value).map(Value::from),
             OCCURRED_AT_FIELD => value
                 .as_str()
-                .and_then(|time| crate::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                .and_then(|time| marfa_rules::time::normalize(time, OCCURRED_AT_FIELD).ok())
                 .map(Value::String),
             TAGS_FIELD => tags_of(value).ok().map(|mut tags| {
                 tags.sort();
@@ -344,7 +346,7 @@ pub(super) fn presentation(
             _ if edge_types.is_name(name) => super::edge_types::typed(value).ok().map(|targets| {
                 let mut names: Vec<_> = targets
                     .into_iter()
-                    .map(|target| crate::names::folded(&target.raw))
+                    .map(|target| marfa_rules::names::folded(&target.raw))
                     .collect();
                 names.sort();
                 names.dedup();
@@ -407,10 +409,20 @@ mod tests {
     use super::*;
 
     fn edge_types() -> EdgeTypes {
-        use crate::catalog::{EdgeType, End};
+        use marfa_rules::catalog::End;
         EdgeTypes::of(vec![
-            EdgeType::of("parent-of", Some("child-of"), End::Target, "one-to-many"),
-            EdgeType::of("cites", Some("cited-by"), End::Source, "many-to-many"),
+            crate::catalog::edge_type_for_tests(
+                "parent-of",
+                Some("child-of"),
+                End::Target,
+                "one-to-many",
+            ),
+            crate::catalog::edge_type_for_tests(
+                "cites",
+                Some("cited-by"),
+                End::Source,
+                "many-to-many",
+            ),
         ])
     }
 

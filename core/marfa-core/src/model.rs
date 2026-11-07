@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::CoreError;
-pub use marfa_rules::query::{SortDirection, SortField};
 use crate::wire::WireItem;
+pub use marfa_rules::query::{SortDirection, SortField};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -826,7 +826,7 @@ impl Draft {
         let at = self
             .occurred_at
             .as_deref()
-            .map(crate::time::projected)
+            .map(marfa_rules::time::projected)
             .unwrap_or_else(crate::store::now_iso);
         WireItem {
             id: id.to_string(),
@@ -1679,7 +1679,6 @@ impl MetadataWrite {
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine;
 
     use super::*;
 

@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::catalog::Catalog;
 use crate::model::ListFilters;
 use crate::{Core, reach, scripted, store};
 
@@ -42,7 +41,7 @@ pub(crate) fn large_copy(dir: &Path, rows: usize) -> Core {
         store::meta_set(&tx, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
         store::meta_set(&tx, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&tx, store::META_SLICE_TIER, "library").unwrap();
-        let catalog = Catalog::load(&tx).unwrap();
+        let catalog = crate::catalog::load(&tx).unwrap();
         let filler = "Some ordinary prose that a note carries, long enough to look like one. ";
         for index in 0..rows {
             let mut body = filler.repeat(6);

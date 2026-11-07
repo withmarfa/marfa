@@ -25,7 +25,7 @@ pub fn encode_filter(
     serde_json::from_value::<marfa_core::FilterExpression>(expression)
         .map_err(not_a_model)?
         .encode()
-        .map_err(|error| failure(env, error))
+        .map_err(|error| failure(env, error.into()))
 }
 
 /// The expression a text in the listing grammar holds, thrown as the
@@ -36,7 +36,7 @@ pub fn encode_filter(
 )]
 pub fn decode_filter(env: Env, text: String) -> Result<serde_json::Value> {
     let expression =
-        marfa_core::FilterExpression::decode(&text).map_err(|error| failure(env, error))?;
+        marfa_core::FilterExpression::decode(&text).map_err(|error| failure(env, error.into()))?;
     serde_json::to_value(expression).map_err(|error| Error::from_reason(error.to_string()))
 }
 

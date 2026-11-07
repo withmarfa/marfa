@@ -11,9 +11,9 @@ use std::collections::HashSet;
 use rusqlite::Connection;
 
 use super::{Folder, PLACEMENT_EDGE, relink, state};
-use crate::catalog::End;
 use crate::model::EdgeDraft;
 use crate::{Result, store};
+use marfa_rules::catalog::End;
 
 impl Folder {
     /// Clears the answered writes, as a drain begins, where the queue holds

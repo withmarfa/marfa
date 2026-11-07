@@ -2,12 +2,12 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::error::CoreError;
-use marfa_rules::query as rules;
 use crate::filter;
-use crate::model::{Item, ItemState, ListFilters, Sort, SortField};
+use crate::model::{Item, ItemState, ListFilters, Sort, SortDirection, SortField};
 use crate::store::{self, Unreadable};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::query as rules;
 
 pub(crate) fn list(
     conn: &Connection,
@@ -55,14 +55,14 @@ pub(crate) fn list_with(
     // `updated_at` it holds misses no row that shares the instant.
     if let Some(after) = &filters.updated_after {
         clauses.push("updated_at >= ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             after,
             "updated_after",
         )?));
     }
     if let Some(before) = &filters.updated_before {
         clauses.push("updated_at < ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             before,
             "updated_before",
         )?));
@@ -112,14 +112,14 @@ pub(crate) fn narrow_by_own_time(
 ) -> Result<()> {
     if let Some(after) = after {
         clauses.push("items.occurred_at > ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             after,
             "occurred_after",
         )?));
     }
     if let Some(before) = before {
         clauses.push("items.occurred_at < ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             before,
             "occurred_before",
         )?));
@@ -319,9 +319,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::catalog::Indexing;
     use crate::model::{ItemState, SortDirection, SortField, Tier};
     use crate::store::testing::*;
+    use marfa_rules::catalog::Indexing;
 
     fn seeded() -> Connection {
         let conn = conn();
@@ -388,7 +388,7 @@ mod tests {
     }
 
     fn ids(conn: &Connection, filters: ListFilters, sort: Sort) -> Vec<String> {
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         list(conn, &catalog, &filters, Some(sort))
             .unwrap()
             .into_iter()
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn a_concrete_type_the_catalog_does_not_hold_is_refused_and_a_wildcard_is_not() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let named = |name: &str| ListFilters {
             types: Some(vec![name.into()]),
             ..Default::default()
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn an_empty_type_is_refused_as_the_server_refuses_it() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let filters = ListFilters {
             types: Some(vec![String::new()]),
             ..Default::default()
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn the_global_wildcard_is_refused_alone_or_in_a_list() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         for types in [vec!["*"], vec!["core.file", "*"], vec![" * ", "acme.memo"]] {
             let filters = ListFilters {
                 types: Some(types.iter().map(|entry| entry.to_string()).collect()),
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn a_type_list_drops_blank_entries_and_repeats_before_it_is_counted() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let named = |types: Vec<&str>| ListFilters {
             types: Some(types.into_iter().map(String::from).collect()),
             ..Default::default()
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn a_list_naming_nothing_or_too_much_is_refused() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let eleven: Vec<String> = (0..11).map(|i| format!("acme{i}.*")).collect();
         let ten = ListFilters {
             types: Some(eleven[..10].to_vec()),
@@ -673,7 +673,7 @@ mod tests {
     }
 
     fn listed(conn: &Connection, filters: ListFilters, sort: Option<Sort>) -> Result<Vec<String>> {
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         Ok(list(conn, &catalog, &filters, sort)?
             .into_iter()
             .map(|item| item.id)

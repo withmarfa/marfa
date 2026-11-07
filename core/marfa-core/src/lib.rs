@@ -2,7 +2,6 @@
 mod attachment_tests;
 mod blob;
 mod body;
-mod builtin;
 mod catalog;
 mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
@@ -16,7 +15,6 @@ mod directory_vfs;
 #[cfg(not(unix))]
 #[path = "directory_vfs_unsupported.rs"]
 mod directory_vfs;
-mod display;
 mod drain;
 mod edge_rules;
 mod error;
@@ -35,11 +33,8 @@ mod hydrate_refill_tests;
 #[cfg(test)]
 mod hydrate_resume_tests;
 mod instance;
-mod integers;
-mod js;
 mod lock;
 mod model;
-mod names;
 #[cfg(test)]
 mod part_names_tests;
 pub mod priority;
@@ -80,13 +75,10 @@ mod telemetry;
 mod telemetry_tests;
 #[cfg(test)]
 mod tier_tests;
-mod time;
 #[cfg(test)]
 mod trashed_at_tests;
 #[cfg(test)]
 mod upload_credential_tests;
-mod url_host;
-mod validation;
 mod view_writes;
 mod views;
 mod watch;
@@ -100,36 +92,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use catalog::CatalogExt;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
-
-/// Rules the server holds requests to, each the one the engine holds a write to.
-pub mod rules {
-    use crate::Result;
-
-    /// A type identifier, or a namespace under `.*`.
-    pub fn type_pattern(name: &str) -> Result<bool> {
-        crate::hydrate::type_pattern(name)
-    }
-
-    /// Refuses what is not a lowercase UUIDv7, with the code `invalid_id`.
-    pub fn id(field: &str, id: &str) -> Result<()> {
-        crate::validation::id(field, id)
-    }
-
-    /// `value` as UTC to the millisecond, or a refusal naming `field`.
-    pub fn instant(value: &str, field: &str) -> Result<String> {
-        crate::time::normalize(value, field)
-    }
-}
 
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{
     BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkPart, LinkParts, LinkState, link_parts,
 };
-pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
+pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
-pub use display::ItemDisplay;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
     CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, environmental_status,
@@ -138,6 +110,14 @@ pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
 };
+pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenAt};
+pub use marfa_rules::display::ItemDisplay;
+pub use marfa_rules::thumbnail::Thumbnail;
+/// Refuses the first whole number in `text`, a JSON object of properties,
+/// that a float would change, read as written.
+pub fn refuse_inexact_integers(text: &str) -> Result<()> {
+    Ok(marfa_rules::integers::refuse_inexact_integers(text)?)
+}
 pub use filter::{
     EdgeDirection, FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator,
     FilterValue, SystemField,
@@ -150,15 +130,14 @@ pub use folder::{
 };
 pub use folder_settings::FolderRow;
 pub use instance::{InstanceDescription, instance_description};
-pub use integers::refuse_inexact_integers;
 pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters,
-    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
-    UnregisteredType, Verdict, WriteKind,
+    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier, UnregisteredType,
+    Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
@@ -764,12 +743,13 @@ impl Core {
             .map(str::to_string)
             .collect();
         let known = |id: &str| {
-            declared.iter().any(|held| held == id) || builtin::ships(id).unwrap_or(false)
+            declared.iter().any(|held| held == id)
+                || marfa_rules::builtin::ships(id).unwrap_or(false)
         };
         let mut rows = Vec::new();
         let mut seen = HashSet::new();
         for definition in types {
-            let row = catalog::declaration(definition, &known)?;
+            let row = marfa_rules::catalog::declaration(definition, &known)?;
             if !seen.insert(row.0.clone()) {
                 return Err(CoreError::Invalid(format!(
                     "{} is declared twice; a set declares each type once",
@@ -778,7 +758,7 @@ impl Core {
             }
             rows.push(row);
         }
-        catalog::refuse_wordless_status(types)?;
+        marfa_rules::catalog::refuse_wordless_status(types)?;
         // The same set again writes nothing, so a declaration at each launch
         // is no change to the copy (`changes_since`).
         let mut sorted = rows.clone();
@@ -940,7 +920,7 @@ impl Core {
             context.check(&tx)?;
             let held = match &read {
                 Some((row, edges)) => {
-                    let catalog = catalog::Catalog::load(&tx)?;
+                    let catalog = crate::catalog::load(&tx)?;
                     hydrate::hold_row(&tx, &catalog, row, edges)?;
                     true
                 }
@@ -1051,7 +1031,7 @@ impl Core {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            let catalog = catalog::Catalog::load(&tx)?;
+            let catalog = crate::catalog::load(&tx)?;
             let mut held = Vec::with_capacity(ids.len());
             for id in ids {
                 held.push(match whole.get(id) {
@@ -1348,7 +1328,7 @@ impl Core {
     pub fn list(&self, filters: &ListFilters, sort: impl Into<Option<Sort>>) -> Result<Rows<Item>> {
         let sort = sort.into();
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
-            let catalog = catalog::Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             Ok(Rows {
                 rows: query::list(conn, &catalog, filters, sort.clone())?,
                 completeness,
@@ -1387,7 +1367,7 @@ impl Core {
         unreadable: &mut store::Unreadable,
     ) -> Result<Rows<(Item, Shown)>> {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
-            let catalog = catalog::Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             let items = query::list_with(conn, &catalog, filters, sort.clone(), unreadable)?;
             Ok(Rows {
                 rows: items,
@@ -1429,7 +1409,7 @@ impl Core {
             let Some(item) = store::held_or_refused(found, completeness)? else {
                 return Ok(None);
             };
-            let catalog = catalog::Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             let shown = catalog.shown_unreadable(&item, unreadable);
             Ok(Some((item, shown)))
         })
@@ -1448,23 +1428,19 @@ impl Core {
                     message: format!("{id} is not held in this working copy"),
                 });
             };
-            Ok((item, catalog::Catalog::load(conn)?))
+            Ok((item, crate::catalog::load(conn)?))
         })?;
         let Some(field) = catalog.thumbnail_field(&item.r#type) else {
             return Ok(None);
         };
         match item.properties.get(field) {
             None | Some(Value::Null) => Ok(None),
-            Some(Value::String(uri)) => {
-                Thumbnail::from_data_uri(uri)
-                    .map(Some)
-                    .map_err(|error| match error {
-                        CoreError::Decoding(reason) => {
-                            CoreError::Decoding(format!("{id}: {reason}"))
-                        }
-                        other => other,
-                    })
-            }
+            Some(Value::String(uri)) => Thumbnail::from_data_uri(uri).map(Some).map_err(|error| {
+                match CoreError::from(error) {
+                    CoreError::Decoding(reason) => CoreError::Decoding(format!("{id}: {reason}")),
+                    other => other,
+                }
+            }),
             Some(other) => {
                 let held = match other {
                     Value::Bool(_) => "a boolean",
@@ -1566,7 +1542,7 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let mut unreadable = store::Unreadable::Keep(HashMap::new());
         let copies = conflicted_copies_in(&conn, id, &mut unreadable)?;
-        let catalog = catalog::Catalog::load(&conn)?;
+        let catalog = crate::catalog::load(&conn)?;
         Ok(copies
             .into_iter()
             .map(|item| {
@@ -1594,7 +1570,7 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
         unreadable: &mut store::Unreadable,
-    ) -> Result<(catalog::Catalog, Rows<SearchHit>)> {
+    ) -> Result<(marfa_rules::catalog::Catalog, Rows<SearchHit>)> {
         let op = telemetry::operation!("search", hits);
         let result = self.find_in_copy(query, filters, limit, unreadable);
         telemetry::ended!(op, result.as_ref(), |found| {
@@ -1610,9 +1586,9 @@ impl Core {
         filters: &SearchFilters,
         limit: usize,
         unreadable: &mut store::Unreadable,
-    ) -> Result<(catalog::Catalog, Rows<SearchHit>)> {
+    ) -> Result<(marfa_rules::catalog::Catalog, Rows<SearchHit>)> {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
-            let catalog = catalog::Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             let rows = search::search(conn, &catalog, query, filters, limit, unreadable)?;
             Ok((catalog, Rows { rows, completeness }))
         })
@@ -1765,7 +1741,7 @@ impl Core {
         if released {
             hydrate::lay_queue_over(
                 &tx,
-                &catalog::Catalog::load(&tx)?,
+                &crate::catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
                 self.credential().as_deref(),
             )?;
@@ -1794,7 +1770,7 @@ impl Core {
         if released > 0 {
             hydrate::lay_queue_over(
                 &tx,
-                &catalog::Catalog::load(&tx)?,
+                &crate::catalog::load(&tx)?,
                 &store::whole_edge_types(&tx)?,
                 self.credential().as_deref(),
             )?;
@@ -1897,7 +1873,7 @@ impl Core {
         store::release(&tx, id)?;
         hydrate::lay_queue_over(
             &tx,
-            &catalog::Catalog::load(&tx)?,
+            &crate::catalog::load(&tx)?,
             &store::whole_edge_types(&tx)?,
             self.credential().as_deref(),
         )?;
@@ -1943,7 +1919,7 @@ impl Core {
         let mut conn = self.conn()?;
         let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
-        let catalog = catalog::Catalog::load(&tx)?;
+        let catalog = crate::catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[], self.credential().as_deref())?;
         if body == Body::Read
             && let Some(item) = queued
@@ -2031,7 +2007,7 @@ impl Core {
         let mut conn = self.conn()?;
         let completeness = store::refuse_unless_writable(&conn)?;
         let tx = conn.transaction()?;
-        let catalog = catalog::Catalog::load(&tx)?;
+        let catalog = crate::catalog::load(&tx)?;
         let before = store::item_by_id(&tx, id)?;
         if !store::item_held(&tx, id)? {
             store::refuse_unless_held(completeness)?;
@@ -2171,7 +2147,7 @@ impl Core {
         let page = self
             .http()?
             .bin_page(r#type, None, cursor, limit.clamp(1, 100))?;
-        let catalog = catalog::Catalog::load(&*self.conn()?)?;
+        let catalog = crate::catalog::load(&*self.conn()?)?;
         let mut items = Vec::with_capacity(page.data.len());
         for row in page.data {
             let item = Item::from_wire(row.item, row.metadata.tags)?;
@@ -2392,7 +2368,7 @@ impl Core {
         apply: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<()>,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        validation::tags(admitted)?;
+        marfa_rules::validation::tags(admitted)?;
         let mut conn = self.conn()?;
         let completeness = store::refuse_unless_writable(&conn)?;
         if !store::item_held(&conn, id)? {
@@ -2407,7 +2383,7 @@ impl Core {
         store::hold_beneath_item(&tx, id)?;
         let before = store::tag_count(&tx, id)?;
         apply(&tx)?;
-        validation::tag_count(before, store::tag_count(&tx, id)?)?;
+        marfa_rules::validation::tag_count(before, store::tag_count(&tx, id)?)?;
         // The index holds a row's tags, so a tag changed here is changed there.
         store::reindex_item(&tx, id)?;
         let queued = store::enqueue(
@@ -2468,7 +2444,7 @@ impl Core {
             ));
         }
         if kind == WriteKind::WriteExtension {
-            integers::refuse_inexact_integers(payload)?;
+            marfa_rules::integers::refuse_inexact_integers(payload)?;
         }
         if !store::item_held(&conn, id)? {
             store::refuse_unless_held(completeness)?;
@@ -2616,7 +2592,7 @@ impl Core {
     fn refuse_unwritable_type(&self, r#type: &str) -> Result<()> {
         refuse_system_type(r#type)?;
         let conn = self.conn()?;
-        if catalog::Catalog::load(&conn)?.known(r#type) {
+        if crate::catalog::load(&conn)?.known(r#type) {
             return Ok(());
         }
         Err(CoreError::UnknownType {
@@ -2630,7 +2606,12 @@ impl Core {
         &self,
         path: &Path,
         mime_type: &str,
-        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
+        then: impl FnOnce(
+            &Connection,
+            &marfa_rules::catalog::Catalog,
+            &QueuedWrite,
+            &blob::Taken,
+        ) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_writable(&*self.conn()?)?;
@@ -2645,7 +2626,12 @@ impl Core {
         path: &Path,
         file: impl std::io::Read,
         mime_type: &str,
-        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
+        then: impl FnOnce(
+            &Connection,
+            &marfa_rules::catalog::Catalog,
+            &QueuedWrite,
+            &blob::Taken,
+        ) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_writable(&*self.conn()?)?;
@@ -2656,7 +2642,7 @@ impl Core {
             let _held = cache.hold();
             let taken = cache.take_reader(path, file)?;
             let mut conn = self.conn()?;
-            let catalog = catalog::Catalog::load(&conn)?;
+            let catalog = crate::catalog::load(&conn)?;
             let tx = conn.transaction()?;
             let upload = queue_upload(&tx, &taken.hash, mime_type)?;
             let queued = then(&tx, &catalog, &upload, &taken)?;
@@ -3394,7 +3380,7 @@ impl Core {
         items: &[(Option<&str>, &str, &Map<String, Value>)],
     ) -> Result<Vec<ItemDisplay>> {
         let conn = self.conn()?;
-        let catalog = catalog::Catalog::load(&conn)?;
+        let catalog = crate::catalog::load(&conn)?;
         items
             .iter()
             .map(|(id, item_type, properties)| match id {
@@ -3588,7 +3574,7 @@ fn keep_relocated_origin(
 fn unpin_held(tx: &Connection, id: &str) -> Result<bool> {
     let pinned = store::unpin(tx, id)?;
     if pinned && store::slice(tx)?.is_some() && store::item_held(tx, id)? {
-        store::let_go_unless_kept(tx, &catalog::Catalog::load(tx)?, id)?;
+        store::let_go_unless_kept(tx, &crate::catalog::load(tx)?, id)?;
     }
     Ok(pinned)
 }
@@ -3601,9 +3587,9 @@ fn refuse_invalid_names(
     tags: &[String],
     properties: &serde_json::Map<String, Value>,
 ) -> Result<()> {
-    validation::tags(tags)?;
-    validation::property_names(properties)?;
-    integers::refuse_in_value(properties)
+    marfa_rules::validation::tags(tags)?;
+    marfa_rules::validation::property_names(properties)?;
+    Ok(marfa_rules::integers::refuse_in_value(properties)?)
 }
 
 /// The server refuses a `system.*` write through the item operations to every
@@ -3631,7 +3617,7 @@ fn refuse_system_type(r#type: &str) -> Result<()> {
 /// naming a natural key is judged by the server, so it is not judged here.
 /// Judged against the `catalog` the caller loaded, so a caller judging
 /// many drafts keeps them to one revision.
-pub(crate) fn check_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<()> {
+pub(crate) fn check_create(catalog: &marfa_rules::catalog::Catalog, draft: &Draft) -> Result<()> {
     refuse_unmakeable_create(catalog, draft)?;
     if draft.source_id.is_none() {
         catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
@@ -3648,10 +3634,10 @@ const MINTED_ID_SHAPE: &str = "00000000-0000-7000-8000-000000000000";
 
 /// What no copy could make an item of, whatever it holds: a name the server
 /// would refuse, an id that is no id, a system type, or a type it does not hold.
-fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<()> {
+fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Draft) -> Result<()> {
     refuse_invalid_names(&draft.tags, &draft.properties)?;
     if let Some(id) = &draft.id {
-        validation::id("id", id)?;
+        marfa_rules::validation::id("id", id)?;
     }
     refuse_system_type(&draft.r#type)?;
     if !catalog.known(&draft.r#type) {
@@ -3692,7 +3678,7 @@ fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result
             });
         }
         for target in targets {
-            validation::id("edges", target)?;
+            marfa_rules::validation::id("edges", target)?;
             if draft.id.as_deref() == Some(target.as_str()) {
                 refuse_self_loop(edge_type, target, target)?;
             }
@@ -3717,7 +3703,7 @@ fn changed_properties(
 /// readable locally before the server answers.
 fn queue_create(
     tx: &Connection,
-    catalog: &catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     draft: &Draft,
     after: &[String],
     credential: Option<&str>,
@@ -3940,14 +3926,14 @@ pub(crate) enum Based {
 
 fn queue_update(
     tx: &Connection,
-    catalog: &catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     id: &str,
     edit: &Edit,
     after: &[String],
     based: Based,
 ) -> Result<QueuedWrite> {
     refuse_invalid_names(&[], &edit.properties)?;
-    validation::cleared_names(&edit.clear_properties, &edit.properties)?;
+    marfa_rules::validation::cleared_names(&edit.clear_properties, &edit.properties)?;
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
             code: "item_not_found".into(),
@@ -4134,7 +4120,7 @@ fn queue_update(
         next.tier = Some(tier);
     }
     if let Some(occurred_at) = &edit.occurred_at {
-        next.occurred_at = time::projected(occurred_at);
+        next.occurred_at = marfa_rules::time::projected(occurred_at);
     }
     // Shown as a create naming no time is shown until its answer.
     if let Some(create) = &unsent_create {
@@ -4235,8 +4221,16 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                 details: None,
             });
         }
-        (Some(source), None) => (catalog::End::Source, source, held.target_id.as_str()),
-        (None, Some(target)) => (catalog::End::Target, held.source_id.as_str(), target),
+        (Some(source), None) => (
+            marfa_rules::catalog::End::Source,
+            source,
+            held.target_id.as_str(),
+        ),
+        (None, Some(target)) => (
+            marfa_rules::catalog::End::Target,
+            held.source_id.as_str(),
+            target,
+        ),
     };
     match catalog::edge_type(conn, &held.edge_type) {
         Ok(edge_type) if !edge_type.one_at(moved.other()) => {
@@ -4269,10 +4263,10 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
 /// server would refuse for what the copy holds.
 fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     if let Some(id) = &draft.id {
-        validation::id("id", id)?;
+        marfa_rules::validation::id("id", id)?;
     }
     refuse_self_loop(&draft.edge_type, &draft.source_id, &draft.target_id)?;
-    integers::refuse_in_value(&draft.properties)?;
+    marfa_rules::integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
         conn,
         &draft.source_id,
@@ -4346,7 +4340,7 @@ fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<Q
     }
     let edit = &ends_moved(&held, edit);
     refuse_edge_move(tx, &held, edit)?;
-    integers::refuse_in_value(&edit.properties)?;
+    marfa_rules::integers::refuse_in_value(&edit.properties)?;
     if edit.is_empty() {
         return Ok(None);
     }
@@ -4476,7 +4470,7 @@ fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String,
 /// until the server answers.
 pub(crate) fn name_bytes(
     properties: &mut serde_json::Map<String, Value>,
-    catalog: &catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     r#type: &str,
     taken: &blob::Taken,
     mime_type: &str,
@@ -4534,7 +4528,7 @@ pub(crate) fn fault_said(fault: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validation::MAX_TAG_LENGTH;
+    use marfa_rules::validation::MAX_TAG_LENGTH;
 
     #[test]
     fn a_server_debug_shows_its_url_and_never_its_key() {
@@ -4556,7 +4550,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         id
@@ -5094,7 +5088,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         let edit = |base, properties: Value, replace| Edit {
@@ -5213,7 +5207,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         let keyed = |key: &str, properties: Value| Draft {
@@ -5251,13 +5245,19 @@ mod tests {
         let conn = store::open_in_memory().unwrap();
         let mut row = store::testing::note("row", "title", "held", "2026-01-01T00:00:00Z");
         row.version = 5;
-        store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+        store::upsert_item(
+            &conn,
+            &row,
+            None,
+            &marfa_rules::catalog::Indexing::default(),
+        )
+        .unwrap();
         store::replace_types(
             &conn,
             &[store::testing::wire_type("core.note", None, Some("title"))],
         )
         .unwrap();
-        let catalog = catalog::Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let edit = |base| Edit {
             properties: serde_json::json!({ "body": "edited", "notes": "new" })
                 .as_object()
@@ -5297,7 +5297,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         core
@@ -5396,7 +5396,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         for (based, edit) in [
@@ -5445,8 +5445,12 @@ mod tests {
             }),
         );
         newer.version = 4;
-        store::put_server_item(&conn, &newer, None, &crate::catalog::Catalog::empty()).unwrap();
-        store::lay_waiting_writes_over(&conn, "row", &|_| catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &newer, None, &marfa_rules::catalog::Catalog::empty())
+            .unwrap();
+        store::lay_waiting_writes_over(&conn, "row", &|_| {
+            marfa_rules::catalog::Indexing::default()
+        })
+        .unwrap();
         drop(conn);
         assert_eq!(
             core.get("row").unwrap().unwrap().properties,
@@ -5495,7 +5499,7 @@ mod tests {
                 &conn,
                 &row,
                 Some(&["a".into()]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             store::put_server_edge(
@@ -5533,7 +5537,7 @@ mod tests {
             &core.conn().unwrap(),
             &store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z"),
             Some(&[]),
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         let version = core.get("row").unwrap().unwrap().version;
@@ -5721,7 +5725,7 @@ mod tests {
             &core.conn().unwrap(),
             &store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z"),
             Some(&[]),
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         let edge = |properties: serde_json::Value| EdgeDraft {
@@ -5861,8 +5865,13 @@ mod tests {
             let conn = core.conn().unwrap();
             for id in ["torn", "bare", "calm"] {
                 let row = store::testing::note(id, id, "zebra", "2026-01-01T00:00:00Z");
-                store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty())
-                    .unwrap();
+                store::put_server_item(
+                    &conn,
+                    &row,
+                    Some(&[]),
+                    &marfa_rules::catalog::Catalog::empty(),
+                )
+                .unwrap();
             }
             // A conflicted copy of "row", whose properties are among the damaged.
             let copy = store::testing::note("copy", "copy", "kept", "2026-01-01T00:00:00Z");
@@ -5870,7 +5879,7 @@ mod tests {
                 &conn,
                 &copy,
                 Some(&[CONFLICTED_COPY_TAG.to_string()]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             store::put_server_edge(
@@ -6038,8 +6047,13 @@ mod tests {
                 inbox.tier = Some("feed".into());
                 inbox.source = "reader".into();
                 inbox.source_id = Some("article-1".into());
-                store::put_server_item(&conn, &inbox, Some(&[]), &crate::catalog::Catalog::empty())
-                    .unwrap();
+                store::put_server_item(
+                    &conn,
+                    &inbox,
+                    Some(&[]),
+                    &marfa_rules::catalog::Catalog::empty(),
+                )
+                .unwrap();
             }
             let keyed = |source_id: &str| Draft {
                 r#type: "core.note".into(),
@@ -6091,10 +6105,15 @@ mod tests {
             inbox.tier = Some("feed".into());
             inbox.source = "reader".into();
             inbox.source_id = Some("article-1".into());
-            store::put_server_item(&conn, &inbox, Some(&[]), &crate::catalog::Catalog::empty())
-                .unwrap();
+            store::put_server_item(
+                &conn,
+                &inbox,
+                Some(&[]),
+                &marfa_rules::catalog::Catalog::empty(),
+            )
+            .unwrap();
             assert!(!store::item_held(&conn, &resynced_id).unwrap());
-            let catalog = catalog::Catalog::load(&conn).unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
             hydrate::lay_queue_over(&conn, &catalog, &[], None).unwrap();
             assert_eq!(
                 store::items_by_ids(&conn, std::slice::from_ref(&resynced_id))
@@ -6165,8 +6184,13 @@ mod tests {
                 "2026-01-01T00:00:00Z",
                 serde_json::json!({ "title": "Inbox" }),
             );
-            store::put_server_item(&conn, &folder, Some(&[]), &crate::catalog::Catalog::empty())
-                .unwrap();
+            store::put_server_item(
+                &conn,
+                &folder,
+                Some(&[]),
+                &marfa_rules::catalog::Catalog::empty(),
+            )
+            .unwrap();
         }
         let before = core.get("folder").unwrap();
         let held = store::count(&core.conn().unwrap(), "items").unwrap();
@@ -6808,11 +6832,13 @@ mod tests {
                 &conn,
                 &baseline,
                 Some(&["a".into(), "b".into()]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
-            store::lay_waiting_writes_over(&conn, "row", &|_| catalog::Indexing::default())
-                .unwrap();
+            store::lay_waiting_writes_over(&conn, "row", &|_| {
+                marfa_rules::catalog::Indexing::default()
+            })
+            .unwrap();
         }
         refuse(&core, &edited);
         assert_eq!(
@@ -6877,7 +6903,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &other, None, &crate::catalog::Catalog::empty()).unwrap();
+            store::put_server_item(&conn, &other, None, &marfa_rules::catalog::Catalog::empty())
+                .unwrap();
             store::put_server_edge(
                 &conn,
                 &store::testing::wire_edge("link2", "row", "other", "references"),
@@ -6961,7 +6988,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &other, None, &crate::catalog::Catalog::empty()).unwrap();
+            store::put_server_item(&conn, &other, None, &marfa_rules::catalog::Catalog::empty())
+                .unwrap();
             store::put_server_edge(
                 &conn,
                 &store::testing::wire_edge("link", "row", "older", "supersedes"),
@@ -6988,7 +7016,7 @@ mod tests {
             for number in 0..count {
                 let id = format!("n{number}");
                 let note = store::testing::note(&id, &id, "body", "2026-01-01T00:00:00Z");
-                store::put_server_item(&conn, &note, None, &crate::catalog::Catalog::empty())
+                store::put_server_item(&conn, &note, None, &marfa_rules::catalog::Catalog::empty())
                     .unwrap();
             }
         }
@@ -7643,7 +7671,13 @@ mod tests {
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             for id in ["root", "first", "second"] {
                 let row = store::testing::note(id, id, id, "2026-01-01T00:00:00Z");
-                store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+                store::upsert_item(
+                    &conn,
+                    &row,
+                    None,
+                    &marfa_rules::catalog::Indexing::default(),
+                )
+                .unwrap();
             }
             for (id, source, target, edge_type) in [
                 ("reply-first", "first", "root", "in-thread"),
@@ -8953,7 +8987,7 @@ mod tests {
         let writer = Core::open(&path, None).unwrap();
         let reader = Core::open_reader(&path).unwrap();
         let catalog = [store::testing::wire_type("core.note", None, Some("title"))];
-        let replace = |types: &[crate::wire::WireType]| {
+        let replace = |types: &[marfa_rules::wire::WireType]| {
             let mut conn = writer.conn().unwrap();
             let tx = conn.transaction().unwrap();
             store::replace_types(&tx, types).unwrap();

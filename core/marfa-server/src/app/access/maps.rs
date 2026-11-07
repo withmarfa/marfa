@@ -213,7 +213,7 @@ impl Axis {
 }
 
 fn type_pattern(name: &str) -> Result<bool> {
-    marfa_core::rules::type_pattern(name)
+    marfa_rules::grammar::type_pattern(name)
         .map_err(|_| Refusal::internal("the shipped type rules did not load"))
 }
 

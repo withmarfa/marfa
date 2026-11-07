@@ -32,10 +32,11 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
-use crate::catalog::{self, EdgeType, End, Lineage};
+use crate::catalog;
 use crate::error::CoreError;
 use crate::model::{Draft, Subject, Verdict, WriteKind};
 use crate::store;
+use marfa_rules::catalog::{EdgeType, End, Lineage};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
@@ -485,9 +486,9 @@ pub(crate) fn refuse_retype_breaking_edges(
 mod tests {
     use serde_json::{Value, json};
 
-    use crate::catalog::Catalog;
-    use crate::wire::{WireCatalog, WireType};
     use crate::{Core, CoreError, Draft, EdgeDraft, EdgeEdit, Edit, End, reach, store};
+    use marfa_rules::catalog::Catalog;
+    use marfa_rules::wire::{WireCatalog, WireType};
 
     const NOTE_A: &str = "0190f3a0-0000-7000-8000-00000000000a";
     const NOTE_B: &str = "0190f3a0-0000-7000-8000-00000000000b";

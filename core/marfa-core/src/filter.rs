@@ -4,19 +4,21 @@
 //! one set of rows offline and another online.
 
 use marfa_rules::catalog::StatusField;
-use marfa_rules::filter::{Compare, Condition, Expression, Literal, Op, Term, parse, system_literal};
+use marfa_rules::filter::{
+    Compare, Condition, Expression, Literal, Op, Term, parse, system_literal,
+};
 use serde_json::{Number, Value};
 
 use crate::Result;
-use crate::catalog::{Catalog, CatalogExt};
 use crate::error::CoreError;
 use crate::query::escape_like;
+use marfa_rules::catalog::Catalog;
 
+pub(crate) use marfa_rules::filter::reads;
 pub use marfa_rules::filter::{
     EdgeDirection, FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator,
     FilterValue, SystemField,
 };
-pub(crate) use marfa_rules::filter::reads;
 
 /// The edge type `beneath` walks: an edge's source is the parent and its
 /// target the child.
@@ -345,27 +347,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::catalog::Indexing;
     use crate::store;
     use crate::store::testing::*;
+    use marfa_rules::catalog::Indexing;
     use marfa_rules::filter::parse;
-
-    fn code(input: &str) -> Option<String> {
-        match parse(input) {
-            Ok(_) => None,
-            Err(error) => Some(error.code.as_str().to_string()),
-        }
-    }
 
     #[test]
     fn timestamp_comparisons_normalize_and_validate() {
         for field in ["created_at", "updated_at", "occurred_at"] {
             for op in ["eq", "neq", "gt", "gte", "lt", "lte"] {
                 let mut values = Vec::new();
-                parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\""))
-                    .unwrap()
-                    .clause(&mut values, &[], &[])
-                    .unwrap();
+                let expression =
+                    parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\"")).unwrap();
+                expression_clause(&expression, &mut values, &[], &[]).unwrap();
                 assert_eq!(values, [Value::String("2026-01-01T00:00:00.500Z".into())]);
                 for invalid in ["42", "true", "null", "\"bad\""] {
                     assert!(
@@ -410,7 +404,7 @@ mod tests {
     /// the type does not declare.
     fn statuses() -> Connection {
         let conn = conn();
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: serde_json::from_value(json!([
                 { "id": "acme.task", "fields": { "state": { "type": "status", "status_values": [
                     { "value": "todo", "group": "not_started" },
@@ -475,7 +469,7 @@ mod tests {
     #[test]
     fn the_shipped_media_types_read_progress_as_their_status_field() {
         let conn = conn();
-        store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+        store::replace_catalog(&conn, &marfa_rules::builtin::catalog().unwrap()).unwrap();
         for (subtype, word) in [
             ("album", "planned"),
             ("article", "started"),
@@ -518,7 +512,7 @@ mod tests {
             ["ongoing"]
         );
 
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let written = |word: &str| {
             let mut properties = serde_json::Map::new();
             properties.insert("title".into(), json!("x"));
@@ -539,7 +533,7 @@ mod tests {
                     "source_type_constraints": ["*"], "target_type_constraints": ["*"],
                     "cascade_on_delete": mode, "property_schema": {}, "written_at": "source" })
         };
-        let catalog = crate::wire::WireCatalog {
+        let catalog = marfa_rules::wire::WireCatalog {
             types: Vec::new(),
             edge_types: vec![
                 edge_type("comments-on", "with-hosts"),
@@ -710,7 +704,7 @@ mod tests {
         let whole: Vec<String> = whole.iter().map(|held| held.to_string()).collect();
         let mut clauses = Vec::new();
         let mut values = Vec::new();
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         narrow(filter, beneath, &whole, &catalog, &mut clauses, &mut values).unwrap();
         let mut ids: Vec<String> = store::items_where(
             conn,
@@ -940,5 +934,4 @@ mod tests {
             Err(CoreError::Validation { .. })
         ));
     }
-}
 }

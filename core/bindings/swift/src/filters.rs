@@ -96,14 +96,18 @@ pub enum FilterValue {
 /// `validation_error` where the server would refuse it.
 #[uniffi::export]
 pub fn encode_filter(expression: FilterExpression) -> Result<String, MarfaError> {
-    Ok(marfa_core::FilterExpression::from(expression).encode()?)
+    Ok(marfa_core::FilterExpression::from(expression)
+        .encode()
+        .map_err(marfa_core::CoreError::from)?)
 }
 
 /// The expression a text in the listing grammar holds, refused with the
 /// server's `validation_error` and message where the server refuses it.
 #[uniffi::export]
 pub fn decode_filter(text: String) -> Result<FilterExpression, MarfaError> {
-    Ok(marfa_core::FilterExpression::decode(&text)?.into())
+    Ok(marfa_core::FilterExpression::decode(&text)
+        .map_err(marfa_core::CoreError::from)?
+        .into())
 }
 
 /// The operators the grammar takes on a field.

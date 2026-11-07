@@ -5,14 +5,15 @@ use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::catalog::Indexing;
 use crate::error::CoreError;
-use crate::js;
 use crate::model::{
     BlockedReason, Completeness, Edge, EdgeDraft, Item, ItemState, QueuedWrite, SliceTier, Subject,
     Tier, Verdict, WriteKind,
 };
-use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
+use crate::wire::{WireEdge, WireItem};
+use marfa_rules::catalog::Indexing;
+use marfa_rules::js;
+use marfa_rules::wire::{WireCatalog, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
 
@@ -1491,7 +1492,7 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
 /// Pinned rows count, even in a copy that has never hydrated.
 pub fn slice_holds(
     conn: &Connection,
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     item: &crate::wire::WireItem,
 ) -> Result<bool, CoreError> {
     if pinned(conn, &item.id)? {
@@ -1514,7 +1515,11 @@ pub const EVERY_TYPE: &str = "*";
 
 /// Whether a declaration names the type, tier aside: `EVERY_TYPE` names every
 /// type but `system.*`.
-pub fn declares_type(catalog: &crate::catalog::Catalog, types: &[String], row_type: &str) -> bool {
+pub fn declares_type(
+    catalog: &marfa_rules::catalog::Catalog,
+    types: &[String],
+    row_type: &str,
+) -> bool {
     types.iter().any(|declared| {
         if declared == EVERY_TYPE {
             !is_system(row_type)
@@ -1529,7 +1534,7 @@ pub fn declares_type(catalog: &crate::catalog::Catalog, types: &[String], row_ty
 /// server stamps one a tier that says nothing about it, and a copy of the
 /// feed still needs the folders it shows.
 pub fn slice_takes(
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     types: &[String],
     tier: SliceTier,
     row_type: &str,
@@ -1567,7 +1572,7 @@ pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>
 /// brought them.
 pub fn keeps_held(
     conn: &Connection,
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     id: &str,
 ) -> Result<bool, CoreError> {
     if pinned(conn, id)? || waiting_write_names(conn, id)? {
@@ -1602,7 +1607,7 @@ pub fn keeps_held(
 /// (`keeps_held`). Whether it did.
 pub fn let_go_unless_kept(
     conn: &Connection,
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
     id: &str,
 ) -> Result<bool, CoreError> {
     if keeps_held(conn, catalog, id)? {
@@ -1898,7 +1903,7 @@ pub(crate) fn put_server_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
 ) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Item, &item.id)?;
     if holds_later(
@@ -3555,15 +3560,6 @@ type TypeRow = (
     String,
 );
 
-fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
-    declared
-        .get("fields")?
-        .as_object()?
-        .iter()
-        .find(|(_, field)| field.get("type").and_then(Value::as_str) == Some("thumbnail"))
-        .map(|(name, _)| name.clone())
-}
-
 /// What a replacement did to the catalog held, decided once, where the rows
 /// are compared, for every reader of the verdict: the reindex and a hydration
 /// that may resume.
@@ -3662,15 +3658,16 @@ pub fn hold_local_catalog_alone(conn: &Connection) -> Result<(), CoreError> {
 }
 
 fn local_catalog(conn: &Connection) -> Result<(Vec<WireType>, Vec<Value>), CoreError> {
-    let shipped = crate::builtin::catalog()?;
+    let shipped = marfa_rules::builtin::catalog()?;
     let mut types = shipped.types;
     for (id, json) in declared_type_rows(conn)? {
         let unreadable = |error: serde_json::Error| {
             CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
         };
         // Held as the registry holds it, as a server's catalog already is.
-        let declared =
-            crate::catalog::normalized_type(&serde_json::from_str(&json).map_err(unreadable)?)?;
+        let declared = marfa_rules::catalog::normalized_type(
+            &serde_json::from_str(&json).map_err(unreadable)?,
+        )?;
         types.push(serde_json::from_value(declared).map_err(unreadable)?);
     }
     Ok((types, shipped.edge_types))
@@ -3890,7 +3887,7 @@ fn type_rows_of(types: &[WireType]) -> Vec<TypeRow> {
                 entry.parent.clone(),
                 entry.label.clone(),
                 hints.title_field,
-                thumbnail_field_of(&entry.rest),
+                marfa_rules::catalog::thumbnail_field_of(&entry.rest),
                 Value::Object(json).to_string(),
             )
         })
@@ -3965,7 +3962,7 @@ pub(crate) fn naming_host(conn: &Connection, id: &str) -> Result<Option<NamingHo
     let Some((edge_type, r#type, properties)) = found else {
         return Ok(None);
     };
-    let label = serde_json::from_str::<crate::wire::WireEdgeType>(&edge_type)
+    let label = serde_json::from_str::<marfa_rules::wire::WireEdgeType>(&edge_type)
         .map_err(|error| CoreError::Store(format!("a held edge type: {error}")))?
         .label();
     // A host whose stored properties cannot be read is named as one with
@@ -4001,7 +3998,7 @@ pub fn reindex_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 }
 
 fn reindex_where(conn: &Connection, only: Option<&str>) -> Result<(), CoreError> {
-    let catalog = crate::catalog::Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     let held: Vec<(i64, String, String, String, String)> = conn
         .prepare(
             "SELECT seq, id, type, state, properties FROM items
@@ -4236,7 +4233,7 @@ fn let_go_of_ends(conn: &Connection, ends: &[String]) -> Result<(), CoreError> {
     if ends.is_empty() || slice_query(conn)?.is_none() {
         return Ok(());
     }
-    let catalog = crate::catalog::Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     for end in ends {
         if item_held(conn, end)? {
             let_go_unless_kept(conn, &catalog, end)?;
@@ -6315,7 +6312,7 @@ pub fn take_server_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    catalog: &crate::catalog::Catalog,
+    catalog: &marfa_rules::catalog::Catalog,
 ) -> Result<bool, CoreError> {
     if !put_server_item(conn, item, tags, catalog)? {
         return Ok(false);
@@ -6528,7 +6525,7 @@ fn lay_write(
                 item.source_id = Some(source_id);
             }
             if let Some(occurred_at) = draft.occurred_at {
-                item.occurred_at = crate::time::projected(&occurred_at);
+                item.occurred_at = marfa_rules::time::projected(&occurred_at);
             }
             if let Some(state) = draft.state {
                 item.move_to(state, &row.queued_at);
@@ -6559,7 +6556,7 @@ fn lay_write(
                     }
                 } else {
                     let projected = if properties.values().any(Value::is_null) {
-                        crate::catalog::Catalog::load(conn)?.projected_properties(
+                        crate::catalog::load(conn)?.projected_properties(
                             payload
                                 .get("type")
                                 .and_then(Value::as_str)
@@ -6588,7 +6585,7 @@ fn lay_write(
                 item.tier = Tier::parse_wire(Some(tier))?;
             }
             if let Some(occurred_at) = payload.get("occurred_at").and_then(Value::as_str) {
-                item.occurred_at = crate::time::projected(occurred_at);
+                item.occurred_at = marfa_rules::time::projected(occurred_at);
             }
         }
         WriteKind::TransitionItem => {
@@ -6661,7 +6658,7 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             if row.kind == WriteKind::CreateItem {
                 return forget_row(conn, id);
             }
-            let catalog = crate::catalog::Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             if let Some(held) = beneath_item(conn, id)?
                 && item_held(conn, id)?
             {
@@ -7079,7 +7076,7 @@ pub(crate) mod testing {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::wire::WireDisplayHints;
+    use marfa_rules::wire::WireDisplayHints;
 
     pub fn conn() -> Connection {
         open_in_memory().unwrap()
@@ -7389,7 +7386,7 @@ mod tests {
                 &conn,
                 &testing::note(id, id, "", "2026-01-01T00:00:00Z"),
                 Some(&[]),
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
         }
@@ -7412,7 +7409,7 @@ mod tests {
         let conn = testing::conn();
         let since = |from: i64| changed_since(&conn, Changes::Items, from, 8).unwrap();
         let ids = |names: &[&str]| Some(names.iter().map(|id| id.to_string()).collect());
-        let empty = crate::catalog::Catalog::empty();
+        let empty = marfa_rules::catalog::Catalog::empty();
         let from = last_change(&conn, Changes::Items).unwrap();
         for id in ["a", "b", "c"] {
             put_server_item(
@@ -7488,9 +7485,7 @@ mod tests {
             "cover": "unicornsXYZ",
             "undeclared": "narwhalsABC",
         });
-        let indexing = crate::catalog::Catalog::load(&conn)
-            .unwrap()
-            .indexing("acme.photo");
+        let indexing = crate::catalog::load(&conn).unwrap().indexing("acme.photo");
         for (id, state) in [("held", "active"), ("binned", "trashed")] {
             let row = wire_item(
                 id,
@@ -7560,9 +7555,7 @@ mod tests {
             }
         };
         replace_catalog(&conn, &catalog("string")).unwrap();
-        let indexing = crate::catalog::Catalog::load(&conn)
-            .unwrap()
-            .indexing("acme.photo");
+        let indexing = crate::catalog::load(&conn).unwrap().indexing("acme.photo");
         for (id, state) in [
             ("damaged", "active"),
             ("healthy", "active"),
@@ -7782,7 +7775,7 @@ mod tests {
         // A copy's own catalog is replaced by a server's whatever the rows say.
         let local = crate::store::open_in_memory().unwrap();
         hold_local_catalog(&local).unwrap();
-        let shipped = crate::builtin::catalog().unwrap();
+        let shipped = marfa_rules::builtin::catalog().unwrap();
         assert_eq!(
             replace_catalog(&local, &shipped).unwrap(),
             CatalogChange::Changed
@@ -9649,7 +9642,9 @@ mod tests {
         later.version = 3;
         later.state = "archived".into();
         later.updated_at = "2026-01-02T00:00:00.000Z".into();
-        assert!(put_server_item(&conn, &later, None, &crate::catalog::Catalog::empty()).unwrap());
+        assert!(
+            put_server_item(&conn, &later, None, &marfa_rules::catalog::Catalog::empty()).unwrap()
+        );
         let mut older = later.clone();
         older.state = "active".into();
         older.properties.insert("title".into(), "older".into());
@@ -9666,7 +9661,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !put_server_item(&conn, &older, None, &crate::catalog::Catalog::empty()).unwrap(),
+            !put_server_item(&conn, &older, None, &marfa_rules::catalog::Catalog::empty()).unwrap(),
             "a row stamped before the one held went in over it"
         );
         let held = item_by_id(&conn, "row").unwrap().unwrap();
@@ -9691,7 +9686,7 @@ mod tests {
     #[test]
     fn taking_a_server_item_lays_the_waiting_writes_over_it_unless_the_copy_holds_a_later_one() {
         let conn = conn();
-        let catalog = crate::catalog::Catalog::empty();
+        let catalog = marfa_rules::catalog::Catalog::empty();
         enqueue(
             &conn,
             &NewWrite {

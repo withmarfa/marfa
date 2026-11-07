@@ -117,7 +117,7 @@ pub fn parse_sort_field(text: &str) -> Result<marfa_core::SortField, String> {
         "occurred-at" => Ok(marfa_core::SortField::OccurredAt),
         other => other
             .parse()
-            .map_err(|error: marfa_core::CoreError| error.to_string()),
+            .map_err(|error: marfa_rules::RuleError| error.to_string()),
     }
 }
 

@@ -6,7 +6,6 @@ pub mod body;
 mod caller;
 mod control;
 mod health;
-pub mod json;
 mod keys;
 pub mod observe;
 mod page;

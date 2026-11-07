@@ -105,7 +105,10 @@ pub fn tags(tags: &[String]) -> Result<(), RuleError> {
             let (code, problem) = if tag.is_empty() {
                 (field_code::EMPTY, "A tag must not be empty".to_string())
             } else if tag.chars().all(js::is_space) {
-                (field_code::INVALID_VALUE, "A tag must not be blank".to_string())
+                (
+                    field_code::INVALID_VALUE,
+                    "A tag must not be blank".to_string(),
+                )
             } else if tag == "." || tag == ".." {
                 (
                     field_code::INVALID_VALUE,
@@ -190,7 +193,10 @@ pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(),
         .map(String::as_str)
         .collect();
     if !both.is_empty() {
-        let message = format!("A property can't be both set and cleared: {}", both.join(", "));
+        let message = format!(
+            "A property can't be both set and cleared: {}",
+            both.join(", ")
+        );
         faults.push((
             message.clone(),
             FieldError::new("clear_properties", field_code::SET_AND_CLEARED, message),
@@ -217,11 +223,13 @@ pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
         Ok(())
     } else {
         let message = format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase");
-        Err(RuleError::new(Code::InvalidId, message.clone()).with_fields(vec![FieldError::new(
-            field,
-            field_code::INVALID_VALUE,
-            message,
-        )]))
+        Err(
+            RuleError::new(Code::InvalidId, message.clone()).with_fields(vec![FieldError::new(
+                field,
+                field_code::INVALID_VALUE,
+                message,
+            )]),
+        )
     }
 }
 
@@ -237,7 +245,11 @@ pub fn properties(
         let required = definition.get("required").and_then(Value::as_bool) == Some(true);
         let Some(value) = properties.get(*name) else {
             if complete && required {
-                faults.push(fault(name, field_code::REQUIRED, "Required field is missing"));
+                faults.push(fault(
+                    name,
+                    field_code::REQUIRED,
+                    "Required field is missing",
+                ));
             }
             continue;
         };
@@ -265,7 +277,12 @@ pub fn properties(
 }
 
 fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem>, RuleError> {
-    let expected = |kind| Some(Problem::new(field_code::INVALID_TYPE, format!("Expected {kind}")));
+    let expected = |kind| {
+        Some(Problem::new(
+            field_code::INVALID_TYPE,
+            format!("Expected {kind}"),
+        ))
+    };
     let invalid = |message: &str| Some(Problem::new(field_code::INVALID_VALUE, message));
     let limit = |key, default| {
         definition
@@ -353,7 +370,10 @@ fn in_range(definition: &Value, number: f64) -> Option<Problem> {
     bound("maximum")
         .filter(|maximum| maximum.as_f64().is_some_and(|maximum| number > maximum))
         .map(|maximum| {
-            Problem::new(field_code::OUT_OF_RANGE, format!("Must be at most {maximum}"))
+            Problem::new(
+                field_code::OUT_OF_RANGE,
+                format!("Must be at most {maximum}"),
+            )
         })
 }
 

@@ -18,13 +18,13 @@ use super::embed::{
 };
 use super::resolve::{Names, Others, Paths, Resolved, Resolver, is_id, resolve_reference};
 use super::text::{self, Embed, Typed};
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::folder::fields;
 use crate::model::{Edge, EdgeDraft, Item, Verdict, WriteKind};
-use crate::names::{folded, name_of};
 use crate::wire::{WireEdge, WireItem};
 use crate::{Core, Result, store};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::names::{folded, name_of};
 
 pub(crate) const LINK_EDGE: &str = "references";
 pub(crate) const ATTACHMENT_EDGE: &str = "attached-to";
@@ -937,7 +937,7 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
             if properties == next.properties {
                 return Ok(());
             }
-            let loaded = Catalog::load(conn)?;
+            let loaded = crate::catalog::load(conn)?;
             let title = fields::title_field(&loaded, &r#type);
             if properties.get(title) == next.properties.get(title)
                 && blob_ref_of(&loaded, &r#type, &properties).is_some()
@@ -950,7 +950,7 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
     }
     let catalog = match catalog {
         Some(catalog) => catalog,
-        None => Catalog::load(conn)?,
+        None => crate::catalog::load(conn)?,
     };
     record_unrecorded(conn, &catalog, &linking(conn, id)?)
 }
@@ -982,7 +982,7 @@ pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
     if hosts.is_empty() {
         return Ok(());
     }
-    record_unrecorded(conn, &Catalog::load(conn)?, &hosts)
+    record_unrecorded(conn, &crate::catalog::load(conn)?, &hosts)
 }
 
 /// Called before the copy writes an edge, whoever wrote it. An edge from a
@@ -1034,7 +1034,11 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
     if !any || other == host {
         return Ok(());
     }
-    record_unrecorded(conn, &Catalog::load(conn)?, std::slice::from_ref(host))
+    record_unrecorded(
+        conn,
+        &crate::catalog::load(conn)?,
+        std::slice::from_ref(host),
+    )
 }
 
 fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> Result<bool> {
@@ -1181,7 +1185,7 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         let rows = statement.query_map([recheck], row_of)?;
         rows.collect::<rusqlite::Result<_>>()?
     };
-    let catalog = Catalog::load(&*core.conn()?)?;
+    let catalog = crate::catalog::load(&*core.conn()?)?;
     let mut resolver = Resolver::new(core, &catalog, &Placements);
     let mut by_item: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     for row in rows {
@@ -1448,7 +1452,7 @@ fn rederive(conn: &Connection) -> Result<()> {
     if !rederive_due(conn)? {
         return Ok(());
     }
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     let ids: Vec<String> = {
         let mut statement = conn.prepare(
             "SELECT id FROM items
@@ -1539,7 +1543,7 @@ fn lost_on_body(conn: &Connection, write: &str) -> Result<bool> {
     else {
         return Ok(false);
     };
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     let body = fields::body_field(&catalog, &item.r#type);
     Ok(fields.iter().any(|field| field == body))
 }
@@ -1611,7 +1615,7 @@ pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Res
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
-    let catalog = Catalog::load(tx)?;
+    let catalog = crate::catalog::load(tx)?;
     for (write, host, old) in checks {
         match store::queued_write(tx, &write)?.and_then(|row| row.verdict) {
             Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => {
@@ -1682,7 +1686,7 @@ pub(crate) fn candidates(
     host: Option<&str>,
     targets: &[String],
 ) -> Result<Vec<LinkCandidates>> {
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     let host = match host {
         Some(id) => Some(
             store::item_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
@@ -1768,7 +1772,7 @@ pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
             message: format!("{id} is not a row this copy holds"),
         });
     };
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     Bodies::new(conn, &catalog).read(&item)
 }
 
@@ -1888,7 +1892,7 @@ fn embeddable(title: &str) -> bool {
 /// `![[title]]`, where that names it alone among the host's attachments,
 /// which an embed is read against first.
 pub(crate) fn embed_text(conn: &Connection, host: &str, file: &str) -> Result<String> {
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     if store::item_by_id(conn, host)?.is_none() {
         return Err(CoreError::NotFound {
             code: "item_not_found".into(),
@@ -2461,7 +2465,8 @@ mod tests {
         item.version += 1;
         let wire: crate::wire::WireItem =
             serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
-        store::put_server_item(&conn, &wire, None, &crate::catalog::Catalog::empty()).unwrap();
+        store::put_server_item(&conn, &wire, None, &marfa_rules::catalog::Catalog::empty())
+            .unwrap();
     }
 
     /// Lands an edge as the server's, as another device's write does.
@@ -3162,7 +3167,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let before = store::item_by_id(&conn, &host).unwrap().unwrap();
-            let old = body_of(&Catalog::load(&conn).unwrap(), &before).to_string();
+            let old = body_of(&crate::catalog::load(&conn).unwrap(), &before).to_string();
             derive_on_answer(&conn, &host, &old, &write.id).unwrap();
             // The server took the edit, and its row keeps one link of the two.
             conn.execute(

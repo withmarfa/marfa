@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{Folder, state};
-use crate::catalog::Catalog;
 use crate::drain::{DrainReport, ReadBack};
 use crate::error::CoreError;
 use crate::model::{
     BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Subject, Verdict, WriteKind,
 };
 use crate::{Result, store};
+use marfa_rules::catalog::Catalog;
 
 /// The edge that says where an item's file sits in a folder, never written
 /// in a file.
@@ -100,7 +100,7 @@ impl Folder {
             }
             if let Some(path) = path_of(&edge).and_then(cleaned) {
                 placed
-                    .entry(crate::names::folded(&path))
+                    .entry(marfa_rules::names::folded(&path))
                     .or_default()
                     .push(edge);
             }
@@ -171,7 +171,9 @@ impl Folder {
         match self.placement(item_id)? {
             // A path differing only in case or form is the same place, so each
             // machine keeps its file's own name.
-            Some(edge) if path_of(&edge).is_some_and(|held| crate::names::same(held, path)) => {
+            Some(edge)
+                if path_of(&edge).is_some_and(|held| marfa_rules::names::same(held, path)) =>
+            {
                 return Ok(false);
             }
             Some(edge) => {
@@ -800,7 +802,8 @@ mod tests {
             )
             .unwrap();
             let note = store::testing::note("note", "Plan", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &note, None, &crate::catalog::Catalog::empty()).unwrap();
+            store::put_server_item(&conn, &note, None, &marfa_rules::catalog::Catalog::empty())
+                .unwrap();
             store::put_server_edge(&conn, &placed_at(1, "Plan.md")).unwrap();
         }
         core.update_edge(
@@ -1100,7 +1103,8 @@ mod tests {
         {
             let conn = folder.core.conn().unwrap();
             let memo = store::testing::note("memo", "Memo", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &memo, None, &crate::catalog::Catalog::empty()).unwrap();
+            store::put_server_item(&conn, &memo, None, &marfa_rules::catalog::Catalog::empty())
+                .unwrap();
             store::put_server_edge(&conn, &memo_at(1, "Memo.md")).unwrap();
         }
         folder

@@ -6,7 +6,7 @@ use super::{
     Flagged, Folder, ItemState, Map, Result, Settings, Value, local_admission_refusal,
     local_refusal_reason, state,
 };
-use crate::catalog::End;
+use marfa_rules::catalog::End;
 
 /// What `queue_default_edges` did: the writes it queued and the refusals the
 /// copy made.

@@ -14,9 +14,9 @@ use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
 use crate::model::SliceTier;
 use crate::wire::{
-    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItem, WireItemWithMetadata,
-    WireMetadata, WirePage, WireType,
+    WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
 };
+use marfa_rules::wire::{WireCatalog, WireEdgeType, WireType};
 
 /// The page asked of the item listing, the most it answers
 /// (`search-and-filters/limit-listing`). A hydration reads a page per round

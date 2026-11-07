@@ -119,7 +119,10 @@ mod tests {
             assert!(
                 matches!(
                     Thumbnail::from_data_uri(&value),
-                    Err(RuleError { code: Code::Decoding, .. })
+                    Err(RuleError {
+                        code: Code::Decoding,
+                        ..
+                    })
                 ),
                 "{what} was read as a thumbnail"
             );

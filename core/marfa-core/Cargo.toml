@@ -12,6 +12,7 @@ telemetry = ["dep:tracing"]
 
 [dependencies]
 base64.workspace = true
+marfa-rules.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 globset = "0.4"

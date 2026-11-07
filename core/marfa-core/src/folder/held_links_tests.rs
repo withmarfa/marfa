@@ -139,7 +139,7 @@ fn a_name_two_items_have_stays_held_until_one_goes_to_the_bin() {
         &folder.core.conn().unwrap(),
         &crate::store::testing::note(ELSEWHERE, "Same", "", "2026-01-01T00:00:00Z"),
         None,
-        &crate::catalog::Catalog::empty(),
+        &marfa_rules::catalog::Catalog::empty(),
     )
     .unwrap();
     std::fs::write(dir.path().join("Same.md"), "same\n").unwrap();
