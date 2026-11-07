@@ -1,6 +1,7 @@
 //! What a handler answers with: one JSON writer, and one shape for a refusal.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -9,6 +10,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::app::refusal::{Code, Refusal};
+use crate::telemetry::Fault;
 
 const CLIENT_CLOSED: u16 = 499;
 
@@ -34,6 +36,11 @@ pub struct Page {
     pub code: Code,
     pub message: String,
 }
+
+/// Left on the answer to a request that ended in a fault no refusal foresaw,
+/// for the layer that tells the outside of it, once.
+#[derive(Clone, Debug)]
+pub struct Unhandled(pub Arc<Fault>);
 
 pub fn json_answer(status: StatusCode, value: &impl Serialize) -> Response {
     match marfa_rules::js::to_vec(value) {
@@ -110,6 +117,13 @@ pub fn refusal_answer(refusal: &Refusal) -> Response {
         code: refusal.code,
         message: refusal.message.to_string(),
     });
+    if refusal.code == Code::InternalError {
+        let fault = refusal
+            .fault
+            .clone()
+            .unwrap_or_else(|| Arc::new(Fault::internal("an internal error with no context")));
+        response.extensions_mut().insert(Unhandled(fault));
+    }
     response
 }
 
@@ -129,7 +143,7 @@ impl IntoResponse for Stopped {
 
 /// The answer to a handler that panicked.
 pub fn panicked(_: Box<dyn Any + Send>) -> Response {
-    refusal_answer(&Refusal::internal("a request panicked"))
+    refusal_answer(&Refusal::panicked("a request panicked"))
 }
 
 fn position(accept: &str, media: &str) -> Option<usize> {

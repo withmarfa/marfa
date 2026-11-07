@@ -14,14 +14,14 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
-use url::Url;
+use marfa_telemetry::environment::text;
+use marfa_telemetry::exception::{self, Exception};
+use marfa_telemetry::host::{Capture, capture_url};
+use serde_json::json;
 
 use super::describe;
 use super::layer;
 use super::otlp;
-use super::settings::text;
-use crate::cleartext::is_loopback;
 use crate::error::CliError;
 
 const HOST: &str = "MARFA_POSTHOG_HOST";
@@ -72,7 +72,7 @@ pub fn read(
         (None, Some(_)) => return Reading::Said(TOKEN_ALONE),
         (Some(host), Some(token)) => (host, token),
     };
-    match capture_url(&host) {
+    match capture_url(&host, Capture::One) {
         Some(url) => Reading::On(Settings {
             url,
             token,
@@ -81,33 +81,6 @@ pub fn read(
         }),
         None => Reading::Said(NOT_HTTPS),
     }
-}
-
-/// Where an event is posted, under the host as written. The project token
-/// travels in the body, so only `https` is used, and `http` only to this
-/// machine, which a test or a local PostHog needs.
-fn capture_url(host: &str) -> Option<String> {
-    let mut url = Url::parse(host).ok()?;
-    let private = match url.scheme() {
-        "https" => true,
-        "http" => is_loopback(&url),
-        _ => false,
-    };
-    if !private
-        || url.host_str().is_none()
-        || url.cannot_be_a_base()
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
-        return None;
-    }
-    url.set_query(None);
-    url.set_fragment(None);
-    url.path_segments_mut()
-        .ok()?
-        .pop_if_empty()
-        .extend(["i", "v0", "e", ""]);
-    Some(url.to_string())
 }
 
 /// The fault a run is reported for (`CliError::is_fault`).
@@ -176,43 +149,37 @@ impl Reporter {
             Fault::Error(error) => (error.code(), describe::error(error)),
             Fault::Panic => ("panic", describe::panic()),
         };
-        let version = env!("CARGO_PKG_VERSION");
-        let mut properties = json!({
-            "$process_person_profile": false,
-            "$geoip_disable": true,
-            "$lib": "marfa-cli",
-            "$lib_version": version,
-            "$os": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "$exception_list": [{
-                "type": kind,
-                "value": value,
-                "mechanism": { "handled": true, "synthetic": false },
-            }],
-            "$exception_level": "error",
-            "command": self.command,
-            "error_code": kind,
-            "exit_code": status,
-        });
-        // The binary's own keys stand over an attribute of the same name, as
-        // the exception's other fields do, except the ones the resource owns.
-        for (key, value) in self.settings.resource.attributes() {
-            if properties.get(&key).is_none() {
-                properties[key] = value.into();
-            }
-        }
-        let event: Value = json!({
-            "api_key": self.settings.token,
-            "event": "$exception",
-            "distinct_id": hex::encode(layer::random::<16>()),
-            "properties": properties,
-        });
-        serde_json::to_vec(&event).expect("a JSON value serializes")
+        let distinct_id = hex::encode(layer::random::<16>());
+        let attributes = self.settings.resource.attributes();
+        let event = exception::Event {
+            distinct_id: &distinct_id,
+            lib: "marfa-cli",
+            lib_version: env!("CARGO_PKG_VERSION"),
+            exception: Exception {
+                kind,
+                value,
+                frames: None,
+                handled: true,
+            },
+            timestamp: None,
+            properties: vec![
+                ("command", self.command.as_str().into()),
+                ("error_code", kind.into()),
+                ("exit_code", json!(status)),
+            ],
+            // The binary's own keys stand over an attribute of the same
+            // name, as the exception's other fields do.
+            attributes: &attributes,
+        };
+        let body = exception::single(&self.settings.token, &event);
+        serde_json::to_vec(&body).expect("a JSON value serializes")
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
 
     const TIMEOUT: Duration = Duration::from_secs(2);
@@ -255,25 +222,11 @@ mod tests {
     }
 
     #[test]
-    fn events_go_to_the_capture_path_under_the_host_as_written() {
+    fn an_event_goes_to_the_single_event_capture_path() {
         assert_eq!(
             on("https://eu.i.posthog.com").url,
             "https://eu.i.posthog.com/i/v0/e/"
         );
-        assert_eq!(
-            on("https://eu.i.posthog.com/").url,
-            "https://eu.i.posthog.com/i/v0/e/"
-        );
-        assert_eq!(
-            on("https://proxy.example/ingest/?key=x#top").url,
-            "https://proxy.example/ingest/i/v0/e/"
-        );
-        assert_eq!(
-            on("http://127.0.0.1:8123").url,
-            "http://127.0.0.1:8123/i/v0/e/"
-        );
-        assert_eq!(on("http://[::1]:8123").url, "http://[::1]:8123/i/v0/e/");
-        assert_eq!(on("http://localhost").url, "http://localhost/i/v0/e/");
     }
 
     #[test]

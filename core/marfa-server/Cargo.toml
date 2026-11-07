@@ -17,6 +17,7 @@ path = "src/main.rs"
 arc-swap = "1"
 argon2 = "0.6"
 askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
+backtrace = "0.3"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "matched-path", "query"] }
 base64.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -27,27 +28,34 @@ hex.workspace = true
 hmac = "0.13"
 http-body = "1"
 http-body-util = "0.1"
+ipnet = "2"
 libc = "0.2"
 marfa-rules.workspace = true
+marfa-telemetry.workspace = true
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
+opentelemetry-http = { version = "0.33", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-json", "trace", "logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 subtle = "2.6"
-subtle = "2"
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tower-http = { version = "0.6", features = ["catch-panic"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 ureq.workspace = true
 url = "2"
 uuid.workspace = true
 
 [dev-dependencies]
 flate2 = "1"
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 proptest = "1"
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tempfile = "3"
+tokio = { version = "1", features = ["io-util"] }
 tower = { version = "0.5", features = ["util"] }

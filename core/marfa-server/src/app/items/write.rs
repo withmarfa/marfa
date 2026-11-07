@@ -14,6 +14,7 @@ use marfa_rules::{js, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::plan::{self, Act, Asked, Gate, Plan, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
@@ -137,6 +138,13 @@ pub enum Change {
         keys: Keys,
         settled_at: String,
     },
+    /// A bulk page under `atomic: true`, as one write.
+    Page(Box<Page>),
+    /// One entry of a bulk page under `atomic: false`, as one write.
+    Entry {
+        entry: Box<Entry>,
+        note: Note,
+    },
 }
 
 /// What the owner does to an item through its summary.
@@ -175,6 +183,7 @@ impl Change {
                 ..
             } => "item.purge",
             Change::Settle { .. } => "items.tombstones",
+            Change::Page(_) | Change::Entry { .. } => "items.bulk",
         }
     }
 }
@@ -247,6 +256,8 @@ pub fn apply(
             keys,
             settled_at,
         } => job.settle(&type_id, &keys, &settled_at),
+        Change::Page(page) => job.page(*page),
+        Change::Entry { entry, note } => job.lone_entry(*entry, &note),
     }
 }
 
@@ -314,6 +325,33 @@ fn require_declared(declared: &str, row: &Item) -> Result<()> {
     .with_detail("item_id", row.id.as_str())
     .with_detail("declared_type", declared)
     .with_detail("actual_type", row.type_id.as_str()))
+}
+
+fn unknown_row(row: &Item) -> Refusal {
+    Refusal::new(
+        Code::UnknownType,
+        format!(
+            "Unknown type: {0}. Register it via POST /types before writing items of it.",
+            row.type_id
+        ),
+    )
+    .with_detail("type", row.type_id.as_str())
+}
+
+fn refuse_other_type(row: &Item, declared: &str, named_by_id: bool) -> Result<()> {
+    if named_by_id && declared != row.type_id {
+        return Err(id_reused(row, declared));
+    }
+    require_declared(declared, row)
+}
+
+fn refuse_uncreatable(put: &Put) -> Result<()> {
+    match put.state.as_deref() {
+        None | Some("active" | "archived" | "trashed") => Ok(()),
+        Some(state) => Err(Refusal::validation(format!(
+            "An item cannot be created in the state \"{state}\"."
+        ))),
+    }
 }
 
 fn item_exists(row: &Item, by_id: bool) -> Refusal {
@@ -600,16 +638,8 @@ impl<'c> Job<'_, '_, 'c> {
 
     fn put(&self, put: Put) -> Result<Done> {
         let tx = self.unit.tx();
-        if let Some(state) = put.state.as_deref()
-            && !matches!(state, "active" | "archived" | "trashed")
-        {
-            return Err(Refusal::validation(format!(
-                "An item cannot be created in the state \"{state}\"."
-            )));
-        }
-        self.gate().type_gate(&put.type_id)?;
-        let source = self.source_of(put.source.as_deref())?;
-        self.refuse_unlisted_source(&put.type_id, &source)?;
+        refuse_uncreatable(&put)?;
+        let source = self.put_gates(&put)?;
         if let Some(tags) = &put.tags {
             validation::tag_count(0, tags.len()).map_err(ruled)?;
         }
@@ -637,6 +667,15 @@ impl<'c> Job<'_, '_, 'c> {
             return self.acknowledge(&row);
         }
         self.create(put, &source)
+    }
+
+    /// What a create or an upsert asks of the caller before any row, and the
+    /// source it stands under.
+    fn put_gates(&self, put: &Put) -> Result<String> {
+        self.gate().type_gate(&put.type_id)?;
+        let source = self.source_of(put.source.as_deref())?;
+        self.refuse_unlisted_source(&put.type_id, &source)?;
+        Ok(source)
     }
 
     fn on_natural_key(&self, row: Item, put: Put, source: &str) -> Result<Done> {
@@ -683,6 +722,13 @@ impl<'c> Job<'_, '_, 'c> {
     }
 
     fn create(&self, put: Put, source: &str) -> Result<Done> {
+        let item = self.created(put, source)?;
+        self.unit
+            .audit("item", &item.id, Some(json!({ "type": item.type_id })))?;
+        self.answer(201, &item, "")
+    }
+
+    fn created(&self, put: Put, source: &str) -> Result<Item> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
         self.refuse_undeclared(&put.type_id, put.properties.as_ref())?;
@@ -741,10 +787,8 @@ impl<'c> Job<'_, '_, 'c> {
         if let Some(tags) = &put.tags {
             rows::set_tags(tx, item.seq, &distinct(tags))?;
         }
-        self.unit
-            .audit("item", &id, Some(json!({ "type": put.type_id })))?;
         self.announce("item.created", &item)?;
-        self.answer(201, &item, "")
+        Ok(item)
     }
 
     fn update(&self, update: Update) -> Result<Done> {
@@ -779,9 +823,39 @@ impl<'c> Job<'_, '_, 'c> {
         )
     }
 
-    /// What a write asks after the row's own gate, in the order the contract
-    /// answers it, ending on the write itself.
     fn change_row(&self, row: Item, writing: Writing) -> Result<Done> {
+        self.judge_change(&row, &writing)?;
+        if !writing.writes_row() {
+            if let Some(named) = writing.version
+                && named != row.version
+            {
+                return Err(stale_bare(&row, named)?);
+            }
+            return self.answer(200, &row, "");
+        }
+        let (item, resolution) = self.landed(&row, &writing)?;
+        let details = if writing.upsert {
+            json!({
+                "type": item.type_id,
+                "idempotent": true,
+                "source": item.source,
+                "source_id": item.source_id,
+            })
+        } else {
+            json!({ "type": item.type_id })
+        };
+        self.unit
+            .audit_also("item.update", "item", &item.id, Some(details))?;
+        let also = match resolution {
+            Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
+            None => String::new(),
+        };
+        self.answer(200, &item, &also)
+    }
+
+    /// What a write asks after the row's own gate, in the order the contract
+    /// answers it.
+    fn judge_change(&self, row: &Item, writing: &Writing) -> Result<()> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
         if let Some(destination) = writing.destination.as_deref()
@@ -814,66 +888,36 @@ impl<'c> Job<'_, '_, 'c> {
                 .with_detail("source_id", source_id));
             }
         }
-        let resulting = writing
-            .destination
-            .clone()
-            .unwrap_or_else(|| row.type_id.clone());
-        self.refuse_undeclared(&resulting, writing.properties.as_ref())?;
-        let unknown_row = || {
-            Refusal::new(
-                Code::UnknownType,
-                format!(
-                    "Unknown type: {0}. Register it via POST /types before writing items of it.",
-                    row.type_id
-                ),
-            )
-            .with_detail("type", row.type_id.as_str())
-        };
+        let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
+        self.refuse_undeclared(resulting, writing.properties.as_ref())?;
         if writing.exact {
             if !rules.known(&row.type_id) {
-                return Err(unknown_row());
+                return Err(unknown_row(row));
             }
             if conflict::precondition(row.version, writing.version, true) == Precondition::Refused {
-                return Err(stale_bare(&row, writing.version.unwrap_or(0))?);
+                return Err(stale_bare(row, writing.version.unwrap_or(0))?);
             }
         }
-        if !writing.writes_row() {
-            if let Some(named) = writing.version
-                && named != row.version
-            {
-                return Err(stale_bare(&row, named)?);
-            }
-            return self.answer(200, &row, "");
+        Ok(())
+    }
+
+    /// Writes what `writing` leaves on `row`, with its events, and answers the
+    /// row and how a stale write settled.
+    fn landed(&self, row: &Item, writing: &Writing) -> Result<(Item, Option<Value>)> {
+        if !self.catalog.rules.known(&row.type_id) {
+            return Err(unknown_row(row));
         }
-        if !rules.known(&row.type_id) {
-            return Err(unknown_row());
-        }
-        let settled = self.settled(&row, &resulting, &writing)?;
-        let item = self.land(&row, &resulting, &settled)?;
+        let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
+        let settled = self.settled(row, resulting, writing)?;
+        let item = self.land(row, resulting, &settled)?;
         if let Some(tags) = &writing.tags {
-            rows::set_tags(tx, item.seq, &distinct(tags))?;
+            rows::set_tags(self.unit.tx(), item.seq, &distinct(tags))?;
         }
-        let details = if writing.upsert {
-            json!({
-                "type": item.type_id,
-                "idempotent": true,
-                "source": item.source,
-                "source_id": item.source_id,
-            })
-        } else {
-            json!({ "type": item.type_id })
-        };
-        self.unit
-            .audit_also("item.update", "item", &item.id, Some(details))?;
         if let Some(copy) = &settled.copy {
             self.announce("item.created", copy)?;
         }
         self.announce("item.updated", &item)?;
-        let also = match &settled.resolution {
-            Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
-            None => String::new(),
-        };
-        self.answer(200, &item, &also)
+        Ok((item, settled.resolution))
     }
 
     /// What the row holds once the write lands, at its own version or merged
@@ -1280,6 +1324,191 @@ impl<'c> Job<'_, '_, 'c> {
         let row = self.extension_row(id, namespace)?;
         rows::remove_extension(self.unit.tx(), row.seq, namespace)?;
         self.extensions_landed(&row, namespace)
+    }
+
+    /// Writes a page as one transaction, so any refusal undoes all of it. What
+    /// an entry names is judged across the page before any row is looked up.
+    fn page(&self, page: Page) -> Result<Done> {
+        let Page {
+            entries,
+            mode,
+            retype,
+            operation,
+            pulse,
+        } = page;
+        for (index, entry) in entries.iter().enumerate() {
+            entry
+                .as_ref()
+                .map_err(Refusal::clone)
+                .and_then(|entry| self.entry_gates(&entry.put))
+                .map_err(|refusal| rollback(index, &refusal))?;
+        }
+        let total = entries.len();
+        let mut counts = Counts::default();
+        let mut results = Vec::with_capacity(total);
+        for (index, entry) in entries.into_iter().enumerate() {
+            let entered = entry
+                .and_then(|entry| self.entry(entry, retype))
+                .map_err(|refusal| rollback(index, &refusal))?;
+            pulse.tick();
+            counts.add(entered.outcome());
+            results.push(entered.answered(index));
+        }
+        self.unit.audit_set(
+            "items.bulk",
+            Some(json!({
+                "operation_id": operation,
+                "mode": mode,
+                "atomic": true,
+                "total": total,
+                "created": counts.created,
+                "updated": counts.updated,
+                "skipped": counts.skipped,
+                "errored": counts.errored,
+            })),
+        )?;
+        Ok(Done {
+            status: 200,
+            body: json!({ "counts": counts, "results": results }).to_string(),
+        })
+    }
+
+    fn entry_gates(&self, put: &Put) -> Result<()> {
+        if put.id.is_none() && put.source_id.is_none() {
+            refuse_uncreatable(put)?;
+        }
+        self.put_gates(put).map(|_| ())
+    }
+
+    /// Writes an entry that stands alone, answered as its place in the page.
+    fn lone_entry(&self, entry: Entry, note: &Note) -> Result<Done> {
+        let entered = self.entry(entry, note.retype)?;
+        if let Some(id) = entered.written() {
+            self.unit.audit(
+                "items.bulk",
+                id,
+                Some(json!({
+                    "operation_id": note.operation,
+                    "mode": note.mode,
+                    "atomic": false,
+                    "total": note.total,
+                    "index": note.index,
+                    "outcome": entered.outcome(),
+                })),
+            )?;
+        }
+        Ok(Done {
+            status: 200,
+            body: entered.answered(note.index).to_string(),
+        })
+    }
+
+    fn entry(&self, entry: Entry, retype: bool) -> Result<Entered> {
+        let tx = self.unit.tx();
+        let Entry { put, replace } = entry;
+        let source = self.put_gates(&put)?;
+        if let Some(tags) = &put.tags {
+            validation::tag_count(0, tags.len()).map_err(ruled)?;
+        }
+        let by_key = match put.source_id.as_deref() {
+            Some(source_id) => rows::by_natural_key(tx, &source, source_id)?,
+            None => None,
+        };
+        let by_id = match (&by_key, put.id.as_deref()) {
+            (None, Some(id)) => rows::by_id(tx, id)?,
+            _ => None,
+        };
+        if put.create_only {
+            return self.entry_once(put, &source, by_key, by_id);
+        }
+        let named_by_id = by_id.is_some();
+        let Some(row) = by_key.or(by_id) else {
+            return self.new_entry(put, &source);
+        };
+        if !self.caller().may_read_type(&row.type_id) {
+            return Err(if named_by_id {
+                Refusal::new(
+                    Code::Conflict,
+                    format!("Item with id={} already exists", row.id),
+                )
+                .with_detail("existing_id", row.id.as_str())
+            } else {
+                Refusal::new(
+                    Code::TypeNotPermitted,
+                    "The natural key resolves a row of a type this credential may not reach",
+                )
+            });
+        }
+        self.gate().row_gate(&row)?;
+        if row.state == "trashed" {
+            if !retype {
+                refuse_other_type(&row, &put.type_id, named_by_id)?;
+            }
+            return Ok(Entered::Skipped {
+                id: Some(row.id),
+                reason: "trashed",
+            });
+        }
+        let id = row.id.clone();
+        self.entry_row(row, put, replace, retype, named_by_id)
+            .map(|()| Entered::Updated(id.clone()))
+            .map_err(|refusal| refusal.naming_row(&id))
+    }
+
+    /// An entry under `create_only`, which writes only what no row holds.
+    fn entry_once(
+        &self,
+        put: Put,
+        source: &str,
+        by_key: Option<Item>,
+        by_id: Option<Item>,
+    ) -> Result<Entered> {
+        if let Some(row) = by_key {
+            return Ok(Entered::Skipped {
+                id: self.caller().may_read_type(&row.type_id).then_some(row.id),
+                reason: "duplicate_source",
+            });
+        }
+        if let Some(row) = by_id {
+            return Ok(Entered::Skipped {
+                id: Some(row.id),
+                reason: "duplicate_id",
+            });
+        }
+        self.new_entry(put, source)
+    }
+
+    fn new_entry(&self, put: Put, source: &str) -> Result<Entered> {
+        refuse_uncreatable(&put)?;
+        Ok(Entered::Created(self.created(put, source)?.id))
+    }
+
+    fn entry_row(
+        &self,
+        row: Item,
+        put: Put,
+        replace: bool,
+        retype: bool,
+        named_by_id: bool,
+    ) -> Result<()> {
+        let moving = retype && put.type_id != row.type_id;
+        if !moving {
+            refuse_other_type(&row, &put.type_id, named_by_id)?;
+        }
+        let writing = Writing {
+            properties: put.properties,
+            replace,
+            destination: moving.then_some(put.type_id),
+            version: put.version,
+            tier: put.tier,
+            occurred_at: put.occurred_at,
+            source_id: put.source_id,
+            tags: put.tags,
+            upsert: true,
+            ..Writing::default()
+        };
+        self.judge_change(&row, &writing)?;
+        self.landed(&row, &writing).map(|_| ())
     }
 
     fn moved_to_bin(&self, plan: &Plan) -> Result<Vec<Item>> {

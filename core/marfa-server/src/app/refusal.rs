@@ -2,9 +2,12 @@
 //! Its status comes from its code, and nothing ever reads its message.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use rusqlite::ErrorCode;
 use serde_json::{Map, Value};
+
+use crate::telemetry::Fault;
 
 pub type Result<T> = std::result::Result<T, Refusal>;
 
@@ -132,8 +135,13 @@ pub struct Refusal {
     /// The SQLite result code behind a failed statement, for those allowed to
     /// read it. It never reaches the envelope.
     pub cause: Option<&'static str>,
+    /// What an unhandled fault is told to the outside as. Set on a refusal
+    /// of `internal_error` and no other.
+    pub fault: Option<Arc<Fault>>,
     /// The commit itself failed, so the write may have landed.
     pub commit_failed: bool,
+    /// The row refused, once its own gates let the caller be told of it.
+    pub row: Option<String>,
 }
 
 impl Refusal {
@@ -144,7 +152,9 @@ impl Refusal {
             details: None,
             members: None,
             cause: None,
+            fault: None,
             commit_failed: false,
+            row: None,
         }
     }
 
@@ -155,13 +165,27 @@ impl Refusal {
     /// A fault nothing foresaw. `context` goes to the log and nowhere else.
     pub fn internal(context: &str) -> Refusal {
         tracing::error!(context, "Internal error");
-        Refusal::new(Code::InternalError, INTERNAL_MESSAGE)
+        let mut refusal = Refusal::new(Code::InternalError, INTERNAL_MESSAGE);
+        refusal.fault = Some(Arc::new(Fault::internal(context)));
+        refusal
+    }
+
+    /// The fault of a panic caught on this thread. The panic hook has logged it.
+    pub fn panicked(context: &str) -> Refusal {
+        let mut refusal = Refusal::new(Code::InternalError, INTERNAL_MESSAGE);
+        refusal.fault = Some(Arc::new(Fault::panicked(context)));
+        refusal
     }
 
     pub fn with_member(mut self, name: &str, value: impl Into<Value>) -> Refusal {
         self.members
             .get_or_insert_default()
             .insert(name.to_string(), value.into());
+        self
+    }
+
+    pub fn naming_row(mut self, id: &str) -> Refusal {
+        self.row = Some(id.to_string());
         self
     }
 
@@ -220,6 +244,7 @@ impl From<rusqlite::Error> for Refusal {
                 tracing::error!(sqlite_code = name, "Database operation failed");
                 let mut refusal = Refusal::new(Code::InternalError, INTERNAL_MESSAGE);
                 refusal.cause = Some(name);
+                refusal.fault = Some(Arc::new(Fault::database(name)));
                 refusal
             }
         }

@@ -63,13 +63,9 @@ impl Reader<'_, '_> {
     /// unreadable or in the bin.
     fn row(&self, id: &str) -> Result<Item> {
         self.caller.require_reach()?;
-        let row = rows::by_id(self.tx, id)?
-            .filter(|row| self.caller.may_read_type(&row.type_id))
-            .ok_or_else(not_found)?;
-        if row.state == "trashed" {
-            return Err(not_found().with_detail("trashed", true));
-        }
-        Ok(row)
+        rows::by_id(self.tx, id)?
+            .filter(|row| row.state != "trashed" && self.caller.may_read_type(&row.type_id))
+            .ok_or_else(not_found)
     }
 
     fn hydrating(&self) {

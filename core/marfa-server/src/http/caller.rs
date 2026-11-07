@@ -9,12 +9,13 @@ use axum::http::{HeaderMap, HeaderValue, Method};
 
 use super::answer::Stopped;
 use super::auth::cookies;
-use super::observe::{RequestContext, Transport};
+use super::observe::RequestContext;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
 use crate::app::auth::{self, session};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, keys};
+use crate::listener::Transport;
 
 #[derive(Clone)]
 struct Identified(Result<Option<Caller>>);

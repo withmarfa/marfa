@@ -29,6 +29,7 @@ use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
 use crate::settings::{Accepted, Settings};
+use crate::telemetry::Telemetry;
 use addresses::Addresses;
 use auth::password::Passwords;
 use catalog::Catalog;
@@ -50,6 +51,7 @@ pub struct App {
     pub usage: Usage,
     pub key_limit: Limiter,
     pub passwords: Passwords,
+    pub telemetry: Telemetry,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
 }
@@ -101,6 +103,7 @@ impl App {
             usage: Usage::default(),
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
+            telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
         }))

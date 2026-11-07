@@ -273,7 +273,7 @@ fn whole_of(value: &Value) -> Option<i64> {
     })
 }
 
-fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
+pub(super) fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
     match body.get("version") {
         None => Ok(None),
         Some(value) => whole_of(value)
@@ -285,7 +285,7 @@ fn version_of(body: &Map<String, Value>) -> Result<Option<i64>> {
     }
 }
 
-fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
+pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
     let Some(text) = text_of(body, "occurred_at")? else {
         return Ok(None);
     };
@@ -294,7 +294,7 @@ fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
 
-fn properties_of(body: &mut Map<String, Value>) -> Result<Option<Map<String, Value>>> {
+pub(super) fn properties_of(body: &mut Map<String, Value>) -> Result<Option<Map<String, Value>>> {
     match body.remove("properties") {
         None => Ok(None),
         Some(Value::Object(properties)) => {
@@ -315,13 +315,13 @@ fn strings_of(value: &Value, field: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn tags_of(value: &Value) -> Result<Vec<String>> {
+pub(super) fn tags_of(value: &Value) -> Result<Vec<String>> {
     let tags = strings_of(value, "tags")?;
     validation::tags(&tags).map_err(ruled)?;
     Ok(tags)
 }
 
-fn declared_type(body: &Map<String, Value>) -> Result<Option<String>> {
+pub(super) fn declared_type(body: &Map<String, Value>) -> Result<Option<String>> {
     let declared = text_of(body, "type")?;
     if let Some(type_id) = &declared {
         check_id(type_id, "type")?;

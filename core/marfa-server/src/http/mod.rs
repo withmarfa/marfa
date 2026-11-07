@@ -4,12 +4,15 @@ pub mod answer;
 mod audit;
 mod auth;
 pub mod body;
+mod bulk;
 pub mod caller;
+mod caller_address;
 mod control;
 mod edge_types;
 mod health;
 mod items;
 mod keys;
+pub mod listening;
 mod lookup;
 pub mod observe;
 mod page;
@@ -21,25 +24,25 @@ mod test_hooks;
 mod trash;
 mod types;
 
-use std::future::Future;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use axum::routing::{delete, get, patch, post, put};
-use axum::{Router, serve};
-use tokio::net::{TcpListener, UnixListener};
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
+use crate::listener::Declaration;
 use answer::{panicked, refusal_answer};
 use caller::identify;
-use observe::{Observed, Transport, Unmatched, observe as observe_request, remember_route};
+pub use listening::serve;
+use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
 type Routes = Router<Arc<App>>;
 
@@ -134,6 +137,7 @@ async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next)
 fn item_doors(app: Arc<App>) -> Routes {
     Router::new()
         .route("/items", post(items::create))
+        .route("/items/bulk", post(bulk::write))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))
@@ -192,10 +196,10 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(auth::owner_doors())
 }
 
-fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
+fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
     let observed = Observed {
         app: app.clone(),
-        transport,
+        listener: Arc::new(listener),
     };
     routes
         .method_not_allowed_fallback(unmatched)
@@ -209,8 +213,14 @@ fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
 }
 
 pub fn public(app: Arc<App>) -> Router {
+    let listener = app.settings.start.public_listener.clone();
+    public_on(app, listener)
+}
+
+/// The public doors, for a listener that declares itself.
+pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
     let routes = shared(app.clone()).merge(auth::doors());
-    finished(routes, app, Transport::Http)
+    finished(routes, app, listener)
 }
 
 pub(crate) async fn no_store(request: Request, next: Next) -> Response {
@@ -241,25 +251,5 @@ pub fn control(app: Arc<App>) -> Router {
                     .delete(test_hooks::clear_faults),
             );
     }
-    finished(routes, app, Transport::LocalSocket).layer(middleware::from_fn(no_store))
-}
-
-pub async fn serve_public(
-    listener: TcpListener,
-    app: Arc<App>,
-    stop: impl Future<Output = ()> + Send + 'static,
-) -> std::io::Result<()> {
-    serve(listener, public(app).into_make_service())
-        .with_graceful_shutdown(stop)
-        .await
-}
-
-pub async fn serve_control(
-    listener: UnixListener,
-    app: Arc<App>,
-    stop: impl Future<Output = ()> + Send + 'static,
-) -> std::io::Result<()> {
-    serve(listener, control(app).into_make_service())
-        .with_graceful_shutdown(stop)
-        .await
+    finished(routes, app, Declaration::control()).layer(middleware::from_fn(no_store))
 }
