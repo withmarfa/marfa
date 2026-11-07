@@ -139,7 +139,7 @@ case "$TARGET" in
     memory=()
     [ -n "${MARFA_VERIFY_MEMORY:-}" ] && memory=(--max-memory "$MARFA_VERIFY_MEMORY")
     said=$(docker run --rm --platform "$platform" --read-only --user 65534:65534 "$prefix-smoke" \
-      /marfa-enrichment-read read /sentence.png "${memory[@]}" 2>&1) \
+      /marfa-enrichment-read read /sentence.png ${memory[@]+"${memory[@]}"} 2>&1) \
       || { docker rmi "$prefix-smoke" >/dev/null 2>&1; die "the program could not read the sample: $said"; }
     docker rmi "$prefix-smoke" >/dev/null 2>&1 || true
     rm -rf "$smoke"

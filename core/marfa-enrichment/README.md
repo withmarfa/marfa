@@ -167,7 +167,16 @@ Measured on macOS with the release build:
 | 64 million pixels, gray, at the decode limit, blank | 584 MB |
 | 64 million pixels, gray, at the decode limit, full of text | 803 MB |
 
-On Linux, address space peaked 4 to 7 MiB above resident memory for Tesseract and PDFium, so `RLIMIT_AS` does not bind before the footprint does. A child costs about 10 ms to start.
+On Linux, with the static musl program, the highest address space of a child (`VmPeak`) stayed 13 to 31 MB above its highest resident memory (`VmHWM`) on real pages, against an `RLIMIT_AS` of 1.37 GB, so the limit does not bind before the footprint does:
+
+| Read | `VmHWM` | `VmPeak` |
+| --- | --- | --- |
+| Letter-size page, OCR with four languages | 41 MB | 57 MB |
+| 64 million pixels, gray, full of text | 513 MB | 539 MB |
+| 12-page scanned PDF | 186 MB | 199 MB |
+| Text PDF (a paper of 12 pages) | 13 MB | 44 MB |
+
+A child costs about 10 ms to start.
 
 ### How the sweep treats a refusal
 
