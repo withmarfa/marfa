@@ -1050,6 +1050,12 @@ describe("a folder's first sync", () => {
         }),
       ]),
     });
+    // A server taking larger requests than a page's 1 MiB, so the large file
+    // is not held.
+    const held = folder;
+    held.server.copyAnswer("GET", "/", () =>
+      answers.root(held.server.contract, undefined, 4 * 1_048_576),
+    );
     const edges = new EdgeDoor();
     scriptFolderWrites(folder, { edges });
     const titles = Array.from({ length: 50 }, (_, at) => `Note ${String(at)}`);
@@ -1118,19 +1124,9 @@ describe("a folder's first sync", () => {
 
     /** Has the root name what `limit` says, or nothing where it says none. */
     function naming(held: FolderHarness, limit: () => number | undefined) {
-      held.server.copyAnswer("GET", "/", () => {
-        const root = answers.root(held.server.contract) as Extract<
-          Answer,
-          { kind: "json" }
-        >;
-        const named = limit();
-        return named === undefined
-          ? root
-          : {
-              ...root,
-              body: { ...(root.body as object), max_request_bytes: named },
-            };
-      });
+      held.server.copyAnswer("GET", "/", () =>
+        answers.root(held.server.contract, undefined, limit() ?? null),
+      );
     }
 
     const creates = (held: FolderHarness, title: string) =>
@@ -1201,6 +1197,7 @@ describe("a folder's first sync", () => {
 
     it("sends a large write to a server that names no limit", async () => {
       const held = await sized("request-limit-unnamed");
+      naming(held, () => undefined);
       put(held, "Large.md", note("Large", 600_000));
       expect((await refusedCreate(held))?.verdict).toBe("accepted");
       expect(creates(held, "Large")).toHaveLength(1);
@@ -1374,6 +1371,7 @@ describe("a folder's first sync", () => {
             }
           : answer,
       );
+      naming(held, () => undefined);
       put(
         held,
         "Large.md",
