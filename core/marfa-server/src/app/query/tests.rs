@@ -109,7 +109,8 @@ fn every_compiled_read_carries_the_callers_reach() {
     let catalog = Catalog::empty();
     let reach = reach();
     for ask in asks() {
-        let selected = selection(&reach, &ask, &catalog).unwrap();
+        assert_reached(&selection(&reach, &ask, &catalog, true).unwrap(), &ask);
+        let selected = selection(&reach, &ask, &catalog, false).unwrap();
         assert_reached(&selected, &ask);
 
         let order = Order::listing(&Sort::default(), &ask);
@@ -134,7 +135,7 @@ fn a_named_type_never_widens_the_reach() {
         types: vec!["core.other".to_string()],
         ..Ask::default()
     };
-    let selected = selection(&reach(), &ask, &catalog).unwrap();
+    let selected = selection(&reach(), &ask, &catalog, false).unwrap();
     assert!(
         selected.text.starts_with("(i.type IN ())"),
         "{}",

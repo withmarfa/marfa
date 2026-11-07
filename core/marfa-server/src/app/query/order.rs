@@ -142,6 +142,15 @@ impl Order {
         }
     }
 
+    /// Whether a page walks an index of this order's own. Any other order is
+    /// served by the type index, which holds each type's rows newest first.
+    pub fn walked(&self) -> bool {
+        matches!(
+            self.keys.first().map(|key| key.expression.text.as_str()),
+            Some("i.updated_at" | "i.occurred_at")
+        )
+    }
+
     pub fn width(&self) -> usize {
         self.keys.len()
     }

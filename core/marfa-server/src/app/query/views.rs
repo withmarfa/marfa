@@ -185,7 +185,7 @@ fn page(read: &Reader<'_, '_>, secret: &super::Secret, view: &ViewPage) -> Resul
             Position::from_payload(&payload, order.width())
         })
         .transpose()?;
-    let selected = selection(&reach, &ask, &read.catalog)?;
+    let selected = selection(&reach, &ask, &read.catalog, order.walked())?;
     let sql = page_sql(&selected, &order, position.as_ref(), view.limit);
     let rows = found(read, &sql, order.width())?;
     answered(

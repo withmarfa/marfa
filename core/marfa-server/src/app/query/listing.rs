@@ -134,7 +134,7 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
                 Position::from_payload(&payload, order.width())
             })
             .transpose()?;
-        let selected = selection(&reach, ask, &read.catalog)?;
+        let selected = selection(&reach, ask, &read.catalog, order.walked())?;
         let sql = page_sql(&selected, &order, position.as_ref(), *limit);
         let rows = found(read, &sql, order.width())?;
         answered(
@@ -158,7 +158,7 @@ pub(super) fn stats_sql(
         "SELECT {}, COUNT(*) FROM items i WHERE ",
         by.column()
     ));
-    sql.append(&selection(reach, ask, read_catalog)?);
+    sql.append(&selection(reach, ask, read_catalog, false)?);
     sql.push(" GROUP BY 1");
     Ok(sql)
 }

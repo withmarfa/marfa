@@ -74,6 +74,12 @@ impl Reach {
         }
     }
 
+    /// Whether a type here is held to `sources`. `OR` across the two lists
+    /// takes the type index out of order, so such a reach walks the order.
+    pub fn narrows_by_source(&self) -> bool {
+        !self.held.is_empty()
+    }
+
     /// The condition over the row `alias`. `unindexed` keeps the planner off
     /// the type index, for a query an order index serves better.
     pub fn clause(&self, sql: &mut Sql, alias: &str, unindexed: bool) {

@@ -48,7 +48,7 @@ pub(super) fn search_sql(
     );
     sql.bind(expression.to_string());
     sql.push(" AND ");
-    sql.append(&selection(reach, ask, catalog)?);
+    sql.append(&selection(reach, ask, catalog, false)?);
     order.order_by(&mut sql);
     sql.push(" LIMIT ");
     sql.bind(take);

@@ -87,6 +87,15 @@ pub struct Ask {
 }
 
 impl Ask {
+    /// Whether a type, a source or a state with no active rows narrows this
+    /// ask before any row is read. A page of anything else reads fewer rows
+    /// by one walk of its order than by a walk for each type.
+    fn leaves_few(&self) -> bool {
+        let rare = matches!(&self.states, States::Named(states)
+            if states.iter().all(|state| state != "active"));
+        !self.types.is_empty() || self.source.is_some() || rare
+    }
+
     /// Everything that decides which rows this selects, spelled one way
     /// however the request spelled it.
     pub fn scope(&self) -> Json {
@@ -153,18 +162,23 @@ pub fn judge_terms(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
 
 /// The condition that selects the rows `ask` names, within `reach`. The row is
 /// `i`.
-pub fn selection(reach: &Reach, ask: &Ask, catalog: &Catalog) -> Result<Sql> {
+pub fn selection(reach: &Reach, ask: &Ask, catalog: &Catalog, walked: bool) -> Result<Sql> {
     let rules = &catalog.rules;
     let rows = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
     let mut sql = Sql::default();
-    rows.clause(&mut sql, "i", ask.types.is_empty());
+    let by_type = ask.leaves_few() && !walked && !rows.narrows_by_source();
+    rows.clause(&mut sql, "i", !by_type);
     if let States::Named(states) = &ask.states {
         sql.push(" AND i.state IN (");
         sql.list(states);
         sql.push(")");
     }
     if let Some(source) = &ask.source {
-        sql.push(" AND i.source = ");
+        sql.push(if walked {
+            " AND +i.source = "
+        } else {
+            " AND i.source = "
+        });
         sql.bind(source.clone());
     }
     if let Some(tier) = &ask.tier {
