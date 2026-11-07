@@ -367,6 +367,8 @@ pub struct PinReport {
 pub struct CatchUpReport {
     pub applied: u64,
     pub skipped: u64,
+    /// Rows a read of `read_only` changed, which no event brought.
+    pub read_only_held: u64,
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
@@ -2512,6 +2514,7 @@ impl Core {
         Ok(CatchUpReport {
             applied: report.applied,
             skipped: report.skipped,
+            read_only_held: report.read_only_held,
             cursor: report.cursor,
             catalog_changed: report.catalog_changed,
         })

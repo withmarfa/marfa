@@ -43,6 +43,7 @@ export interface BindingHydrateReport {
 export interface BindingCatchUpReport {
   applied: number;
   skipped: number;
+  readOnlyHeld: number;
   cursor: string;
   catalogChanged: boolean;
 }

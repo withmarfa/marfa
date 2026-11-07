@@ -112,6 +112,9 @@ export interface HydrateReport {
 export interface CatchUpReport {
   applied: number;
   skipped: number;
+  /** Rows a read of `read_only` changed, which no event brought
+   *  (`device/read-only-report`). */
+  read_only_held: number;
   cursor: string;
   /** Whether the catch-up changed the catalog the copy holds
    *  (`device/catch-up-catalog-told`). */
@@ -140,6 +143,9 @@ export interface Change {
 export interface FollowReport {
   applied: number;
   skipped: number;
+  /** Rows a read of `read_only` changed, which no event brought
+   *  (`device/read-only-report`). */
+  read_only_held: number;
   cursor: string;
   /** Streams asked for after the first. */
   reconnects: number;

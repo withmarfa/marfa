@@ -314,11 +314,87 @@ describe("an item's read_only in a working copy", () => {
     );
     expect(told).toHaveLength(1);
     expect(told[0]?.item_id).toBeNull();
+    expect(followed.value.report.read_only_held).toBe(2);
+    expect(followed.value.report.applied).toBe(0);
   });
 
-  it("keeps an edit waiting on a row whose read_only moves", async () => {
-    harness = await hydratedHarness("read-only-under-edit", {
-      rows: { "core.note": [{ item: { id: "n1", ...NOTE } }] },
+  it("reports the rows it held apart from the events it applied", async () => {
+    harness = await followedBy(
+      "read-only-report",
+      [
+        { id: "n1", ...NOTE },
+        { id: "n2", ...NOTE },
+      ],
+      copyReplay("2", [
+        copyItemEvent("2", "item.created", wireItem({ id: "n3", ...NOTE })),
+      ]),
+    );
+    const { server, device } = harness;
+    lastRead(device, 16);
+    readAnswers(server, wireItem({ id: "n1", ...NOTE, read_only: true }));
+
+    const caught = await device.catchUp();
+
+    if (!caught.ok) throw new Error(JSON.stringify(caught.refusal));
+    expect(caught.value.applied).toBe(1);
+    expect(caught.value.read_only_held).toBe(3);
+  });
+
+  it("reads another row of a source and type whose row the server leaves out", async () => {
+    harness = await hydratedHarness("read-only-omitted", {
+      rows: {
+        "core.note": [
+          { item: { id: "n1", ...NOTE } },
+          { item: { id: "n2", ...NOTE } },
+        ],
+      },
+    });
+    const { server, device } = harness;
+    lastRead(device, 16);
+    readAnswers(server);
+    readAnswers(server, wireItem({ id: "n2", ...NOTE, read_only: true }));
+
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const asked = looks(server).flat();
+    expect(asked).toHaveLength(2);
+    expect(new Set(asked).size, "the same row was read twice").toBe(2);
+    expect(await readOnlyOf(device, "n1")).toBe(true);
+    expect(await readOnlyOf(device, "n2")).toBe(true);
+  });
+
+  it("stops at three rows of a source and type the server keeps leaving out", async () => {
+    harness = await hydratedHarness("read-only-omitted-stops", {
+      rows: {
+        "core.note": ["n1", "n2", "n3", "n4", "n5"].map((id) => ({
+          item: { id, ...NOTE, read_only: true },
+        })),
+      },
+    });
+    const { server, device } = harness;
+    lastRead(device, 16);
+    readAnswers(server);
+    readAnswers(server);
+    readAnswers(server);
+
+    expect((await device.catchUp()).ok).toBe(true);
+
+    expect(looks(server)).toHaveLength(3);
+    expect(await readOnlyOf(device, "n1")).toBe(true);
+
+    // A source and type that cannot be answered leaves no read owed at once.
+    expect((await device.catchUp()).ok).toBe(true);
+    expect(looks(server)).toHaveLength(3);
+  });
+
+  it("reads no row a write is waiting on", async () => {
+    harness = await hydratedHarness("read-only-waiting-row", {
+      rows: {
+        "core.note": [
+          { item: { id: "n1", ...NOTE } },
+          { item: { id: "n2", ...NOTE } },
+        ],
+      },
     });
     const { server, device } = harness;
     const edit = await device.update("n1", {
@@ -327,7 +403,32 @@ describe("an item's read_only in a working copy", () => {
     });
     if (!edit.ok) throw new Error(JSON.stringify(edit.refusal));
     lastRead(device, 16);
-    readAnswers(server, wireItem({ id: "n1", ...NOTE, read_only: true }));
+    readAnswers(server, wireItem({ id: "n2", ...NOTE, read_only: true }));
+
+    expect((await device.catchUp()).ok).toBe(true);
+
+    expect(looks(server)).toEqual([["n2"]]);
+    expect(await readOnlyOf(device, "n1")).toBe(true);
+    expect(await readOnlyOf(device, "n2")).toBe(true);
+  });
+
+  it("keeps an edit waiting on a row whose read_only moves", async () => {
+    harness = await hydratedHarness("read-only-under-edit", {
+      rows: {
+        "core.note": [
+          { item: { id: "n1", ...NOTE } },
+          { item: { id: "n2", ...NOTE } },
+        ],
+      },
+    });
+    const { server, device } = harness;
+    const edit = await device.update("n1", {
+      properties: { title: "unsent", body: "unsent" },
+      version: 1,
+    });
+    if (!edit.ok) throw new Error(JSON.stringify(edit.refusal));
+    lastRead(device, 16);
+    readAnswers(server, wireItem({ id: "n2", ...NOTE, read_only: true }));
     expect((await device.catchUp()).ok).toBe(true);
 
     const row = await device.get("n1");

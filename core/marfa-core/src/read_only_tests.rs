@@ -3,13 +3,15 @@
 //! that the flag never stops a write.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use serde_json::{Map, Value, json};
 
+use crate::reach::Context;
 use crate::scripted::{self, Answer, Scripted, Then, certified};
 use crate::stop_tests::{copy, copy_in_keyed};
 use crate::wire::WireCatalog;
-use crate::{Core, CoreError, Draft, Edit, Item, Server, store};
+use crate::{Core, CoreError, Draft, Edit, Item, Server, read_only, store};
 
 const NOTE: &str = "core.note";
 const BOOKMARK: &str = "core.bookmark";
@@ -151,6 +153,53 @@ fn asks(server: &Scripted) -> usize {
     server.seen("/items/bulk-get").len()
 }
 
+/// The ids of each read of `read_only`, in the order they were sent.
+fn asked_ids(server: &Scripted) -> Vec<Vec<String>> {
+    server
+        .seen("/items/bulk-get")
+        .iter()
+        .map(|seen| {
+            let sent: Value = serde_json::from_slice(&seen.body).unwrap();
+            let mut ids: Vec<String> = sent["ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().to_string())
+                .collect();
+            ids.sort();
+            ids
+        })
+        .collect()
+}
+
+/// An answer that every row of a large copy is read-only.
+fn bench_answers(core: &Core) -> store::ReadOnlyKnown {
+    store::read_only_samples(&core.conn().unwrap(), 0)
+        .unwrap()
+        .into_iter()
+        .map(|sample| ((sample.source, sample.r#type), true))
+        .collect()
+}
+
+/// The row a look will ask of first for `source`.
+fn sample_of(core: &Core, source: &str) -> String {
+    store::read_only_samples(&core.conn().unwrap(), 0)
+        .unwrap()
+        .into_iter()
+        .find(|sample| sample.source == source)
+        .unwrap()
+        .id
+}
+
+/// Whether the copy still owes a look at `read_only`.
+fn looked_for(core: &Core) -> bool {
+    store::read_only_owed(
+        &core.conn().unwrap(),
+        std::time::Duration::from_secs(15 * 60),
+    )
+    .unwrap()
+}
+
 #[test]
 fn an_event_without_the_field_holds_false_and_one_with_it_holds_what_it_says() {
     let server = Scripted::start();
@@ -194,7 +243,7 @@ fn a_flag_that_flips_with_no_event_reaches_every_row_of_its_source_and_type() {
 
     let report = core.catch_up().unwrap();
 
-    assert_eq!(report.applied, 2);
+    assert_eq!((report.applied, report.read_only_held), (0, 2));
     assert!(flag(&core, "a") && flag(&core, "b"));
     assert!(!flag(&core, "c"));
     assert_eq!(
@@ -264,12 +313,15 @@ fn an_answer_without_the_field_changes_nothing() {
     let server = Scripted::start();
     let core = held_copy(&server);
     put(&core, "a", "connector", true);
+    put(&core, "b", "connector", true);
     owed(&core);
     server.on("/items/bulk-get", vec![asked(&[("a", "connector", None)])]);
 
-    assert_eq!(core.catch_up().unwrap().applied, 0);
+    assert_eq!(core.catch_up().unwrap().read_only_held, 0);
 
     assert!(flag(&core, "a"), "a server that does not say cleared it");
+    assert_eq!(asks(&server), 1, "a row without the field was asked past");
+    assert!(!looked_for(&core), "a row answered left the look owed");
 }
 
 #[test]
@@ -288,6 +340,346 @@ fn a_row_the_server_leaves_out_of_its_answer_changes_nothing() {
 
     assert!(flag(&core, "a"));
     assert!(flag(&core, "b"), "the rows answered were not held to it");
+    assert_eq!(asks(&server), 1, "a group of one row was asked twice");
+}
+
+#[test]
+fn a_row_the_server_leaves_out_is_answered_for_by_another_of_its_source_and_type() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    put(&core, "a", "connector", false);
+    put(&core, "b", "connector", false);
+    put(&core, "c", "other", false);
+    owed(&core);
+    let first = sample_of(&core, "connector");
+    let second = if first == "a" { "b" } else { "a" };
+    server.on(
+        "/items/bulk-get",
+        vec![
+            asked(&[("c", "other", Some(false))]),
+            asked(&[(second, "connector", Some(true))]),
+        ],
+    );
+
+    core.catch_up().unwrap();
+
+    assert!(flag(&core, "a") && flag(&core, "b"));
+    assert_eq!(
+        asked_ids(&server),
+        [
+            vec![first.clone(), "c".to_string()],
+            vec![second.to_string()]
+        ],
+        "the second read was not of another row, or asked of a group answered"
+    );
+    assert!(!looked_for(&core));
+}
+
+#[test]
+fn a_group_that_stays_unanswered_ends_the_look_after_three_of_its_rows() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d", "e"] {
+        put(&core, id, "connector", true);
+    }
+    put(&core, "z", "other", false);
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![
+            asked(&[("z", "other", Some(true))]),
+            asked(&[]),
+            asked(&[]),
+            asked(&[]),
+        ],
+    );
+
+    core.catch_up().unwrap();
+
+    assert_eq!(asks(&server), 3, "the look did not stop at three rows");
+    let rows: std::collections::HashSet<_> = asked_ids(&server)
+        .into_iter()
+        .flatten()
+        .filter(|id| id != "z")
+        .collect();
+    assert_eq!(rows.len(), 3, "a row was asked of twice: {rows:?}");
+    assert!(flag(&core, "z"), "the group answered was not held to it");
+    assert!(flag(&core, "a"), "an unanswered group moved");
+    assert!(
+        !looked_for(&core),
+        "a group that cannot be answered kept the whole look owed"
+    );
+
+    core.catch_up().unwrap();
+    assert_eq!(asks(&server), 3, "the next catch-up looked again");
+}
+
+#[test]
+fn a_look_that_fails_on_a_later_row_is_owed_again() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    put(&core, "a", "connector", false);
+    put(&core, "b", "connector", false);
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[]), scripted::json(500, "{}")],
+    );
+
+    core.catch_up().unwrap();
+
+    assert_eq!(asks(&server), 2);
+    assert!(looked_for(&core), "a look that failed was stamped");
+}
+
+#[test]
+fn a_row_a_waiting_write_holds_is_never_the_row_asked_of() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    put(&core, "a", "connector", false);
+    put(&core, "b", "connector", false);
+    let edit = Edit {
+        r#type: Some(BOOKMARK.into()),
+        ..titled("retyped")
+    };
+    core.update_item("a", &edit).unwrap();
+    core.update_item("b", &titled("waiting")).unwrap();
+    put(&core, "c", "connector", false);
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[("c", "connector", Some(true))])],
+    );
+
+    core.catch_up().unwrap();
+
+    assert_eq!(
+        asked_ids(&server),
+        [vec!["c".to_string()]],
+        "the copy asked of a row a waiting write holds"
+    );
+    assert!(flag(&core, "a") && flag(&core, "b") && flag(&core, "c"));
+    assert!(!looked_for(&core));
+}
+
+#[test]
+fn a_look_asks_for_no_metadata_and_reads_an_answer_without_it() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    put(&core, "a", "connector", false);
+    owed(&core);
+    let mut item = row("a", 1, Some(true));
+    item["source"] = json!("connector");
+    server.on(
+        "/items/bulk-get",
+        vec![certified(scripted::json(
+            200,
+            &json!({"items": [item], "listed": [true]}).to_string(),
+        ))],
+    );
+
+    core.catch_up().unwrap();
+
+    let sent: Value = serde_json::from_slice(&server.seen("/items/bulk-get")[0].body).unwrap();
+    assert_eq!(sent["include"], json!(["system"]));
+    assert!(flag(&core, "a"));
+}
+
+#[test]
+fn a_catch_up_reports_the_events_it_applied_apart_from_the_rows_it_held() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d", "e"] {
+        put(&core, id, "connector", false);
+    }
+    owed(&core);
+    let mut item = row("f", 1, None);
+    item["source"] = json!("other");
+    server.on(
+        "/events",
+        vec![replay(&[("11", frame("item.created", item))])],
+    );
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[
+            ("a", "connector", Some(true)),
+            ("f", "other", Some(false)),
+        ])],
+    );
+
+    let report = core.catch_up().unwrap();
+
+    assert_eq!((report.applied, report.read_only_held), (1, 5));
+}
+
+/// A look at the copy's rows, moving them `page` at a time, as a catch-up runs
+/// one.
+fn look_in_pages(core: &Core, page: usize, held: &mut u64) -> crate::Result<()> {
+    let context = Context::capture(&core.conn().unwrap()).unwrap();
+    let http = core.http().unwrap();
+    let pace = crate::catch_up::Pace {
+        read_only_page: page,
+        ..crate::catch_up::PACE
+    };
+    read_only::refresh(
+        core,
+        &context,
+        &context.http(http),
+        &AtomicBool::new(false),
+        &pace,
+        held,
+    )
+}
+
+#[test]
+fn a_flip_larger_than_a_page_moves_every_row_of_every_group() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d", "e"] {
+        put(&core, id, "connector", false);
+    }
+    put(&core, "f", "other", true);
+    core.update_item("a", &titled("waiting")).unwrap();
+    core.update_item("f", &titled("waiting")).unwrap();
+    put(&core, "g", "other", true);
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[
+            ("b", "connector", Some(true)),
+            ("g", "other", Some(false)),
+        ])],
+    );
+    let mut moved = 0;
+
+    look_in_pages(&core, 2, &mut moved).unwrap();
+
+    assert_eq!(moved, 7);
+    for id in ["a", "b", "c", "d", "e"] {
+        assert!(flag(&core, id), "{id} was left behind");
+    }
+    assert!(!flag(&core, "f") && !flag(&core, "g"));
+    assert_eq!(beneath(&core, "a")["read_only"], json!(true));
+    assert_eq!(beneath(&core, "f")["read_only"], json!(false));
+    assert!(!looked_for(&core));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_read_of_the_copy_gets_through_between_two_pages_of_a_flip() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d"] {
+        put(&core, id, "connector", false);
+    }
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[("a", "connector", Some(true))])],
+    );
+    let point = "read-only-page:connector";
+    crate::fault::arm(point);
+    let flipping = {
+        let core = Arc::clone(&core);
+        std::thread::spawn(move || look_in_pages(&core, 2, &mut 0))
+    };
+    let waiting = std::time::Instant::now();
+    while crate::fault::waiting(point) == 0 {
+        assert!(
+            waiting.elapsed() < std::time::Duration::from_secs(5),
+            "the flip reached no second page"
+        );
+        std::thread::yield_now();
+    }
+
+    let (reader, read) = std::sync::mpsc::channel();
+    {
+        let core = Arc::clone(&core);
+        std::thread::spawn(move || {
+            let flags: usize = ["a", "b", "c", "d"]
+                .iter()
+                .filter(|id| flag(&core, id))
+                .count();
+            let _ = reader.send((flags, looked_for(&core)));
+        });
+    }
+    let got = read.recv_timeout(std::time::Duration::from_secs(5));
+    crate::fault::release(point);
+    flipping.join().unwrap().unwrap();
+
+    assert_eq!(
+        got.expect("a read waited for the whole flip"),
+        (2, true),
+        "a half-held group read as other than half-held, or was stamped"
+    );
+    assert_eq!(
+        ["a", "b", "c", "d"]
+            .iter()
+            .filter(|id| flag(&core, id))
+            .count(),
+        4
+    );
+    assert!(!looked_for(&core));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_flip_cut_short_is_not_stamped_and_the_next_look_finishes_it() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d", "e"] {
+        put(&core, id, "connector", false);
+    }
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![
+            asked(&[("a", "connector", Some(true))]),
+            asked(&[("a", "connector", Some(true))]),
+        ],
+    );
+    let mut moved = 0;
+
+    let cut = {
+        let _failing = crate::fault::fail_on_this_thread("read-only-page:connector");
+        look_in_pages(&core, 2, &mut moved)
+    };
+
+    assert!(cut.is_err(), "{cut:?}");
+    assert_eq!(moved, 2, "the rows that moved went unreported");
+    assert!(looked_for(&core), "a half-held group was stamped");
+
+    look_in_pages(&core, 2, &mut moved).unwrap();
+
+    assert_eq!(moved, 5);
+    assert!(["a", "b", "c", "d", "e"].iter().all(|id| flag(&core, id)));
+    assert!(!looked_for(&core));
+}
+
+#[test]
+fn a_look_told_to_stop_between_pages_leaves_the_rest_owed() {
+    let server = Scripted::start();
+    let core = held_copy(&server);
+    for id in ["a", "b", "c", "d", "e"] {
+        put(&core, id, "connector", false);
+    }
+    owed(&core);
+    server.on(
+        "/items/bulk-get",
+        vec![asked(&[("a", "connector", Some(true))])],
+    );
+    let context = Context::capture(&core.conn().unwrap()).unwrap();
+    let scoped = context.http(core.http().unwrap());
+    let stop = AtomicBool::new(false);
+    let known = read_only::ask(&core, &context, &scoped, &stop).unwrap();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut moved = 0;
+
+    let ended = read_only::hold(&core, &context, &stop, 2, &known, &mut moved);
+
+    assert!(matches!(ended, Err(CoreError::Canceled)), "{ended:?}");
+    assert_eq!(moved, 0);
+    assert!(looked_for(&core));
 }
 
 #[test]
@@ -319,6 +711,7 @@ fn a_look_answered_outside_the_copys_reach_expires_it_as_any_read_does() {
     let core = held_copy(&server);
     put(&core, "a", "connector", false);
     let waiting = core.update_item("a", &titled("kept")).unwrap();
+    put(&core, "b", "connector", false);
     owed(&core);
     server.on(
         "/items/bulk-get",
@@ -651,7 +1044,7 @@ fn a_row_beneath_written_before_the_field_is_read_and_lands_false() {
         vec![asked(&[("a", "connector", Some(false))])],
     );
 
-    assert_eq!(core.catch_up().unwrap().applied, 0);
+    assert_eq!(core.catch_up().unwrap().read_only_held, 0);
 
     assert_eq!(title(&held(&core, "a")), "waiting");
     assert!(!flag(&core, "a"));
@@ -685,4 +1078,60 @@ fn a_row_beneath_that_cannot_be_read_is_left_as_it_was() {
         })
         .unwrap();
     assert_eq!(kept, "not json");
+}
+
+/// A flip of every row of a large copy, and how long a read beside it waits.
+/// With `MARFA_READ_BENCH_ROWS` set, it builds that many; `MARFA_READ_ONLY_PAGE`
+/// tries another page. Run it in a release build:
+///
+/// ```sh
+/// MARFA_READ_BENCH_ROWS=200000 cargo test --release -p marfa-core read_only_bench -- --nocapture
+/// ```
+#[test]
+fn read_only_bench_times_a_flip_and_a_read_beside_it() {
+    let number = |name: &str| std::env::var(name).ok().and_then(|n| n.parse().ok());
+    let rows: usize = number("MARFA_READ_BENCH_ROWS").unwrap_or(300);
+    let page = number("MARFA_READ_ONLY_PAGE").unwrap_or(crate::catch_up::PACE.read_only_page);
+    let dir = tempfile::tempdir().unwrap();
+    let core = Arc::new(crate::read_bench_tests::large_copy(dir.path(), rows));
+    let context = Context::capture(&core.conn().unwrap()).unwrap();
+    let known = bench_answers(&core);
+    let flipped = Arc::new(AtomicBool::new(false));
+    let reading = {
+        let (core, flipped) = (Arc::clone(&core), Arc::clone(&flipped));
+        std::thread::spawn(move || {
+            let mut waits = Vec::new();
+            while !flipped.load(std::sync::atomic::Ordering::Relaxed) {
+                let asked = std::time::Instant::now();
+                core.get("note-000000").unwrap().unwrap();
+                waits.push(asked.elapsed());
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            waits
+        })
+    };
+    let started = std::time::Instant::now();
+    let mut moved = 0;
+
+    read_only::hold(
+        &core,
+        &context,
+        &AtomicBool::new(false),
+        page,
+        &known,
+        &mut moved,
+    )
+    .unwrap();
+
+    let took = started.elapsed();
+    flipped.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut waits = reading.join().unwrap();
+    waits.sort();
+    assert_eq!(moved, rows as u64);
+    println!(
+        "{rows} rows, page {page}: flip {took:?}; {} reads beside it, median {:?}, slowest {:?}",
+        waits.len(),
+        waits[waits.len() / 2],
+        waits[waits.len() - 1],
+    );
 }

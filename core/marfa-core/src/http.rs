@@ -1162,7 +1162,7 @@ impl Http {
         }
         let body = serde_json::json!({
             "ids": ids,
-            "include": ["metadata", "system"],
+            "include": ["system"],
         })
         .to_string();
         let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;

@@ -46,6 +46,9 @@ pub(crate) struct Pace {
     /// How long a copy goes between holding its rows to the server's `read_only`,
     /// which no event says has changed.
     pub(crate) read_only_every: Duration,
+    /// The most rows one write of a `read_only` answer moves, so a read of the
+    /// copy gets through between two of them however many rows the answer moves.
+    pub(crate) read_only_page: usize,
     /// How long a stream stayed open is read from this clock, so a test can
     /// hold it still and a slow machine cannot make a stream that ended at
     /// once look like one that was held.
@@ -71,6 +74,7 @@ pub(crate) const PACE: Pace = Pace {
     reconnect_most: Duration::from_secs(30),
     synced_every: Duration::from_secs(30),
     read_only_every: Duration::from_secs(15 * 60),
+    read_only_page: 1_000,
     clock: &crate::clock::now,
 };
 
@@ -245,8 +249,11 @@ impl fmt::Display for ChangeEvent {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct FollowReport {
+    /// Events, never the rows a read of `read_only` moved.
     pub applied: u64,
     pub skipped: u64,
+    /// Rows a read of `read_only` changed, which no event brought.
+    pub read_only_held: u64,
     /// Empty where the follow was stopped before it read the copy's cursor.
     pub cursor: String,
     /// Streams asked for after the first, for any reason.
@@ -516,9 +523,16 @@ pub(crate) fn catch_up(
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
     let mut report = unless_stopped(result, stop)?;
     mark_synced_if_same(core, &context)?;
-    report.applied += read_only::refresh(core, &context, &scoped, stop, PACE.read_only_every)
-        .or_else(read_only::contained)
-        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
+    read_only::refresh(
+        core,
+        &context,
+        &scoped,
+        stop,
+        &PACE,
+        &mut report.read_only_held,
+    )
+    .or_else(read_only::contained)
+    .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
     Ok(report)
 }
 
@@ -555,6 +569,7 @@ pub(crate) fn replay_build(
     let mut report = CatchUpReport {
         applied: 0,
         skipped: 0,
+        read_only_held: 0,
         cursor: cursor.clone(),
         catalog_changed: false,
     };
@@ -966,12 +981,27 @@ fn follow_paced(
     on_live(false);
     let asked = Mutex::new(Asked::default());
     let (told, heard) = mpsc::channel();
-    let result = thread::scope(|scope| -> Result<FollowReport> {
+    let look_halt = AtomicBool::new(false);
+    let (looked, looks) = mpsc::channel();
+    let mut result = thread::scope(|scope| -> Result<FollowReport> {
         // The drains watch the caller's own stop, so none sends a write once
         // it is raised; raised here too, so a follow that ends on an error
         // sends no further write either. A folder's watch, which does not
         // drain, keeps its stop for its own pass.
         let _halt = drains.then(|| Raise(stop));
+        let _look_halt = Raise(&look_halt);
+        let mut look = Look {
+            scope,
+            core,
+            context: &context,
+            http: &http,
+            pace,
+            halt: &look_halt,
+            told: looked,
+            heard: &looks,
+            running: false,
+            asked: None,
+        };
         let recovery = Recovery {
             scope: drains.then_some(scope),
             core,
@@ -994,10 +1024,10 @@ fn follow_paced(
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
         let mut owes_drain = owes_drain;
         let mut synced = None;
-        let mut read_only_asked = None;
         while !stop.load(Ordering::Relaxed) {
             on_live(false);
             recovery.tell(&report.cursor, on_change);
+            look.tell(&mut report, on_change)?;
             let (slice, cursor) = start(core)?;
             report.cursor = cursor.clone();
             if asked {
@@ -1071,7 +1101,7 @@ fn follow_paced(
                 &mut report,
                 &mut refreshed,
                 &mut synced,
-                &mut read_only_asked,
+                &mut look,
                 &recovery,
                 on_change,
                 on_live,
@@ -1114,6 +1144,11 @@ fn follow_paced(
             edge_id: None,
             cursor: cursor.clone(),
         });
+    }
+    for told in looks.try_iter() {
+        if let Err(error) = told.tell(result.as_mut().ok(), &cursor, on_change) {
+            result = result.and(Err(error));
+        }
     }
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
@@ -1205,6 +1240,106 @@ impl Recovery<'_, '_> {
     }
 }
 
+/// What a look at `read_only` beside a stream came to.
+struct Looked {
+    held: u64,
+    ended: Result<()>,
+}
+
+impl Looked {
+    /// Adds the rows it moved to `report`, tells them as an item change no
+    /// event brought, and answers what of its end goes on to the follow.
+    fn tell(
+        self,
+        report: Option<&mut FollowReport>,
+        cursor: &str,
+        on_change: &mut dyn FnMut(&Change),
+    ) -> Result<()> {
+        if let Some(report) = report {
+            report.read_only_held += self.held;
+        }
+        if self.held > 0 {
+            on_change(&Change {
+                event: ChangeEvent::Applied("item.updated".into()),
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+        }
+        self.ended.or_else(read_only::contained)
+    }
+}
+
+/// Holds the copy to the server's `read_only` once `read_only_every` has gone
+/// by, on a thread of its own: the read is a request the stream must not wait
+/// on, and the rows it moves take many writes. A frame that lands while it runs
+/// can be overtaken by its answer, and the next look puts that right.
+/// `asked` paces the asking, so a server that keeps failing the read is asked
+/// no more often than one that answers it.
+struct Look<'scope, 'env> {
+    scope: &'scope thread::Scope<'scope, 'env>,
+    core: &'env Core,
+    context: &'env Context,
+    http: &'env Http,
+    pace: &'env Pace,
+    /// Raised as the follow ends, whatever ended it. A follow that does not
+    /// drain keeps its stop, so this is not that.
+    halt: &'env AtomicBool,
+    told: Sender<Looked>,
+    heard: &'env Receiver<Looked>,
+    running: bool,
+    asked: Option<Instant>,
+}
+
+impl Look<'_, '_> {
+    fn start_if_owed(&mut self, now: &dyn Fn() -> Instant) -> Result<()> {
+        let at = now();
+        if self.running
+            || self
+                .asked
+                .is_some_and(|last| at.saturating_duration_since(last) < self.pace.read_only_every)
+            || !store::read_only_owed(&*self.core.conn()?, self.pace.read_only_every)?
+        {
+            return Ok(());
+        }
+        self.asked = Some(at);
+        self.running = true;
+        let (core, context, http) = (self.core, self.context, self.http);
+        let (pace, halt, told) = (self.pace, self.halt, self.told.clone());
+        let carried = Carried::here();
+        self.scope.spawn(inheriting(move || {
+            carried.run(|| {
+                let mut held = 0;
+                let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    read_only::refresh(core, context, http, halt, pace, &mut held)
+                }))
+                .unwrap_or_else(|fault| {
+                    Err(CoreError::Fault(format!(
+                        "the look at read_only stopped on a fault in the core: {}",
+                        crate::fault_said(fault.as_ref())
+                    )))
+                });
+                let _ = told.send(Looked { held, ended });
+            });
+        }));
+        Ok(())
+    }
+
+    /// What the look it started has come to, since it last looked.
+    fn tell(
+        &mut self,
+        report: &mut FollowReport,
+        on_change: &mut dyn FnMut(&Change),
+    ) -> Result<()> {
+        for looked in self.heard.try_iter() {
+            self.running = false;
+            let cursor = report.cursor.clone();
+            looked.tell(Some(report), &cursor, on_change)?;
+        }
+        Ok(())
+    }
+}
+
 /// `None` where no work was left for a drain, or the follow ended first.
 fn recover(core: &Core, stop: &AtomicBool) -> Option<ChangeEvent> {
     match core.drain_what_remains(stop)? {
@@ -1236,7 +1371,7 @@ fn read_stream(
     report: &mut FollowReport,
     refreshed: &mut HashSet<Unexplained>,
     synced: &mut Option<Instant>,
-    read_only_asked: &mut Option<Instant>,
+    look: &mut Look,
     recovery: &Recovery,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
@@ -1252,6 +1387,7 @@ fn read_stream(
             return Ok(Ended::Stopped);
         }
         recovery.tell(&report.cursor, on_change);
+        look.tell(report, on_change)?;
         let frame = match frames.recv_timeout(pace.stop_poll) {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {
@@ -1282,16 +1418,7 @@ fn read_stream(
             // A heartbeat at the head says the copy is still current.
             if live_confirmed {
                 mark_synced_while_live(core, context, pace, now, synced)?;
-                refresh_read_only_while_live(
-                    core,
-                    context,
-                    pace,
-                    now,
-                    read_only_asked,
-                    stop,
-                    report,
-                    on_change,
-                )?;
+                look.start_if_owed(now)?;
             }
             continue;
         };
@@ -1336,16 +1463,7 @@ fn read_stream(
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced)?;
-                    refresh_read_only_while_live(
-                        core,
-                        context,
-                        pace,
-                        now,
-                        read_only_asked,
-                        stop,
-                        report,
-                        on_change,
-                    )?;
+                    look.start_if_owed(now)?;
                 }
             }
             "stream_incomplete" => return Ok(Ended::Over),
@@ -1464,44 +1582,6 @@ fn mark_synced_while_live(
     }
     mark_synced_if_same(core, context)?;
     *synced = Some(at);
-    Ok(())
-}
-
-/// Holds the copy to the server's `read_only` once `read_only_every` has gone
-/// by, telling a change as an item change no event brought. `asked` paces the
-/// asking too, so a server that keeps failing the read is asked no more often
-/// than one that answers it.
-#[allow(clippy::too_many_arguments)]
-fn refresh_read_only_while_live(
-    core: &Core,
-    context: &Context,
-    pace: &Pace,
-    now: &dyn Fn() -> Instant,
-    asked: &mut Option<Instant>,
-    stop: &AtomicBool,
-    report: &mut FollowReport,
-    on_change: &mut dyn FnMut(&Change),
-) -> Result<()> {
-    let at = now();
-    if asked.is_some_and(|last| at.saturating_duration_since(last) < pace.read_only_every)
-        || !store::read_only_owed(&*core.conn()?, pace.read_only_every)?
-    {
-        return Ok(());
-    }
-    *asked = Some(at);
-    let changed = core
-        .http()
-        .and_then(|http| read_only::refresh(core, context, http, stop, pace.read_only_every))
-        .or_else(read_only::contained)?;
-    if changed > 0 {
-        report.applied += 1;
-        on_change(&Change {
-            event: ChangeEvent::Applied("item.updated".into()),
-            item_id: None,
-            edge_id: None,
-            cursor: report.cursor.clone(),
-        });
-    }
     Ok(())
 }
 
@@ -2073,6 +2153,7 @@ mod tests {
         reconnect_most: Duration::from_millis(40),
         synced_every: Duration::from_secs(30),
         read_only_every: Duration::from_secs(15 * 60),
+        read_only_page: 1_000,
         clock: &frozen,
     };
 
@@ -2316,7 +2397,145 @@ mod tests {
         assert_eq!((change.item_id, change.edge_id), (None, None));
         assert!(core.get("a").unwrap().unwrap().read_only);
         run.stop();
-        assert_eq!(run.ended().unwrap().applied, 1);
+        let report = run.ended().unwrap();
+        assert_eq!((report.applied, report.read_only_held), (0, 1));
+    }
+
+    #[test]
+    fn a_slow_look_holds_up_no_event_of_the_stream_beside_it() {
+        let server = Scripted::start();
+        let ready = Arc::new(AtomicBool::new(false));
+        let (_dir, core) = owing_a_look(
+            &server,
+            None,
+            vec![Answer::WaitFor {
+                ready: ready.clone(),
+                answer: Box::new(a_look(true)),
+            }],
+        );
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                Then::Later {
+                    keepalive: MS(5),
+                    after: MS(50),
+                    frames: vec![created("b", "11")],
+                },
+            )],
+        );
+
+        let run = follow_on(&core, STILL, None);
+        server.wait_for("/items/bulk-get", 1, Duration::from_secs(5));
+
+        let change = run.change();
+        assert_eq!(change.item_id.as_deref(), Some("b"), "{change:?}");
+        assert!(core.get("b").unwrap().is_some());
+        assert!(
+            !core.get("a").unwrap().unwrap().read_only,
+            "the look answered before it was let"
+        );
+
+        ready.store(true, Ordering::Relaxed);
+        let change = run.change();
+        assert_eq!(change.event, ChangeEvent::Applied("item.updated".into()));
+        assert_eq!(change.item_id, None);
+        assert!(core.get("a").unwrap().unwrap().read_only);
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!((report.applied, report.read_only_held), (1, 2));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_look_that_ends_as_the_follow_stops_is_still_told() {
+        let server = Scripted::start();
+        let answer = crate::scripted::certified(crate::scripted::json(
+            200,
+            &serde_json::json!({
+                "items": [{ "id": "a", "type": NOTE, "source": "told-late", "read_only": true }],
+            })
+            .to_string(),
+        ));
+        let (_dir, core) = owing_a_look(&server, None, vec![answer]);
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET source = 'told-late'", [])
+            .unwrap();
+        let point = "read-only-page:told-late";
+        crate::fault::arm(point);
+
+        let run = follow_on(&core, STILL, None);
+        let waiting = Instant::now();
+        while crate::fault::waiting(point) == 0 {
+            assert!(waiting.elapsed() < Duration::from_secs(5), "no page moved");
+            thread::yield_now();
+        }
+        run.stop();
+        thread::sleep(MS(50));
+        crate::fault::release(point);
+
+        let report = run.ended().unwrap();
+        assert_eq!(report.read_only_held, 1);
+        assert_eq!(
+            run.change().event,
+            ChangeEvent::Applied("item.updated".into())
+        );
+    }
+
+    #[test]
+    fn a_follow_that_does_not_drain_ending_on_an_error_lets_a_slow_look_go() {
+        let server = Scripted::start();
+        let ready = Arc::new(AtomicBool::new(false));
+        let (_dir, core) = owing_a_look(
+            &server,
+            None,
+            vec![Answer::WaitFor {
+                ready: ready.clone(),
+                answer: Box::new(a_look(true)),
+            }],
+        );
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                Then::Later {
+                    keepalive: MS(5),
+                    after: MS(50),
+                    frames: vec![event("11", "reach_changed", "{}")],
+                },
+            )],
+        );
+
+        let run = follow_drains(&core, STILL, None, false, false, |_| {});
+        let ended = run.ended();
+        ready.store(true, Ordering::Relaxed);
+
+        assert!(
+            matches!(ended, Err(CoreError::CopyExpired { .. })),
+            "{ended:?}"
+        );
+    }
+
+    #[test]
+    fn a_look_the_server_says_is_for_an_expired_copy_ends_the_follow() {
+        let server = Scripted::start();
+        let (_dir, core) = owing_a_look(
+            &server,
+            None,
+            vec![crate::scripted::json(
+                409,
+                r#"{"error":{"code":"reach_changed","message":"gone"}}"#,
+            )],
+        );
+
+        let run = follow_on(&core, STILL, None);
+
+        let ended = run.ended();
+        assert!(
+            matches!(ended, Err(CoreError::CopyExpired { .. })),
+            "{ended:?}"
+        );
     }
 
     #[test]
@@ -3355,6 +3574,9 @@ mod tests {
             let catalog = Catalog::load(&core.conn().unwrap()).unwrap();
             let (asked, (told, heard)) = (Mutex::new(Asked::default()), mpsc::channel());
             let still = AtomicBool::new(false);
+            let context = Context::capture(&core.conn().unwrap()).unwrap();
+            let http = core.http().unwrap();
+            let (looked, looks) = mpsc::channel();
             let recovery = Recovery {
                 scope: None,
                 core: &core,
@@ -3363,23 +3585,37 @@ mod tests {
                 told,
                 heard: &heard,
             };
-            let read = read_stream(
-                &core,
-                &Context::capture(&core.conn().unwrap()).unwrap(),
-                &catalog,
-                &slice,
-                &frames,
-                &AtomicBool::new(false),
-                &QUICK,
-                &|| reading.now(),
-                &mut FollowReport::default(),
-                &mut HashSet::new(),
-                &mut None,
-                &mut None,
-                &recovery,
-                &mut |_| {},
-                &mut |_| {},
-            );
+            let read = thread::scope(|scope| {
+                let mut look = Look {
+                    scope,
+                    core: &core,
+                    context: &context,
+                    http,
+                    pace: &QUICK,
+                    halt: &still,
+                    told: looked,
+                    heard: &looks,
+                    running: false,
+                    asked: None,
+                };
+                read_stream(
+                    &core,
+                    &context,
+                    &catalog,
+                    &slice,
+                    &frames,
+                    &AtomicBool::new(false),
+                    &QUICK,
+                    &|| reading.now(),
+                    &mut FollowReport::default(),
+                    &mut HashSet::new(),
+                    &mut None,
+                    &mut look,
+                    &recovery,
+                    &mut |_| {},
+                    &mut |_| {},
+                )
+            });
             let _ = ended.send(read);
         });
         // A send on the rendezvous channel fails once the reader has let the

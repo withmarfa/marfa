@@ -256,6 +256,8 @@ pub struct PinReport {
 pub struct CatchUpReport {
     pub applied: i64,
     pub skipped: i64,
+    /// Rows a read of `read_only` changed, which no event brought.
+    pub read_only_held: i64,
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds. A catch-up that
     /// fails says the same on its error, as `catalogChanged`.
@@ -2031,6 +2033,7 @@ impl Task for CatchUp {
         Ok(CatchUpReport {
             applied: count(report.applied),
             skipped: count(report.skipped),
+            read_only_held: count(report.read_only_held),
             cursor: report.cursor,
             catalog_changed: report.catalog_changed,
         })

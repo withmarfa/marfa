@@ -637,8 +637,11 @@ pub struct UnregisteredType {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CatchUpReport {
+    /// Events, never the rows a read of `read_only` moved.
     pub applied: u64,
     pub skipped: u64,
+    /// Rows a read of `read_only` changed, which no event brought.
+    pub read_only_held: u64,
     pub cursor: String,
     /// The catch-up replaced the catalog the copy holds with one that
     /// differs from it.

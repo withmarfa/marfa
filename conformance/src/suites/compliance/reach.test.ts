@@ -721,6 +721,17 @@ describe("conditional working-copy reaches", () => {
       made.item.id,
     ]);
 
+    // A device reading `read_only` asks for no metadata, and only an item page
+    // is refused for that.
+    const bare = await bulkGet(
+      { ids: [made.item.id], include: ["system"] },
+      proof.reach,
+    );
+    certified(bare, proof.reach);
+    const answered = (await bare.json()) as BulkRead;
+    expect(answered.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(answered.metadata).toBeUndefined();
+
     for (const [include, expected] of [
       [[], []],
       [["system"], [made.item.id]],
