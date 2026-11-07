@@ -2367,6 +2367,7 @@ dependencies = [
  "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "p256",
  "proptest",
  "rcgen",
  "rusqlite",
