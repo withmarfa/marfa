@@ -11,6 +11,7 @@ use super::origin::{self, Source};
 use super::{cookies, redirect, require_safe_transport, text_field, with_cookie};
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
+use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session::{self, Opened, Session};
 use crate::app::auth::{Visit, form_origins, owner, sign_in};
@@ -24,7 +25,7 @@ const CHANGE_FIELDS: [&str; 3] = ["currentPassword", "newPassword", "revokeOther
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CONFIRM_PASSWORD_CHARS: usize = 1024;
 
-fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
+pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     if source == Source::Elsewhere {
         return Err(Refusal::new(
             Code::Forbidden,
@@ -34,7 +35,7 @@ fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn signed_in(session: &Session, owner: &owner::Owner) -> Value {
+pub(super) fn signed_in(session: &Session, owner: &owner::Owner) -> Value {
     json!({ "session": session.to_json(), "user": owner.to_json() })
 }
 
@@ -180,24 +181,30 @@ pub async fn revoke_other_sessions(
     Ok(json_answer(StatusCode::OK, &json!({ "status": true })))
 }
 
-fn passkey_or_password(body: &Map<String, Value>) -> Result<Option<String>, Refusal> {
+enum Proof {
+    Password(String),
+    Passkey(Value),
+}
+
+fn passkey_or_password(body: &Map<String, Value>) -> Result<Proof, Refusal> {
     match (body.get("password"), body.get("passkey")) {
         (Some(Value::String(password)), None) => {
             let length = password.encode_utf16().count();
             if (1..=CONFIRM_PASSWORD_CHARS).contains(&length) {
-                Ok(Some(password.clone()))
+                Ok(Proof::Password(password.clone()))
             } else {
                 Err(Refusal::validation("Enter your password."))
             }
         }
-        (None, Some(Value::Object(_))) => Ok(None),
+        (None, Some(passkey @ Value::Object(_))) => Ok(Proof::Passkey(passkey.clone())),
         _ => Err(Refusal::validation("Send your password or a passkey.")),
     }
 }
 
-/// `POST /auth/confirm`. No passkey is registered yet, so none can answer.
+/// `POST /auth/confirm`.
 pub async fn confirm(
     State(app): State<Arc<App>>,
+    headers: HeaderMap,
     caller: Caller,
     visit: Visit,
     body: JsonBody,
@@ -206,15 +213,16 @@ pub async fn confirm(
         return Err(unauthorized().into());
     }
     let body = body.object(&CONFIRM_FIELDS).await?;
-    let Some(password) = passkey_or_password(&body)? else {
-        return Err(unauthorized().into());
+    let address = app.addresses().sign_in();
+    let opened = match passkey_or_password(&body)? {
+        Proof::Password(password) => sign_in::confirm(&app, &caller, password, visit).await?,
+        Proof::Passkey(response) => {
+            let token = cookies::passkey_challenge_token(&headers, &address).map(str::to_string);
+            let assertion = Assertion { token, response };
+            passkeys::confirm(app.clone(), &caller, assertion, visit).await?
+        }
     };
-    let opened = sign_in::confirm(&app, &caller, password, visit).await?;
-    let cookie = cookies::session(
-        &app.addresses().sign_in(),
-        &opened.token,
-        opened.session.remembered,
-    )?;
+    let cookie = cookies::session(&address, &opened.token, opened.session.remembered)?;
     Ok(with_cookie(
         json_answer(StatusCode::OK, &json!({ "ok": true })),
         cookie,

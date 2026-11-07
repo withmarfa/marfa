@@ -49,10 +49,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 ureq.workspace = true
 url = "2"
 uuid.workspace = true
+webauthn-rs = { version = "0.6.2", default-features = false, features = ["conditional-ui", "danger-allow-state-serialisation"] }
 
 [dev-dependencies]
 flate2 = "1"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
+p256 = "0.14"
 proptest = "1"
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

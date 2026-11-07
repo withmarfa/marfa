@@ -117,7 +117,7 @@ pub(super) fn is_hidden(c: char) -> bool {
 
 /// A name a person can read, of at most 200 characters once trimmed. `None`
 /// if nothing is left.
-fn checked_name(text: &str) -> Result<Option<String>> {
+pub(super) fn checked_name(text: &str) -> Result<Option<String>> {
     if text.chars().any(is_hidden) {
         return Err(invalid("name", "Use letters, numbers and punctuation."));
     }

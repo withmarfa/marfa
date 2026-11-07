@@ -4,6 +4,7 @@ pub mod cookies;
 pub(super) mod origin;
 mod owner;
 mod pages;
+pub mod passkeys;
 mod setup;
 mod sign_in;
 
@@ -16,7 +17,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use serde_json::{Map, Value};
 
 use super::Routes;
@@ -88,6 +89,11 @@ pub fn owner_doors() -> Routes {
             "/owner",
             get(owner::read).post(owner::claim).patch(owner::update),
         )
+        .route("/owner/passkeys", get(passkeys::list))
+        .route(
+            "/owner/passkeys/{id}",
+            patch(passkeys::rename).delete(passkeys::remove),
+        )
         .route_layer(from_fn(no_store))
 }
 
@@ -108,6 +114,23 @@ pub fn doors() -> Routes {
             post(sign_in::revoke_other_sessions),
         )
         .route("/auth/confirm", post(sign_in::confirm))
+        .route(
+            "/auth/passkey/generate-register-options",
+            get(passkeys::register_options),
+        )
+        .route(
+            "/auth/passkey/verify-registration",
+            post(passkeys::verify_registration),
+        )
+        .route(
+            "/auth/passkey/generate-authenticate-options",
+            get(passkeys::authenticate_options),
+        )
+        .route(
+            "/auth/passkey/verify-authentication",
+            post(passkeys::verify_authentication),
+        )
+        .route("/auth/owner/passkeys", get(passkeys::page))
         .route("/setup/exchange", post(setup::exchange))
         .route("/setup/claim", post(setup::claim))
         .route_layer(from_fn(no_store))

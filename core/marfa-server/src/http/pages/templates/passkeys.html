@@ -1,0 +1,27 @@
+<h1>Password and passkeys</h1>
+<p class="lede">A passkey signs you in with your device's lock instead of your password.</p>
+<p>Passkeys work only at a secure address: HTTPS with a domain name, or localhost on the computer running Marfa. They don't work at an IP address.</p>
+{% if rows.is_empty() %}
+<p>You haven't added a passkey yet.</p>
+{% else %}
+<ul class="stack">
+{% for row in rows %}
+<li>
+<p><bdi>{{ row.name }}</bdi></p>
+<p class="lede">Added {{ row.added }}{% if let Some(day) = row.last_used %}. Last used {{ day }}{% endif %}.</p>
+{% if let Some(host) = row.made_for %}
+<p class="notice">Made for {{ host }}, so it can't sign in here. Remove it and add a new passkey.</p>
+{% endif %}
+<button type="button" class="button" data-passkey-remove="{{ row.id }}">Remove</button>
+</li>
+{% endfor %}
+</ul>
+{% endif %}
+<p class="notice error" role="alert" data-passkey-error hidden></p>
+<div class="stack" data-passkey-group hidden>
+<div class="field">
+<label for="passkey-name">Passkey name</label>
+<input id="passkey-name" type="text" maxlength="200" autocomplete="off" data-passkey-name>
+</div>
+<button type="button" class="button primary wide" data-passkey="add" hidden>Add a passkey</button>
+</div>
