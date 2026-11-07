@@ -713,6 +713,20 @@ it("reports first-sync waiting without claiming a successful content pass", asyn
   expect(report.last_success_at).toBeNull();
 });
 
+it("counts no settings_invalid for a refused settings file while the first sync waits", async () => {
+  harness = await folderHarness("health-first-settings", {
+    confirm: false,
+    hydrate: false,
+    files: { "note.md": "a local note\n" },
+  });
+  const file = settingsFile(harness);
+  writeFileSync(file, `${readFileSync(file, "utf8")}include: [not closed\n`);
+  expect((await harness.folder.pushWaiting()).ok).toBe(true);
+  const report = latest(harness);
+  expect(report.first_sync_waiting).toBe(true);
+  expect(report.problems).toEqual([]);
+});
+
 it("preserves successful content sync when reporting fails and coalesces across CLI restarts", async () => {
   harness = await folderHarness("health-failure", {
     statusReport: [
