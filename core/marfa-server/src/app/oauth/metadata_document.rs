@@ -27,6 +27,9 @@ use super::scope::ScopeSet;
 /// The draft's recommended limit.
 const MAX_DOCUMENT_BYTES: u64 = 5 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
+
+/// All a `ureq` resolver answer holds.
+const MOST_ADDRESSES: usize = 16;
 const TIME_LIMIT: Duration = Duration::from_secs(5);
 
 const SYMMETRIC_METHODS: [&str; 3] = [
@@ -186,10 +189,10 @@ impl Lookup for SystemLookup {
     }
 }
 
-/// Answers every name with the one checked address, so that nothing between
-/// the check and the connection can look the name up again.
+/// Answers every name with the checked addresses, so that nothing between the
+/// check and the connection can look the name up again.
 #[derive(Debug)]
-struct Pinned(SocketAddr);
+struct Pinned(Vec<SocketAddr>);
 
 impl Resolver for Pinned {
     fn resolve(
@@ -199,7 +202,9 @@ impl Resolver for Pinned {
         _timeout: NextTimeout,
     ) -> Result<ResolvedSocketAddrs, ureq::Error> {
         let mut answers = self.empty();
-        answers.push(self.0);
+        for address in &self.0 {
+            answers.push(*address);
+        }
         Ok(answers)
     }
 }
@@ -226,7 +231,7 @@ impl Fetcher {
     /// Fetch the document a `client_id` names.
     pub fn fetch(&self, client_id: &str) -> Result<Vec<u8>, Failure> {
         let url = check_url(client_id)?;
-        let address = self.one_address(&url)?;
+        let addresses = self.checked_addresses(&url)?;
         let config = Agent::config_builder()
             .https_only(true)
             .proxy(None)
@@ -237,7 +242,7 @@ impl Fetcher {
             .tls_config(self.tls.clone())
             .user_agent("marfa-server")
             .build();
-        let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(address));
+        let agent = Agent::with_parts(config, DefaultConnector::default(), Pinned(addresses));
         let mut response = agent
             .get(url.as_str())
             .header(header::ACCEPT, "application/json")
@@ -289,7 +294,7 @@ impl Fetcher {
 
     /// Resolve once, and judge every answer: a name that also answers an
     /// internal address is not trusted for the sake of its public one.
-    fn one_address(&self, url: &Url) -> Result<SocketAddr, Failure> {
+    fn checked_addresses(&self, url: &Url) -> Result<Vec<SocketAddr>, Failure> {
         let unavailable = Failure::Unavailable("The client's host could not be resolved.");
         let port = url.port_or_known_default().ok_or(unavailable)?;
         let answers = match url.host() {
@@ -298,14 +303,15 @@ impl Fetcher {
             Some(Host::Domain(name)) => self.lookup.lookup(name, port).map_err(|_| unavailable)?,
             None => Vec::new(),
         };
-        let first = *answers.first().ok_or(unavailable)?;
-        if answers.iter().all(|answer| (self.allow)(answer.ip())) {
-            Ok(first)
-        } else {
-            Err(Failure::Refused(
-                "The client's host resolves to an address that is not public.",
-            ))
+        if answers.is_empty() {
+            return Err(unavailable);
         }
+        if !answers.iter().all(|answer| (self.allow)(answer.ip())) {
+            return Err(Failure::Refused(
+                "The client's host resolves to an address that is not public.",
+            ));
+        }
+        Ok(answers.into_iter().take(MOST_ADDRESSES).collect())
     }
 }
 
@@ -596,6 +602,42 @@ mod tests {
         assert!(fetcher.fetch(ID).is_err());
         assert_eq!(lookups.load(Ordering::SeqCst), 2);
         assert_eq!(internal.accepted.load(Ordering::SeqCst), 1);
+    }
+
+    fn closed_port() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        listener.local_addr().expect("an address")
+    }
+
+    #[test]
+    fn every_checked_address_is_tried_until_one_answers() {
+        let live = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        let (script, _) = Script::new(vec![vec![closed_port(), closed_port(), live.address]]);
+        let fetcher = fetcher(script, &live.certificate);
+        assert_eq!(fetcher.fetch(ID).expect("a document"), b"{}");
+        assert_eq!(live.accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn more_answers_than_can_be_tried_are_all_judged_and_only_sixteen_used() {
+        let live = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        let mut answers = vec![closed_port(); 16];
+        answers.push(live.address);
+        let (script, _) = Script::new(vec![answers]);
+        assert!(matches!(
+            fetcher(script, &live.certificate).fetch(ID),
+            Err(Failure::Unavailable(_))
+        ));
+        assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
+
+        let mut answers = vec!["8.8.8.8:443".parse().expect("an address"); 16];
+        answers.push("10.0.0.1:443".parse().expect("an address"));
+        let (script, _) = Script::new(vec![answers]);
+        let fetcher = Fetcher {
+            lookup: Box::new(script),
+            ..Fetcher::default()
+        };
+        assert!(matches!(fetcher.fetch(ID), Err(Failure::Refused(_))));
     }
 
     #[test]

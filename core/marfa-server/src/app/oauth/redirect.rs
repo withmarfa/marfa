@@ -162,21 +162,43 @@ pub fn check_registered(kind: AppKind, uri: &str) -> Result<(), Refused> {
 }
 
 /// Whether a request's `redirect_uri` is one the client registered: the same
-/// text, or for a registered loopback host the same URI on any port, since a
-/// native app binds an ephemeral one.
+/// text, or for a registered loopback host the same text with only the port
+/// changed, since a native app binds an ephemeral one. The comparison is of
+/// text because a browser goes where the text says: two spellings the parser
+/// makes equal are not the URI the client registered.
 pub fn is_registered(registered: &[String], requested: &str) -> bool {
     registered.iter().any(|entry| entry == requested) || {
-        let parsed = (is_plain(requested) && !requested.contains('#'))
+        let bare = (is_plain(requested) && !requested.contains('#'))
             .then(|| Url::parse(requested).ok())
             .flatten()
-            .filter(|url| url.username().is_empty() && url.password().is_none());
-        parsed.is_some_and(|requested| {
-            registered
-                .iter()
-                .filter_map(|entry| Url::parse(entry).ok())
-                .any(|entry| same_but_for_the_port(&entry, &requested))
+            .filter(|url| url.username().is_empty() && url.password().is_none())
+            .and_then(|_| without_port(requested));
+        bare.is_some_and(|bare| {
+            registered.iter().any(|entry| {
+                Url::parse(entry).is_ok_and(|url| takes_any_port(&url))
+                    && without_port(entry).is_some_and(|entry| entry == bare)
+            })
         })
     }
+}
+
+/// `uri` with its port taken out, for a URI with an authority. A colon with
+/// no digits after it is no port, so it stays.
+fn without_port(uri: &str) -> Option<String> {
+    let (scheme, rest) = uri.split_once("://")?;
+    let end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let host = match authority.rsplit_once(':') {
+        Some((host, port))
+            if !port.is_empty()
+                && port.bytes().all(|byte| byte.is_ascii_digit())
+                && (!host.starts_with('[') || host.ends_with(']')) =>
+        {
+            host
+        }
+        _ => authority,
+    };
+    Some(format!("{scheme}://{host}{tail}"))
 }
 
 /// RFC 9700 section 4.1.3 lets the port vary for "native apps using a
@@ -188,14 +210,6 @@ pub fn is_registered(registered: &[String], requested: &str) -> bool {
 /// that name. Only the name exactly: not a subdomain and not a trailing dot.
 fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
-}
-
-fn same_but_for_the_port(registered: &Url, requested: &Url) -> bool {
-    takes_any_port(registered)
-        && registered.scheme() == requested.scheme()
-        && registered.host() == requested.host()
-        && registered.path() == requested.path()
-        && registered.query() == requested.query()
 }
 
 /// `keys-and-oauth/page-origin-serialized`: scheme, lowercase host and port,
@@ -408,6 +422,41 @@ mod tests {
                 "{elsewhere}"
             );
         }
+    }
+
+    #[test]
+    fn only_the_port_may_differ_from_the_text_that_was_registered() {
+        let registered = list(&[
+            "http://127.0.0.1/callback",
+            "http://localhost/callback",
+            "http://[::1]/callback",
+        ]);
+        for requested in [
+            "http://2130706433:9/callback",
+            "http://0x7f.0.0.1:9/callback",
+            "http://127.1:9/callback",
+            "http://127.0.0.1:9/%2e/callback",
+            "http://127.0.0.1:9/./callback",
+            "http://127.0.0.1:9/a/../callback",
+            "HTTP://127.0.0.1:9/callback",
+            "http://LOCALHOST:9/callback",
+            "http://[0:0:0:0:0:0:0:1]:9/callback",
+            "http://127.0.0.1:/callback",
+        ] {
+            assert!(!is_registered(&registered, requested), "{requested}");
+        }
+        for requested in [
+            "http://127.0.0.1:9/callback",
+            "http://127.0.0.1:65535/callback",
+            "http://localhost:9/callback",
+            "http://[::1]:9/callback",
+        ] {
+            assert!(is_registered(&registered, requested), "{requested}");
+        }
+        assert!(!is_registered(
+            &registered,
+            "http://127.0.0.1:65536/callback"
+        ));
     }
 
     #[test]

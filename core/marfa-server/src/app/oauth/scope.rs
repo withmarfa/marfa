@@ -22,6 +22,9 @@ const METADATA: &str = "metadata";
 const PROFILE: &str = "profile";
 const MOST_NAME_BYTES: usize = 128;
 
+/// The platform's own roots, which the content category never reaches.
+const NOT_CONTENT: [&str; 2] = ["system", "marfa"];
+
 /// The roots a permission lives under, and the one word no publisher may use.
 /// Anything under one of these that is not a permission is no scope, so
 /// `keys.note:read` can never come to mean a type.
@@ -455,7 +458,7 @@ impl Registries {
         self.types
             .iter()
             .map(String::as_str)
-            .filter(|id| !matches!(platform_root(id), Some("system" | "marfa")))
+            .filter(|id| !platform_root(id).is_some_and(|root| NOT_CONTENT.contains(&root)))
             .collect()
     }
 
@@ -501,8 +504,8 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
 /// same code as a key.
 ///
 /// The content category goes first and every other type scope over it: a
-/// type named beside `content:read` reaches that type, and a `system` type
-/// reached by nothing else stays out. So `*:read content:read` reaches less
+/// type named beside `content:read` reaches that type, and a `system` or
+/// `marfa` type reached by nothing else stays out. So `*:read content:read` reaches less
 /// than `*:read` alone.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
     let mut types = Entries::new();
@@ -515,7 +518,9 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
         .max()
     {
         types.insert(ALL.to_string(), Value::from(verb.word()));
-        types.insert("system.*".to_string(), Value::from(Level::None.word()));
+        for root in NOT_CONTENT {
+            types.insert(format!("{root}.*"), Value::from(Level::None.word()));
+        }
     }
     let mut edges = Entries::new();
     let mut metadata = Entries::new();
@@ -908,6 +913,25 @@ mod tests {
         assert_eq!(
             level("*:read content:read", Axis::Type, "system.folder"),
             Level::None
+        );
+    }
+
+    #[test]
+    fn the_content_category_reaches_no_marfa_type_shipped_or_not() {
+        for id in ["marfa.never-shipped", "marfa.other.deeper"] {
+            assert!(!builtin::ships(id).unwrap_or(false), "{id}");
+            assert_eq!(level("content:read", Axis::Type, id), Level::None, "{id}");
+            assert_eq!(level("content:write", Axis::Type, id), Level::None, "{id}");
+            assert_eq!(
+                level(&format!("content:read {id}:read"), Axis::Type, id),
+                Level::Read,
+                "{id}"
+            );
+        }
+        // The witness: what `content:read` denies, `*:read` reaches.
+        assert_eq!(
+            level("*:read", Axis::Type, "marfa.never-shipped"),
+            Level::Read
         );
     }
 
