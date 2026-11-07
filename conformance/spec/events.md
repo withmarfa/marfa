@@ -1,33 +1,33 @@
 # Events
 
-`GET /events` is a server-sent event stream of every mutation, resumable by cursor, and outbound webhooks deliver the same events to a URL. The audit log, which records the writes the events announce, closes the chapter.
+`GET /events` is a server-sent event stream of the writes to items and edges, resumable by cursor, and outbound webhooks deliver those events to a URL, except the writes `items/bulk-fanout` holds back. The audit log, which records the writes the events announce, closes the chapter.
 
 Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 
 ## Event types
 
-Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame.
+Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame. A row names the statements that hold a write to its event. Writes that announce nothing include those of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`.
 
 <!-- event-types-table:start -->
 
-| Event                | Sent to              | When it is sent                                                                                             |
-| -------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `item.created`       | Streams and webhooks | An item is created.                                                                                         |
-| `item.updated`       | Streams and webhooks | An item is updated.                                                                                         |
-| `item.deleted`       | Streams and webhooks | An item is moved to the bin.                                                                                |
-| `item.restored`      | Streams and webhooks | An item in the bin is restored.                                                                             |
-| `item.purged`        | Streams and webhooks | A trashed item is destroyed.                                                                                |
-| `item.state_changed` | Streams and webhooks | An item moves to another lifecycle state.                                                                   |
-| `metadata.changed`   | Streams and webhooks | An item's tags or extensions change.                                                                        |
-| `edge.created`       | Streams and webhooks | An edge is created.                                                                                         |
-| `edge.updated`       | Streams and webhooks | An edge's properties change, or one of its ends moves to another item.                                      |
-| `edge.deleted`       | Streams and webhooks | An edge is deleted.                                                                                         |
-| `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                 |
-| `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live. |
-| `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                            |
-| `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                    |
-| `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                         |
-| `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                              |
+| Event                | Sent to              | When it is sent                                                                                                                                                                                                                                                                                                  |
+| -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item.created`       | Streams and webhooks | A write creates an item (`events/create-announced`).                                                                                                                                                                                                                                                             |
+| `item.updated`       | Streams and webhooks | A write to an item, however little it changes (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).                                                                                       |
+| `item.deleted`       | Streams and webhooks | An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).                                                                          |
+| `item.restored`      | Streams and webhooks | An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).                                                                                                                                                                                                                      |
+| `item.purged`        | Streams and webhooks | An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).                                                                                                                                                                        |
+| `item.state_changed` | Streams and webhooks | A transition moves the item it names to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`). |
+| `metadata.changed`   | Streams and webhooks | A tag operation commits for an item, whether or not it changes the tags (`items/tag-announced`), or an extension namespace is written or deleted (`items/extension-announced`).                                                                                                                                  |
+| `edge.created`       | Streams and webhooks | An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).                                                                                                                                                                    |
+| `edge.updated`       | Streams and webhooks | An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).                                                                                                                                                  |
+| `edge.deleted`       | Streams and webhooks | An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).                                                                                                                                                                                  |
+| `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                                                                                                                                                                                                                      |
+| `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.                                                                                                                                                                                                      |
+| `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                                                                                                                                                                                                                                 |
+| `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                                                                                                                                                                                                                         |
+| `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                                                                                                                                                                                                                              |
+| `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                                                                                                                                                                                                                                   |
 
 <!-- event-types-table:end -->
 
@@ -517,7 +517,7 @@ The server MUST NOT carry `purged_with` on an `edge.deleted` for an edge deleted
 
 When a bulk action transitions an item, the server MUST send `item.state_changed` for it, to a live stream and on a replay.
 
-**Tests:** `sync/replay.test.ts › announces what a bulk-action job changes to a live stream and to a replay`.
+**Tests:** `sync/replay.test.ts › announces what a bulk-action job changes to a live stream and to a replay`, `compliance/events-contract.test.ts › announces a transition as item.state_changed, single or by bulk action, with item.deleted or item.restored when it crosses the bin`.
 
 ## Writes and their events
 
@@ -578,6 +578,70 @@ When a retention job purges an item, the server MUST send `edge.deleted` for eac
 When a request repeats under an `Idempotency-Key` the server kept the answer for, the server MUST NOT send a second event for it, on the create, update, edge create and delete operations.
 
 **Tests:** `sync/idempotency.test.ts › announces nothing for a repeated request under a key, on the create, update, edge create and delete doors`.
+
+### `events/create-announced`
+
+When a write creates an item, the server MUST announce `item.created` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces item.created for an item POST /items or a POST /items/bulk entry creates`.
+
+### `events/update-announced`
+
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key, a `POST /items/bulk` entry that lands on an item, or a bulk `update_properties` or `update_occurred_at` action writes an item, the server MUST announce `item.updated` for it, however little the write changes.
+
+**Reason:** a write that changes nothing still ends in a frame, so a client sees the item as the write left it.
+
+**Tests:** `compliance/events-contract.test.ts › announces item.updated once for each write to an item, however little it changes`.
+
+### `events/update-edges-only-announced`
+
+When `PATCH /items/{id}` carries only `edges`, the server MUST announce `item.updated` for the item, carrying the version the item held before the write (`versions/update-edges-only`).
+
+**Tests:** `compliance/events-contract.test.ts › announces item.updated at the version it held for a PATCH that carries only edges`.
+
+### `events/delete-no-state-change`
+
+When `DELETE /items/{id}`, `POST /items/trash` or `POST /items/summaries/{id}/trash` moves an item into the bin, the server MUST NOT announce `item.state_changed` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.deleted and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
+
+### `events/restore-no-state-change`
+
+When `POST /items/{id}/restore` or `POST /items/summaries/{id}/restore` brings an item back, the server MUST NOT announce `item.state_changed` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.deleted and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
+
+### `events/owner-trash-announced`
+
+When `POST /items/summaries/{id}/trash`, `POST /items/summaries/{id}/restore`, `POST /items/summaries/{id}/purge` or `POST /trash/empty` moves or purges an item, the server MUST announce `item.deleted`, `item.restored` or `item.purged` for it.
+
+**Tests:** `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
+
+### `events/cascade-revoke-announced`
+
+When a cascade moves a `system.*` item to `revoked`, the server MUST announce `item.deleted` for it, with `state` `revoked`.
+
+**Tests:** `compliance/cascade-marks.test.ts › marks no row a cascade revokes rather than trashes`.
+
+### `events/edge-bulk-announced`
+
+When a `POST /edges/bulk` entry creates an edge or writes the edge that holds its triple, the server MUST announce `edge.created` or `edge.updated` for it, however little the write changes.
+
+**Tests:** `compliance/events-contract.test.ts › announces each edge a POST /edges/bulk entry creates or writes, however little it changes`.
+
+### `events/edge-inline-announced`
+
+When the `edges` of `POST /items`, `POST /items/bulk` or `PATCH /items/{id}` create or remove an edge, the server MUST announce `edge.created` or `edge.deleted` for it.
+
+**Tests:** `compliance/events-contract.test.ts › announces each edge the edges of an item write create or remove`, `› announces each edge the edges of a POST /items/bulk entry create or remove`.
+
+### `events/settings-silent`
+
+When a write changes a type, an edge type, a key, the instance's configuration or a webhook subscription, the server MUST NOT send an event for it.
+
+**Reason:** every event names an item or an edge.
+
+**Tests:** `compliance/events-silent-writes.test.ts › sends nothing for a write to a type, an edge type, a key, the configuration or a webhook, and sends the item write after them`.
 
 ## Edge events and who is told
 

@@ -1226,7 +1226,7 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 ### `items/transition-announced`
 
-When a transition moves an item to another state, the server MUST announce `item.state_changed` for it.
+When a transition moves the item it names to another state, the server MUST announce `item.state_changed` for that item.
 
 **Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
 
@@ -1544,7 +1544,7 @@ When `POST /items/{id}/purge` names an item in the bin, the server MUST delete i
 
 When the server purges an item, the server MUST announce `item.purged` with the item as it stood, its cascade marks included.
 
-**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/cascade-marks.test.ts › names the row whose trash took it on the purge of a row a cascade trashed`, `compliance/cascade-marks.test.ts › names the row whose trash took it on each row a bulk purge purges, only to a key that may read its type`.
+**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/cascade-marks.test.ts › names the row whose trash took it on the purge of a row a cascade trashed`, `compliance/cascade-marks.test.ts › names the row whose trash took it on each row a bulk purge purges, only to a key that may read its type`, `compliance/events-contract.test.ts › announces each item a bulk purge takes as item.purged`.
 
 ### `items/purge-edges`
 
@@ -1828,11 +1828,11 @@ When a bulk operation writes an item or an edge, the server MUST write its event
 
 ### `items/bulk-fanout`
 
-When `POST /items/bulk`, `POST /edges/bulk` or `POST /items/bulk-actions` names no `enable_fanout: true`, the server MUST NOT deliver its writes to outbound webhooks.
+When `POST /items/bulk`, `POST /edges/bulk` or `POST /items/bulk-actions` names no `enable_fanout: true`, or `POST /types/{id}/move` gives an item the type `to`, the server MUST NOT deliver those writes to outbound webhooks.
 
-**Reason:** one call writes thousands of rows, and a delivery for each to each subscriber is not what the caller asked for.
+**Reason:** one call writes thousands of rows, and a delivery for each to each subscriber is not what the caller asked for. A type move takes no `enable_fanout`, so the items it moves reach a stream (`types/move-announced`) and no webhook.
 
-**Tests:** `compliance/webhooks.test.ts › calls out for a bulk write only when the call asks for fan-out`, `› calls out for a bulk edge write only when the call asks for fan-out`, `› calls out for a bulk action only when the call asks for fan-out`.
+**Tests:** `compliance/webhooks.test.ts › calls out for a bulk write only when the call asks for fan-out`, `› calls out for a bulk edge write only when the call asks for fan-out`, `› calls out for a bulk action only when the call asks for fan-out`, `compliance/type-move.test.ts › announces each moved item to a stream and delivers it to no webhook, while the same webhook delivers a later write`.
 
 ### `items/single-write-fanout`
 
@@ -2152,9 +2152,11 @@ When a tag operation writes an item's tags, the server MUST move the item's `upd
 
 ### `items/tag-announced`
 
-When a tag operation writes an item's tags, the server MUST announce `metadata.changed`.
+When `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata` or a bulk `update_tags` action commits for an item, the server MUST announce `metadata.changed`, whether or not the item's tags change.
 
-**Tests:** `compliance/events-contract.test.ts › announces metadata.changed on a tag write`.
+**Reason:** such a write still moves the item's `updated_at` (`items/tag-updated-at`), and a client learns the new time from the frame.
+
+**Tests:** `compliance/events-contract.test.ts › announces metadata.changed on a tag write`, `› announces metadata.changed for each tag write that changes nothing`.
 
 ### `items/extension-replace`
 
