@@ -230,6 +230,8 @@ pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
     }
 }
 
+const NUL_REFUSED: &str = "Must not contain a null byte (U+0000)";
+
 /// Whether the properties hold what the fields, by name, declare: every value
 /// of the kind its field names, and with `complete`, every required one.
 pub fn properties(
@@ -237,7 +239,14 @@ pub fn properties(
     properties: &Map<String, Value>,
     complete: bool,
 ) -> Result<(), RuleError> {
-    let mut faults = Vec::new();
+    let mut faults: Vec<_> = properties
+        .iter()
+        .filter(|(name, value)| {
+            !fields.contains_key(name.as_str())
+                && value.as_str().is_some_and(|text| text.contains('\0'))
+        })
+        .map(|(name, _)| fault(name, field_code::INVALID_VALUE, NUL_REFUSED))
+        .collect();
     for (name, definition) in fields {
         let required = definition.get("required").and_then(Value::as_bool) == Some(true);
         let Some(value) = properties.get(*name) else {
@@ -295,7 +304,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
                 format!("Must contain at most {max} UTF-16 code units"),
             ))
         } else if text.contains('\0') {
-            invalid("Must not contain a null byte (U+0000)")
+            invalid(NUL_REFUSED)
         } else {
             None
         }
