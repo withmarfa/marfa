@@ -47,8 +47,8 @@ fn problem_answer(problem: &Problem) -> Answer {
     Ok(json_answer(status, &problem.to_json()))
 }
 
-/// Refuses a form another site's page posted. A form that says nothing of its
-/// origin came from no browser, which a session's cookie cannot ride on.
+/// Refuses a form another site's page posted. A browser says where a post
+/// came from, so a form that says nothing came from no page at all.
 fn require_own_form(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     match origin::said_by_form(headers, &form_origins(app)) {
         Source::Elsewhere => Err(origin::not_our_page()),
