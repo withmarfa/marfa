@@ -116,11 +116,16 @@ impl Reader<'_> {
     fn secret(&mut self, name: &str, min_length: usize) -> Option<String> {
         let text = self.environment.get(name)?;
         if text != text.trim() {
-            self.refuse(format!("{name} must have no whitespace around it"));
+            self.refuse(format!(
+                "{name} has whitespace around it, which would be part of the secret; remove it"
+            ));
             return None;
         }
         if text.chars().count() < min_length {
-            self.refuse(format!("{name} must be at least {min_length} characters"));
+            self.refuse(format!(
+                "{name} must be at least {min_length} characters; generate one with \
+                 `openssl rand -hex {min_length}`"
+            ));
             return None;
         }
         Some(text.to_string())

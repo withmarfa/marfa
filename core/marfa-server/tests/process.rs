@@ -235,6 +235,21 @@ fn a_stop_clears_a_hold_finishes_the_write_and_exits_cleanly() {
 }
 
 #[test]
+fn a_request_still_open_at_the_end_of_a_stop_exits_with_status_1() {
+    let dir = TempDir::new().unwrap();
+    let mut server = Server::start(dir.path());
+    let mut open = UnixStream::connect(&server.socket).unwrap();
+    let head = "POST /keys HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\
+                Content-Length: 100\r\n\r\n{";
+    open.write_all(head.as_bytes()).unwrap();
+    thread::sleep(Duration::from_millis(200));
+
+    server.signal("-TERM");
+    assert_eq!(server.wait().code(), Some(1));
+    assert!(!server.socket.exists());
+}
+
+#[test]
 fn an_interrupt_stops_it_as_a_terminate_does() {
     let dir = TempDir::new().unwrap();
     let mut server = Server::start(dir.path());
