@@ -99,11 +99,14 @@ mod tests {
         map
     }
 
+    /// What it shows, the peer, the trust, the headers and the answer.
+    type Case<'a> = (&'a str, &'a str, Trust, &'a [(&'a str, &'a str)], &'a str);
+
     #[test]
     fn each_kind_of_trust_answers_as_it_should() {
         let inner = "10.0.0.0/8";
         #[rustfmt::skip]
-        let table: &[(&str, &str, Trust, &[(&str, &str)], &str)] = &[
+        let table: &[Case] = &[
             ("no trust ignores a forwarded address", "192.0.2.1", Trust::Nothing, &[(XFF, "203.0.113.9")], "192.0.2.1"),
             ("no trust ignores an edge's header", "192.0.2.1", Trust::Nothing, &[(EDGE, "203.0.113.9")], "192.0.2.1"),
             ("no trust normalizes a mapped peer", "::ffff:192.0.2.1", Trust::Nothing, &[], "192.0.2.1"),
@@ -199,14 +202,11 @@ mod tests {
     fn held_in(values: &[Vec<u8>]) -> Vec<IpAddr> {
         values
             .iter()
+            .map(|value| String::from_utf8_lossy(value))
             .flat_map(|value| {
-                String::from_utf8_lossy(value)
-                    .into_owned()
-                    .split(',')
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
+                let entries = value.split(',').map(|entry| entry.trim().parse::<IpAddr>());
+                entries.flatten().collect::<Vec<_>>()
             })
-            .filter_map(|entry| entry.trim().parse::<IpAddr>().ok())
             .map(|address| address.to_canonical())
             .collect()
     }
