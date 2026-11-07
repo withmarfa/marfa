@@ -32,6 +32,8 @@ struct Problem {
     message: String,
     /// The words with the position written in them, as a person reads them.
     shown: String,
+    /// The other elements of the same array found wrong.
+    also: Vec<Problem>,
 }
 
 impl Problem {
@@ -42,11 +44,31 @@ impl Problem {
             code,
             shown: message.clone(),
             message,
+            also: Vec::new(),
         }
+    }
+
+    fn all_of(found: Vec<Problem>) -> Option<Problem> {
+        let mut found = found.into_iter();
+        let mut first = found.next()?;
+        first.also.extend(found);
+        Some(first)
+    }
+
+    /// The problem and each one found beside it, in order.
+    fn flattened(mut self) -> Vec<Problem> {
+        let also = std::mem::take(&mut self.also);
+        std::iter::once(self)
+            .chain(also.into_iter().flat_map(Problem::flattened))
+            .collect()
     }
 
     /// The same problem found in the member `member` of entry `index`.
     fn in_entry(mut self, index: usize, member: Option<&str>) -> Problem {
+        self.also = std::mem::take(&mut self.also)
+            .into_iter()
+            .map(|problem| problem.in_entry(index, member))
+            .collect();
         self.at.insert(0, index.to_string());
         let label = match member {
             Some(member) => {
@@ -61,6 +83,10 @@ impl Problem {
 
     /// The same problem found in element `index`.
     fn in_element(mut self, index: usize) -> Problem {
+        self.also = std::mem::take(&mut self.also)
+            .into_iter()
+            .map(|problem| problem.in_element(index))
+            .collect();
         self.at.insert(0, index.to_string());
         self.shown = format!("Item {index}: {}", self.shown);
         self
@@ -268,7 +294,7 @@ pub fn properties(
             .ok_or_else(|| {
                 RuleError::decoding(format!("the held field {name} declares no type"))
             })?;
-        if let Some(problem) = field(kind, definition, value)? {
+        for problem in field(kind, definition, value)?.map_or(Vec::new(), Problem::flattened) {
             let path = std::iter::once(*name)
                 .chain(problem.at.iter().map(String::as_str))
                 .collect::<Vec<_>>()
@@ -383,7 +409,7 @@ fn in_range(definition: &Value, number: f64) -> Option<Problem> {
         })
 }
 
-/// The first element of an array that is not a value of the field's
+/// Each element of an array that is not a value of the field's
 /// `items_type`, judged as a field of that type judges a value. An
 /// `items_type` that names no field type leaves the elements unchecked, as the
 /// server leaves them.
@@ -398,6 +424,7 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, Rul
         return entries(members, values);
     }
     let element = serde_json::json!({ "enum_values": definition.get("enum_values") });
+    let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
         match field(items, &element, value) {
             // `field` fails only on a kind it does not know.
@@ -407,53 +434,64 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, Rul
             }) => return Ok(None),
             checked => {
                 if let Some(problem) = checked? {
-                    return Ok(Some(problem.in_element(index)));
+                    found.push(problem.in_element(index));
                 }
             }
         }
     }
-    Ok(None)
+    Ok(Problem::all_of(found))
 }
 
-/// The first entry of a list that is not an object with at least one member,
-/// only members the field declares, every member it requires and a value for
-/// each that a field of the member's definition takes. A member with no value
-/// is left out, and a `null` is no value.
+/// Each entry of a list that is not an object with at least one member, only
+/// members the field declares, every member it requires and a value for each
+/// that a field of the member's definition takes. A member with no value is
+/// left out, and a `null` is no value.
 fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<Problem>, RuleError> {
+    let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
-        let refused = |code, message: String, member: Option<&str>| {
-            Ok(Some(Problem::new(code, message).in_entry(index, member)))
-        };
-        let Some(entry) = value.as_object() else {
-            return refused(field_code::INVALID_TYPE, "Expected object".into(), None);
-        };
-        if entry.is_empty() {
-            return refused(
-                field_code::EMPTY,
-                "Must have at least one member".into(),
-                None,
-            );
-        }
-        if let Some(name) = entry.keys().find(|name| !members.contains_key(*name)) {
-            return refused(
-                field_code::UNKNOWN_MEMBER,
-                "Is not a member of the entry".into(),
-                Some(name),
-            );
-        }
-        for (name, member) in members {
-            let Some(held) = entry.get(name) else {
-                if member.get("required").and_then(Value::as_bool) == Some(true) {
-                    return refused(field_code::REQUIRED, "Required".into(), Some(name));
-                }
-                continue;
-            };
-            let kind = member.get("type").and_then(Value::as_str).ok_or_else(|| {
-                RuleError::decoding(format!("the held member {name} declares no type"))
-            })?;
-            if let Some(problem) = field(kind, member, held)? {
-                return Ok(Some(problem.in_entry(index, Some(name))));
+        found.extend(entry(members, index, value)?);
+    }
+    Ok(Problem::all_of(found))
+}
+
+/// The first thing wrong with one entry of a list.
+fn entry(
+    members: &Map<String, Value>,
+    index: usize,
+    value: &Value,
+) -> Result<Option<Problem>, RuleError> {
+    let refused = |code, message: String, member: Option<&str>| {
+        Ok(Some(Problem::new(code, message).in_entry(index, member)))
+    };
+    let Some(entry) = value.as_object() else {
+        return refused(field_code::INVALID_TYPE, "Expected object".into(), None);
+    };
+    if entry.is_empty() {
+        return refused(
+            field_code::EMPTY,
+            "Must have at least one member".into(),
+            None,
+        );
+    }
+    if let Some(name) = entry.keys().find(|name| !members.contains_key(*name)) {
+        return refused(
+            field_code::UNKNOWN_MEMBER,
+            "Is not a member of the entry".into(),
+            Some(name),
+        );
+    }
+    for (name, member) in members {
+        let Some(held) = entry.get(name) else {
+            if member.get("required").and_then(Value::as_bool) == Some(true) {
+                return refused(field_code::REQUIRED, "Required".into(), Some(name));
             }
+            continue;
+        };
+        let kind = member.get("type").and_then(Value::as_str).ok_or_else(|| {
+            RuleError::decoding(format!("the held member {name} declares no type"))
+        })?;
+        if let Some(problem) = field(kind, member, held)? {
+            return Ok(Some(problem.in_entry(index, Some(name))));
         }
     }
     Ok(None)
@@ -752,6 +790,16 @@ mod tests {
         ] {
             assert_eq!(url_value(text), None, "{text:?}");
         }
+    }
+
+    #[test]
+    fn every_wrong_element_of_an_array_is_named() {
+        let definition = serde_json::json!({ "type": "array", "items_type": "string" });
+        let declared = BTreeMap::from([("to", &definition)]);
+        let sent = serde_json::json!({ "to": [42, "fine", { "x": 1 }] });
+        let refused = properties(&declared, sent.as_object().unwrap(), false).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["to.0", "to.2"]);
     }
 
     #[test]
