@@ -98,11 +98,21 @@ case "$TARGET:$(uname -s)-$(uname -m)" in
   aarch64-apple-darwin:Darwin-arm64 | x86_64-unknown-linux-musl:Linux-x86_64 | aarch64-unknown-linux-musl:Linux-aarch64) runs_here=1 ;;
   *) runs_here= ;;
 esac
+# Rosetta, which runs x86_64 programs in a container on an Apple silicon Mac, cannot
+# start a process whose address space is limited (RLIMIT_AS, which the reader sets on
+# Linux), and says so: that run proves nothing about the program, and verify.sh runs the
+# program under QEMU, which does not apply the limit.
 if [ -n "$runs_here" ]; then
-  "$shipped" read "$fault_file" >/dev/null 2>&1 || die "the shipped program refused a plain text file that names a fault"
-  if "$proof" read "$fault_file" >/dev/null 2>&1; then
-    die "the proof program ignored a fault, so it proves nothing"
-  fi
+  shipped_said=$("$shipped" read "$fault_file" 2>&1) && shipped_ok=1 || shipped_ok=
+  case "$shipped_said" in
+    *"rosetta error"*) echo "program: Rosetta cannot run the reader's address-space limit; not run here" ;;
+    *)
+      [ -n "$shipped_ok" ] || die "the shipped program refused a plain text file that names a fault: $shipped_said"
+      if "$proof" read "$fault_file" >/dev/null 2>&1; then
+        die "the proof program ignored a fault, so it proves nothing"
+      fi
+      ;;
+  esac
 fi
 rm -f "$fault_file"
 

@@ -23,6 +23,11 @@
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.
+# MARFA_VERIFY_MEMORY   a memory limit in bytes added to every run that sets none. Needed
+#                       to run linux/amd64 on an Apple silicon machine: Rosetta cannot
+#                       start a program whose address space is limited to the default
+#                       1 GiB (it stops with "rosetta error: mmap_anonymous_rw"), and
+#                       2 GiB is enough. Native machines leave it unset.
 # MARFA_VERIFY_IMAGE    the name of the container image to make (default
 #                       marfa-enrichment-verify). The script removes it at the end.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -158,6 +163,9 @@ fi
 prog() {
   local bin=$1
   shift
+  if [ -n "${MARFA_VERIFY_MEMORY:-}" ]; then
+    case " $* " in *" --max-memory "*) ;; *) set -- "$@" --max-memory "$MARFA_VERIFY_MEMORY" ;; esac
+  fi
   if [ "$KIND" = mac ]; then
     env -i "$OUT/$bin" "$@"
   else
@@ -301,7 +309,10 @@ fault_cases() {
   check fault-fork 0 "$fork_wants" marfa-enrichment-read-proof read "$FILES/faults/fork.txt"
   DOCKER_EXTRA=''
   [ -e "$SCRATCH/written.txt" ] && echo "NOTE the reader wrote $SCRATCH/written.txt" | tee -a "$REPORT"
-  check fault-report 0 "descriptors=0,1,2|environment=|directory=/" marfa-enrichment-read-proof read "$FILES/faults/report.txt"
+  # macOS adds __CF_USER_TEXT_ENCODING to every process's environment, and its sandbox
+  # denies even the working directory's name.
+  if [ "$KIND" = mac ]; then report_wants="descriptors=0,1,2"; else report_wants="descriptors=0,1,2|environment= |directory=/|no_new_privs=1"; fi
+  check fault-report 0 "$report_wants" marfa-enrichment-read-proof read "$FILES/faults/report.txt"
 }
 
 # The memory limit against real pages.
