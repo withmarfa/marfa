@@ -7712,17 +7712,17 @@ When `folders status` flags a file `encoding` or `unreadable` and the file does 
 
 ### `folders/report-held-files`
 
-When `folders status` flags a file `empty`, `addition`, `outside_query`, `edges` or `dead`, a device MUST count that file in its report under `held_file`.
+When `folders status` flags a file with a flag other than `removal`, `query`, `gone`, `refused`, `default_edge_refused`, `credential_refused`, `encoding` or `unreadable`, a device MUST count that file in its report under `held_file`.
 
-**Reason:** this list is the flags a fixture asserts, and states nothing about any other flag.
+**Reason:** a file held for any cause the other statements do not name is one the person still has to act on. The fixtures below witness `empty`, `addition`, `outside_query`, `edges` and `dead`; `name`, `lost` and `lists` have none.
 
 **Tests:** `device/folder-health.test.ts › counts an empty file as a held file, and a file the query leaves alone as no problem`, `› keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`, `device/folders-additions.test.ts › is held, named apart from a removal in status, and its files stay on the disk`, `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`, `device/folders-held-links.test.ts › resolves a body link once its target is created on this machine, and asks nothing while the folder is quiet`.
 
 ### `folders/report-unproblematic-files`
 
-When `folders status` flags a file `removal` or `query`, a device MUST NOT count that file in its report under any problem code.
+When `folders status` flags a file `removal`, `query` or `gone`, a device MUST NOT count that file in its report under any problem code.
 
-**Reason:** a removal held back is counted by `folders/report-paused-removals`, and a file the query leaves alone is not a fault.
+**Reason:** a removal held back is counted by `folders/report-paused-removals`, a file the query leaves alone is not a fault, and a file whose item is already in the bin only waits for a scan to let it go.
 
 **Tests:** `device/folder-health.test.ts › counts the removals a large removal holds on disk or from a pull as paused removals and no problem`, `› counts an empty file as a held file, and a file the query leaves alone as no problem`, `› counts no problem for a file whose item is already in the bin`.
 
@@ -7770,7 +7770,7 @@ When a pass reports `root_gone`, a device MUST report the problem `root_gone` wi
 
 While a device cannot use or cannot write a folder's settings file and the folder's first sync is not waiting, a device MUST report `settings_invalid` with a count of 1.
 
-**Tests:** `device/folder-health.test.ts › counts one settings_invalid while the settings file is refused`, `› counts one settings_invalid while a pull cannot write the settings file, and none once it can`.
+**Tests:** `device/folder-health.test.ts › counts one settings_invalid while the settings file is refused`, `› counts one settings_invalid while a pull cannot write the settings file, and none once it can`, `› counts no settings_invalid for a refused settings file while the first sync waits`.
 
 ### `folders/report-full-success`
 
