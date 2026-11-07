@@ -266,9 +266,9 @@ The server MUST answer a page of at most `limit` items, 50 when `limit` is absen
 
 ### `views/items-limit-range`
 
-If a key sends a `limit` below 1 or above 200, then the server MUST answer `400 validation_error`.
+If `GET /views/{id}/items` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/views-items.test.ts › answers 50 items without a limit and refuses a limit above 200 or below 1`.
+**Tests:** `compliance/views-items.test.ts › answers 50 items without a limit and refuses a limit above 200 or below 1`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `views/items-cursor`
 

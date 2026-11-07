@@ -594,9 +594,9 @@ When `GET /connectors/{id}/deliveries` names no `limit`, the server MUST list at
 
 ### `inbound-webhooks/deliveries-limit-bounds`
 
-If `GET /connectors/{id}/deliveries` names a `limit` outside 1 to 200, then the server MUST answer `400 validation_error`.
+If `GET /connectors/{id}/deliveries` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/inbound-webhooks.test.ts › lists oldest first by cursor, narrowed by state and endpoint`.
+**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/inbound-webhooks.test.ts › lists oldest first by cursor, narrowed by state and endpoint`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `inbound-webhooks/deliveries-paged`
 

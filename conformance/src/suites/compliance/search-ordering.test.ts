@@ -187,16 +187,17 @@ describe("search ordering", () => {
   });
 
   it("refuses a sort or direction it does not take", async () => {
-    for (const bad of [
-      "sort=title",
-      "sort=properties.Title",
-      "sort=properties.a.b",
-      "sort=updated",
-      "direction=up",
-    ]) {
+    for (const [bad, path] of [
+      ["sort=title", "sort"],
+      ["sort=properties.Title", "sort"],
+      ["sort=properties.a.b", "sort"],
+      ["sort=updated", "sort"],
+      ["direction=up", "direction"],
+    ] as const) {
       const res = await client.rawRequest<unknown>(`/search?q=${word}&${bad}`);
       expect(res.status, bad).toBe(400);
       expect(res.error?.error.code, bad).toBe("validation_error");
+      expect(res.error?.error.details?.errors, bad).toMatchObject([{ path }]);
     }
     // The witness: the same search without the bad key is answered.
     expect((await client.search(word)).status).toBe(200);
@@ -337,6 +338,50 @@ describe("search cursor", () => {
       cursor: cursor ?? undefined,
     });
     expect(same.status).toBe(200);
+  });
+
+  it("refuses a cursor under any other query, type, state, list or time bound", async () => {
+    const first = await client.rawRequest<{ next_cursor: string | null }>(
+      `/search?q=${word}&limit=2`,
+    );
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const cursor = encodeURIComponent(first.data.next_cursor!);
+    const instant = "2000-01-01T00:00:00.000Z";
+    for (const changed of [
+      `q=${word}%20other`,
+      `q=${word}&type=core.note`,
+      `q=${word}&state=archived`,
+      `q=${word}&include=system`,
+      `q=${word}&tags=${encodeURIComponent(`tag-${ctx.runId}`)}`,
+      `q=${word}&filter=${encodeURIComponent(`source neq "other"`)}`,
+      `q=${word}&occurred_after=${instant}`,
+      `q=${word}&occurred_before=${instant}`,
+    ]) {
+      // The witness: the request is one the door takes without the cursor.
+      const fresh = await client.rawRequest(`/search?${changed}&limit=2`);
+      expect(fresh.status, changed).toBe(200);
+      const res = await client.rawRequest(
+        `/search?${changed}&limit=2&cursor=${cursor}`,
+      );
+      expect(res.status, changed).toBe(400);
+      expect(res.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("continues a cursor under another limit", async () => {
+    const first = await client.rawRequest<{
+      data: { item: { id: string } }[];
+      next_cursor: string | null;
+    }>(`/search?q=${word}&limit=1`);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const res = await client.rawRequest<{
+      data: { item: { id: string } }[];
+    }>(
+      `/search?q=${word}&limit=2&cursor=${encodeURIComponent(first.data.next_cursor!)}`,
+    );
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    const all = await ids();
+    expect(res.data.data.map((hit) => hit.item.id)).toEqual(all.slice(1, 3));
   });
 
   it("continues a cursor whether the default order is spelled out or left out", async () => {
