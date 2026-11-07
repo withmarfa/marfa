@@ -17,9 +17,9 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 use super::access::{Caller, Level, Permission};
-use super::{edges, items};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use super::{edges, items};
 use crate::db::Write;
 
 pub const MAX_KEY_CHARACTERS: usize = 255;
