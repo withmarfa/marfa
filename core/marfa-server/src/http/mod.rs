@@ -21,7 +21,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{MatchedPath, Request};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
@@ -55,6 +55,35 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     };
     response.extensions_mut().insert(Unmatched);
     response
+}
+
+/// The doors `X-Marfa-Reach` may name, as their routes are written.
+const REACH_DOORS: [&str; 9] = [
+    "/items",
+    "/items/{id}",
+    "/items/{id}/edges",
+    "/edges",
+    "/edges/{id}",
+    "/types",
+    "/edge-types",
+    "/keys/current",
+    "/events",
+];
+
+async fn reach_where_taken(request: Request, next: Next) -> Response {
+    let takes_it = request
+        .extensions()
+        .get::<MatchedPath>()
+        .is_some_and(|route| REACH_DOORS.contains(&route.as_str()));
+    if request.method() == Method::GET
+        && request.headers().contains_key("x-marfa-reach")
+        && !takes_it
+    {
+        return refusal_answer(&Refusal::validation(
+            "No operation at this path takes X-Marfa-Reach.",
+        ));
+    }
+    next.run(request).await
 }
 
 fn key_doors(app: Arc<App>) -> Routes {
@@ -130,6 +159,7 @@ fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
     routes
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
+        .route_layer(from_fn(reach_where_taken))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))

@@ -95,7 +95,7 @@ impl Reader<'_, '_> {
         let more = page.len() as i64 > limit;
         page.truncate(limit as usize);
         let next = match page.last().filter(|_| more) {
-            Some(snapshot) => Value::from(cursor_of(&row.id, snapshot.version)).to_string(),
+            Some(snapshot) => Value::from(cursor_of(snapshot.version)).to_string(),
             None => "null".to_string(),
         };
         let data: Vec<String> = page
@@ -109,23 +109,19 @@ impl Reader<'_, '_> {
     }
 }
 
-fn cursor_of(item_id: &str, version: i64) -> String {
-    hex::encode(format!("versions\0{item_id}\0{version}"))
+fn cursor_of(version: i64) -> String {
+    hex::encode(format!("versions\0{version}"))
 }
 
-fn version_at(item_id: &str, cursor: &str) -> Result<i64> {
+fn version_at(cursor: &str) -> Result<i64> {
     let refused = || Refusal::validation("The cursor does not belong to this listing.");
     let text = hex::decode(cursor)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(refused)?;
-    let mut parts = text.split('\0');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("versions"), Some(id), Some(version), None) if id == item_id => {
-            version.parse().map_err(|_| refused())
-        }
-        _ => Err(refused()),
-    }
+    text.strip_prefix("versions\0")
+        .and_then(|version| version.parse().ok())
+        .ok_or_else(refused)
 }
 
 /// What `GET /items/{id}` adds to the item.
@@ -162,7 +158,7 @@ pub async fn history(
     reading(app, caller, move |read| {
         let row = read.row(&id)?;
         let after = match cursor.as_deref() {
-            Some(cursor) => version_at(&id, cursor)?,
+            Some(cursor) => version_at(cursor)?,
             None => 0,
         };
         read.history_page(&row, after, limit)

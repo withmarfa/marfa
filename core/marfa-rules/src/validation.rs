@@ -187,21 +187,18 @@ pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(),
             "A property name must not be empty",
         ));
     }
-    let both: Vec<&str> = cleared
-        .iter()
-        .filter(|name| set.contains_key(*name))
-        .map(String::as_str)
-        .collect();
-    if !both.is_empty() {
-        let message = format!(
-            "A property can't be both set and cleared: {}",
-            both.join(", ")
-        );
-        faults.push((
-            message.clone(),
-            FieldError::new("clear_properties", field_code::SET_AND_CLEARED, message),
-        ));
-    }
+    faults.extend(
+        cleared
+            .iter()
+            .filter(|name| set.contains_key(*name))
+            .map(|name| {
+                fault(
+                    name,
+                    field_code::SET_AND_CLEARED,
+                    "A property can't be both set and cleared",
+                )
+            }),
+    );
     refuse(Code::ValidationError, faults)
 }
 

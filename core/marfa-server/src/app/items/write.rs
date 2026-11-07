@@ -180,10 +180,15 @@ pub fn ruled(error: RuleError) -> Refusal {
         Rule::UnknownType => Code::UnknownType,
         _ => Code::ValidationError,
     };
+    let named_by = if code == Code::InvalidProperties {
+        "field"
+    } else {
+        "path"
+    };
     let errors: Vec<Value> = error
         .fields
         .iter()
-        .map(|field| json!({ "field": field.path, "message": field.message }))
+        .map(|field| json!({ named_by: field.path, "message": field.message }))
         .collect();
     let refusal = Refusal::new(code, error.message);
     if errors.is_empty() {
@@ -373,6 +378,7 @@ impl Job<'_, '_, '_> {
     /// Whether the caller may write items of `type_id` through an item door,
     /// which no caller may for a `system.*` type.
     fn type_gate(&self, type_id: &str) -> Result<()> {
+        self.note(Need::Reach);
         self.note(Need::Type {
             name: type_id.to_string(),
             write: true,

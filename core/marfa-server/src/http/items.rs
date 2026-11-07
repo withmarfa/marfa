@@ -9,9 +9,10 @@ use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::Response;
+use marfa_rules::error::{RuleError, field_code};
 use marfa_rules::{names, time, validation};
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::answer::{Answer, Stopped, refusal_body, text_answer};
 use super::body::{Bag, JsonBody, ReadBody, only_declared};
@@ -238,7 +239,10 @@ fn check_item_id(id: &str) -> Result<()> {
 }
 
 fn invalid_field(field: &str, message: impl Into<String>) -> Refusal {
-    Refusal::validation(message.into()).with_detail("field", field)
+    let message = message.into();
+    Refusal::validation(message.clone())
+        .with_detail("field", field)
+        .with_detail("errors", json!([{ "path": field, "message": message }]))
 }
 
 fn text_of(body: &Map<String, Value>, field: &str) -> Result<Option<String>> {
@@ -383,6 +387,21 @@ fn settle_of(uri: &Uri) -> Result<Settle> {
     }
 }
 
+fn cleared_refusal(error: RuleError) -> Refusal {
+    let both: Vec<String> = error
+        .fields
+        .iter()
+        .filter(|field| field.code == field_code::SET_AND_CLEARED)
+        .map(|field| field.path.clone())
+        .collect();
+    let refusal = ruled(error);
+    if both.is_empty() {
+        refusal
+    } else {
+        refusal.with_detail("clear_properties", both)
+    }
+}
+
 fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
     let sent = body.object(Bag::Properties)?;
     if !sent.contains_key("version") {
@@ -420,11 +439,9 @@ fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
              `source_id`, or `retype` is required.",
         ));
     }
-    if let Some(properties) = &properties {
-        validation::cleared_names(&clear, properties).map_err(ruled)?;
-    } else {
-        validation::cleared_names(&clear, &Map::new()).map_err(ruled)?;
-    }
+    let none = Map::new();
+    validation::cleared_names(&clear, properties.as_ref().unwrap_or(&none))
+        .map_err(cleared_refusal)?;
     let occurred_at = time_of(&sent)?;
     let type_id = declared_type(&sent)?;
     if retype && type_id.is_none() {
@@ -488,7 +505,8 @@ fn detail_of(uri: &Uri) -> Result<Detail> {
         }
         for token in value.split(',').map(str::trim) {
             match token {
-                "" => {}
+                // Every item read carries its metadata, asked for or not.
+                "" | "metadata" => {}
                 "versions" => detail.versions = true,
                 other => {
                     return Err(invalid_field(
