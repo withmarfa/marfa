@@ -82,9 +82,18 @@ struct ConsentBody<'a> {
     answer_field: &'static str,
     yes: &'static str,
     no: &'static str,
+    page_addresses: String,
     full_access: &'static str,
     controls: Vec<Control>,
     type_controls: Vec<Control>,
+}
+
+fn page_addresses(origins: &[String]) -> String {
+    let shown: Vec<&str> = origins
+        .iter()
+        .map(|origin| origin.strip_prefix("https://").unwrap_or(origin))
+        .collect();
+    shown.join(" and ")
 }
 
 pub fn consent(view: &Consent) -> Result<Page> {
@@ -127,6 +136,7 @@ pub fn consent(view: &Consent) -> Result<Page> {
         answer_field,
         yes,
         no,
+        page_addresses: page_addresses(&offer.app.web_origins),
         full_access: FULL_ACCESS,
         controls,
         type_controls,

@@ -1,6 +1,8 @@
 <h1>Approve {{ view.offer.app.name }}</h1>
 {% for host in view.offer.app.destinations %}<p class="hint">Sends you back to {{ host }}</p>
 {% endfor %}{% if let Some(host) = view.offer.app.document_host %}<p class="hint">Described by {{ host }}</p>
+{% endif %}{% if !page_addresses.is_empty() %}<p class="hint">Approving also lets {{ page_addresses }} reach Marfa from your browser.</p>
+{% endif %}{% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 5 minutes.</p>
 {% endif %}{% if !view.offer.held.is_empty() %}<h2>Already allowed</h2>
 <ul>{% for literal in view.offer.held %}<li>{{ literal }}</li>{% endfor %}</ul>
 {% endif %}<form method="post" action="{{ action }}" class="stack">

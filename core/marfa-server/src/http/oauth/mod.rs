@@ -3,6 +3,7 @@
 mod authorize;
 mod device;
 mod discovery;
+mod origins;
 mod token;
 
 use std::sync::Arc;
@@ -14,6 +15,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{Next, from_fn};
 use axum::response::Response;
 use axum::routing::{get, post};
+
+pub(super) use origins::page_origins;
 
 use super::Routes;
 use super::answer::{Answer, Stopped, json_answer};

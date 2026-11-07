@@ -223,7 +223,7 @@ pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
     let routes = shared(app.clone())
         .merge(auth::doors())
         .merge(oauth::doors());
-    finished(routes, app, listener)
+    finished(routes, app.clone(), listener).layer(from_fn_with_state(app, oauth::page_origins))
 }
 
 pub(crate) async fn no_store(request: Request, next: Next) -> Response {

@@ -132,6 +132,16 @@ pub fn client(tx: &Connection, id: &str) -> Result<Option<Client>> {
         .optional()?)
 }
 
+/// Every client some person's standing consent names.
+pub fn consented_clients(tx: &Connection) -> Result<Vec<Client>> {
+    let mut query = tx.prepare(
+        "SELECT * FROM auth_oauth_client WHERE client_id IN \
+         (SELECT client_id FROM auth_oauth_consent WHERE withdrawn_at IS NULL)",
+    )?;
+    let rows = query.query_map([], client_of)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// Holds `registration` as `id`, in place of any copy already there, which
 /// keeps its first date and when it was last offered.
 pub fn put_client(tx: &Connection, id: &str, registration: &Registration, now: i64) -> Result<()> {

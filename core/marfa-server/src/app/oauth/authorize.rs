@@ -170,7 +170,15 @@ pub async fn begin(
         return Ok(Ok(if asked.prompt.as_deref() == Some("none") {
             asked.refused("login_required", "Nobody is signed in.")
         } else {
-            sign_in_then(app, &format!("{REQUEST_PATH}?{query}"))
+            let scope = if only(&pairs, "scope").is_some() {
+                asked.scope
+            } else {
+                client.registration.scope
+            };
+            let way = sign_in_then(app, &format!("{REQUEST_PATH}?{query}"));
+            let scope: String =
+                url::form_urlencoded::byte_serialize(scope.to_text().as_bytes()).collect();
+            format!("{way}&scope={scope}")
         }));
     };
     answer_signed_in(app, &owner, asked).await.map(Ok)

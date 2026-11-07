@@ -79,6 +79,23 @@ pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Cl
     }
 }
 
+/// `keys-and-oauth/token-no-client`: a public client's proof is what its grant
+/// presents, so a request lacking it is judged before its `client_id` is.
+fn unproved(grant: GrantType, form: &Form) -> Option<Problem> {
+    let (fields, description): (&[&str], _) = match grant {
+        GrantType::AuthorizationCode => (
+            &["code", "code_verifier", "redirect_uri"],
+            "Name the code, its code_verifier and its redirect_uri.",
+        ),
+        GrantType::RefreshToken => (&["refresh_token"], "Name the refresh_token."),
+        GrantType::DeviceCode => (&["device_code"], "Name the device_code."),
+    };
+    fields
+        .iter()
+        .any(|field| form.get(field).is_none())
+        .then(|| Problem::new("invalid_request", description))
+}
+
 /// Answers a token request.
 pub async fn exchange(
     app: &Arc<App>,
@@ -94,6 +111,9 @@ pub async fn exchange(
             "This grant type is not served.",
         )));
     };
+    if let Some(problem) = unproved(grant, &form) {
+        return Ok(Err(problem));
+    }
     let client = match checked_client(app, &form).await? {
         Ok(client) => client,
         Err(problem) => return Ok(Err(problem)),
@@ -217,16 +237,9 @@ async fn by_code(
     audience: Option<String>,
     ip: Option<String>,
 ) -> Result<Answered<Map<String, Value>>> {
-    let (Some(code), Some(verifier), Some(redirect_uri)) = (
-        form.get("code").map(str::to_string),
-        form.get("code_verifier").map(str::to_string),
-        form.get("redirect_uri").map(str::to_string),
-    ) else {
-        return Ok(Err(Problem::new(
-            "invalid_request",
-            "Name the code, its code_verifier and its redirect_uri.",
-        )));
-    };
+    let field = |name| form.get(name).unwrap_or_default().to_string();
+    let (code, verifier, redirect_uri) =
+        (field("code"), field("code_verifier"), field("redirect_uri"));
     let shared = app.clone();
     app.write(&Caller::Local, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
@@ -289,12 +302,7 @@ async fn by_refresh(
     audience: Option<String>,
     ip: Option<String>,
 ) -> Result<Answered<Map<String, Value>>> {
-    let Some(token) = form.get("refresh_token").map(str::to_string) else {
-        return Ok(Err(Problem::new(
-            "invalid_request",
-            "Name the refresh_token.",
-        )));
-    };
+    let token = form.get("refresh_token").unwrap_or_default().to_string();
     let asked = form.get("scope").map(ScopeSet::parse);
     let shared = app.clone();
     app.write(&Caller::Local, TOKEN_ISSUED, move |unit| {
@@ -364,12 +372,7 @@ async fn by_device_code(
     audience: Option<String>,
     ip: Option<String>,
 ) -> Result<Answered<Map<String, Value>>> {
-    let Some(code) = form.get("device_code").map(str::to_string) else {
-        return Ok(Err(Problem::new(
-            "invalid_request",
-            "Name the device_code.",
-        )));
-    };
+    let code = form.get("device_code").unwrap_or_default().to_string();
     let shared = app.clone();
     app.write(&Caller::Local, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();

@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 
 use super::client::Registration;
 use super::metadata_document::{self, Failure, Fetcher};
+use super::redirect::web_origins;
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, covers, narrow};
 use super::store::{self, Client};
 use super::{Answered, Problem};
@@ -274,6 +275,21 @@ pub(super) fn ceiling_lacks(
         lacking.insert(literal);
     }
     Ok(lacking)
+}
+
+/// `keys-and-oauth/page-origin-allowed`: whether a standing consent to a web
+/// client names `origin`.
+pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
+    let origin = origin.to_string();
+    app.db
+        .read(move |tx| {
+            Ok(store::consented_clients(tx)?.iter().any(|client| {
+                let registration = &client.registration;
+                web_origins(registration.application_type, &registration.redirect_uris)
+                    .contains(&origin)
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]
