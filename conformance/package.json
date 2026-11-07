@@ -23,7 +23,6 @@
     "test:load:extreme": "MARFA_LOAD_PROFILE=extreme NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
     "test:conformance": "vitest run --project correctness --project compliance --project sync --project device",
     "scale": "tsx scripts/scale/run.ts",
-    "slice-bench": "tsx scripts/slice-bench/run.ts",
     "load:cleanup": "tsx src/suites/load/cleanup-cli.ts",
     "check:statuses": "tsx scripts/check-statuses.ts",
     "check:shard-drift": "tsx scripts/shard-drift.ts",
