@@ -237,7 +237,11 @@ pub fn control(app: Arc<App>) -> Router {
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))
         .route("/_control/setup/ticket", post(control::setup_ticket))
-        .route("/_control/owner/recover", post(control::recover_owner));
+        .route("/_control/owner/recover", post(control::recover_owner))
+        .route(
+            "/_control/owner/passkeys/add-url",
+            get(auth::passkeys::add_url),
+        );
     if app.settings.start.test_hooks {
         routes = routes
             .route(

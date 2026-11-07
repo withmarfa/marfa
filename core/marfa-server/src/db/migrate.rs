@@ -25,6 +25,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("migrations/0002_sign_in.sql"),
     },
+    Migration {
+        version: 4,
+        sql: include_str!("migrations/0004_passkeys.sql"),
+    },
 ];
 
 const RETIRED_TABLES: [&str; 2] = ["custom_types", "custom_edge_types"];

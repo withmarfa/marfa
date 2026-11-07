@@ -7,6 +7,7 @@
 mod device;
 mod escape;
 mod notice;
+mod passkeys;
 mod setup;
 mod sign_in;
 mod wait;
@@ -19,6 +20,7 @@ use crate::app::refusal::{Refusal, Result};
 
 pub use device::{DeviceEntry, DeviceProblem, device_entry};
 pub use notice::{AuthError, AuthErrorCode, Link, Notice, auth_error, notice};
+pub use passkeys::{OwnerPasskey, OwnerPasskeys, owner_passkeys};
 pub use setup::{
     SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, setup_code, setup_details,
 };

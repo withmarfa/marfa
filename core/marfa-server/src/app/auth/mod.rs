@@ -5,6 +5,7 @@ pub mod claim;
 pub mod limits;
 pub mod names;
 pub mod owner;
+pub mod passkeys;
 pub mod password;
 pub mod return_to;
 pub mod session;

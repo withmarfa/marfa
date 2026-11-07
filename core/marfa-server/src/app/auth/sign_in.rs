@@ -16,8 +16,8 @@ use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
-const SIGNED_IN: &str = "auth.sign_in.success";
-const SIGN_IN_FAILED: &str = "auth.sign_in.failed";
+pub(super) const SIGNED_IN: &str = "auth.sign_in.success";
+pub(super) const SIGN_IN_FAILED: &str = "auth.sign_in.failed";
 const CHANGED: &str = "owner.password.changed";
 const CHANGE_FAILED: &str = "owner.password.change_failed";
 const INVALID: &str = "invalid_credentials";

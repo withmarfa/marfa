@@ -160,13 +160,214 @@
       .addEventListener("click", () => dialog.close());
   }
 
-  // WebAuthn. A later step defines this object with one function for each
-  // data-passkey value on the page ("sign-in" and "confirm"). Each takes the
-  // button that was pressed. While it is null the passkey buttons stay hidden.
-  const webauthn = null;
+  // WebAuthn. The server's JSON carries bytes as base64url, and the browser's
+  // API takes and gives ArrayBuffers.
+  function toBytes(text) {
+    const padded = text.replace(/-/g, "+").replace(/_/g, "/");
+    return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  }
+
+  function toText(buffer) {
+    let binary = "";
+    for (const byte of new Uint8Array(buffer)) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  async function getJson(path) {
+    try {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+      return {
+        response,
+        status: response.status,
+        body: await response.clone().json().catch(() => null),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Asks the browser for an assertion. Null if the person cancelled. */
+  async function askForAssertion() {
+    const asked = await getJson("/auth/passkey/generate-authenticate-options");
+    if (!asked || asked.status !== 200) throw new Error("no options");
+    const publicKey = {
+      ...asked.body,
+      challenge: toBytes(asked.body.challenge),
+      allowCredentials: [],
+    };
+    let credential;
+    try {
+      credential = await navigator.credentials.get({ publicKey });
+    } catch (error) {
+      if (error.name === "NotAllowedError" || error.name === "AbortError") {
+        return null;
+      }
+      throw error;
+    }
+    const { response } = credential;
+    return {
+      id: credential.id,
+      rawId: toText(credential.rawId),
+      type: credential.type,
+      clientExtensionResults: credential.getClientExtensionResults(),
+      response: {
+        clientDataJSON: toText(response.clientDataJSON),
+        authenticatorData: toText(response.authenticatorData),
+        signature: toText(response.signature),
+        userHandle: response.userHandle ? toText(response.userHandle) : null,
+      },
+    };
+  }
+
+  /** Asks the browser to make a passkey. Null if the person cancelled. */
+  async function askForRegistration(options) {
+    const publicKey = {
+      ...options,
+      challenge: toBytes(options.challenge),
+      user: { ...options.user, id: toBytes(options.user.id) },
+      excludeCredentials: options.excludeCredentials.map((excluded) => ({
+        ...excluded,
+        id: toBytes(excluded.id),
+      })),
+    };
+    let credential;
+    try {
+      credential = await navigator.credentials.create({ publicKey });
+    } catch (error) {
+      if (error.name === "NotAllowedError" || error.name === "AbortError") {
+        return null;
+      }
+      throw error;
+    }
+    const { response } = credential;
+    return {
+      id: credential.id,
+      rawId: toText(credential.rawId),
+      type: credential.type,
+      clientExtensionResults: credential.getClientExtensionResults(),
+      response: {
+        clientDataJSON: toText(response.clientDataJSON),
+        attestationObject: toText(response.attestationObject),
+        transports: response.getTransports ? response.getTransports() : [],
+      },
+    };
+  }
+
+  function showPasskeyError(message) {
+    const failure = document.querySelector("[data-passkey-error]");
+    if (!failure) return;
+    failure.textContent = message;
+    failure.hidden = !message;
+  }
+
+  const SOMETHING_WENT_WRONG = "Something went wrong. Try again.";
+
+  /** Sends a request again once the owner confirms an old sign-in. */
+  async function withRecentSignIn(send) {
+    const answer = await send();
+    if (answer && dialog && (await isRecentSignInRefusal(answer.response))) {
+      if (await confirmItsYou()) return send();
+      return null;
+    }
+    return answer;
+  }
+
+  function returnTo() {
+    return document.querySelector("input[name=return_to]").value;
+  }
+
+  function goBackToSignIn() {
+    const query = new URLSearchParams({ error: "passkey" });
+    if (returnTo()) query.set("return_to", returnTo());
+    location.assign("/auth/sign-in?" + query);
+  }
+
+  const webauthn = {
+    async "sign-in"(button) {
+      button.disabled = true;
+      try {
+        const response = await askForAssertion();
+        if (!response) return;
+        const answer = await postJson("/auth/passkey/verify-authentication", {
+          response,
+        });
+        if (answer && answer.status === 200) location.assign(returnTo() || "/");
+        else goBackToSignIn();
+      } catch {
+        goBackToSignIn();
+      } finally {
+        button.disabled = false;
+      }
+    },
+
+    async confirm(button) {
+      button.disabled = true;
+      showConfirmError("none", 0);
+      try {
+        const passkey = await askForAssertion();
+        if (!passkey) return;
+        const answer = await postJson("/auth/confirm", { passkey });
+        if (answer && answer.status === 200) dialog.close("confirmed");
+        else showConfirmError("other", 0);
+      } catch {
+        showConfirmError("other", 0);
+      } finally {
+        button.disabled = false;
+      }
+    },
+
+    async add(button) {
+      button.disabled = true;
+      showPasskeyError("");
+      try {
+        const asked = await withRecentSignIn(() =>
+          getJson("/auth/passkey/generate-register-options"),
+        );
+        if (!asked) return;
+        if (asked.status !== 200) {
+          showPasskeyError(asked.body?.error?.message ?? SOMETHING_WENT_WRONG);
+          return;
+        }
+        const response = await askForRegistration(asked.body);
+        if (!response) return;
+        const field = document.querySelector("[data-passkey-name]");
+        const name = field.value.trim();
+        const answer = await postJson("/auth/passkey/verify-registration", {
+          ...(name ? { name } : {}),
+          response,
+        });
+        if (answer && answer.status === 200) location.reload();
+        else {
+          showPasskeyError(answer?.body?.error?.message ?? SOMETHING_WENT_WRONG);
+        }
+      } catch (error) {
+        showPasskeyError(
+          error.name === "InvalidStateError"
+            ? "This device already has a passkey here."
+            : SOMETHING_WENT_WRONG,
+        );
+      } finally {
+        button.disabled = false;
+      }
+    },
+  };
+
+  // A browser refuses a passkey at an IP address.
+  function addressTakesPasskeys() {
+    return !/^(\[.*\]|\d+\.\d+\.\d+\.\d+)$/.test(location.hostname);
+  }
 
   function watchPasskeys() {
-    if (!webauthn || !window.PublicKeyCredential) return;
+    if (!window.PublicKeyCredential || !addressTakesPasskeys()) return;
     for (const button of document.querySelectorAll("[data-passkey]")) {
       button.hidden = false;
       const group = button.closest("[data-passkey-group]");
@@ -177,8 +378,33 @@
     }
   }
 
+  async function removePasskey(button) {
+    button.disabled = true;
+    showPasskeyError("");
+    const path = "/owner/passkeys/" + button.dataset.passkeyRemove;
+    const answer = await withRecentSignIn(async () => {
+      const response = await fetch(path, {
+        method: "DELETE",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      }).catch(() => null);
+      return response && { response, status: response.status };
+    });
+    if (answer && answer.status === 200) location.reload();
+    else if (answer !== null) showPasskeyError(SOMETHING_WENT_WRONG);
+    button.disabled = false;
+  }
+
+  function watchPasskeyRemovals() {
+    for (const button of document.querySelectorAll("[data-passkey-remove]")) {
+      button.addEventListener("click", () => void removePasskey(button));
+    }
+  }
+
   exchangeHandoff();
   watchChanges();
   watchDialog();
   watchPasskeys();
+  watchPasskeyRemovals();
 })();
