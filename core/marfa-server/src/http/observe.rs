@@ -16,9 +16,9 @@ use super::answer::{Page, Unhandled, asks_for_html};
 use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
-use super::page;
-use crate::app::App;
+use super::pages::{self, Notice};
 use crate::app::refusal::Code;
+use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
 use crate::settings::registry::ERROR_REPORTING_ENABLED;
@@ -63,25 +63,20 @@ fn keeps_its_envelope(code: Code) -> bool {
     matches!(code, Code::VersionConflict | Code::AncestorUnavailable)
 }
 
-fn offer_page(response: &mut Response) {
+async fn offer_page(app: &App, response: &mut Response) {
     let Some(page) = response.extensions().get::<Page>().cloned() else {
         return;
     };
     if keeps_its_envelope(page.code) {
         return;
     }
-    let status = response.status().as_u16().to_string();
-    let Ok(rendered) = page::render(&status, &page.message) else {
-        return;
-    };
-    *response.body_mut() = Body::from(rendered.html);
-    let headers = response.headers_mut();
-    headers.remove(header::CONTENT_LENGTH);
-    headers.insert(header::CONTENT_SECURITY_POLICY, rendered.policy);
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
-    );
+    let name = instance::name(app)
+        .await
+        .unwrap_or_else(|_| instance::DEFAULT_NAME.to_string());
+    let notice = Notice::refusal(&name, response.status(), &page.message);
+    if let Ok(rendered) = pages::notice(&notice) {
+        rendered.write_over(response);
+    }
 }
 
 pub async fn observe(State(observed): State<Observed>, request: Request, next: Next) -> Response {
@@ -123,7 +118,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     body.finish();
 
     if wants_html {
-        offer_page(&mut response);
+        offer_page(&observed.app, &mut response).await;
     }
     let unanswered = !response.headers().contains_key(header::SET_COOKIE);
     if let Some(cookie) = notes.renewal.get()

@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use super::answer::{Answer, asks_for_html, json_answer};
-use super::{page, query};
+use super::pages::{self, Notice};
+use super::query;
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 
@@ -33,9 +34,7 @@ async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     if asks_for_html(accept) {
-        let page = page::render(&name, "This Marfa instance is running.")?;
-        let policy = [(header::CONTENT_SECURITY_POLICY, page.policy)];
-        return Ok((policy, Html(page.html)).into_response());
+        return Ok(pages::notice(&Notice::running(&name))?.into_response());
     }
     Ok(json_answer(
         StatusCode::OK,

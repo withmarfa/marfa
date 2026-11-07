@@ -3,6 +3,7 @@
 pub mod cookies;
 mod origin;
 mod owner;
+mod pages;
 mod setup;
 mod sign_in;
 
@@ -93,7 +94,10 @@ pub fn owner_doors() -> Routes {
 /// The doors a browser signs in and sets up through.
 pub fn doors() -> Routes {
     Router::new()
-        .route("/auth/sign-in", post(sign_in::form))
+        .route("/auth/sign-in", get(pages::sign_in).post(sign_in::form))
+        .route("/auth/error", get(pages::error))
+        .route("/auth/device", get(pages::device))
+        .route("/setup", get(pages::setup))
         .route("/auth/sign-in/email", post(sign_in::email))
         .route("/auth/get-session", get(sign_in::get_session))
         .route("/auth/sign-out", post(sign_in::sign_out))

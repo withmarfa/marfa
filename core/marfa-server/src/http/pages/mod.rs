@@ -2,7 +2,6 @@
 //! pages that tell a person a request was refused. Each page is a function
 //! from a view struct to a [`Page`]. Nothing here reads a request or the
 //! database.
-#![allow(dead_code)]
 
 mod device;
 mod escape;
@@ -12,6 +11,7 @@ mod sign_in;
 mod wait;
 
 use askama::Template;
+use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
@@ -48,19 +48,33 @@ impl Page {
     pub fn policy(&self) -> &HeaderValue {
         &self.policy
     }
-}
 
-impl IntoResponse for Page {
-    fn into_response(self) -> Response {
-        let mut response = Response::new(self.html.into());
-        *response.status_mut() = self.status;
+    /// Makes `response` this page and leaves its status as it is. A page sent
+    /// in place of a refusal keeps the refusal's status and headers.
+    pub fn write_over(self, response: &mut Response) {
+        *response.body_mut() = Body::from(self.html);
         let headers = response.headers_mut();
+        headers.remove(header::CONTENT_LENGTH);
         headers.insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/html; charset=utf-8"),
         );
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         headers.insert(header::CONTENT_SECURITY_POLICY, self.policy);
+        // Not `no-referrer`: for a form's own post a browser then sends
+        // `Origin: null`, which the origin check refuses.
+        headers.insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        );
+    }
+}
+
+impl IntoResponse for Page {
+    fn into_response(self) -> Response {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = self.status;
+        self.write_over(&mut response);
         response
     }
 }

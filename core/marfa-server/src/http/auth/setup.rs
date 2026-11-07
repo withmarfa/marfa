@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source, not_our_page};
+use super::pages::{self, Typed};
 use super::{cookies, redirect, require_safe_transport, with_cookie};
 use crate::app::App;
 use crate::app::auth::claim::{self, Proof};
@@ -18,7 +19,7 @@ use crate::http::body::{JsonBody, only_declared};
 
 const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const CLAIM_FIELDS: [&str; 4] = ["email", "password", "name", "code"];
-const AFTER_CLAIM: &str = "/setup/passkey";
+const AFTER_CLAIM: &str = "/auth/sign-in";
 
 fn own_origin(app: &App) -> Vec<String> {
     vec![app.addresses().sign_in().origin().to_string()]
@@ -42,14 +43,21 @@ pub async fn exchange(
         body.object(&EXCHANGE_FIELDS).await?
     };
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
-    let session = match (text("ticket"), text("code")) {
-        (Some(ticket), _) if !form => claim::exchange_ticket(&app, ticket, visit).await?,
+    let exchanged = match (text("ticket"), text("code")) {
+        (Some(ticket), _) if !form => claim::exchange_ticket(&app, ticket, visit).await,
         (_, Some(code)) if !code.trim().is_empty() || !form => {
-            claim::exchange_code(&app, code, visit).await?
+            claim::exchange_code(&app, code, visit).await
         }
-        _ => {
-            return Err(Refusal::validation("Enter a setup code or open a new setup link.").into());
+        _ => Err(Refusal::validation(
+            "Enter a setup code or open a new setup link.",
+        )),
+    };
+    let session = match exchanged {
+        Ok(session) => session,
+        Err(refusal) if form && pages::wants_page(&headers) => {
+            return Ok(pages::exchange_refused(&app, &refusal).await?);
         }
+        Err(refusal) => return Err(refusal.into()),
     };
     let cookie = cookies::setup(&app.addresses().sign_in(), &session.token)?;
     let answer = if form {
@@ -128,8 +136,14 @@ pub async fn claim(
     } else {
         body.open_object().await?
     };
-    let (owner, session) = make_claim(&app, &headers, visit, fields).await?;
     let browser = form && origin::said(&headers, &own_origin(&app)) == Source::Own;
+    let typed = Typed::of(&fields);
+    let (owner, session) = match make_claim(&app, &headers, visit, fields).await {
+        Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
+            return Ok(pages::claim_refused(&app, &refusal, typed).await?);
+        }
+        claimed => claimed?,
+    };
     let mut answer = if browser {
         redirect(StatusCode::SEE_OTHER, AFTER_CLAIM)?
     } else {

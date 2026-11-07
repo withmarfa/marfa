@@ -52,18 +52,56 @@ impl Notice {
     }
 
     pub fn signed_out(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "You're signed out",
+            "You're signed out of this browser.",
+        )
+        .linked("Sign in", "/auth/sign-in")
+    }
+
+    fn linked(self, label: &str, href: &str) -> Notice {
         Notice {
             link: Some(Link {
-                label: "Sign in".into(),
-                href: "/auth/sign-in".into(),
+                label: label.into(),
+                href: href.into(),
             }),
-            ..Notice::new(
-                instance_name,
-                StatusCode::OK,
-                "You're signed out",
-                "You're signed out of this browser.",
-            )
+            ..self
         }
+    }
+
+    /// The page a browser is given at the instance's own address.
+    pub fn running(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "This Marfa is running",
+            "Sign in to manage it, or open an app that connects to it.",
+        )
+        .linked("Sign in", "/auth/sign-in")
+    }
+
+    /// Setup, asked of an instance that has an owner.
+    pub fn already_claimed(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "This Marfa already has an owner",
+            "Setup is finished. Sign in to continue.",
+        )
+        .linked("Sign in", "/auth/sign-in")
+    }
+
+    /// Sign-in, asked of an instance nobody has claimed.
+    pub fn no_owner_yet(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "This Marfa has no owner yet",
+            "Claim it first. Then you can sign in.",
+        )
+        .linked("Set up this Marfa", "/setup")
     }
 
     /// A refusal a browser asked for as a page. The message is the refusal's
@@ -77,7 +115,11 @@ impl Notice {
             status if status.is_server_error() => "Something went wrong",
             _ => "Request not accepted",
         };
-        Notice::new(instance_name, status, heading, message)
+        let notice = Notice::new(instance_name, status, heading, message);
+        match status {
+            StatusCode::UNAUTHORIZED => notice.linked("Sign in", "/auth/sign-in"),
+            _ => notice,
+        }
     }
 }
 

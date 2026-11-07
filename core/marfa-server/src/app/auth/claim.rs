@@ -323,6 +323,16 @@ fn proof_stands(
     }
 }
 
+/// Whether a setup session's token is still good, for the page that shows
+/// the owner's details form.
+pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
+    let digest = digest_of(&app.settings.start.api_key_salt, token)?;
+    let clock = app.clock.clone();
+    app.db
+        .read(move |tx| holds(tx, SESSION, &digest, clock.now_ms()))
+        .await
+}
+
 pub async fn is_claimed(app: &App) -> Result<bool> {
     app.db.read(instance::is_claimed).await
 }
