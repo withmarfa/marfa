@@ -320,7 +320,7 @@ mod tests {
     #[tokio::test]
     async fn a_panic_in_a_run_is_caught_and_the_next_goes_on() {
         crate::telemetry::install_panic_hook();
-        let fault: Result<(), _> = caught(async {
+        let fault: std::result::Result<(), _> = caught(async {
             tokio::task::yield_now().await;
             panic!("the run's own words");
         })
