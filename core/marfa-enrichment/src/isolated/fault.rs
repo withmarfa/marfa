@@ -137,7 +137,7 @@ pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
             Err(error) => format!("refused: {error}"),
         }),
         "chmod" => Some(
-            match std::fs::set_permissions(argument, std::fs::Permissions::from_mode(0)) {
+            match std::fs::set_permissions(argument, std::fs::Permissions::from_mode(0o000)) {
                 Ok(()) => "changed".to_owned(),
                 Err(error) => format!("refused: {error}"),
             },

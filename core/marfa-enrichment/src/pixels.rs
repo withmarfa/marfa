@@ -34,16 +34,20 @@ pub(crate) fn budget(max_memory: u64, file_bytes: usize) -> u64 {
     max_memory.saturating_sub(file_bytes as u64) / 4 * 3
 }
 
-/// The most a picture holds at once on its way to OCR: the decoded picture beside its
-/// gray and alpha copy, or the gray picture beside the buffer that scales it.
+/// What a picture costs on its way to OCR: the decoded picture, its gray and alpha
+/// copy, and the buffer that scales it. The sum, and not the largest step, because
+/// macOS keeps a freed block of this size resident: a 48 million pixel RGB photo
+/// reached 611 MB there, where the largest step holds 432 MB.
 fn peak_bytes(decoded: u64, pixels: u64) -> u64 {
-    let converting = decoded.saturating_add(pixels.saturating_mul(2));
-    if pixels <= MAX_OCR_PIXELS {
-        return converting;
-    }
-    let rows_kept = (MAX_OCR_PIXELS as f64 * pixels as f64).sqrt();
-    let scaling = pixels.saturating_add((SCALING_BYTES_PER_PIXEL * rows_kept) as u64);
-    converting.max(scaling)
+    let scaling = if pixels > MAX_OCR_PIXELS {
+        let rows_kept = (MAX_OCR_PIXELS as f64 * pixels as f64).sqrt();
+        (SCALING_BYTES_PER_PIXEL * rows_kept) as u64
+    } else {
+        0
+    };
+    decoded
+        .saturating_add(pixels.saturating_mul(2))
+        .saturating_add(scaling)
 }
 
 /// Decodes `bytes` for OCR. A picture that would take more than `max_bytes` on the way

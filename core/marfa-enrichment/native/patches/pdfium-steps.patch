@@ -10,7 +10,7 @@
 +# PDFium's example (step 9) nor packs (step 10).
 --- a/steps/02-checkout.sh
 +++ b/steps/02-checkout.sh
-@@ -21,4 +21,11 @@
+@@ -21,4 +21,13 @@
    find pdfium -name .git -prune -execdir sh -xc 'git reset --hard && git clean -df' \;
  fi
  
@@ -18,11 +18,13 @@
 +gclient sync -r "${PDFium_COMMIT:?}" --no-history --shallow
 +
 +# Stop before the build if the checkout is not what the pin says: PDFium at the
-+# manifest's commit, and each dependency at the revision that commit's DEPS names.
++# manifest's commit, and each git dependency at the commit its DEPS names. The first
++# line of each list is PDFium, which DEPS does not name.
 +test "$(git -C pdfium rev-parse HEAD)" == "$PDFium_COMMIT"
-+gclient revinfo >revinfo-pinned
-+gclient revinfo --actual >revinfo-actual
-+diff revinfo-pinned revinfo-actual
++gclient revinfo --ignore-dep-type cipd --ignore-dep-type gcs >revinfo-pinned
++gclient revinfo --actual --ignore-dep-type cipd --ignore-dep-type gcs >revinfo-actual
++test -n "$(sed 1d revinfo-pinned)"
++diff <(sed 1d revinfo-pinned) <(sed 1d revinfo-actual)
 --- a/steps/04-install-extras.sh
 +++ b/steps/04-install-extras.sh
 @@ -11,9 +11,9 @@
