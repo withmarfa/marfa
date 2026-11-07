@@ -43,6 +43,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-opentelemetry = { version = "0.34", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
 ureq.workspace = true
+url = "2"
 uuid.workspace = true
 
 [dev-dependencies]

@@ -288,6 +288,7 @@ async fn a_stale_write_under_another_source_is_refused_before_its_merge() {
         .call(&other, Method::PATCH, &path, stale.clone())
         .await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert_eq!(refused.json()["error"]["details"]["source"], "owner");
     assert_eq!(instance.written(), before);
 
     // The witness: the same stale write merges for a key that may make it.
@@ -330,6 +331,40 @@ async fn a_retype_its_destination_refuses_changes_nothing() {
     let read = instance.get(&token, &path).await.json();
     assert_eq!(read["item"]["type"], "core.note");
     assert_eq!(read["item"]["version"], 1);
+}
+
+#[tokio::test]
+async fn a_stale_move_onto_a_row_moved_since_is_refused_naming_type() {
+    let instance = Instance::start().await;
+    let (_, token) = instance.key("movers", json!({ "*": "write" })).await;
+    let third = json!({
+        "id": "user.third",
+        "version": 1,
+        "fields": { "title": { "type": "string" } },
+    });
+    let registered = instance.local(Method::POST, "/types", third).await;
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
+    let item = instance.note(&token, "contested").await;
+    let path = format!("/items/{}", item["id"].as_str().unwrap());
+
+    let first = json!({ "type": "core.bookmark", "retype": true, "version": 1 });
+    let answer = instance.call(&token, Method::PATCH, &path, first).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+
+    let before = instance.written();
+    let second = json!({ "type": "user.third", "retype": true, "version": 1 });
+    let answer = instance.call(&token, Method::PATCH, &path, second).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert_eq!(answer.code(), "version_conflict");
+    assert!(answer.text.contains(r#""type""#), "{}", answer.text);
+    assert_eq!(instance.written(), before);
+    let read = instance.get(&token, &path).await.json();
+    assert_eq!(read["item"]["type"], "core.bookmark");
 }
 
 #[tokio::test]

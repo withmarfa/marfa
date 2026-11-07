@@ -12,7 +12,7 @@ use crate::app::App;
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
-use crate::settings::Settings;
+use crate::settings::Accepted;
 
 /// Leaves room inside the ten seconds a container runtime gives a stop.
 const STOP_WAIT: Duration = Duration::from_secs(7);
@@ -87,9 +87,9 @@ fn listen(
 }
 
 /// Runs until a stop signal, and returns the status to exit with.
-pub async fn run(settings: Settings) -> Result<u8, Failure> {
-    let claim = Claim::take(&settings.start.control_socket)?;
-    let app = App::start(settings).await?;
+pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
+    let claim = Claim::take(&accepted.fixed().control_socket)?;
+    let app = App::start(accepted).await?;
     let mut signals = Signals::install()?;
 
     let public = if app.settings.start.control_only {
@@ -105,6 +105,9 @@ pub async fn run(settings: Settings) -> Result<u8, Failure> {
         .as_ref()
         .and_then(|listener| listener.local_addr().ok())
         .map(|address| address.port());
+    if let Some(port) = port {
+        app.record_bound_port(port);
+    }
     let mut servers = JoinSet::new();
     listen(&mut servers, &app, public, private, &stopping);
     tracing::info!("Private control socket listening");
