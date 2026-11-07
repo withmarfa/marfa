@@ -287,7 +287,10 @@ impl<G: Graph> Walk<'_, G> {
         let mut stack = vec![(start.to_string(), 0)];
         placed.insert(start.to_string());
         while let Some((id, next)) = stack.last_mut() {
-            let child = self.children.get(id.as_str()).and_then(|kids| kids.get(*next));
+            let child = self
+                .children
+                .get(id.as_str())
+                .and_then(|kids| kids.get(*next));
             *next += 1;
             match child {
                 Some(child) => {
@@ -318,9 +321,8 @@ impl<G: Graph> Walk<'_, G> {
         }
         // Roots no other root reaches lead; any left, such as the roots of a
         // cycle, each head their own group.
-        let (free, reached_roots): (Vec<&String>, Vec<&String>) = roots
-            .iter()
-            .partition(|id| !reached.contains(id.as_str()));
+        let (free, reached_roots): (Vec<&String>, Vec<&String>) =
+            roots.iter().partition(|id| !reached.contains(id.as_str()));
         let mut closure = Closure::default();
         let mut placed = HashSet::new();
         for root in free.into_iter().chain(reached_roots) {
@@ -441,15 +443,16 @@ pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused 
         End::Source => ("source", "outbound"),
         End::Target => ("target", "inbound"),
     };
+    let limit = match edge_type.cardinality.as_str() {
+        "one-to-one" => format!("is one-to-one; {end} already has one"),
+        cardinality => format!("is {cardinality} on the {end} side; {end} already has an"),
+    };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(edge_type.id));
     details.insert(format!("{end}_id"), json!(at));
     details.insert("constraint".into(), json!("cardinality"));
     Refused {
-        message: format!(
-            "Edge \"{}\" is {}; {end} already has an {edge} edge of this type",
-            edge_type.id, edge_type.cardinality
-        ),
+        message: format!("Edge \"{}\" {limit} {edge} edge of this type", edge_type.id),
         details: Value::Object(details),
     }
 }
@@ -580,7 +583,10 @@ mod tests {
         let edge = proposed("about", "a", "b");
         assert_eq!(duplicate(&held, &edge), Ok(Some("e0".to_string())));
         assert_eq!(duplicate(&held, &proposed("about", "a", "c")), Ok(None));
-        assert_eq!(duplicate(&held, &proposed("references", "a", "b")), Ok(None));
+        assert_eq!(
+            duplicate(&held, &proposed("references", "a", "b")),
+            Ok(None)
+        );
         let moving = Proposed {
             moving: Some("e0"),
             ..edge
@@ -746,7 +752,10 @@ mod tests {
     #[test]
     fn a_part_reached_by_a_cascade_is_not_a_part_that_went_with_hosts() {
         let held = graph(
-            &[("attached-to", "part", "host"), ("parent-of", "host", "part")],
+            &[
+                ("attached-to", "part", "host"),
+                ("parent-of", "host", "part"),
+            ],
             &[],
         );
         let taken = closure(&held, &ids(&["host"])).expect("in memory");

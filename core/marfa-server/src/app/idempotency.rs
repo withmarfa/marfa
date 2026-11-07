@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 use super::access::{Caller, Level, Permission};
-use super::items;
+use super::{edges, items};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use crate::db::Write;
@@ -58,6 +58,24 @@ pub enum Need {
         name: String,
         disclosed: bool,
     },
+    Edge {
+        name: String,
+        write: bool,
+    },
+    /// The type of a row an edge that cascades ends at.
+    CascadeTarget {
+        name: String,
+    },
+    /// An edge a write acted on, with the type of the source it had then.
+    EdgeSource {
+        id: String,
+        type_id: String,
+    },
+    /// One end of a blocking edge a refusal named.
+    BlockingEnd {
+        id: String,
+        type_id: String,
+    },
 }
 
 impl Need {
@@ -66,11 +84,12 @@ impl Need {
     fn rank(&self) -> u8 {
         match self {
             Need::Reach | Need::Purge => 0,
-            Need::ItemRef { .. } => 1,
-            Need::Item { .. } => 2,
+            Need::ItemRef { .. } | Need::EdgeSource { .. } => 1,
+            Need::Item { .. } | Need::BlockingEnd { .. } => 2,
             Need::Type { .. } => 3,
             Need::Extension { .. } => 4,
-            Need::Source { .. } => 5,
+            Need::Edge { .. } | Need::CascadeTarget { .. } => 5,
+            Need::Source { .. } => 6,
         }
     }
 }
@@ -277,6 +296,10 @@ fn may_not_read() -> Refusal {
 }
 
 /// Holds `caller` to what the first request needed, as things stand now.
+fn edge_gone() -> Refusal {
+    Refusal::new(Code::EdgeNotFound, "Edge not found")
+}
+
 fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Result<()> {
     needs.sort_by_key(Need::rank);
     for need in needs {
@@ -302,6 +325,23 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                     }
                 }
             }
+            Need::EdgeSource { id, type_id } => {
+                let current = edges::source_type(tx, &id)?;
+                let types = std::iter::once(&type_id).chain(current.iter());
+                if !types.clone().all(|held| caller.may_read_type(held)) {
+                    return Err(edge_gone());
+                }
+                for held in types {
+                    caller.require_type(held, Level::Write)?;
+                }
+            }
+            Need::BlockingEnd { id, type_id } => {
+                let current = items::type_of(tx, &id)?;
+                let types = std::iter::once(&type_id).chain(current.iter());
+                if !types.clone().all(|held| caller.may_read_type(held)) {
+                    return Err(edge_gone());
+                }
+            }
             Need::Type { name, write } => {
                 let level = if write { Level::Write } else { Level::Read };
                 caller.require_type(&name, level)?;
@@ -310,6 +350,13 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                 let level = if write { Level::Write } else { Level::Read };
                 caller.require_extension(&namespace, level)?;
             }
+            Need::Edge { name, write: true } => caller.require_edge(&name, Level::Write)?,
+            Need::Edge { name, write: false } => {
+                if caller.require_edge(&name, Level::Read).is_err() {
+                    return Err(edge_gone());
+                }
+            }
+            Need::CascadeTarget { name } => caller.require_cascade_target(&name)?,
             Need::Source { name, disclosed } => {
                 if caller.may_grant(&name) {
                     continue;
@@ -403,6 +450,16 @@ fn visit(tx: &Transaction<'_>, claim: &Claim, value: &Value) -> Result<()> {
             write: false,
         });
     }
+    if let (Some(name), true, true) = (
+        row.get("edge_type").and_then(Value::as_str),
+        row.contains_key("source_id"),
+        row.contains_key("target_id"),
+    ) {
+        claim.note(Need::Edge {
+            name: name.to_string(),
+            write: false,
+        });
+    }
     for (field, child) in row {
         match (field.as_str(), child) {
             ("properties", _) => continue,
@@ -415,6 +472,17 @@ fn visit(tx: &Transaction<'_>, claim: &Claim, value: &Value) -> Result<()> {
                     });
                 }
                 continue;
+            }
+            ("trashed_with", Value::String(with)) => {
+                let marked = row.get("id").and_then(Value::as_str).unwrap_or_default();
+                claim.note(match items::mark_type(tx, marked)? {
+                    Some(type_id) => Need::Item {
+                        id: with.clone(),
+                        type_id,
+                        write: false,
+                    },
+                    None => Need::ItemRef { id: with.clone() },
+                });
             }
             ("item_id" | "existing_id", Value::String(id)) => {
                 claim.note(match items::type_of(tx, id)? {

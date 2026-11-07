@@ -12,8 +12,10 @@ use serde_json::Value;
 use super::App;
 use super::access::{Caller, Door, Level, Permission, SchemaKind};
 use super::catalog::{self, Catalog, Snapshot};
+use super::edges;
 use super::refusal::{Code, Refusal, Result};
 use super::types::{issues_json, missing_field};
+use super::unit::Unit;
 
 const INVALID: &str = "Invalid edge type schema";
 
@@ -60,7 +62,7 @@ fn refusal_of(issues: EdgeIssues) -> Refusal {
 }
 
 /// An edge type as the doors answer it.
-fn presented(mut schema: Obj) -> Value {
+pub(super) fn presented(mut schema: Obj) -> Value {
     if !schema.contains_key("reverse_label")
         && let Some(label) = schema.get("label").cloned()
     {
@@ -78,6 +80,19 @@ fn require_names(caller: &Caller, id: &str, reverse: Option<&str>) -> Result<()>
         caller.require_edge(reverse, Level::Write)?;
     }
     Ok(())
+}
+
+/// The grant that reaches a `user.` name no edge type holds yet.
+const NAMESPACE_WILDCARD: &str = "edge.user.*:write";
+
+fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()> {
+    caller.require_edge(name, Level::Write).map_err(|refusal| {
+        if name.starts_with("user.") && catalog.edge_kind(name).is_none() {
+            refusal.with_detail("required_scope", NAMESPACE_WILDCARD)
+        } else {
+            refusal
+        }
+    })
 }
 
 /// Every edge type, those Marfa ships first.
@@ -121,8 +136,11 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
         .write(caller, "edge_type.register", move |unit| {
             let caller = &unit.caller;
             caller.require_door(SchemaKind::EdgeTypes, Door::Register)?;
-            let reverse = text_of(&body, "reverse_name").map(str::to_string);
-            require_names(caller, &id, reverse.as_deref())?;
+            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            require_new_name(caller, &catalog, &id)?;
+            if let Some(reverse) = text_of(&body, "reverse_name") {
+                require_new_name(caller, &catalog, reverse)?;
+            }
             if body.contains_key("extends") {
                 return Err(Refusal::validation(
                     "A registered edge type does not support `extends`",
@@ -134,7 +152,6 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
             if !unread.is_empty() {
                 return Err(refusal_of(EdgeIssues::Schema(unread)));
             }
-            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             let existing = catalog.edge_type(&id);
             if let Some(existing) = existing {
                 require_names(caller, &id, text_of(existing, "reverse_name"))?;
@@ -186,6 +203,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ));
             }
             let built = edge_type_from_request(&body, &taken).map_err(refusal_of)?;
+            require_stored_targets(unit, &id, &built)?;
             unit.tx().execute(
                 "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -206,6 +224,26 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
     Ok((outcome.0, presented(outcome.1)))
 }
 
+/// Edges stored under `id` take on what `built` says of them, so a type that
+/// cascades asks of each stored target what writing such an edge asks. The
+/// refusal names no type, since the target can be one the caller cannot read.
+fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
+    if text_of(built, "cascade_on_delete") != Some("cascade") {
+        return Ok(());
+    }
+    for target_type in edges::target_types(unit.tx(), id)? {
+        unit.caller
+            .require_cascade_target(&target_type)
+            .map_err(|_| {
+                Refusal::new(
+                    Code::TypeNotPermitted,
+                    "This edge type cannot cascade onto the targets its stored edges hold.",
+                )
+            })?;
+    }
+    Ok(())
+}
+
 /// The registered edge type that holds `name` as its id or reverse name.
 fn holder_of(catalog: &Catalog, name: &str) -> Option<String> {
     catalog.edge_types.iter().find_map(|edge| {
@@ -215,7 +253,7 @@ fn holder_of(catalog: &Catalog, name: &str) -> Option<String> {
 }
 
 /// Deletes a registered edge type.
-pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
+pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, "edge_type.delete", move |unit| {
         let caller = &unit.caller;
@@ -233,6 +271,13 @@ pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
             ));
         };
         require_names(caller, &id, text_of(existing, "reverse_name"))?;
+        if !force && edges::count_of_type(unit.tx(), &id)? > 0 {
+            return Err(Refusal::new(
+                Code::EdgeTypeInUse,
+                format!("Edges of type {id} still exist."),
+            )
+            .with_detail("edge_type", id.as_str()));
+        }
         unit.tx()
             .execute("DELETE FROM edge_types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;

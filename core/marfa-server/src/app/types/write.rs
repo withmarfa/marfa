@@ -54,6 +54,9 @@ fn store(tx: &Transaction<'_>, id: &str, schema: &Obj, at: &str) -> Result<()> {
     catalog::raise(tx)
 }
 
+/// The grant that reaches an identifier nothing has registered yet.
+const NAMESPACE_WILDCARD: &str = "user.*:write";
+
 /// Registers a type. The answer is the type as it was stored.
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     if !body.contains_key("fields") {
@@ -77,10 +80,16 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
         .write(caller, "type.register", move |unit| {
             let caller = &unit.caller;
             caller.require_door(SchemaKind::Types, Door::Register)?;
-            if let Some(id) = &named {
-                caller.require_type(id, Level::Write)?;
-            }
             let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            if let Some(id) = &named {
+                caller.require_type(id, Level::Write).map_err(|refusal| {
+                    if catalog.holds(id) {
+                        refusal
+                    } else {
+                        refusal.with_detail("required_scope", NAMESPACE_WILDCARD)
+                    }
+                })?;
+            }
             let schema = validate_type(&Value::Object(body), &catalog.types)
                 .map_err(schema_refusal)?;
             let schema = labelled(schema);

@@ -15,19 +15,23 @@ pub mod write;
 
 use marfa_rules::catalog::Catalog as Rules;
 use marfa_rules::conflict::ItemFields;
-use marfa_rules::names;
+use marfa_rules::{display, names};
 use rusqlite::Transaction;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use super::access::Caller;
 use super::catalog::Catalog;
+use super::edges::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
 
+pub(crate) use plan::require_version;
 pub use read::{
     Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, detail, extension, extensions,
     history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
+pub(crate) use read::{Reader, position_at, position_cursor, reading};
+pub(crate) use write::settle_late_part;
 
 const UNTITLED: &str = "Untitled";
 
@@ -81,6 +85,18 @@ pub struct Item {
     pub capture_longitude: Option<f64>,
     link: Option<String>,
     trashed_by: Option<Writer>,
+    mark: Option<Mark>,
+}
+
+/// Why a row is in the bin when no one named it there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// The row whose move took this one.
+    with: String,
+    /// That row's type, which decides who may read its id on this row.
+    with_type: String,
+    /// Whether this row went as a part of its hosts.
+    hosts: bool,
 }
 
 /// Who wrote a version.
@@ -106,6 +122,22 @@ pub struct Snapshot {
     pub created_at: String,
 }
 
+/// How much of a bin mark a printed item names.
+#[derive(Clone, Copy)]
+enum Marks<'a> {
+    To(&'a Caller),
+    Logged,
+}
+
+/// An item's text with `blocks` under `edges`.
+fn with_blocks(mut item: String, blocks: &str) -> String {
+    item.pop();
+    item.push_str(",\"edges\":");
+    item.push_str(blocks);
+    item.push('}');
+    item
+}
+
 #[derive(Serialize)]
 struct ItemHead<'a> {
     id: &'a str,
@@ -128,6 +160,14 @@ struct ItemHead<'a> {
     capture_longitude: Option<f64>,
     trashed_at: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    trashed_by_cascade: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trashed_with: Option<&'a str>,
+    /// Kept in the event log so a frame can name `trashed_with` only to a
+    /// key that may read that row's type; a frame never carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trashed_with_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     read_only: Option<bool>,
 }
 
@@ -146,7 +186,7 @@ struct SnapshotHead<'a> {
 }
 
 /// `head`, a JSON object, with `properties` added as text that is not parsed.
-fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
+pub(crate) fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
     let printed = marfa_rules::js::to_vec(head)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -158,7 +198,7 @@ fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
 }
 
 /// A stored JSON object, as a value to work on.
-fn parsed(text: &str) -> Result<Map<String, Value>> {
+pub(crate) fn parsed(text: &str) -> Result<Map<String, Value>> {
     match serde_json::from_str(text) {
         Ok(Value::Object(object)) => Ok(object),
         _ => Err(Refusal::internal("stored properties do not read")),
@@ -166,7 +206,12 @@ fn parsed(text: &str) -> Result<Map<String, Value>> {
 }
 
 impl Item {
-    fn head(&self, read_only: Option<bool>) -> ItemHead<'_> {
+    fn head(&self, read_only: Option<bool>, shown: Marks) -> ItemHead<'_> {
+        let mark = self.mark.as_ref();
+        let named = mark.filter(|mark| match shown {
+            Marks::To(caller) => caller.may_read_type(&mark.with_type),
+            Marks::Logged => true,
+        });
         ItemHead {
             id: &self.id,
             type_id: &self.type_id,
@@ -182,20 +227,40 @@ impl Item {
             capture_latitude: self.capture_latitude,
             capture_longitude: self.capture_longitude,
             trashed_at: self.trashed_at.as_deref(),
+            trashed_by_cascade: mark.map(|_| true),
+            trashed_with: named.map(|mark| mark.with.as_str()),
+            trashed_with_type: named
+                .filter(|_| matches!(shown, Marks::Logged))
+                .map(|mark| mark.with_type.as_str()),
             read_only,
         }
     }
 
-    /// The item as an answer gives it.
-    pub fn answered(&self, tx: &Transaction<'_>) -> Result<String> {
+    /// The item as an answer to `caller` gives it.
+    pub fn answered(&self, tx: &Transaction<'_>, caller: &Caller) -> Result<String> {
         let read_only = read_only(tx, &self.source, &self.type_id)?;
-        with_properties(&self.head(Some(read_only)), &self.properties)
+        with_properties(
+            &self.head(Some(read_only), Marks::To(caller)),
+            &self.properties,
+        )
+    }
+
+    /// The item as an answer gives it, with the outbound edges the caller may
+    /// read.
+    pub(crate) fn hydrated(
+        &self,
+        tx: &Transaction<'_>,
+        caller: &Caller,
+        catalog: &Catalog,
+    ) -> Result<String> {
+        let blocks = edges::hydrate(tx, caller, catalog, &self.id, Reach::Outbound)?;
+        Ok(with_blocks(self.answered(tx, caller)?, &blocks.text))
     }
 
     /// The item as the event log keeps it. A frame adds `read_only` when it
     /// is sent, as registrations stand then.
     fn logged(&self) -> Result<String> {
-        with_properties(&self.head(None), &self.properties)
+        with_properties(&self.head(None, Marks::Logged), &self.properties)
     }
 
     /// The item as a conflict answer names it.
@@ -278,21 +343,41 @@ fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a st
         .filter(|value| !value.is_empty())
 }
 
-fn name_of(rules: &Rules, row: &Item) -> Result<String> {
+fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String> {
+    let rules = &catalog.rules;
     let properties = parsed(&row.properties)?;
-    Ok(rules
-        .display(&row.type_id, &properties)
-        .name
-        .unwrap_or_else(|| UNTITLED.to_string()))
+    let untitled = display::title_name(&properties, rules.title_field(&row.type_id)).is_none();
+    let shown = match untitled.then(|| edges::naming_host(tx, catalog, &row.id)) {
+        Some(found) => match found? {
+            Some(host) => {
+                // A host whose stored properties cannot be read is named as
+                // one that holds none.
+                let held = parsed(&host.properties).unwrap_or_default();
+                let host_name = rules
+                    .display(&host.type_id, &held)
+                    .name
+                    .unwrap_or_else(|| UNTITLED.to_string());
+                display::part_display(
+                    &properties,
+                    rules.body_field(&row.type_id),
+                    &host.label,
+                    &host_name,
+                )
+            }
+            None => rules.display(&row.type_id, &properties),
+        },
+        None => rules.display(&row.type_id, &properties),
+    };
+    Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
 }
 
 /// An item by its name, with nothing of its content.
-fn summary_of(rules: &Rules, row: &Item) -> Result<Value> {
+fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Value> {
     Ok(json!({
         "id": row.id,
         "type": row.type_id,
         "version": row.version,
-        "name": name_of(rules, row)?,
+        "name": name_of(tx, catalog, row)?,
         "source": row.source,
         "created_at": row.created_at,
     }))
@@ -351,9 +436,19 @@ fn metadata_for(tx: &Transaction<'_>, item: &Item, caller: &Caller) -> Result<St
     metadata_text(tx, item, |namespace| caller.may_read_extension(namespace))
 }
 
+/// The row `id`, wherever it stands.
+pub(crate) fn row(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
+    rows::by_id(tx, id)
+}
+
 /// The type of the row `id`, wherever it stands.
 pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.map(|row| row.type_id))
+}
+
+/// The type of the row whose trash took `id`, which outlives that row.
+pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
 }
 
 /// How many items hold `type_id`, in any state.

@@ -6,6 +6,7 @@ pub mod audit;
 pub mod catalog;
 pub mod clock;
 pub mod edge_types;
+pub mod edges;
 pub mod events;
 pub mod faults;
 pub mod health;
