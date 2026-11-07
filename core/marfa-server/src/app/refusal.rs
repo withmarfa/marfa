@@ -125,7 +125,10 @@ const INTERNAL_MESSAGE: &str = "Internal server error";
 pub struct Refusal {
     pub code: Code,
     pub message: Cow<'static, str>,
-    pub details: Option<Map<String, Value>>,
+    pub details: Option<Box<Map<String, Value>>>,
+    /// What an answer carries beside `error`: the item states a conflict
+    /// names, for the writer to merge from.
+    pub members: Option<Box<Map<String, Value>>>,
     /// The SQLite result code behind a failed statement, for those allowed to
     /// read it. It never reaches the envelope.
     pub cause: Option<&'static str>,
@@ -137,6 +140,7 @@ impl Refusal {
             code,
             message: message.into(),
             details: None,
+            members: None,
             cause: None,
         }
     }
@@ -149,6 +153,13 @@ impl Refusal {
     pub fn internal(context: &str) -> Refusal {
         tracing::error!(context, "Internal error");
         Refusal::new(Code::InternalError, INTERNAL_MESSAGE)
+    }
+
+    pub fn with_member(mut self, name: &str, value: impl Into<Value>) -> Refusal {
+        self.members
+            .get_or_insert_default()
+            .insert(name.to_string(), value.into());
+        self
     }
 
     pub fn with_detail(mut self, name: &str, value: impl Into<Value>) -> Refusal {

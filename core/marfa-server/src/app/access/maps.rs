@@ -52,6 +52,13 @@ impl Map {
         Value::Object(self.0.clone())
     }
 
+    /// Whether any entry grants anything.
+    pub fn grants_any(&self) -> bool {
+        self.0
+            .values()
+            .any(|level| Level::stored(level) > Level::None)
+    }
+
     fn exact(&self, name: &str) -> Option<Level> {
         self.0.get(name).map(Level::stored)
     }

@@ -69,13 +69,13 @@ fn dependents_refusal(broken: Vec<(String, Vec<Issue>)>) -> Refusal {
         .with_detail("errors", errors)
 }
 
-pub(super) fn missing_field(field: &str) -> Refusal {
+pub fn missing_field(field: &str) -> Refusal {
     Refusal::new(Code::MissingRequiredField, format!("{field} is required"))
         .with_detail("field", field)
 }
 
 /// Refuses an identifier the grammar does not take, naming `field`.
-fn check_id(id: &str, field: &str) -> Result<()> {
+pub fn check_id(id: &str, field: &str) -> Result<()> {
     let taken = grammar::type_id(id)
         .map_err(|error| Refusal::internal(&format!("the type grammar did not read: {error}")))?;
     if taken {

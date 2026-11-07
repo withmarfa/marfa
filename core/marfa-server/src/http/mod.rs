@@ -7,6 +7,7 @@ mod caller;
 mod control;
 mod edge_types;
 mod health;
+mod items;
 mod keys;
 pub mod observe;
 mod page;
@@ -85,6 +86,29 @@ fn schema_doors() -> Routes {
         .route("/edge-types/{id}", delete(edge_types::delete))
 }
 
+fn item_doors() -> Routes {
+    Router::new()
+        .route("/items", post(items::create))
+        .route("/items/bulk-get", post(items::bulk_get))
+        .route("/items/titles", post(items::titles))
+        .route("/items/{id}", get(items::read).patch(items::update))
+        .route("/items/{id}/versions", get(items::versions))
+        .route(
+            "/items/{id}/metadata",
+            get(items::metadata).put(items::set_metadata),
+        )
+        .route("/items/{id}/tags", post(items::add_tags))
+        .route("/items/{id}/tags/{tag}", delete(items::remove_tag))
+        .route("/items/{id}/extensions", get(items::extensions))
+        .route(
+            "/items/{id}/extensions/{namespace}",
+            get(items::extension)
+                .put(items::set_extension)
+                .delete(items::clear_extension),
+        )
+        .route("/metadata/tags", get(items::tags))
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Router::new()
         .route("/", get(root::describe))
@@ -95,6 +119,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
         .merge(key_doors(app))
+        .merge(item_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
@@ -104,6 +129,7 @@ fn finished(routes: Routes, app: Arc<App>, transport: Transport) -> Router {
     };
     routes
         .method_not_allowed_fallback(unmatched)
+        .route_layer(from_fn_with_state(app.clone(), body::checked))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))

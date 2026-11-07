@@ -18,6 +18,7 @@ const TITLE_PROPERTY: &str = "title";
 const EVERY_TYPE_TAKES: [(&str, &str); 2] = [("attachments", "object"), ("links", "string")];
 const BODY_PROPERTY: &str = "body";
 
+#[derive(Debug)]
 pub struct CatalogEntry {
     pub parent: Option<String>,
     pub title_field: Option<String>,
@@ -899,6 +900,7 @@ pub struct Indexing {
 /// The server's type catalog as last hydrated, answering the same subtree
 /// question `?type=` answers on the server: exact name, dotted-name
 /// descendant, or a type whose declared parent chain reaches the root.
+#[derive(Debug)]
 pub struct Catalog {
     entries: HashMap<String, CatalogEntry>,
     /// What the root last said a request may carry, which a write is held to

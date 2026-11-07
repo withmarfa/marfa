@@ -9,6 +9,17 @@ pub fn folded(name: &str) -> String {
     name.nfc().flat_map(char::to_lowercase).nfc().collect()
 }
 
+/// The longest name, in UTF-16 code units, that has a title key.
+pub const MAX_NAME_UNITS: usize = 1000;
+
+/// What an item is found by under this title: its name folded, or nothing
+/// for a title that is blank or longer than a name.
+pub fn title_key(title: &str) -> Option<String> {
+    let trimmed = title.trim();
+    let named = !trimmed.is_empty() && trimmed.encode_utf16().count() <= MAX_NAME_UNITS;
+    named.then(|| folded(trimmed))
+}
+
 pub fn same(one: &str, other: &str) -> bool {
     folded(one) == folded(other)
 }

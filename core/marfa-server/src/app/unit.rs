@@ -6,6 +6,7 @@ use serde_json::Value;
 use super::App;
 use super::access::Caller;
 use super::audit::{self, Entry};
+use super::events::{self, Event};
 use super::refusal::Result;
 use crate::db::Write;
 
@@ -22,6 +23,11 @@ pub struct Unit<'t, 'c> {
 impl<'c> Unit<'_, 'c> {
     pub fn tx(&self) -> &Transaction<'c> {
         self.tx
+    }
+
+    /// Adds what this write announces to the event log.
+    pub fn announce(&self, event: &Event<'_>) -> Result<()> {
+        events::append(self.tx, &self.at, event)
     }
 
     /// Leaves the entry for the action this write is.

@@ -3,6 +3,7 @@
 //! takes the state it decides on, so a write can make it inside its own
 //! transaction.
 
+mod items;
 mod levers;
 mod maps;
 mod schema;

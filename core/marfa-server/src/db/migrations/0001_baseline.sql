@@ -92,3 +92,86 @@ CREATE TABLE IF NOT EXISTS edge_types (
 
 CREATE UNIQUE INDEX IF NOT EXISTS edge_types_reverse_name
     ON edge_types (reverse_name) WHERE reverse_name IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS items (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'archived', 'trashed', 'revoked')),
+    tier TEXT CHECK (tier IS NULL OR tier IN ('library', 'feed')),
+    source TEXT NOT NULL CHECK (length(source) > 0),
+    source_id TEXT,
+    properties BLOB NOT NULL,
+    title_key TEXT,
+    version INTEGER NOT NULL CHECK (version >= 1),
+    schema_version INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    trashed_at TEXT,
+    capture_latitude REAL,
+    capture_longitude REAL,
+    writer_kind TEXT,
+    writer_id TEXT,
+    writer_name TEXT
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS items_natural_key
+    ON items (source, source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS items_title_key
+    ON items (title_key, id) WHERE title_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS items_type_state ON items (type, state);
+
+CREATE TABLE IF NOT EXISTS item_tags (
+    item_seq INTEGER NOT NULL REFERENCES items (seq),
+    tag TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (item_seq, tag)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS item_extensions (
+    item_seq INTEGER NOT NULL REFERENCES items (seq),
+    namespace TEXT NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (item_seq, namespace)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS item_versions (
+    item_seq INTEGER NOT NULL REFERENCES items (seq),
+    version INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    properties BLOB NOT NULL,
+    type TEXT NOT NULL,
+    tier TEXT,
+    occurred_at TEXT NOT NULL,
+    source_id TEXT,
+    writer_kind TEXT,
+    writer_id TEXT,
+    writer_name TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item_seq, version)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS idempotency_records (
+    credential TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('in_flight', 'complete')),
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    response_status INTEGER,
+    response_content_type TEXT,
+    response_body BLOB,
+    requirements TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (credential, idempotency_key)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS event_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    at TEXT NOT NULL,
+    payload TEXT NOT NULL
+) STRICT;

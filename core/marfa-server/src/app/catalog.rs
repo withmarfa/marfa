@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use marfa_rules::builtin;
+use marfa_rules::catalog::{Catalog as Rules, CatalogEntry};
 use marfa_rules::schema::{Obj, Registry};
+use marfa_rules::wire::WireType;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
@@ -46,6 +48,8 @@ pub struct Catalog {
     pub unreadable: Vec<String>,
     /// The edge types registered here, by id.
     pub edge_types: Vec<Obj>,
+    /// The same types, as what judges an item's properties.
+    pub rules: Rules,
 }
 
 impl Catalog {
@@ -56,6 +60,7 @@ impl Catalog {
             provenance: HashMap::new(),
             unreadable: Vec::new(),
             edge_types: Vec::new(),
+            rules: Rules::empty(),
         }
     }
 
@@ -167,13 +172,29 @@ fn load(tx: &Transaction<'_>, generation: i64) -> Result<Catalog> {
             _ => tracing::error!(edge_type = %id, "A stored edge type does not read"),
         }
     }
+    let rules = rules_of(&rows);
     Ok(Catalog {
         generation,
         types: Registry::new(rows).with_icons(icons),
         provenance,
         unreadable,
         edge_types,
+        rules,
     })
+}
+
+fn rules_of(rows: &[Obj]) -> Rules {
+    let entries = rows.iter().filter_map(|row| {
+        let wire = serde_json::from_value::<WireType>(Value::Object(row.clone()));
+        match wire {
+            Ok(wire) => Some((wire.id.clone(), CatalogEntry::from_wire(&wire))),
+            Err(_) => {
+                tracing::error!("A stored type does not read as a type");
+                None
+            }
+        }
+    });
+    Rules::new(entries.collect(), None)
 }
 
 /// The catalog `tx` sees. A shared catalog read from a newer snapshot is

@@ -50,23 +50,45 @@ pub fn json_answer(status: StatusCode, value: &impl Serialize) -> Response {
     }
 }
 
+/// An answer whose JSON is already text, so that what was stored goes out as
+/// it stands.
+pub fn text_answer(status: StatusCode, body: impl Into<Body>) -> Response {
+    let mut response = Response::new(body.into());
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
 fn envelope(refusal: &Refusal) -> Value {
     let mut error = Map::new();
     error.insert("code".into(), refusal.code.wire().into());
     error.insert("message".into(), refusal.message.as_ref().into());
     if let Some(details) = &refusal.details {
-        error.insert("details".into(), Value::Object(details.clone()));
+        error.insert("details".into(), Value::Object((**details).clone()));
+    }
+    if refusal.members.is_some() {
+        error.insert("status".into(), refusal.code.status().into());
     }
     let mut out = Map::new();
     out.insert("error".into(), Value::Object(error));
+    if let Some(members) = &refusal.members {
+        out.extend((**members).clone());
+    }
     Value::Object(out)
+}
+
+/// A refusal's body as it is sent, for what keeps it.
+pub fn refusal_body(refusal: &Refusal) -> Vec<u8> {
+    marfa_rules::js::to_vec(&envelope(refusal)).unwrap_or_default()
 }
 
 pub fn refusal_answer(refusal: &Refusal) -> Response {
     let status =
         StatusCode::from_u16(refusal.code.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let bytes = marfa_rules::js::to_vec(&envelope(refusal)).unwrap_or_default();
-    let mut response = Response::new(Body::from(bytes));
+    let mut response = Response::new(Body::from(refusal_body(refusal)));
     *response.status_mut() = status;
     let headers = response.headers_mut();
     headers.insert(

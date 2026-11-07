@@ -15,6 +15,7 @@ use super::{
 use crate::app::App;
 use crate::app::access::{Caller, Door, Level, Permission, SchemaKind};
 use crate::app::catalog::{self, Catalog, Provenance, Snapshot};
+use crate::app::items;
 use crate::app::refusal::{Code, Refusal, Result};
 
 fn not_found(id: &str) -> Refusal {
@@ -115,6 +116,8 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                 ],
             )?;
             catalog::raise(unit.tx())?;
+            let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
             unit.audit("type", &id, None)?;
             let held = Provenance {
                 origin: "user",
@@ -157,7 +160,8 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
                 }
                 None => schema,
             };
-            require_evolution(caller, stored, &schema)?;
+            let family = with_subtypes(unit.tx(), &id)?;
+            require_evolution(unit.tx(), caller, &family, stored, &schema)?;
             require_reach(caller, &schema, stored)?;
             if let Some(parent) = text_of(&schema, "parent") {
                 let below = descendant_depth(&catalog.types, &id);
@@ -171,6 +175,8 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
             if !broken.is_empty() {
                 return Err(dependents_refusal(broken));
             }
+            let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
             unit.audit("type", &id, None)?;
             let shown = next
                 .owned(&id)
@@ -184,14 +190,22 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
 
 /// Holds a replacement to what the caller's permissions allow. A stored
 /// definition that does not read can be replaced only by a schema writer.
-fn require_evolution(caller: &Caller, stored: Option<&Obj>, next: &Obj) -> Result<()> {
+fn require_evolution(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    family: &[String],
+    stored: Option<&Obj>,
+    next: &Obj,
+) -> Result<()> {
     if caller.holds(Permission::SchemaWrite) {
         return Ok(());
     }
     let Some(stored) = stored else {
         return caller.require(Permission::SchemaWrite);
     };
-    let (mut changes, _) = evolution_of(stored, next);
+    let (mut changes, additions) = evolution_of(stored, next);
+    let held = items::held_names(tx, family, &additions)?;
+    changes.extend(held.iter().map(|name| format!("fields.{name}")));
     if changes.is_empty() {
         return Ok(());
     }
@@ -245,8 +259,21 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         if !broken.is_empty() {
             return Err(dependents_refusal(broken));
         }
+        let held = items::count_of_type(unit.tx(), &id)?;
+        if held > 0 && !force {
+            return Err(Refusal::new(
+                Code::TypeInUse,
+                format!(
+                    "Type \"{id}\" still has {held} item(s). Move them to another type, or delete with ?force=true to keep them unregistered."
+                ),
+            )
+            .with_detail("item_count", held)
+            .with_detail("settings", json!([])));
+        }
         unit.tx().execute("DELETE FROM types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;
+        let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+        items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
         unit.audit("type", &id, None)?;
         Ok(())
     })
@@ -260,6 +287,21 @@ pub(super) fn subtypes_of(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>>
     let mut statement = tx.prepare("SELECT id FROM types WHERE parent = ?1 ORDER BY id")?;
     let found = statement.query_map([id], |row| row.get(0))?;
     Ok(found.collect::<std::result::Result<_, _>>()?)
+}
+
+/// `id` and every type under it.
+fn with_subtypes(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
+    let mut family = vec![id.to_string()];
+    let mut at = 0;
+    while let Some(held) = family.get(at).cloned() {
+        for subtype in subtypes_of(tx, &held)? {
+            if !family.contains(&subtype) {
+                family.push(subtype);
+            }
+        }
+        at += 1;
+    }
+    Ok(family)
 }
 
 /// Sets the icon the owner chose for a type, which stands in place of the one
