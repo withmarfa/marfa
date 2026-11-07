@@ -23,7 +23,7 @@ use tokio::sync::{Notify, watch};
 use super::App;
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
-use crate::settings::registry::Setting;
+use crate::settings::registry::{Setting, Snapshot};
 
 pub use cleanups::drain;
 use jobs::JOBS;
@@ -39,10 +39,27 @@ const ATTENTION_WAIT: Duration = Duration::from_secs(2);
 
 type Body = fn(Arc<App>, Run) -> Pin<Box<dyn Future<Output = Result<Report>> + Send>>;
 
+/// How often a job runs: by a stored setting, or at a pace the contract gives
+/// it no setting for.
+#[derive(Clone, Copy)]
+enum Interval {
+    Stored(Setting<u64>),
+    Fixed(u64),
+}
+
+impl Interval {
+    fn ms(self, live: &Snapshot) -> u64 {
+        match self {
+            Interval::Stored(setting) => live.get(setting),
+            Interval::Fixed(ms) => ms,
+        }
+    }
+}
+
 /// One housekeeping job.
 pub struct Job {
     pub name: &'static str,
-    interval: Setting<u64>,
+    interval: Interval,
     /// How long after a fresh start its first run comes, within its interval.
     first_run_ms: u64,
     deadline: Duration,
@@ -57,6 +74,38 @@ impl Job {
     const fn new(
         name: &'static str,
         interval: Setting<u64>,
+        first_run_ms: u64,
+        deadline: Duration,
+        run: Body,
+    ) -> Job {
+        Job::paced(
+            name,
+            Interval::Stored(interval),
+            first_run_ms,
+            deadline,
+            run,
+        )
+    }
+
+    const fn fixed(
+        name: &'static str,
+        interval_ms: u64,
+        first_run_ms: u64,
+        deadline: Duration,
+        run: Body,
+    ) -> Job {
+        Job::paced(
+            name,
+            Interval::Fixed(interval_ms),
+            first_run_ms,
+            deadline,
+            run,
+        )
+    }
+
+    const fn paced(
+        name: &'static str,
+        interval: Interval,
         first_run_ms: u64,
         deadline: Duration,
         run: Body,
@@ -240,7 +289,7 @@ pub fn start(app: &Arc<App>) {
 fn listed(app: &App, job: &Job, row: &schedule::Row) -> Value {
     json!({
         "name": job.name,
-        "interval_ms": app.settings.live().get(job.interval),
+        "interval_ms": job.interval.ms(&app.settings.live()),
         "next_run_at": schedule::readable(&row.next_run_at).then_some(&row.next_run_at),
         "running_since": row.running_since,
         "last_started_at": row.last_started_at,

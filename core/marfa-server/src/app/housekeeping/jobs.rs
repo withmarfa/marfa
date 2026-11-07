@@ -1,17 +1,20 @@
 //! Every housekeeping job. A later area adds a job with one entry here, and an
-//! interval in `settings/registry.rs`.
+//! interval in `settings/registry.rs` unless the contract fixes its pace.
 
 use std::time::Duration;
 
-use super::super::items;
+use super::super::{items, oauth};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
-    AUDIT_CLEANUP_INTERVAL_MS, EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS,
-    HEARTBEAT_INTERVAL_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS, REVOKED_KEY_REAP_INTERVAL_MS,
-    TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
+    AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
+    EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS, HEARTBEAT_INTERVAL_MS,
+    RATE_LIMIT_CLEANUP_INTERVAL_MS, REVOKED_KEY_REAP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS,
+    VERSION_THINNING_INTERVAL_MS,
 };
 
 const HOUR: Duration = Duration::from_secs(3_600);
+const HOUR_MS: u64 = 3_600_000;
+const DAY_MS: u64 = 86_400_000;
 const SIX_HOURS: Duration = Duration::from_secs(6 * 3_600);
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -66,13 +69,36 @@ pub(super) const JOBS: &[Job] = &[
         20_000,
         HOUR,
         |app, run| Box::pin(cleanups::rate_limit(app, run)),
-    )
-    .without_statements(),
+    ),
     Job::new(
         "revoked-key-reap",
         REVOKED_KEY_REAP_INTERVAL_MS,
         45_000,
         HOUR,
         |app, run| Box::pin(cleanups::revoked_keys(app, run)),
+    ),
+    Job::new(
+        "auth-session-cleanup",
+        AUTH_SESSION_CLEANUP_INTERVAL_MS,
+        10_000,
+        HOUR,
+        |app, run| Box::pin(oauth::sweep::sweep_expired(app, run)),
+    ),
+    Job::new(
+        "dcr-client-cleanup",
+        DCR_CLIENT_CLEANUP_INTERVAL_MS,
+        25_000,
+        HOUR,
+        |app, run| Box::pin(oauth::sweep::remove_idle_clients(app, run)),
+    ),
+    Job::fixed("revoked-grant-purge", HOUR_MS, 20_000, HOUR, |app, run| {
+        Box::pin(oauth::sweep::purge_withdrawn_grants(app, run))
+    }),
+    Job::fixed(
+        "grant-inactivity-retirement",
+        DAY_MS,
+        40_000,
+        HOUR,
+        |app, run| Box::pin(oauth::sweep::retire_idle_grants(app, run)),
     ),
 ];

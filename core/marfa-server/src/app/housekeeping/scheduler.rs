@@ -31,7 +31,7 @@ pub fn wanted(app: &App) -> Vec<Wanted> {
         .filter(|job| job.runs_here(app))
         .map(|job| Wanted {
             name: job.name,
-            interval_ms: i64::try_from(live.get(job.interval)).unwrap_or(i64::MAX),
+            interval_ms: i64::try_from(job.interval.ms(&live)).unwrap_or(i64::MAX),
             first_run_ms: i64::try_from(job.first_run_ms).unwrap_or(i64::MAX),
         })
         .collect()
@@ -206,7 +206,7 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
         let written = app
             .db
             .write(Write::own(), move |tx| {
-                let interval_ms = live.settings.live().get(interval);
+                let interval_ms = interval.ms(&live.settings.live());
                 schedule::finish(
                     tx,
                     &Finish {

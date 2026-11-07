@@ -8,6 +8,7 @@ use rusqlite::Transaction;
 use serde_json::json;
 
 use super::super::access::Caller;
+use super::super::auth::limits;
 use super::super::keys::reap;
 use super::super::refusal::Result;
 use super::super::{App, audit, events, idempotency};
@@ -92,11 +93,25 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
     })
 }
 
-/// The only limiter so far is the one in memory that `/keys` shares.
-pub async fn rate_limit(app: Arc<App>, _run: Run) -> Result<Report> {
+async fn ended_windows(app: &Arc<App>) -> Result<i64> {
+    let now_ms = app.clock.now_ms();
+    app.db
+        .write(Write::own(), move |tx| {
+            limits::remove_expired(tx, now_ms, BATCH)
+        })
+        .await
+}
+
+/// Both limiters: the one in memory that `/keys` shares, and the sign-in
+/// doors' table.
+pub async fn rate_limit(app: Arc<App>, run: Run) -> Result<Report> {
     let window_ms = app.settings.live().get(RATE_LIMIT_WINDOW_MS);
-    let deleted = app.key_limit.sweep(app.clock.now_ms(), window_ms);
-    Ok(Report::done(json!({ "deleted": deleted })))
+    let swept = app.key_limit.sweep(app.clock.now_ms(), window_ms);
+    let (deleted, done) = drain(&run, BATCH, || ended_windows(&app)).await?;
+    Ok(Report {
+        result: json!({ "deleted": i64::try_from(swept).unwrap_or(i64::MAX) + deleted }),
+        again: !done,
+    })
 }
 
 async fn reap_batch(app: &Arc<App>) -> Result<i64> {

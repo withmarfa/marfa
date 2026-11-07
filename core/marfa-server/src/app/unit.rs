@@ -25,6 +25,16 @@ impl<'c> Unit<'_, 'c> {
         self.tx
     }
 
+    /// The same write, leaving what it audits under `action`.
+    pub fn under(&self, action: &'static str) -> Unit<'_, 'c> {
+        Unit {
+            tx: self.tx,
+            action,
+            caller: self.caller.clone(),
+            at: self.at.clone(),
+        }
+    }
+
     /// Adds what this write announces to the event log.
     pub fn announce(&self, event: &Event<'_>) -> Result<()> {
         events::append(self.tx, &self.at, event)

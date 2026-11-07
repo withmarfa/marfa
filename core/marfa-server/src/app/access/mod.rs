@@ -476,6 +476,38 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_cannot_write_a_system_type_whatever_its_map_says() {
+        let wide = with_map(
+            key("wide", "mine", &[], &[]),
+            Axis::Type,
+            json!({ "*": "write" }),
+        );
+        let app = Caller::App {
+            key: Box::new(wide.clone()),
+            grant: Box::new(oauth::Granted {
+                client_id: "client".into(),
+                user_id: "owner".into(),
+                grant_id: "grant".into(),
+            }),
+        };
+        for credential in [Caller::Key(Box::new(wide)), app] {
+            let refused = credential
+                .require_type("system.connection", Level::Write)
+                .unwrap_err();
+            assert_eq!(refused.code, Code::TypeNotPermitted);
+            credential.require_type("core.note", Level::Write).unwrap();
+            credential
+                .require_type("system.connection", Level::Read)
+                .unwrap();
+        }
+        for direct in [Caller::Local, Caller::Server] {
+            direct
+                .require_type("system.connection", Level::Write)
+                .unwrap();
+        }
+    }
+
+    #[test]
     fn a_key_reaches_what_holds_nothing_beyond_it() {
         use Permission::{AuditRead, KeysManage, KeysMint};
         let minter = |sources: &[&str]| key("minter", "mine", &[KeysMint], sources);

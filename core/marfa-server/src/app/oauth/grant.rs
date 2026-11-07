@@ -17,8 +17,8 @@ use crate::app::unit::Unit;
 const TYPE: &str = "system.connection";
 pub(super) const CONSENT_SOURCE: &str = "marfa/oauth2/consent";
 pub(super) const DEVICE_SOURCE: &str = "marfa/oauth/device";
-/// The action of a write that may create the grant's item, which the item
-/// path audits by it. The grant has its own entry beside that one.
+/// The action of an approval's write. The grant has its own entry, and its item
+/// another by what was done to it.
 pub(super) const GRANT_WRITE: &str = "item.create";
 pub(super) const GRANT_CREATED: &str = "auth.grant.created";
 
@@ -47,7 +47,8 @@ fn properties(pairs: Value) -> Map<String, Value> {
 }
 
 fn applied(unit: &Unit<'_, '_>, cache: &ArcSwap<Catalog>, change: Change) -> Result<()> {
-    let done = apply_server_own(unit, cache, change)?;
+    let action = change.action();
+    let done = apply_server_own(&unit.under(action), cache, change)?;
     if done.status >= 400 {
         return Err(Refusal::internal("a grant's item did not write"));
     }

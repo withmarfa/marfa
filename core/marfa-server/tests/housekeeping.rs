@@ -708,3 +708,23 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
         .await;
     assert!(began.elapsed() < Duration::from_secs(2));
 }
+
+#[tokio::test]
+async fn a_job_the_contract_paces_lists_its_fixed_interval() {
+    let instance = Instance::start(&[]).await;
+    assert_eq!(
+        instance.job("revoked-grant-purge").await["interval_ms"],
+        3_600_000
+    );
+    assert_eq!(
+        instance.job("grant-inactivity-retirement").await["interval_ms"],
+        86_400_000
+    );
+    instance
+        .store("auth_session_cleanup_interval_ms", "60000")
+        .await;
+    assert_eq!(
+        instance.job("auth-session-cleanup").await["interval_ms"],
+        60_000
+    );
+}

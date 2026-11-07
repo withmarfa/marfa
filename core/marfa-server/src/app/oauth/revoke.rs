@@ -31,7 +31,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
     let digest = digest_of(&app.settings.start.api_key_salt, &token)?;
     let ip = visit.client_ip();
     if looks_like_access_token(&token) {
-        app.write(&Caller::Local, TOKEN_REVOKED, move |unit| {
+        app.write(&Caller::Server, TOKEN_REVOKED, move |unit| {
             let tx = unit.tx();
             let Some(found) = store::access_token_by_digest(tx, &digest)?
                 .filter(|found| found.client_id == client.id)
@@ -55,7 +55,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         .await?;
     } else if looks_like_refresh_token(&token) {
         let cache = app.catalog_handle();
-        app.write(&Caller::Local, GRANT_REVOKED, move |unit| {
+        app.write(&Caller::Server, GRANT_REVOKED, move |unit| {
             let tx = unit.tx();
             let Some(found) = store::refresh_token_by_digest(tx, &digest)?.filter(|found| {
                 found.client_id == client.id

@@ -7,10 +7,9 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
-use marfa_server::app::App;
 use marfa_server::app::oauth::authorize::sign_in_then;
 use marfa_server::app::oauth::signed_link;
-use marfa_server::app::oauth::sweep;
+use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -30,6 +29,15 @@ const VERIFIER: &str = "a-verifier-long-enough-for-the-pkce-rule-of-43-character
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS: u64 = 86_400_000;
 const AN_APPROVED_PAGE: &str = "https://approved.example";
+
+/// Runs a job through the scheduler's door, and answers how many it took.
+async fn swept(app: &Arc<App>, job: &str) -> u64 {
+    let ended = housekeeping::run_now(app, job).await.unwrap();
+    assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
+    let result = ended.result.unwrap();
+    let taken = result.get("deleted").or_else(|| result.get("retired"));
+    taken.and_then(Value::as_u64).unwrap()
+}
 
 struct Instance {
     _dir: TempDir,
@@ -274,6 +282,10 @@ impl Instance {
 
     async fn write_note(&self, token: &str) -> Reply {
         let body = json!({ "type": "core.note", "properties": { "body": "from an app" } });
+        self.write_item(token, &body).await
+    }
+
+    async fn write_item(&self, token: &str, body: &Value) -> Reply {
         let request = Request::builder()
             .method(Method::POST)
             .uri("/items")
@@ -753,6 +765,38 @@ async fn a_return_to_beside_a_link_never_leaves_this_server() {
 }
 
 #[tokio::test]
+async fn a_page_the_cors_origins_setting_names_is_answered_and_no_other() {
+    let instance = Instance::signed_in().await;
+    let named = "https://named.example";
+    instance
+        .app
+        .settings
+        .apply_stored(&[("cors_origins".to_string(), json!([named]).to_string())]);
+    let asks = |page: &str| {
+        from_page(Method::GET, "/keys", page)
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let answered = instance.send(asks(named)).await;
+    assert_eq!(answered.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], named);
+
+    let preflight = from_page(Method::OPTIONS, "/items", named)
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let reply = instance.send(preflight).await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.text);
+
+    let other = instance.send(asks("https://other.example")).await;
+    assert!(
+        !other
+            .headers
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    );
+}
+
+#[tokio::test]
 async fn the_item_door_still_refuses_a_grant_a_person_did_not_approve() {
     let instance = Instance::signed_in().await;
     let client = instance.register(NOTES).await;
@@ -767,6 +811,25 @@ async fn the_item_door_still_refuses_a_grant_a_person_did_not_approve() {
     let reply = instance.send(request).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text);
     assert_eq!(instance.count(grants).await, 1);
+}
+
+#[tokio::test]
+async fn an_app_cannot_write_a_system_type_its_scope_names() {
+    let instance = Instance::signed_in().await;
+    let scope = "core.note:write system.view:write offline_access";
+    let client = instance.register(scope).await;
+    let issued = instance.tokens(&client, scope).await;
+    let token = text_at(&issued, "access_token");
+
+    let written = instance.write_note(token).await;
+    assert_eq!(written.status, StatusCode::CREATED, "{}", written.text);
+
+    let body = json!({ "type": "system.view", "properties": { "name": "from an app" } });
+    let refused = instance.write_item(token, &body).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert_eq!(refused.json()["error"]["code"], "type_not_permitted");
+    let views = "SELECT count(*) FROM items WHERE type = 'system.view'";
+    assert_eq!(instance.count(views).await, 0);
 }
 
 #[tokio::test]
@@ -824,7 +887,7 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
         .revoke(&revoked, text_at(&issued, "refresh_token"))
         .await;
     let offered = instance.register(NOTES).await;
-    assert_eq!(sweep::remove_idle_clients(&instance.app).await.unwrap(), 0);
+    assert_eq!(swept(&instance.app, "dcr-client-cleanup").await, 0);
 
     instance.app.clock.advance(2 * DAY_MS).unwrap();
     let link = instance.consent_link(&offered, NOTES).await;
@@ -835,7 +898,7 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
         ))
         .await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
-    assert_eq!(sweep::remove_idle_clients(&instance.app).await.unwrap(), 1);
+    assert_eq!(swept(&instance.app, "dcr-client-cleanup").await, 1);
 
     let held = async |client: &str| {
         let fields = [
@@ -862,27 +925,31 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
     let client = instance.register(OFFLINE_NOTES).await;
     let issued = instance.tokens(&client, OFFLINE_NOTES).await;
     let app = &instance.app;
-    assert_eq!(sweep::retire_idle_grants(app).await.unwrap(), 0);
+    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
+    let named_by_nobody = "SELECT count(*) FROM items \
+                           WHERE type = 'system.connection' AND writer_kind IS NULL";
+    assert_eq!(instance.count(named_by_nobody).await, 0);
 
     app.clock.advance(364 * DAY_MS).unwrap();
-    assert_eq!(sweep::retire_idle_grants(app).await.unwrap(), 0);
+    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
     app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(sweep::retire_idle_grants(app).await.unwrap(), 1);
-    assert_eq!(sweep::retire_idle_grants(app).await.unwrap(), 0);
+    assert_eq!(swept(app, "grant-inactivity-retirement").await, 1);
+    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
     let refused = instance
         .refresh(&client, text_at(&issued, "refresh_token"))
         .await;
     refused_as(&refused, "invalid_grant");
     let retired = "SELECT count(*) FROM audit_log WHERE action = 'auth.grant.retired'";
     assert_eq!(instance.count(retired).await, 1);
+    assert_eq!(instance.count(named_by_nobody).await, 1);
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
     assert_eq!(instance.count(grants).await, 1);
 
     app.clock.advance(89 * DAY_MS).unwrap();
-    assert_eq!(sweep::purge_withdrawn_grants(app).await.unwrap(), 0);
-    assert_eq!(sweep::remove_idle_clients(app).await.unwrap(), 0);
+    assert_eq!(swept(app, "revoked-grant-purge").await, 0);
+    assert_eq!(swept(app, "dcr-client-cleanup").await, 0);
     app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(sweep::purge_withdrawn_grants(app).await.unwrap(), 1);
+    assert_eq!(swept(app, "revoked-grant-purge").await, 1);
     assert_eq!(instance.count(grants).await, 0);
     assert_eq!(
         instance
@@ -891,9 +958,9 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
         0
     );
 
-    assert_eq!(sweep::remove_idle_clients(app).await.unwrap(), 0);
-    assert!(sweep::sweep_expired(app).await.unwrap() > 0);
-    assert_eq!(sweep::remove_idle_clients(app).await.unwrap(), 1);
+    assert_eq!(swept(app, "dcr-client-cleanup").await, 0);
+    assert!(swept(app, "auth-session-cleanup").await > 0);
+    assert_eq!(swept(app, "dcr-client-cleanup").await, 1);
 }
 
 #[tokio::test]
@@ -907,7 +974,7 @@ async fn a_grant_in_use_is_not_idle() {
         .await;
     assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
     instance.app.clock.advance(350 * DAY_MS).unwrap();
-    assert_eq!(sweep::retire_idle_grants(&instance.app).await.unwrap(), 0);
+    assert_eq!(swept(&instance.app, "grant-inactivity-retirement").await, 0);
 }
 
 #[tokio::test]
@@ -921,20 +988,74 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
     assert_eq!(refreshed.status, StatusCode::OK, "{}", refreshed.text);
     instance.code(&client, OFFLINE_NOTES).await;
     let app = &instance.app;
-    assert_eq!(sweep::sweep_expired(app).await.unwrap(), 0);
+    assert_eq!(swept(app, "auth-session-cleanup").await, 0);
 
     app.clock.advance(2 * 3_600_000).unwrap();
-    assert_eq!(sweep::sweep_expired(app).await.unwrap(), 3);
+    assert_eq!(swept(app, "auth-session-cleanup").await, 3);
     let rotated = "SELECT count(*) FROM auth_oauth_refresh_token WHERE rotated_at IS NOT NULL";
     assert_eq!(instance.count(rotated).await, 1);
     app.clock.advance(31 * DAY_MS).unwrap();
-    assert_eq!(sweep::sweep_expired(app).await.unwrap(), 2);
+    let both_tokens_and_the_browser_session = 3;
+    assert_eq!(
+        swept(app, "auth-session-cleanup").await,
+        both_tokens_and_the_browser_session
+    );
     assert_eq!(instance.count(rotated).await, 0);
 }
 
 #[tokio::test]
+async fn an_expired_browser_session_goes_and_a_live_one_stays() {
+    let instance = Instance::signed_in().await;
+    let claim = json!({ "email": EMAIL, "password": PASSWORD });
+    let again = post_json("/auth/sign-in/email", &claim);
+    assert_eq!(instance.send(again).await.status, StatusCode::OK);
+    let sessions = "SELECT count(*) FROM auth_session";
+    assert_eq!(instance.count(sessions).await, 2);
+    let app = &instance.app;
+    app.db
+        .write(Write::own(), |tx| {
+            tx.execute(
+                "UPDATE auth_session SET expires_at = 0 \
+                 WHERE id = (SELECT id FROM auth_session LIMIT 1)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(swept(app, "auth-session-cleanup").await, 1);
+    assert_eq!(instance.count(sessions).await, 1);
+}
+
+#[tokio::test]
+async fn an_ended_rate_limit_window_goes_and_a_running_one_stays() {
+    let instance = Instance::signed_in().await;
+    let app = &instance.app;
+    app.db
+        .write(Write::own(), |tx| {
+            tx.execute(
+                "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) VALUES \
+                 ('a test', 'ended', 1, '2000-01-01T00:00:00.000Z'), \
+                 ('a test', 'running', 1, '2999-01-01T00:00:00.000Z')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    swept(app, "rate-limit-cleanup").await;
+    let left = "SELECT count(*) FROM rate_limit_windows \
+                WHERE family = 'a test' AND window_key = 'running'";
+    assert_eq!(instance.count(left).await, 1);
+    let all = "SELECT count(*) FROM rate_limit_windows WHERE family = 'a test'";
+    assert_eq!(instance.count(all).await, 1);
+}
+
+#[tokio::test]
 async fn a_pass_works_through_more_than_one_batch() {
-    const MORE_THAN_A_BATCH: usize = 201;
+    const MORE_THAN_A_BATCH: u64 = 201;
     let instance = Instance::signed_in().await;
     for _ in 0..MORE_THAN_A_BATCH {
         instance.register(NOTES).await;
@@ -960,20 +1081,14 @@ async fn a_pass_works_through_more_than_one_batch() {
         })
         .await
         .unwrap();
-    assert_eq!(sweep::sweep_expired(app).await.unwrap(), MORE_THAN_A_BATCH);
+    assert_eq!(swept(app, "auth-session-cleanup").await, MORE_THAN_A_BATCH);
     assert_eq!(
-        sweep::retire_idle_grants(app).await.unwrap(),
+        swept(app, "grant-inactivity-retirement").await,
         MORE_THAN_A_BATCH
     );
     app.clock.advance(91 * DAY_MS).unwrap();
-    assert_eq!(
-        sweep::purge_withdrawn_grants(app).await.unwrap(),
-        MORE_THAN_A_BATCH
-    );
-    assert_eq!(
-        sweep::remove_idle_clients(app).await.unwrap(),
-        MORE_THAN_A_BATCH
-    );
+    assert_eq!(swept(app, "revoked-grant-purge").await, MORE_THAN_A_BATCH);
+    assert_eq!(swept(app, "dcr-client-cleanup").await, MORE_THAN_A_BATCH);
 }
 
 fn from_page(method: Method, path: &str, page: &str) -> axum::http::request::Builder {

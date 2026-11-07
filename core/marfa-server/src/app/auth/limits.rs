@@ -162,6 +162,16 @@ fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i
     }))
 }
 
+/// Removes up to `batch` windows that have ended, of any family.
+pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i64> {
+    let count = tx.execute(
+        "DELETE FROM rate_limit_windows WHERE (family, window_key) IN ( \
+         SELECT family, window_key FROM rate_limit_windows WHERE expires_at <= ?1 LIMIT ?2)",
+        params![stamp(now_ms), batch],
+    )?;
+    Ok(i64::try_from(count).unwrap_or(i64::MAX))
+}
+
 /// Counts one attempt, and answers how many milliseconds from `now_ms` the
 /// caller must wait if it is refused. An attempt stops at the first lane that
 /// refuses it, so that lane's excess never reaches the next. The wait runs to

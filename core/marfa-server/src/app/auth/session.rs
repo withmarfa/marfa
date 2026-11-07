@@ -287,6 +287,16 @@ pub(super) fn end_all(
     Ok(())
 }
 
+/// Removes up to `batch` sessions past their end, which no cookie opens any more.
+pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i64> {
+    let count = tx.execute(
+        "DELETE FROM auth_session WHERE id IN ( \
+         SELECT id FROM auth_session WHERE expires_at <= ?1 LIMIT ?2)",
+        params![now_ms / 1_000, batch],
+    )?;
+    Ok(i64::try_from(count).unwrap_or(i64::MAX))
+}
+
 /// Signs a browser out. A session that ended while this waited is out already.
 pub async fn sign_out(app: &App, caller: &Caller, visit: Visit) -> Result<()> {
     if caller.session().is_none() {
