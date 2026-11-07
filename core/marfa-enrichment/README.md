@@ -173,8 +173,8 @@ On Linux, with the static musl program, the highest address space of a child (`V
 | --- | --- | --- |
 | Letter-size page, OCR with four languages | 41 MB | 57 MB |
 | 64 million pixels, gray, full of text | 513 MB | 539 MB |
-| 12-page scanned PDF | 186 MB | 199 MB |
-| Text PDF (a paper of 12 pages) | 13 MB | 44 MB |
+| Scanned, multi-page PDF | 186 MB | 199 MB |
+| Text PDF, a research paper | 13 MB | 44 MB |
 
 A child costs about 10 ms to start.
 
