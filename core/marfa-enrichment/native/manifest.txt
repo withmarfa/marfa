@@ -10,6 +10,7 @@
 #   image   <name> <reference>                   a container image, by digest
 #   apt-snapshot <name> <timestamp>              the date of the Ubuntu package archive the image installs from
 #   toolchain <name> <version>                   a compiler version the builder must have
+#   kernel  <name> <url> <sha256>               a Linux kernel package that native/vm.sh boots to run the x86_64 program
 #   licence <name> <url> <sha256>                a licence text that ships with a program and that no source archive holds
 #
 # To move a pin, change the URL and the hash together: the build stops at the
@@ -72,3 +73,11 @@ licence tessdata_fast https://raw.githubusercontent.com/tesseract-ocr/tessdata_f
 licence musl https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?id=b76f37fd f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af
 licence gcc-copying3 https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING3 8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903
 licence gcc-runtime-exception https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING.RUNTIME 9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74
+
+# The x86_64 program is also run on a real Linux kernel (native/vm.sh), in a full-system
+# QEMU. The kernel is Debian's cloud kernel, a file of snapshot.debian.org, which never
+# changes: Landlock and seccomp are built in, and so are the serial console and everything
+# else it needs, so the machine has no modules and no disk. QEMU comes from the Alpine
+# package of the image below.
+kernel debian-6.1.0-28-cloud-amd64 https://snapshot.debian.org/file/961bd3c01a6f9bf88db09af672b5510ca9510c4b 859a19374f886463145d2743b243007f60054d3ff2d1e55cd6d6a72a623e2ece
+image qemu alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc

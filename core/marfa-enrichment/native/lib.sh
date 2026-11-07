@@ -205,3 +205,14 @@ licence_into() {
   download "$url" "$sha" "$DOWNLOADS/licence-$name.txt"
   cp "$DOWNLOADS/licence-$name.txt" "$out"
 }
+
+# make_build_image <name>: builds the image of native/linux/Dockerfile, the one every
+# Linux build and the VM's init program are made in, with the base image and the
+# snapshot date the manifest pins.
+make_build_image() {
+  local image=$1 base snapshot
+  base=$(manifest_line image build | awk '{ print $3 }')
+  snapshot=$(manifest_line apt-snapshot ubuntu | awk '{ print $3 }')
+  docker build --quiet --platform linux/amd64 --build-arg "BASE=$base" --build-arg "SNAPSHOT=$snapshot" \
+    -f "$NATIVE_DIR/linux/Dockerfile" -t "$image" "$NATIVE_DIR" >/dev/null || die "could not build $image"
+}

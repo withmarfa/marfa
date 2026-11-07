@@ -87,8 +87,9 @@ write("not-a-workbook.xls", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 120)
 write("deep.xml", "<a>" * 5000 + "quokkadeep" + "</a>" * 5000)
 write("truncated-package.docx", b"PK\x03\x04" + bytes(range(200)))
 
-# The picture for the memory test: 64 million pixels, gray, full of text, which is the
-# densest read the decode limit allows.
+# The picture for the memory test: 64 million pixels, gray, with a few lines of small
+# type. It takes 2.5 seconds on macOS and 600 MB; a page of readable 60 pixel type
+# across the whole width takes 11 seconds and 790 MB (the README's table).
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:

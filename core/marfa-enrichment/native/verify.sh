@@ -2,7 +2,7 @@
 # Runs the finished programs of a target on real files, with nothing else installed,
 # and says what each run showed.
 #
-#   MARFA_NATIVE_ROOT=<folder> native/verify.sh <target> [--users nobody,root]
+#   MARFA_NATIVE_ROOT=<folder> native/verify.sh <target> [--users nobody,root] [--vm]
 #   MARFA_NATIVE_ROOT=<folder> native/verify.sh compare <target-a> <target-b>
 #
 # On Linux the programs run in a container made `FROM scratch` that holds only the two
@@ -17,13 +17,20 @@
 # is asked for a real crash, hang, spin, memory blow-up and output flood, each read
 # with a good file after it by the same parent, which must survive.
 #
+# --vm (x86_64 Linux only) runs every case in one boot of a full-system QEMU with a real
+# Linux kernel (native/vm.sh), as an emulated x86_64 PC: the CPU is emulated and the
+# kernel, its Landlock and its seccomp are real. The machine holds the two programs and
+# the test files, and no shell. It runs each case, and this script judges the answers
+# the same way as on any other target. No memory workaround is allowed there, and every
+# read of a file must report `sandbox: Full`.
+#
 # Needs python3 (and Pillow, for the scanned PDF and the memory test's picture) and, on
 # Linux, docker. Under `uv`, `uv run --with pillow` finds Pillow. A target other than
 # the machine's own runs emulated; the report says which.
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.
-# MARFA_VERIFY_MEMORY   a memory limit in bytes added to every run that sets none, and
+# MARFA_VERIFY_MEMORY   (not with --vm) a memory limit in bytes added to every run that sets none, and
 #                       the least for a run that sets a real one. Needed
 #                       to run linux/amd64 on an Apple silicon machine: Rosetta cannot
 #                       start a program whose address space is limited to the default
@@ -71,9 +78,11 @@ fi
 select_target "${1:-}"
 shift
 users=nobody,root
+VM=
 while [ $# -gt 0 ]; do
   case "$1" in
     --users) users=$2; shift 2 ;;
+    --vm) VM=1; shift ;;
     *) die "unknown option $1" ;;
   esac
 done
@@ -92,7 +101,14 @@ case "$TARGET" in
   aarch64-unknown-linux-musl) KIND=linux PLATFORM=linux/arm64 ;;
   x86_64-unknown-linux-musl) KIND=linux PLATFORM=linux/amd64 ;;
 esac
-if [ "$KIND" = linux ]; then
+EXPECT_FULL=
+if [ -n "$VM" ]; then
+  [ "$TARGET" = x86_64-unknown-linux-musl ] || die "--vm is for x86_64-unknown-linux-musl"
+  [ -z "${MARFA_VERIFY_MEMORY:-}" ] || die "--vm runs with the program's own limits; unset MARFA_VERIFY_MEMORY"
+  KIND=vm
+  EMULATED="yes (an emulated x86_64 PC in full-system QEMU, on a real Linux kernel; the machine is $(uname -m))"
+  EXPECT_FULL=1
+elif [ "$KIND" = linux ]; then
   need docker
   IMAGE=${MARFA_VERIFY_IMAGE:-marfa-enrichment-verify}-${TARGET%%-*}
   # The machine's own architecture runs natively; the other is emulated.
@@ -103,6 +119,7 @@ if [ "$KIND" = linux ]; then
 else
   EMULATED=no
 fi
+[ "$EMULATED" = no ] && EXPECT_FULL=1
 
 # The test files.
 chmod -R u+w "$V/models" "$V/context" 2>/dev/null || true
@@ -130,7 +147,7 @@ if [ -n "${MARFA_VERIFY_CORPUS:-}" ]; then
   cp "$MARFA_VERIFY_CORPUS"/* "$FILES_DIR/corpus/"
 fi
 
-if [ "$KIND" = linux ]; then
+if [ "$KIND" = linux ] || [ "$KIND" = vm ]; then
   FILES=/files
   MODELS=/models
   SCRATCH=/scratch
@@ -203,15 +220,38 @@ REPORT="$V/report.txt"
 
 # check <name> <exit code> <text that must appear, words joined by '|'> <binary> <args...>
 # The text is looked for in what the program printed to stdout and stderr together.
+# On a target that must report `sandbox: Full`, a successful read of the shipped program
+# must say so. With --vm the cases are first only written down (MODE=plan) and run
+# together by one boot of the machine, then judged one by one (MODE=replay).
+MODE=
+VM_DIR="$V/context"
 check() {
   local name=$1 want=$2 needles=$3 bin=$4
   shift 4
-  local dir="$V/results/${RUN_USER//:/-}"
+  local user=${RUN_USER//:/-}
+  if [ "$MODE" = plan ]; then
+    local IFS=$'\t'
+    printf '%s\t%s\t%s/%s\t/%s\t%s\n' "${RUN_USER%%:*}" "${RUN_USER##*:}" "$user" "$name" "$bin" "$*" >>"$VM_DIR/plan.body"
+    return 0
+  fi
+  local dir="$V/results/$user"
   mkdir -p "$dir"
-  local started=$SECONDS code
-  prog "$bin" "$@" >"$dir/$name.stdout" 2>"$dir/$name.stderr" </dev/null && code=0 || code=$?
-  local elapsed=$((SECONDS - started)) ok=1 needle
+  local started=$SECONDS code elapsed
+  if [ "$MODE" = replay ]; then
+    local answer="$VM_DIR/results/$user/$name"
+    cp "$answer.stdout" "$dir/$name.stdout"
+    cp "$answer.stderr" "$dir/$name.stderr"
+    code=$(cat "$answer.code")
+    elapsed=$(($(cat "$answer.ms") / 1000))
+  else
+    prog "$bin" "$@" >"$dir/$name.stdout" 2>"$dir/$name.stderr" </dev/null && code=0 || code=$?
+    elapsed=$((SECONDS - started))
+  fi
+  local ok=1 needle
   [ "$code" -eq "$want" ] || ok=0
+  if [ -n "$EXPECT_FULL" ] && [ "$bin" = marfa-enrichment-read ] && [ "$want" -eq 0 ]; then
+    needles="$needles|sandbox: Full"
+  fi
   local IFS='|'
   for needle in $needles; do
     cat "$dir/$name.stdout" "$dir/$name.stderr" | grep -qF -- "$needle" || ok=0
@@ -292,7 +332,7 @@ read_cases() {
   # What the child holds, from the proof program: the limits the parent set.
   # An emulator may run a program without honoring its filter, and then says so.
   local sandbox_wants="sandbox: Full"
-  [ "$EMULATED" = no ] || sandbox_wants="sandbox: "
+  [ -n "$EXPECT_FULL" ] || sandbox_wants="sandbox: "
   check sandbox-state 0 "$sandbox_wants" marfa-enrichment-read-proof read "$f/faults/report.txt"
 }
 
@@ -356,20 +396,45 @@ memory_cases() {
   fi
 }
 
+run_cases() {
+  for RUN_USER in ${users//,/ }; do
+    case "$RUN_USER" in
+      nobody) RUN_USER=65534:65534 ;;
+      root) RUN_USER=0:0 ;;
+    esac
+    [ "$KIND" = mac ] && RUN_USER=$(id -un)
+    [ "$MODE" = plan ] || echo "verify: user $RUN_USER" | tee -a "$REPORT"
+    read_cases
+    fault_cases
+    memory_cases
+    [ "$KIND" = mac ] && break
+  done
+  return 0
+}
+
 echo "verify: $TARGET, emulated: $EMULATED" | tee -a "$REPORT"
-for RUN_USER in ${users//,/ }; do
-  case "$RUN_USER" in
-    nobody) RUN_USER=65534:65534 ;;
-    root) RUN_USER=0:0 ;;
-  esac
-  [ "$KIND" = mac ] && RUN_USER=$(id -un)
-  echo "verify: user $RUN_USER" | tee -a "$REPORT"
-  read_cases
-  fault_cases
-  memory_cases
-  [ "$KIND" = mac ] && break
-done
+if [ "$KIND" = vm ]; then
+  # One boot runs every case: write them down, run them, then judge the answers.
+  : >"$VM_DIR/plan.body"
+  MODE=plan run_cases
+  { echo "timeout ${MARFA_VM_CASE_LIMIT:-1800}"; cat "$VM_DIR/plan.body"; } >"$VM_DIR/plan"
+  rm -f "$VM_DIR/plan.body"
+  rm -rf "$VM_DIR/models"
+  cp -a "$V/models" "$VM_DIR/models"
+  "$NATIVE_DIR/vm.sh" "$VM_DIR" "$OUT" 2>&1 | tee -a "$REPORT" || die "the machine did not run the cases"
+  echo "verify: the machine, as its kernel and CPU described themselves:" | tee -a "$REPORT"
+  sed 's/^/  /' "$VM_DIR/results/machine.txt" | tee -a "$REPORT" >/dev/null
+  MODE=replay
+fi
+run_cases
 echo "verify: sandbox states the programs reported:" | tee -a "$REPORT"
 cat "$V"/results/*/*.stderr | grep '^sandbox:' | sort | uniq -c | tee -a "$REPORT"
+if [ -n "$EXPECT_FULL" ]; then
+  not_full=$(cat "$V"/results/*/*.stderr | grep '^sandbox:' | grep -vc '^sandbox: Full$' || true)
+  if [ "$not_full" -ne 0 ]; then
+    FAILED=$((FAILED + 1))
+    echo "FAIL $not_full reads reported a sandbox other than Full on a target that must hold it" | tee -a "$REPORT"
+  fi
+fi
 echo "verify: $PASSED passed, $FAILED failed ($REPORT)" | tee -a "$REPORT"
 [ "$FAILED" -eq 0 ]

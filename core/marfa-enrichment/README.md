@@ -98,6 +98,8 @@ It then checks them. On Linux, `file` must say the program is statically linked,
 
 An x86_64 program cannot be run natively on an Apple silicon Mac. Docker there runs it under Rosetta, which cannot start a process whose address space is limited to the reader's default (`RLIMIT_AS`, 1 GiB plus 256 MiB plus the program), cannot satisfy an allocation too large for it, reports no Landlock, and cannot run under a seccomp filter: its own calls are not x86_64 calls, so the filter would end the process. The child tries the filter in a forked process first and goes on without it, so `Reading::sandbox` is `Off`. Run it there with `MARFA_VERIFY_MEMORY=2147483648` (and `--max-memory 2147483648` for `fuzz.sh`), expect the cases that depend on those and on the sandbox to differ, and run the whole matrix on an x86_64 Linux machine to see them hold.
 
+`native/verify.sh x86_64-unknown-linux-musl --vm` runs the whole matrix on a real kernel instead, with no Rosetta and none of the changes above. It boots one full-system QEMU that emulates an x86_64 PC (`native/vm.sh`), with Debian's 6.1 cloud kernel from a pinned file, Landlock and seccomp on, and in the machine only a first program (`native/qemu/init.rs`), the two programs and the test files, with no shell and no memory workaround. The first program runs each case as `nobody` or `root` and writes what it did to the serial console, and `verify.sh` judges the answers as on any other target and requires `sandbox: Full` from every read. This is an emulated CPU on a real kernel, which is the nearest to x86_64 hardware a machine without it can reach: the kernel's own Landlock and seccomp are tested, but not the instructions of a real CPU or its timing. A test that is bound by a time limit can fail from the slowness of emulation alone; the report names it.
+
 ### OCR
 
 `Options::ocr` is `None` for no OCR, and an image then gives its size only. `OcrOptions::languages` defaults to `eng+deu+fra+spa`. All six models are inside the program, and `OcrOptions::data_dir` names an optional folder of `<language>.traineddata` files. A model in that folder is used in place of the program's own for that language, and a language only the folder has can be named too, so an owner adds a language or a larger model by dropping in a file. Nothing is written to disk: the shim hands Tesseract a file reader that serves each model from the folder or from the program's memory.
@@ -173,7 +175,7 @@ A polled limit can be passed for the length of a poll. Memory written as fast as
 
 | Option | Default | Why |
 | --- | --- | --- |
-| `time_limit` | 60 seconds | The TypeScript server's item timeout. The densest page the decode limit allows took 11 seconds. |
+| `time_limit` | 60 seconds | The TypeScript server's item timeout. A 64 million pixel page of readable type took 11 seconds on macOS. The same page in type too small to read after scaling, the slowest read found, passes 60 seconds and is `TimedOut`. |
 | `time_budget` | Three quarters of `time_limit` | Leaves room to answer with what was read. |
 | `max_memory_bytes` | 1 GiB | Holds a 64 million pixel photo, at 807 MB on macOS. A picture's decode limit is three quarters of it, and `max_inflated_bytes` does not touch pictures. |
 
@@ -189,8 +191,8 @@ Measured on macOS with the release build:
 | 8000 x 6000 RGB photo, JPEG | 681 MB |
 | 8000 x 6000 RGB photo, 96 MB PNG | 767 MB |
 | 8000 x 8000 RGB photo, JPEG, near the decode limit | 807 MB |
-| 64 million pixels, gray, blank | 584 MB |
-| 64 million pixels, gray, full of text | 803 MB |
+| 64 million pixels, gray, blank | 585 MB |
+| 64 million pixels, gray, a page of readable type (60 pixel type, 29,000 characters) | 790 MB |
 
 macOS keeps a freed block of this size resident, so the picture, its gray copy, and the buffer that scales it add up there. The decode limit counts all three.
 
@@ -203,7 +205,7 @@ On Linux, with the static musl program, the highest address space of a child (`V
 | 8000 x 6000 RGB photo, JPEG | 453 MB | 476 MB |
 | 8000 x 6000 RGB photo, 96 MB PNG | 534 MB | 557 MB |
 | 8000 x 8000 RGB photo, JPEG | 526 MB | 549 MB |
-| 64 million pixels, gray, full of text | 516 MB | 539 MB |
+| 64 million pixels, gray, a few lines of small type (the picture of `verify.sh`) | 516 MB | 539 MB |
 | Scanned, multi-page PDF | 186 MB | 199 MB |
 | Text PDF, a research paper | 13 MB | 44 MB |
 

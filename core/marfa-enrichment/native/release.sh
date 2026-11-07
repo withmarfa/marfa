@@ -94,10 +94,7 @@ case "$TARGET" in
     image="$prefix-build"
     volume="$prefix-work"
     stage "make the build image $image"
-    base=$(manifest_line image build | awk '{ print $3 }')
-    snapshot=$(manifest_line apt-snapshot ubuntu | awk '{ print $3 }')
-    docker build --quiet --platform linux/amd64 --build-arg "BASE=$base" --build-arg "SNAPSHOT=$snapshot" \
-      -f "$NATIVE_DIR/linux/Dockerfile" -t "$image" "$NATIVE_DIR" >/dev/null || die "could not build $image"
+    make_build_image "$image"
     docker volume create "$volume" >/dev/null
     # The checkout and the Cargo caches live on a volume of the engine's own file
     # system, which tells `A` from `a` and holds many small files; the folder the
