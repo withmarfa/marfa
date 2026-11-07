@@ -1,0 +1,32 @@
+[package]
+name = "marfa-server"
+description = "An experimental Marfa server built on marfa-core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "marfa-server"
+path = "src/main.rs"
+
+[dependencies]
+argon2 = "0.6"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "matched-path"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap.workspace = true
+getrandom = "0.4"
+hex.workspace = true
+hmac = "0.13"
+http-body-util = "0.1"
+libc = "0.2"
+marfa-core.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["catch-panic"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+uuid.workspace = true

@@ -1092,7 +1092,7 @@ impl Catalog {
     /// is judged only where the write itself sets it, so this is for
     /// properties a write names; `validate_merged` judges the item a write
     /// leaves.
-    pub(crate) fn validate_properties(
+    pub fn validate_properties(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
@@ -1201,7 +1201,7 @@ impl Catalog {
     /// A create's properties as the server holds them: a null on a field
     /// the type declares and does not require is dropped, and one on a
     /// property it does not declare is kept (`items/create-null-optional`).
-    pub(crate) fn created_properties(
+    pub fn created_properties(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
@@ -1226,7 +1226,7 @@ impl Catalog {
     /// `url` elements and a `url` member of a list's entries hold the trimmed
     /// address (`types/url-stored`). A value the field would refuse is left
     /// for the validation to name.
-    pub(crate) fn coerced_properties(
+    pub fn coerced_properties(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
@@ -1334,7 +1334,7 @@ impl Catalog {
     /// order a read of the type lists them, its parent's before its own and a
     /// field declared again keeping the place it first took, then the rest as
     /// given.
-    pub(crate) fn in_answer_order(
+    pub fn in_answer_order(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,

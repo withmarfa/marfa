@@ -5,7 +5,7 @@ use crate::{CoreError, Result};
 /// Matches the server's flexible timestamp grammar, with a UTC default zone.
 /// Chrono handles the calendar; the adapter preserves Date's reduced precision,
 /// compact offsets, millisecond truncation and special midnight spelling.
-pub(crate) fn normalize(value: &str, field: &str) -> Result<String> {
+pub fn normalize(value: &str, field: &str) -> Result<String> {
     let instant = parse(value).ok_or_else(|| invalid(field, "expected an RFC 3339 timestamp"))?;
     if !(0..=9999).contains(&instant.year()) {
         return Err(invalid(field, "the UTC year must be between 0000 and 9999"));

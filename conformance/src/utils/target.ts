@@ -23,7 +23,8 @@ export interface TargetCredentials {
   apiKey: string;
   managementKey: string;
   controlSocket: string;
-  ownerCookie: string;
+  /** Absent for a target with no owner sign-in. */
+  ownerCookie?: string;
   ownerSessionFile?: string;
   authSecret?: string;
 }
@@ -45,7 +46,9 @@ export function renderEnvFile(
     `MARFA_API_KEY=${credentials.apiKey}`,
     `MARFA_MANAGEMENT_KEY=${credentials.managementKey}`,
     `MARFA_CONTROL_SOCKET=${credentials.controlSocket}`,
-    `MARFA_OWNER_COOKIE=${credentials.ownerCookie}`,
+    ...(credentials.ownerCookie === undefined
+      ? []
+      : [`MARFA_OWNER_COOKIE=${credentials.ownerCookie}`]),
     ...(credentials.ownerSessionFile === undefined
       ? []
       : [`MARFA_OWNER_SESSION_FILE=${credentials.ownerSessionFile}`]),

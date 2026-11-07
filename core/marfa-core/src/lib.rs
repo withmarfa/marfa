@@ -68,6 +68,7 @@ mod scaffold;
 #[cfg(test)]
 mod scripted;
 mod search;
+pub mod server;
 mod slice;
 #[cfg(test)]
 mod slice_query_tests;

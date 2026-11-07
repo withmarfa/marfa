@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::filter;
-use crate::model::{SearchFilters, SearchHit};
+use crate::model::{SearchFilters, SearchHit, Sort, SortDirection, SortField};
 use crate::query;
 use crate::store::{self, Unreadable};
 
@@ -16,6 +16,17 @@ pub(crate) fn search(
     limit: usize,
     unreadable: &mut Unreadable,
 ) -> Result<Vec<SearchHit>> {
+    let (clauses, values) = narrowing(conn, catalog, filters)?;
+    search_where(conn, query, &clauses, values, limit, unreadable)
+}
+
+/// The `WHERE` clauses, and the values they bind, that select the rows
+/// `filters` name, on `items`.
+fn narrowing(
+    conn: &Connection,
+    catalog: &Catalog,
+    filters: &SearchFilters,
+) -> Result<(Vec<String>, Vec<Value>)> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
     query::narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
@@ -46,7 +57,7 @@ pub(crate) fn search(
         &mut clauses,
         &mut values,
     )?;
-    search_where(conn, query, &clauses, values, limit, unreadable)
+    Ok((clauses, values))
 }
 
 /// Ranked as `search` ranks, narrowed by `clauses` on `items`.
@@ -54,8 +65,40 @@ pub(crate) fn search_where(
     conn: &Connection,
     query: &str,
     clauses: &[String],
+    values: Vec<Value>,
+    limit: usize,
+    unreadable: &mut Unreadable,
+) -> Result<Vec<SearchHit>> {
+    search_page(
+        conn,
+        query,
+        Order::Relevance(SortDirection::Descending),
+        clauses,
+        values,
+        limit,
+        0,
+        unreadable,
+    )
+}
+
+/// What a search orders its hits by. Ties fall to the item id, ascending in
+/// both directions.
+pub enum Order {
+    /// `Descending` puts the best match first.
+    Relevance(SortDirection),
+    Field(Sort),
+}
+
+/// A page of hits: `limit` of them after the first `offset` of the ranking.
+#[allow(clippy::too_many_arguments)]
+pub fn search_page(
+    conn: &Connection,
+    query: &str,
+    order: Order,
+    clauses: &[String],
     mut values: Vec<Value>,
     limit: usize,
+    offset: usize,
     unreadable: &mut Unreadable,
 ) -> Result<Vec<SearchHit>> {
     let Some(expression) = fts_expression(query) else {
@@ -67,13 +110,30 @@ pub(crate) fn search_where(
         .map(|clause| format!(" AND {clause}"))
         .collect();
     values.push(Value::from(limit as i64));
-    let mut statement = conn.prepare(&format!(
+    values.push(Value::from(offset as i64));
+    let order_sql = match order {
+        Order::Relevance(SortDirection::Descending) => "bm25(items_fts), items.id".to_string(),
+        Order::Relevance(SortDirection::Ascending) => "bm25(items_fts) DESC, items.id".to_string(),
+        Order::Field(Sort {
+            field: SortField::Property(name),
+            direction,
+        }) => query::order_terms(&Sort {
+            field: SortField::Property(name),
+            direction,
+        })?,
+        Order::Field(sort) => format!(
+            "{} {}, items.id ASC",
+            query::sort_expression(&sort.field)?,
+            sort.direction.as_sql()
+        ),
+    };
+    let mut statement = conn.prepare_cached(&format!(
         "SELECT items.id, bm25(items_fts), snippet(items_fts, -1, '{MARK_OPEN}', '{MARK_CLOSE}', '...', 32)
          FROM items_fts
          JOIN items ON items.seq = items_fts.rowid
          WHERE items_fts MATCH ?{narrowing}
-         ORDER BY bm25(items_fts), items.id
-         LIMIT ?"
+         ORDER BY {order_sql}
+         LIMIT ? OFFSET ?"
     ))?;
     let params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
     let ranked = statement

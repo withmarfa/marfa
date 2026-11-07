@@ -3,7 +3,7 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-pub(crate) fn folded(name: &str) -> String {
+pub fn folded(name: &str) -> String {
     // Normalized again after lowercasing, since a lowercase mapping can
     // leave a sequence that composes differently.
     name.nfc().flat_map(char::to_lowercase).nfc().collect()

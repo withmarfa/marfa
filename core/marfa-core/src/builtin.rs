@@ -12,7 +12,7 @@ use crate::wire::{WireCatalog, WireType};
 
 const CATALOG: &str = include_str!("builtin_catalog.json");
 
-pub(crate) fn catalog() -> Result<WireCatalog, CoreError> {
+pub fn catalog() -> Result<WireCatalog, CoreError> {
     static PARSED: OnceLock<Result<WireCatalog, String>> = OnceLock::new();
     PARSED
         .get_or_init(|| {
