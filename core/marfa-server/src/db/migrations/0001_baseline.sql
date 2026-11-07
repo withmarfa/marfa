@@ -67,3 +67,28 @@ CREATE INDEX IF NOT EXISTS audit_log_newest ON audit_log (created_at, id);
 CREATE INDEX IF NOT EXISTS audit_log_action ON audit_log (action, created_at, id);
 CREATE INDEX IF NOT EXISTS audit_log_resource
     ON audit_log (resource_type, resource_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS types (
+    id TEXT PRIMARY KEY,
+    parent TEXT,
+    origin TEXT NOT NULL CHECK (origin IN ('platform', 'user')),
+    created_by TEXT CHECK (created_by IS NULL OR json_valid(created_by)),
+    owner_icon TEXT,
+    definition TEXT NOT NULL CHECK (json_valid(definition)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS types_parent ON types (parent) WHERE parent IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS edge_types (
+    id TEXT PRIMARY KEY,
+    reverse_name TEXT,
+    created_by TEXT CHECK (created_by IS NULL OR json_valid(created_by)),
+    definition TEXT NOT NULL CHECK (json_valid(definition)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS edge_types_reverse_name
+    ON edge_types (reverse_name) WHERE reverse_name IS NOT NULL;

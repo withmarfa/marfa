@@ -32,3 +32,17 @@ pub fn only(uri: &Uri, allowed: &[&str]) -> Result<()> {
     ))
     .with_detail("unknown_parameters", unknown))
 }
+
+/// A parameter that is `true` or `false`, where the query names it.
+pub fn flag(uri: &Uri, name: &str) -> Result<Option<bool>> {
+    let Some((_, value)) = pairs(uri)?.into_iter().find(|(key, _)| key == name) else {
+        return Ok(None);
+    };
+    match value.as_str() {
+        "true" => Ok(Some(true)),
+        "false" => Ok(Some(false)),
+        _ => {
+            Err(Refusal::validation(format!("{name} is true or false.")).with_detail("field", name))
+        }
+    }
+}

@@ -5,6 +5,7 @@
 
 mod levers;
 mod maps;
+mod schema;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
@@ -13,6 +14,7 @@ use super::keys::{self, Key};
 use super::refusal::{Code, Refusal, Result};
 pub use levers::Levers;
 pub use maps::{Axis, Level, Map};
+pub use schema::{Door, SchemaKind};
 
 macro_rules! permissions {
     ($($variant:ident = $wire:literal;)*) => {

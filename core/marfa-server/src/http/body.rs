@@ -77,6 +77,27 @@ impl JsonBody {
 
     /// The body as a JSON object holding no key outside `allowed`.
     pub async fn object(self, allowed: &[&str]) -> Result<Map<String, Value>, Stopped> {
+        let object = self.open_object().await?;
+        let mut unknown: Vec<&str> = object
+            .keys()
+            .map(String::as_str)
+            .filter(|key| !allowed.contains(key))
+            .collect();
+        if unknown.is_empty() {
+            return Ok(object);
+        }
+        unknown.sort_unstable();
+        Err(Refusal::validation(format!(
+            "The body names fields this operation does not take: {}.",
+            unknown.join(", ")
+        ))
+        .with_detail("unknown_body_fields", unknown)
+        .into())
+    }
+
+    /// The body as a JSON object, whatever keys it holds, for an operation
+    /// that judges the keys itself.
+    pub async fn open_object(self) -> Result<Map<String, Value>, Stopped> {
         let declared = self
             .headers
             .get(header::CONTENT_TYPE)
@@ -94,23 +115,9 @@ impl JsonBody {
         }
         let value: Value = serde_json::from_slice(&bytes)
             .map_err(|error| Refusal::validation(format!("The body is not valid JSON: {error}")))?;
-        let Value::Object(object) = value else {
-            return Err(Refusal::validation("The body must be a JSON object.").into());
-        };
-        let mut unknown: Vec<&str> = object
-            .keys()
-            .map(String::as_str)
-            .filter(|key| !allowed.contains(key))
-            .collect();
-        if unknown.is_empty() {
-            return Ok(object);
+        match value {
+            Value::Object(object) => Ok(object),
+            _ => Err(Refusal::validation("The body must be a JSON object.").into()),
         }
-        unknown.sort_unstable();
-        Err(Refusal::validation(format!(
-            "The body names fields this operation does not take: {}.",
-            unknown.join(", ")
-        ))
-        .with_detail("unknown_body_fields", unknown)
-        .into())
     }
 }

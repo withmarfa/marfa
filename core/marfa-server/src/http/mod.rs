@@ -5,6 +5,7 @@ mod audit;
 pub mod body;
 mod caller;
 mod control;
+mod edge_types;
 mod health;
 mod keys;
 pub mod observe;
@@ -13,6 +14,7 @@ mod query;
 mod root;
 mod sources;
 mod test_hooks;
+mod types;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -22,7 +24,7 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Router, serve};
 use tokio::net::{TcpListener, UnixListener};
 use tower_http::catch_panic::CatchPanicLayer;
@@ -62,6 +64,27 @@ fn key_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, keys::limited))
 }
 
+fn schema_doors() -> Routes {
+    Router::new()
+        .route("/types", get(types::list).post(types::register))
+        .route("/types/normalize", post(types::normalize))
+        .route(
+            "/types/{id}",
+            get(types::read).put(types::replace).delete(types::delete),
+        )
+        .route(
+            "/types/{id}/icon",
+            put(types::set_icon).delete(types::clear_icon),
+        )
+        .route("/platform-types/retired", get(types::retired))
+        .route("/platform-types/{id}", delete(types::remove_retired))
+        .route(
+            "/edge-types",
+            get(edge_types::list).post(edge_types::register),
+        )
+        .route("/edge-types/{id}", delete(edge_types::delete))
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Router::new()
         .route("/", get(root::describe))
@@ -70,6 +93,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/audit", get(audit::list))
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
+        .merge(schema_doors())
         .merge(key_doors(app))
 }
 
