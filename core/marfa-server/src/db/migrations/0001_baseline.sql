@@ -101,7 +101,6 @@ CREATE TABLE IF NOT EXISTS items (
     tier TEXT CHECK (tier IS NULL OR tier IN ('library', 'feed')),
     source TEXT NOT NULL CHECK (length(source) > 0),
     source_id TEXT,
-    properties BLOB NOT NULL,
     title_key TEXT,
     version INTEGER NOT NULL CHECK (version >= 1),
     schema_version INTEGER NOT NULL,
@@ -120,7 +119,9 @@ CREATE TABLE IF NOT EXISTS items (
     trashed_by_name TEXT,
     trashed_with TEXT,
     trashed_with_type TEXT,
-    went_with_hosts INTEGER NOT NULL DEFAULT 0 CHECK (went_with_hosts IN (0, 1))
+    went_with_hosts INTEGER NOT NULL DEFAULT 0 CHECK (went_with_hosts IN (0, 1)),
+    -- Last, so a read of any other column stops short of a wide value.
+    properties BLOB NOT NULL
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS items_natural_key
@@ -226,3 +227,44 @@ CREATE TABLE IF NOT EXISTS event_log (
     at TEXT NOT NULL,
     payload TEXT NOT NULL
 ) STRICT;
+
+-- The text a search reads, by `items.seq`. A row in the bin holds no row here.
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+    title, body, description, name, extra, tags,
+    tokenize = 'porter unicode61'
+);
+
+-- The rows whose indexed text a write may have changed. The item write function
+-- empties this as its last step, in the same transaction, so a write cannot
+-- leave the index behind by any path through it.
+CREATE TABLE IF NOT EXISTS items_fts_pending (
+    seq INTEGER PRIMARY KEY
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS items_fts_inserted AFTER INSERT ON items BEGIN
+    INSERT OR IGNORE INTO items_fts_pending (seq) VALUES (NEW.seq);
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_updated AFTER UPDATE OF type, state, properties ON items
+WHEN NEW.type IS NOT OLD.type OR NEW.state IS NOT OLD.state
+    OR NEW.properties IS NOT OLD.properties
+BEGIN
+    INSERT OR IGNORE INTO items_fts_pending (seq) VALUES (NEW.seq);
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_deleted AFTER DELETE ON items BEGIN
+    INSERT OR IGNORE INTO items_fts_pending (seq) VALUES (OLD.seq);
+END;
+CREATE TRIGGER IF NOT EXISTS item_tags_fts_inserted AFTER INSERT ON item_tags BEGIN
+    INSERT OR IGNORE INTO items_fts_pending (seq) VALUES (NEW.item_seq);
+END;
+CREATE TRIGGER IF NOT EXISTS item_tags_fts_deleted AFTER DELETE ON item_tags BEGIN
+    INSERT OR IGNORE INTO items_fts_pending (seq) VALUES (OLD.item_seq);
+END;
+
+-- The types whose searchable fields changed, each state's rows walked by `seq`
+-- in pages, so a large type never holds the writer.
+CREATE TABLE IF NOT EXISTS items_fts_stale (
+    type TEXT NOT NULL,
+    state TEXT NOT NULL,
+    after_seq INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (type, state)
+) STRICT, WITHOUT ROWID;

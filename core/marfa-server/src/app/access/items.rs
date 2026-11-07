@@ -80,6 +80,12 @@ impl Caller {
         }
     }
 
+    /// Refuses a caller whose type map does not reach `system.view` at write.
+    pub fn require_view_write(&self) -> Result<()> {
+        self.require_reach()?;
+        self.require_type_map("system.view", Level::Write)
+    }
+
     pub fn may_read_extension(&self, namespace: &str) -> bool {
         self.level_on(Axis::Extension, namespace) >= Level::Read
     }
@@ -135,16 +141,21 @@ impl Caller {
             .then(|| list(&block, "sources"))
     }
 
-    /// Whether a read that returns a set shows an item of `type_id` under
-    /// `source`: a filter leaves out what its types cover and its sources do
-    /// not name.
-    pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
-        let Some(block) = self.lever("source_filter") else {
-            return true;
-        };
-        let covered = list(&block, "types")
+    /// The sources a read that returns a set shows items of `type_id` under,
+    /// where it is held to a list: a filter leaves out what its types cover
+    /// and its sources do not name.
+    pub fn listed_sources(&self, rules: &Rules, type_id: &str) -> Option<Vec<String>> {
+        let block = self.lever("source_filter")?;
+        list(&block, "types")
             .iter()
-            .any(|held| rules.matches(held, type_id));
-        !covered || list(&block, "sources").iter().any(|held| held == source)
+            .any(|held| rules.matches(held, type_id))
+            .then(|| list(&block, "sources"))
+    }
+
+    /// Whether a read that returns a set shows an item of `type_id` under
+    /// `source`.
+    pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
+        self.listed_sources(rules, type_id)
+            .is_none_or(|sources| sources.iter().any(|held| held == source))
     }
 }

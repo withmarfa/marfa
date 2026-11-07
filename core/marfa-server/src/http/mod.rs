@@ -15,6 +15,7 @@ mod housekeeping;
 mod items;
 mod keys;
 pub mod listening;
+mod listing;
 mod lookup;
 pub mod observe;
 mod page;
@@ -24,6 +25,7 @@ mod sources;
 mod test_hooks;
 mod trash;
 mod types;
+mod views;
 
 use std::sync::Arc;
 
@@ -137,7 +139,12 @@ async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next)
 
 fn item_doors(app: Arc<App>) -> Routes {
     Router::new()
-        .route("/items", post(items::create))
+        .route("/items", post(items::create).get(listing::items))
+        .route("/items/stats", get(listing::stats))
+        .route("/search", get(listing::search))
+        .route("/views", post(views::create))
+        .route("/views/{id}", patch(views::update).delete(views::delete))
+        .route("/views/{id}/items", get(views::items))
         .route("/items/bulk", post(bulk::write))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))

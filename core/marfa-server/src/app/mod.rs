@@ -17,15 +17,19 @@ pub mod idempotency;
 pub mod instance;
 pub mod items;
 pub mod keys;
+pub mod query;
 pub mod refusal;
+mod reindex;
 pub mod sources;
 pub mod stored;
 pub mod types;
 pub mod unit;
+pub mod views;
 
 use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
+use tokio::sync::Notify;
 
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
@@ -39,6 +43,7 @@ use faults::Faults;
 use health::Health;
 use housekeeping::Housekeeping;
 use keys::{Limiter, Usage};
+use query::Secret;
 
 const READERS: usize = 4;
 
@@ -54,6 +59,8 @@ pub struct App {
     pub key_limit: Limiter,
     pub housekeeping: Housekeeping,
     pub telemetry: Telemetry,
+    pub cursor_secret: Secret,
+    pub reindexing: Arc<Notify>,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
 }
@@ -80,6 +87,7 @@ impl App {
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
         settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
+        let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         health::prepare_blobs(&start.blob_path)?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
@@ -101,6 +109,8 @@ impl App {
             faults,
             settings,
             instance_id,
+            cursor_secret,
+            reindexing: Arc::new(Notify::new()),
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
@@ -112,6 +122,7 @@ impl App {
         housekeeping::prepare(&app)
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
+        reindex::start(&app);
         Ok(app)
     }
 

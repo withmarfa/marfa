@@ -1,6 +1,9 @@
 //! The text of a search as the full-text index takes it, and the excerpt it
 //! answers with.
 
+use serde_json::{Map, Value};
+
+use crate::catalog::Indexing;
 use crate::js;
 
 // FTS5 puts these private-use characters around each match in place of the
@@ -73,6 +76,54 @@ pub fn fts_expression(query: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" "),
     )
+}
+
+/// What one row contributes to the index, column by column.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FtsText {
+    pub title: String,
+    pub body: String,
+    pub description: String,
+    pub name: String,
+    pub extra: String,
+}
+
+/// The server's rule: the four core properties when they hold a string, the
+/// type's other declared string properties joined by a space, and nothing the
+/// type does not declare. A thumbnail is not a string property, so its base64
+/// is never indexed.
+pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> FtsText {
+    let core = |name: &str| -> String {
+        if indexing.opted_out.iter().any(|opted| opted == name) {
+            return String::new();
+        }
+        properties
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let extra: Vec<&str> = indexing
+        .extra
+        .iter()
+        .filter_map(|name| properties.get(name).and_then(Value::as_str))
+        .filter(|text| !text.is_empty())
+        .collect();
+    FtsText {
+        title: core("title"),
+        body: core("body"),
+        description: core("description"),
+        name: core("name"),
+        extra: extra.join(" "),
+    }
+}
+
+/// A row's tags as the index holds them: in byte order, so the same tags in
+/// another order are the same text.
+pub fn fts_tags(tags: &[String]) -> String {
+    let mut sorted: Vec<&str> = tags.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    sorted.join(" ")
 }
 
 #[cfg(test)]
