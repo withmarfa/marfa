@@ -671,13 +671,26 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn answer(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
-        let tx = self.unit.tx();
+        self.answer_with(
+            status,
+            item.answered(self.unit.tx(), self.caller())?,
+            item,
+            also,
+        )
+    }
+
+    /// The answer to a create or an update, which carries the item's edges.
+    fn answer_edges(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
+        let shown = item.hydrated(self.unit.tx(), self.caller(), &self.catalog)?;
+        self.answer_with(status, shown, item, also)
+    }
+
+    fn answer_with(&self, status: u16, shown: String, item: &Item, also: &str) -> Result<Done> {
         Ok(Done {
             status,
             body: format!(
-                "{{\"item\":{},\"metadata\":{}{also}}}",
-                item.hydrated(tx, self.caller(), &self.catalog)?,
-                metadata_for(tx, item, self.caller())?
+                "{{\"item\":{shown},\"metadata\":{}{also}}}",
+                metadata_for(self.unit.tx(), item, self.caller())?
             ),
         })
     }
@@ -795,7 +808,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let item = self.created(put, source)?;
         self.unit
             .audit("item", &item.id, Some(json!({ "type": item.type_id })))?;
-        self.answer(201, &item, "")
+        self.answer_edges(201, &item, "")
     }
 
     fn created(&self, put: Put, source: &str) -> Result<Item> {
@@ -909,7 +922,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 self.announce("item.updated", &row)?;
             }
             let item = self.with_inline(row, writing.edges.as_ref())?;
-            return self.answer(200, &item, "");
+            return self.answer_edges(200, &item, "");
         }
         let (item, resolution) = self.landed(&row, &writing)?;
         let details = if writing.upsert {
@@ -928,7 +941,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
             None => String::new(),
         };
-        self.answer(200, &item, &also)
+        self.answer_edges(200, &item, &also)
     }
 
     /// What a write asks after the row's own gate, in the order the contract

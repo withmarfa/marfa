@@ -61,7 +61,7 @@ impl Writing<'_, '_, '_> {
     }
 
     fn entry(&self, entry: Entry, create_only: bool) -> Result<Entered> {
-        edges::check_entry_ids(&entry)?;
+        self.entry_gates(&entry)?;
         let source = self.source_row(&entry.source_id)?;
         self.require_row_write(&source)?;
         self.require_edge_write(&entry.edge_type)?;
@@ -115,7 +115,8 @@ impl Writing<'_, '_, '_> {
                 properties: Some(entry.properties.unwrap_or_default()),
             }),
             By::Caller,
-        )?;
+        )
+        .map_err(|refusal| refusal.naming_row(&matched.id))?;
         Ok(Entered::Updated(matched.id))
     }
 }

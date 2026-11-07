@@ -277,7 +277,7 @@ pub(super) fn hosts_out_of_bin(
     id: &str,
 ) -> Result<Vec<(String, String, String)>> {
     let mut statement = tx.prepare_cached(
-        "SELECT e.edge_type, h.type, h.properties FROM edges e \
+        "SELECT e.edge_type, h.type, json(h.properties) FROM edges e \
          JOIN items h ON h.id = e.target_id \
          WHERE e.source_id = ?1 AND h.state <> 'trashed' \
          ORDER BY e.created_at, e.id",

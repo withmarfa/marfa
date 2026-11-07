@@ -443,15 +443,16 @@ pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused 
         End::Source => ("source", "outbound"),
         End::Target => ("target", "inbound"),
     };
+    let limit = match edge_type.cardinality.as_str() {
+        "one-to-one" => format!("is one-to-one; {end} already has one"),
+        cardinality => format!("is {cardinality} on the {end} side; {end} already has an"),
+    };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(edge_type.id));
     details.insert(format!("{end}_id"), json!(at));
     details.insert("constraint".into(), json!("cardinality"));
     Refused {
-        message: format!(
-            "Edge \"{}\" is {}; {end} already has an {edge} edge of this type",
-            edge_type.id, edge_type.cardinality
-        ),
+        message: format!("Edge \"{}\" {limit} {edge} edge of this type", edge_type.id),
         details: Value::Object(details),
     }
 }

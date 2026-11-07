@@ -82,6 +82,19 @@ fn require_names(caller: &Caller, id: &str, reverse: Option<&str>) -> Result<()>
     Ok(())
 }
 
+/// The grant that reaches a `user.` name no edge type holds yet.
+const NAMESPACE_WILDCARD: &str = "edge.user.*:write";
+
+fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()> {
+    caller.require_edge(name, Level::Write).map_err(|refusal| {
+        if name.starts_with("user.") && catalog.edge_kind(name).is_none() {
+            refusal.with_detail("required_scope", NAMESPACE_WILDCARD)
+        } else {
+            refusal
+        }
+    })
+}
+
 /// Every edge type, those Marfa ships first.
 pub async fn list(app: &App) -> Result<Vec<Value>> {
     let cache = app.catalog_handle();
@@ -123,8 +136,11 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
         .write(caller, "edge_type.register", move |unit| {
             let caller = &unit.caller;
             caller.require_door(SchemaKind::EdgeTypes, Door::Register)?;
-            let reverse = text_of(&body, "reverse_name").map(str::to_string);
-            require_names(caller, &id, reverse.as_deref())?;
+            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            require_new_name(caller, &catalog, &id)?;
+            if let Some(reverse) = text_of(&body, "reverse_name") {
+                require_new_name(caller, &catalog, reverse)?;
+            }
             if body.contains_key("extends") {
                 return Err(Refusal::validation(
                     "A registered edge type does not support `extends`",
@@ -136,7 +152,6 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
             if !unread.is_empty() {
                 return Err(refusal_of(EdgeIssues::Schema(unread)));
             }
-            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             let existing = catalog.edge_type(&id);
             if let Some(existing) = existing {
                 require_names(caller, &id, text_of(existing, "reverse_name"))?;

@@ -529,8 +529,8 @@ fn detail_of(uri: &Uri) -> Result<Detail> {
         }
         for token in value.split(',').map(str::trim) {
             match token {
-                // Every item read carries its metadata, asked for or not.
-                "" | "metadata" => {}
+                // Every item read carries these, asked for or not.
+                "" | "metadata" | "edges" => {}
                 "versions" => detail.versions = true,
                 "backrefs" => detail.backrefs = true,
                 "neighbors" => detail.neighbors = true,
