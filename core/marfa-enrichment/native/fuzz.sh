@@ -4,6 +4,7 @@
 # reader. The parent must survive all of them; each file that harms a reader is kept.
 #
 #   MARFA_NATIVE_ROOT=<folder> native/fuzz.sh <target> <seconds> [--findings <folder>] [--jobs <n>] [--seed <n>]
+#                              [--max-memory <bytes>]
 #
 # The seeds are the test files of native/verify.sh (run that first), without its
 # damaged and oversized ones. On Linux the run is in a `FROM scratch` container with
@@ -21,11 +22,13 @@ shift 2
 jobs=2
 seed=1
 findings=
+extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --findings) findings=$2; shift 2 ;;
     --jobs) jobs=$2; shift 2 ;;
     --seed) seed=$2; shift 2 ;;
+    --max-memory) extra=(--max-memory "$2"); shift 2 ;;
     *) die "unknown option $1" ;;
   esac
 done
@@ -53,7 +56,7 @@ started=$(date +%s)
 case "$TARGET" in
   aarch64-apple-darwin)
     code=0
-    env -i "$OUT/marfa-enrichment-fuzz" "$F/seeds" "$findings" --seconds "$seconds" --jobs "$jobs" --seed "$seed" \
+    env -i "$OUT/marfa-enrichment-fuzz" "$F/seeds" "$findings" --seconds "$seconds" --jobs "$jobs" --seed "$seed" ${extra[@]+"${extra[@]}"} \
       2>&1 | tee "$F/run.log" || code=$?
     ;;
   *)
@@ -69,7 +72,7 @@ case "$TARGET" in
     code=0
     docker run --rm --platform "$platform" --read-only --user "$(id -u):$(id -g)" \
       -v "$findings:/findings" "$image" /marfa-enrichment-fuzz /seeds /findings \
-      --seconds "$seconds" --jobs "$jobs" --seed "$seed" 2>&1 | tee "$F/run.log" || code=$?
+      --seconds "$seconds" --jobs "$jobs" --seed "$seed" ${extra[@]+"${extra[@]}"} 2>&1 | tee "$F/run.log" || code=$?
     ;;
 esac
 echo "fuzz: finished after $(($(date +%s) - started)) seconds; findings are in $findings"

@@ -41,25 +41,62 @@ The `native` feature is off by default, so `cargo check --workspace` needs no ex
 
 `native/manifest.txt` pins every source by URL and SHA-256 hash (or git commit), and the scripts stop on the first mismatch. Nothing is downloaded by `cargo build`.
 
+For a program that ships, run one script per target. It goes from an empty folder to a checked program:
+
+```sh
+MARFA_NATIVE_ROOT=/path/to/cache native/release.sh aarch64-apple-darwin
+MARFA_NATIVE_ROOT=/path/to/cache native/release.sh aarch64-unknown-linux-musl
+MARFA_NATIVE_ROOT=/path/to/cache native/release.sh x86_64-unknown-linux-musl --full
+```
+
+`release.sh` fetches and verifies every source, builds PDFium, Leptonica and Tesseract, builds and links the program, checks what it made, gathers the licences, and reads a picture with the finished program and nothing else installed. `--full` adds the whole matrix of `native/verify.sh`, and `--needs` prints what the runner must have. A second run builds only what changed. To build against the libraries in a test run instead:
+
 ```sh
 MARFA_NATIVE_ROOT=/path/to/cache native/build.sh aarch64-apple-darwin
 MARFA_NATIVE_PREFIX=/path/to/cache/prefix/aarch64-apple-darwin cargo test -p marfa-enrichment --features native
 ```
 
-`build.sh` runs `models.sh`, `tesseract.sh` and `pdfium.sh`, which you can also run alone. Each takes the target as its argument:
+`build.sh` runs `models.sh`, `tesseract.sh` and `pdfium.sh`, which you can also run alone. Each takes the target as its argument.
 
-| Target | Status |
-| --- | --- |
-| `aarch64-apple-darwin` | Built and tested. |
-| `aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` | Scripts written, not yet run. |
+| Target | Program | Where it builds |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | Built, checked and run on its own machine. | A Mac with Apple silicon, Xcode's command line tools, cmake and ninja, and Rust 1.98.1. |
+| `aarch64-unknown-linux-musl` | Built, checked and run in `FROM scratch` containers. Fully static (no interpreter, no shared library). | Any machine with Docker. |
+| `x86_64-unknown-linux-musl` | Built and checked. Run only under emulation on an Apple silicon Mac (see [Checking a program](#checking-a-program)). Static-pie, with no interpreter and no shared library. | Any machine with Docker. |
 
-You need `cmake`, `ninja`, `git`, `curl`, and Python 3 on the path, plus Xcode's command line tools on macOS. The scripts put downloads, work folders, and the finished `prefix/<target>/` (`lib/`, `include/`, `tessdata/`, `licenses/`) under `MARFA_NATIVE_ROOT`. PDFium takes about 4 GB of checkout and a few minutes on an M4 Pro; delete `work/<target>/` after the build.
+On macOS the scripts build with the Xcode on the machine and the Rust the manifest names. On Linux they run in an image that the script makes from `native/linux/Dockerfile`: Ubuntu 24.04 by digest, its packages from the archive as it stood on one day, and Rust from standalone installers pinned by hash. The image is `linux/amd64` for both Linux targets, because Google's build tools and the musl.cc cross compilers are x86_64 programs, so on an Apple silicon Mac it runs emulated. `release.sh` keeps PDFium's checkout (6 GB) on a Docker volume (`<MARFA_RELEASE_PREFIX>-work`, default `marfa-release-work`), which tells `A` from `a` and holds many small files, and deletes it once the library is saved. Remove the image and volume by name when you are done.
 
 - **Leptonica and Tesseract** build static, with no image codecs, no OpenMP, no training tools, and no legacy engine.
-- **PDFium** builds from `bblanchon/pdfium-binaries` with its own `build.sh`, static, with no V8 and no XFA. The script stops before the build if the PDFium branch of the pinned release no longer resolves to the pinned commit. To apply a patch to PDFium's build steps, put it in `native/patches/pdfium-*.patch`.
+- **PDFium** builds from `bblanchon/pdfium-binaries` with its own `build.sh`, static, with no V8 and no XFA. The script stops before the build if the PDFium branch of the pinned release no longer resolves to the pinned commit. The Linux libraries use the musl.cc cross compiler (GCC 11.2.1, musl 1.2.2), pinned by hash, and Leptonica, Tesseract, the C++ shim and the program are built with the same compiler, so a program holds one C++ library. To change PDFium's build steps, put a patch in `native/patches/pdfium-*.patch`: it is applied to the verified archive before anything runs. The finished library is kept in `archives/pdfium-<target>-<recipe>.tgz`, named for a hash of the pins and patches, so a later run with the same recipe builds nothing. depot_tools can stop a run under emulation with `LockError ... gsutil_5.35`; `pdfium.sh` resumes the checkout up to four times.
 - **Models** are the six `tessdata_fast` files (English, German, French, Spanish, Japanese, simplified Chinese) at one commit. They are fetched, not committed, and `build.rs` embeds them in the program.
 
-`build.rs` reads `MARFA_NATIVE_PREFIX`, stops with a message that names what is missing, compiles the C++ shim in `native/shim.cc`, and links everything statically. To move a pin, change the URL and hash in the manifest together.
+`build.rs` reads `MARFA_NATIVE_PREFIX`, stops with a message that names what is missing, compiles the C++ shim in `native/shim.cc`, and emits the link directives. On Linux it links the compiler's own `libstdc++` and `libgcc_eh` statically (the compiler is the linker, with `-C link-self-contained=no`). To move a pin, change the URL and hash in the manifest together.
+
+### The programs
+
+`native/program.sh` builds three programs per target with `cargo build --release --features native`, stripped, into `out/<target>/`:
+
+- `marfa-enrichment-read` is what ships.
+- `marfa-enrichment-read-proof` is the same with `fault-injection` (`MARFA_ENRICHMENT_ALLOW_FAULTS` allows it in a release build) so that `verify.sh` can make a reader crash, hang, spin, run out of memory and flood its output. It never ships.
+- `marfa-enrichment-fuzz` reads mutated files through the real reader. It never ships.
+
+It then checks them. On Linux, `file` must say the program is statically linked, with no `NEEDED` entry and no interpreter. On macOS, `otool -L` must list only system libraries, the deployment target must be the one built for (`MACOSX_DEPLOYMENT_TARGET`, 13.0 unless `MARFA_MACOS_DEPLOYMENT_TARGET` says otherwise), and the ad hoc signature the linker makes must verify. Where the program can run on the builder, a file that names a fault must be read as plain text by the shipped program and crash the proof program.
+
+`native/licenses.sh` writes `out/<target>/NOTICES.txt`, which ships beside the program: for each part its name, version, licence and where the text came from. The texts are PDFium's own list, the Leptonica and Tesseract sources, the models' licence, the Rust distribution's `COPYRIGHT-library.html`, the licence file of each Rust crate the program holds (`cargo metadata`, normal dependencies), and for Linux the musl and GCC runtime texts that the manifest pins.
+
+### Checking a program
+
+`native/verify.sh <target>` runs the programs on real files with nothing else installed. On Linux that is a `FROM scratch` image holding only the programs and the test files, run `--read-only`, with no `/tmp`, as a user that is not root and as root. On macOS it is `env -i`. The cases:
+
+- one file of every format, and OCR in `eng+deu+fra+spa` from the program's memory, in `jpn` and `chi_sim`, with an owner's model in a read-only data folder, and in a scanned PDF;
+- encrypted, damaged and unsupported files, which must be refused with the right reason;
+- the proof program's faults, each followed by a good read by the same parent;
+- a reader that has been taken over (write a file, open a file, connect) and what it is told;
+- the memory limit against a dense 64 million pixel page, and on Linux what a reader's address space reaches against `RLIMIT_AS`.
+
+`MARFA_VERIFY_CORPUS` adds a folder of real PDFs and pictures. `native/verify.sh compare <a> <b>` compares the OCR text of two targets byte for byte. `native/fuzz.sh <target> <seconds>` mutates the same files and reads them, and keeps each file that harms a reader.
+
+An x86_64 program cannot be run natively on an Apple silicon Mac. Docker there runs it under Rosetta, which cannot start a process whose address space is limited to the reader's default (`RLIMIT_AS`, 1 GiB plus 256 MiB plus the program), cannot satisfy an allocation too large for it, and reports no Landlock (`Reading::sandbox` is `Off`). Run it there with `MARFA_VERIFY_MEMORY=2147483648` (and `--max-memory 2147483648` for `fuzz.sh`), expect the 12 cases that depend on those to differ, and run the whole matrix on an x86_64 Linux machine to see them hold.
 
 ### OCR
 
