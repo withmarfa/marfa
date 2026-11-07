@@ -109,9 +109,10 @@ export interface FieldDefinition {
    * Per-field override for the default maximum string length enforced at
    * validation. Only meaningful for `string`-typed fields (incl. `enum`
    * fallbacks); ignored elsewhere. Defense-in-depth alongside the global
-   * request-body cap. When omitted, a generous default (100_000 chars)
-   * applies; set this higher for a field that legitimately carries very
-   * long text, or lower to tighten a field.
+   * request-body cap. When omitted, a generous default applies: 1_000_000
+   * UTF-16 code units on the `string` field a type names as its body, and
+   * 100_000 on any other. Set this higher for a field that legitimately
+   * carries very long text, or lower to tighten a field.
    */
   maxLength?: number;
   /**

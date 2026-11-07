@@ -140,6 +140,7 @@ describe("the instance", () => {
     expect(r.data.name).toBe("Marfa");
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
+    expect(r.data.max_request_bytes).toBe(1_048_576);
     await expectMatchesSchema("GET", "/", 200, r.data);
     // The contract version is an integer, and the case that names it holds
     // it to the document; here it is only that the root carries one.

@@ -743,7 +743,6 @@ impl Folder {
                         let removing = bound.filter(|_| !queued.is_empty()).map(|bound| {
                             let mut kept = bound.clone();
                             kept.lines.retain(|line| !removed.contains(line));
-                            kept.writes.save = save;
                             kept.writes
                                 .queued
                                 .extend(queued.drain(..).map(|(id, line)| state::Queued {

@@ -737,8 +737,9 @@ pub(crate) fn refuse_another_instance_until(
         }
         reach::generation(&conn)?
     };
-    let served = ask_unless_stopped(stop, http, Http::instance_id)?;
-    same_instance(core, &served, generation)
+    let served = ask_unless_stopped(stop, http, Http::served)?;
+    same_instance(core, &served.instance_id, generation)?;
+    store::note_request_limit(&*core.conn()?, served.max_request_bytes)
 }
 
 /// Runs a request on a thread holding only the transport and ends with

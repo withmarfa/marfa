@@ -1981,7 +1981,7 @@ export interface paths {
         };
         /**
          * Get the instance
-         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
+         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2625,7 +2625,7 @@ export interface components {
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
-            /** @description The field that holds an item's body for display. The field holds Markdown. */
+            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise. */
             body_field?: string;
             /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
             name_from_body?: boolean;
@@ -2784,7 +2784,7 @@ export interface components {
             /** @description The values whose groups the view leaves out. */
             hidden?: (string | number | boolean | null)[];
         };
-        /** @description An instance: its identity, build, contract version and features. */
+        /** @description An instance: its identity, build, contract version, features and request size. */
         InstanceDescription: {
             /** @description The instance's display name. Defaults to `Marfa`. */
             name: string;
@@ -2798,6 +2798,8 @@ export interface components {
             contract: number;
             /** @description The features the instance serves, such as `items` and `webhooks`. */
             features: string[];
+            /** @description The largest body, in bytes, the instance takes in an ordinary JSON request. A larger one is answered `413 request_too_large`. Bulk writes, blob uploads and a few other operations have their own limits. */
+            max_request_bytes: number;
         };
         /** @description An error response. */
         ValidationErrorRefusal: {
@@ -4085,7 +4087,7 @@ export interface components {
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
-            /** @description The longest value a `string` or `enum` field allows. */
+            /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
             maxLength?: number;
             /** @description The most elements an `array` field allows. */
             maxItems?: number;

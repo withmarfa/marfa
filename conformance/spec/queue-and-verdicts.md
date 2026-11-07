@@ -154,9 +154,9 @@ A first sync of a folder, or an import, queues thousands of creates. Sent one at
 
 ### `queue-and-verdicts/create-pages`
 
-When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same row or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the server takes in a single request, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
+When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same row or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the lower of 1048576 bytes and the server's limit, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
 
-**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one behind a write that is not a create would jump that write; one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same row, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. An instance does not say what it set `MARFA_MAX_REQUEST_BYTES` to, so a device holds every create to the default, 1048576 bytes; on an instance that lowers it, a create between its cap and the default can still go in a page.
+**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one behind a write that is not a create would jump that write; one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same row, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. A device holds every create in a page to 1048576 bytes, the default, and to the limit the root names where that is lower (`queue-and-verdicts/request-over-limit-page`).
 
 **Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `› sends no create in a page ahead of a write queued before it that is not a create`, `› pages no edge whose end the page it went in did not create`, `› sends its files and their placements in pages, in one push`, `› sends a file larger than a single request may carry on its own door, and the rest in pages`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
 
@@ -1158,7 +1158,81 @@ If the store is full as a device takes the answer to a write, before the write h
 
 **Tests:** `device/classification.test.ts › ends the drain storage_full when the store fills as it takes an answer, counting nothing`.
 
+## A body over the server's request limit
+
+The root names the largest body a server takes in one request. A server closes the connection on a larger body with the rest unread, and that close can destroy its `413` before a client still sending reads it. A link that drops, or a proxy or server that restarts, looks the same, so a write that meets the close is an environmental failure like any other, and a device holds a write over the limit itself rather than send it.
+
+### `queue-and-verdicts/request-limit-read`
+
+When a device reads the root to confirm its instance, a device MUST take the description's `max_request_bytes` as the server's limit until it next reads the root.
+
+**Reason:** a drain with work reads the root once, so a limit raised or lowered on the server is followed by the next such drain, with nothing for a person to do.
+
+**Tests:** `device/pages.test.ts › follows the limit the root names at each drain, raised or lowered`, `cli/request-size.test.ts › lets a held file go once the server takes it, with no edit`.
+
+### `queue-and-verdicts/request-limit-refused-read`
+
+When a drain finds nothing to send and a write was refused for its size since a device last read the root, a device MUST read the root.
+
+**Reason:** a limit raised on the server would otherwise go unseen, because a refused write leaves nothing to send and a drain with nothing to send reads nothing. A root that does not answer fails no such drain, and the next one reads it.
+
+**Tests:** `cli/request-size.test.ts › reads the root at a drain with nothing to send, after a write was refused for its size`.
+
+### `queue-and-verdicts/request-limit-unknown`
+
+While the root names no `max_request_bytes`, a device MUST send a write whatever its size.
+
+**Reason:** a device claims only what it knows. What such a write meets stays what the server or the link answers.
+
+**Tests:** `device/pages.test.ts › sends a large write to a server that names no limit`.
+
+### `queue-and-verdicts/request-over-limit-unsent`
+
+If the JSON body of a write never sent is larger in bytes than the server's limit, then a device MUST NOT send that write.
+
+**Reason:** the bytes counted are the bytes sent, so escapes and multi-byte text count. A body of exactly the limit goes.
+
+**Tests:** `device/pages.test.ts › refuses unsent a write one byte past the limit, and sends one at it`, `cli/request-size.test.ts › holds a file past the limit, sends none of it and delivers what is beside it`, `› sends a file at the limit and holds one a byte past it`.
+
+### `queue-and-verdicts/request-over-limit-said`
+
+When a device does not send a write under `queue-and-verdicts/request-over-limit-unsent`, a device MUST refuse it unsent with a reason naming the size of its request and the server's limit.
+
+**Tests:** `device/pages.test.ts › refuses unsent a write one byte past the limit, and sends one at it`.
+
+### `queue-and-verdicts/request-over-limit-own-word`
+
+When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST NOT give it the reason `request_too_large`.
+
+**Reason:** `request_too_large` is the server's answer. This is what the device decided, and the server was not asked.
+
+**Tests:** `device/pages.test.ts › refuses unsent a write one byte past the limit, and sends one at it`.
+
+### `queue-and-verdicts/request-over-limit-sent`
+
+While a write sent before has no answer, a device MUST send it again under its key whatever its size.
+
+**Reason:** an earlier attempt may have landed under a limit since lowered, so only the server can say what became of it.
+
+**Tests:** `device/pages.test.ts › sends again under its key a write sent before the limit fell`.
+
+### `queue-and-verdicts/request-over-limit-page`
+
+If the body of a create is larger in bytes than the server's limit, then a device MUST NOT send that create in a page.
+
+**Reason:** a page has a cap of its own, so a create the server would refuse on its own door would otherwise succeed or fail by what else waits.
+
+**Tests:** `device/pages.test.ts › keeps out of a page a create past the limit, and pages the rest`, `› sends no page where a create past the limit leaves fewer than 50`.
+
 ## Refusals that park a write
+
+### `queue-and-verdicts/request-too-large-body-unread`
+
+When the server answers a write `413` naming its contract and the body of the answer cannot be read, a device MUST take the answer as `413 request_too_large`.
+
+**Reason:** the server closes the connection as it answers a body over its cap, which can cut the answer short after its status. The status was heard, so this is the server's refusal, and a failure to retry would send the same bytes to the same answer.
+
+**Tests:** `device/pages.test.ts › takes a 413 whose body cannot be read as the refusal it is`.
 
 ### `queue-and-verdicts/credential-blocks-queue`
 

@@ -1347,6 +1347,40 @@ pub enum BlockedReason {
 /// waiting (`queue-and-verdicts/binding-shows-waiting`).
 pub(crate) const AWAITING_DEPENDENCY: &str = "awaiting_dependency";
 
+/// What a device calls a write it will not send because its body is larger
+/// than the server said it takes. The device's decision, never the server's
+/// answer, so it is no `request_too_large`.
+pub(crate) const OVER_REQUEST_LIMIT: &str = "over_request_limit";
+
+/// How the reason for such a write starts, ahead of `over_request_limit`'s words.
+pub(crate) const OVER_REQUEST_LIMIT_WRITE: &str = "This write is ";
+
+/// The reason a write refused unsent for its size carries in the queue.
+pub(crate) const OVER_REQUEST_LIMIT_REASON: &str = "over_request_limit: This write is ";
+
+/// How a body of `size` bytes stands against `limit`, in words for a person,
+/// where it is larger. A limit not known holds nothing.
+pub(crate) fn over_request_limit(size: usize, limit: Option<usize>) -> Option<String> {
+    let limit = limit.filter(|limit| size > *limit)?;
+    Some(format!(
+        "{} bytes as a request, and this server takes {}. Make it smaller to send it.",
+        grouped(size),
+        grouped(limit)
+    ))
+}
+
+fn grouped(number: usize) -> String {
+    let digits = number.to_string();
+    let mut grouped = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 impl BlockedReason {
     pub const ALL: [BlockedReason; 6] = [
         BlockedReason::CredentialRefused,

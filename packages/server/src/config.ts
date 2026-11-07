@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
 import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS } from "./upload-body.js";
@@ -292,11 +291,10 @@ export interface AppConfig {
    *  20MB; env override `MARFA_ENRICHMENT_MAX_BLOB_BYTES`. */
   enrichmentMaxBlobBytes?: number;
   /** Extracted text is cut to at most this many UTF-16 code units.
-   *  Defaults to the validator's own default string ceiling, because text
-   *  longer than that is a value the write path refuses; env override
-   *  `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. Raising it past the ceiling is
-   *  allowed and is not silently clamped: the sweeper validates before it
-   *  writes, so an over-long extraction is parked rather than stored. */
+   *  Default 100_000, the length the `extracted_text` field of `core.file`
+   *  holds; env override `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. Raising it past
+   *  that is allowed and is not silently clamped: the sweeper validates before
+   *  it writes, so an over-long extraction is parked rather than stored. */
   enrichmentMaxTextChars?: number;
   /** How many times a failing item is retried before the sweeper stops
    *  offering it. Default 3; env override
@@ -1401,12 +1399,12 @@ const settingsShape = {
       { unit: "bytes" },
     ),
   ),
-  // The validator's cap, not restated: above it, the sweeper's validation
+  // Above what the `extracted_text` field holds, the sweeper's validation
   // parks an over-long extraction rather than storing it.
   MARFA_ENRICHMENT_MAX_TEXT_CHARS: grouped(
     { group: "Text from files", label: "Most text to keep" },
     count(
-      DEFAULT_MAX_STRING_LENGTH,
+      100_000,
       "The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.",
     ),
   ),

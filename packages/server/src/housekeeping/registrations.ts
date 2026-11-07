@@ -4,7 +4,6 @@ import {
   validateEffectiveConfig,
 } from "../effective-config.js";
 import { HOUSEKEEPING_JOBS } from "./metadata.js";
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { AppConfig } from "../config.js";
 import {
@@ -437,7 +436,7 @@ export function registerHousekeepingJobs(
       batchSize: config.enrichmentBatchSize ?? 8,
       itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
       maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
-      maxTextChars: config.enrichmentMaxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
+      maxTextChars: config.enrichmentMaxTextChars ?? 100_000,
       maxAttempts: config.enrichmentMaxAttempts ?? 3,
       maxInflatedBytes: config.enrichmentMaxInflatedBytes ?? 64 * 1024 * 1024,
       maxMemoryBytes: config.enrichmentMaxMemoryBytes ?? 256 * 1024 * 1024,

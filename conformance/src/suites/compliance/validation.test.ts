@@ -114,13 +114,12 @@ describe("validation edge cases", () => {
   });
 
   it("stores a body at the field's length cap intact", async () => {
-    // `core.note` declares no `maxLength` on `body`, so the cap is the
-    // instance default; a field that declares one raises its own.
+    // `core.note` names `body` as its body and declares no `maxLength`.
     const note = createNote({
       source: ctx.source,
       properties: {
         title: "Large properties test",
-        body: "x".repeat(100_000),
+        body: "x".repeat(1_000_000),
       },
     });
     const r = await client.createItem(note);
@@ -128,27 +127,29 @@ describe("validation edge cases", () => {
     trackItem(ctx, r.data.item.id);
     const fetched = await client.getItem(r.data.item.id);
     expect(fetched.ok).toBe(true);
-    expect((fetched.data.item.properties.body as string).length).toBe(100_000);
+    expect((fetched.data.item.properties.body as string).length).toBe(
+      1_000_000,
+    );
   });
 
   it("refuses a string one unit over the default length cap, naming the field", async () => {
     const over = await client.createItem(
       createNote({
         source: ctx.source,
-        properties: { body: "x".repeat(100_001) },
+        properties: { title: "x".repeat(100_001) },
       }),
     );
     expect(over.status).toBe(400);
     expect(over.error?.error.code).toBe("invalid_properties");
     const errors = over.error?.error.details?.errors as
       Array<{ field: string }> | undefined;
-    expect(errors?.map((e) => e.field)).toContain("body");
+    expect(errors?.map((e) => e.field)).toContain("title");
 
     // The witness: one unit fewer is accepted.
     const edge = await client.createItem(
       createNote({
         source: ctx.source,
-        properties: { body: "x".repeat(100_000) },
+        properties: { title: "x".repeat(100_000) },
       }),
     );
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

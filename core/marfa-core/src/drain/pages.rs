@@ -167,9 +167,17 @@ pub(super) fn send(
         if report.unavailable.is_some() || pass.changed() {
             return Ok(());
         }
-        let waiting = candidates(sender.core, lane, standing)?;
+        let mut waiting = candidates(sender.core, lane, standing)?;
         if waiting.len() < FLOOR || !confirm(report)? {
             continue;
+        }
+        // The root was read just now. A create over its limit meets the walk,
+        // so whether it goes does not depend on what else waits.
+        if let Some(limit) = store::request_limit(&*sender.core.conn()?)? {
+            waiting.retain(|(_, size)| *size <= limit);
+            if waiting.len() < FLOOR {
+                continue;
+            }
         }
         for page in pages(&waiting) {
             crate::catch_up::refuse_if_stopped(sender.stop)?;

@@ -1806,7 +1806,13 @@ describe("the scripted answers match the server's", () => {
       answers.root(Number(BUILT_FOR)),
       {
         same: ["contract"],
-        shape: ["name", "version", "instance_id", "features"],
+        shape: [
+          "name",
+          "version",
+          "instance_id",
+          "features",
+          "max_request_bytes",
+        ],
       },
     );
     // The scripted server names the contract of the document the binary was

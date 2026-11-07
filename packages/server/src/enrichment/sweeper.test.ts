@@ -1,6 +1,5 @@
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { readFile } from "node:fs/promises";
@@ -14,6 +13,8 @@ import {
 } from "./sweeper.js";
 import type { OcrEngine } from "./ocr.js";
 import { docx, longParagraph } from "./test-documents.js";
+
+const MAX_TEXT_CHARS = 100_000;
 
 /**
  * Each test gets its own context, deliberately. The sweeper sweeps the
@@ -60,7 +61,7 @@ function sweeper(
     batchSize: overrides.batchSize ?? 8,
     itemTimeoutMs: overrides.itemTimeoutMs ?? 60_000,
     maxBlobBytes: overrides.maxBlobBytes ?? 20 * 1024 * 1024,
-    maxTextChars: overrides.maxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
+    maxTextChars: overrides.maxTextChars ?? MAX_TEXT_CHARS,
     maxAttempts: overrides.maxAttempts ?? 3,
     maxInflatedBytes: overrides.maxInflatedBytes ?? 64 * 1024 * 1024,
     maxMemoryBytes: overrides.maxMemoryBytes ?? 256 * 1024 * 1024,
@@ -128,7 +129,7 @@ async function readVersion(id: string): Promise<number> {
 function defaultSignature(): string {
   return JSON.stringify({
     max_blob_bytes: 20 * 1024 * 1024,
-    max_text_chars: DEFAULT_MAX_STRING_LENGTH,
+    max_text_chars: MAX_TEXT_CHARS,
     max_inflated_bytes: 64 * 1024 * 1024,
     max_memory_bytes: 256 * 1024 * 1024,
     ocr: false,
@@ -511,14 +512,14 @@ describe("skips", () => {
     // enforces. Neither store validates on update, so without the judge
     // the write would simply succeed and every later edit of the item be
     // refused, naming a property the caller had never set.
-    const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
+    const overLong = "q".repeat(MAX_TEXT_CHARS + 1);
     const id = await createFileItem(
       await seedBlob(Buffer.from(overLong), "text/plain"),
       "text/plain",
     );
 
     const result = await sweeper({
-      maxTextChars: DEFAULT_MAX_STRING_LENGTH * 2,
+      maxTextChars: MAX_TEXT_CHARS * 2,
     }).runOnce();
     expect(result).toEqual({ extracted: 0, skipped: 1, failed: 0 });
 
@@ -619,14 +620,14 @@ describe("skips", () => {
   });
 
   it("reconsiders a refused extraction once the ceiling is back under the validator's", async () => {
-    const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
+    const overLong = "q".repeat(MAX_TEXT_CHARS + 1);
     const id = await createFileItem(
       await seedBlob(Buffer.from(overLong), "text/plain"),
       "text/plain",
     );
 
     expect(
-      await sweeper({ maxTextChars: DEFAULT_MAX_STRING_LENGTH * 2 }).runOnce(),
+      await sweeper({ maxTextChars: MAX_TEXT_CHARS * 2 }).runOnce(),
     ).toEqual({ extracted: 0, skipped: 1, failed: 0 });
 
     // The ceiling is in the config signature precisely so this re-offers.
@@ -636,7 +637,7 @@ describe("skips", () => {
       failed: 0,
     });
     expect(String((await readItem(id)).extracted_text)).toHaveLength(
-      DEFAULT_MAX_STRING_LENGTH,
+      MAX_TEXT_CHARS,
     );
   });
 });

@@ -6707,8 +6707,8 @@ describe("a file that is not a document", () => {
     expect(sentTitles(made)).toContain("large.bin");
     renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
     renameSync(join(made.dir, "large.bin"), join(made.dir, "large.txt"));
-    // The witnesses: new documents holding the same bytes are held, and
-    // warned of.
+    // The witnesses: new documents holding the same bytes are held, one for
+    // its encoding and one for being past the request limit.
     writeFileSync(join(made.dir, "Witness.md"), latin1);
     writeFileSync(join(made.dir, "Large.md"), large);
 
@@ -6728,9 +6728,9 @@ describe("a file that is not a document", () => {
     ]);
     expect(of("Witness.md")).toEqual(["held", "encoding", false]);
     expect(
-      of("Large.md")[2],
-      "a new document this size was not warned of",
-    ).toBe(true);
+      of("Large.md").slice(0, 2),
+      "a new document this size was not held",
+    ).toEqual(["held", "refused"]);
 
     rmSync(join(made.dir, "Witness.md"));
     rmSync(join(made.dir, "Large.md"));
