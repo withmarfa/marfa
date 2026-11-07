@@ -57,16 +57,25 @@ pub async fn register(State(app): State<Arc<App>>, visit: Visit, body: JsonBody)
     }
 }
 
-pub async fn register_preflight() -> Response {
+pub async fn register_preflight(asked: HeaderMap) -> Response {
     let mut response = StatusCode::NO_CONTENT.into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type"),
-    );
+    let posting = asked
+        .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+        .is_some_and(|method| method == "POST");
+    if posting {
+        let headers = response.headers_mut();
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("POST"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Content-Type"),
+        );
+    }
     response
 }

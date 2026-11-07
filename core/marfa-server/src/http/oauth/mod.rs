@@ -11,7 +11,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{Next, from_fn};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -86,11 +86,14 @@ impl Fields {
 }
 
 async fn any_origin(request: Request, next: Next) -> Response {
+    let preflight = request.method() == Method::OPTIONS;
     let mut response = next.run(request).await;
-    response.headers_mut().insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
+    if !preflight {
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+    }
     response
 }
 
