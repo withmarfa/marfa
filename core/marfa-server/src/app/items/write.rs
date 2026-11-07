@@ -471,7 +471,7 @@ struct Settled {
     copy: Option<Item>,
 }
 
-fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
+pub(super) fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
     unit.announce(&Event {
         event_type,
         item_id: &item.id,
@@ -484,7 +484,7 @@ fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Resul
     })
 }
 
-fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec<Item>> {
+pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec<Item>> {
     let (at, writer) = (unit.at.as_str(), unit.caller.writer());
     moving
         .iter()

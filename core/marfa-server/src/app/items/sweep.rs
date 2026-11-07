@@ -7,11 +7,14 @@ use serde_json::json;
 
 use super::super::App;
 use super::super::access::Caller;
-use super::super::events::Event;
+use super::super::catalog::{self, Snapshot};
+use super::super::edges::write::purge_edge;
 use super::super::housekeeping::{DAY_MS, Report, Run, cutoff};
 use super::super::refusal::{Refusal, Result};
 use super::super::unit::Unit;
-use super::{Item, rows};
+use super::plan::{Act, Asked, Gate, plan};
+use super::rows;
+use super::write::announce;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 /// Items one run removes. A run that leaves more runs again at once.
@@ -25,20 +28,6 @@ fn binned_before(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<Vec<S
     Ok(statement
         .query_map(params![before, limit], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?)
-}
-
-/// Announces what happened to `item`, as a write of it would.
-pub(super) fn announced(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
-    unit.announce(&Event {
-        event_type,
-        item_id: &item.id,
-        type_id: &item.type_id,
-        source: &item.source,
-        payload: format!(
-            "{{\"event_type\":\"{event_type}\",\"item\":{}}}",
-            item.logged()?
-        ),
-    })
 }
 
 /// Does the work of one row of a batch so that its failure takes back that row
@@ -75,20 +64,41 @@ fn purge_batch(unit: &Unit<'_, '_>, app: &App) -> Result<Purged> {
         });
     };
     let tx = unit.tx();
+    let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
+    let gate = Gate {
+        tx,
+        caller: &unit.caller,
+        catalog: &catalog,
+        claim: None,
+    };
     let chosen = binned_before(tx, &before, BATCH + 1)?;
     let left = chosen.len() as i64 > BATCH;
     let mut deleted = 0;
     let mut first_refusal = None;
     for id in chosen.iter().take(BATCH as usize) {
+        // A part goes with its host, so a row chosen here can have gone already.
+        if rows::by_id(tx, id)?.is_none() {
+            continue;
+        }
+        let mut gone = 0;
         let refused = alone(tx, || {
-            let Some(item) = rows::by_id(tx, id)? else {
-                return Ok(());
+            let asked = Asked {
+                id: id.clone(),
+                version: None,
             };
-            rows::purge(tx, &item, &unit.at)?;
-            announced(unit, "item.purged", &item)
+            let purging = plan(&gate, Act::Purge, &[asked])?.purging;
+            for row in &purging {
+                for (edge, source) in &row.edges {
+                    purge_edge(unit, edge, source, &row.item.id)?;
+                }
+                rows::purge(tx, &row.item, &unit.at)?;
+                announce(unit, "item.purged", &row.item)?;
+            }
+            gone = purging.len();
+            Ok(())
         })?;
         match refused {
-            None => deleted += 1,
+            None => deleted += gone,
             Some(refused) => {
                 tracing::error!(item = %id, error = %refused, "An item could not be purged");
                 first_refusal.get_or_insert(refused);

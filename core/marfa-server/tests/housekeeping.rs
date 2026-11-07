@@ -59,6 +59,7 @@ impl Instance {
             "source": "writer",
             "permissions": ["schema.write", "items.purge"],
             "type_permissions": { "*": "write" },
+            "edge_permissions": { "*": "write" },
             "metadata_permissions": { "types": "write" },
         });
         let minted = instance.ok(Method::POST, "/keys", body).await;
@@ -80,7 +81,10 @@ impl Instance {
         if let Some(key) = key {
             request = request.header("idempotency-key", key);
         }
-        let doors = if path.starts_with("/items") || path.starts_with("/types") {
+        let doors = if ["/items", "/types", "/edges"]
+            .iter()
+            .any(|door| path.starts_with(door))
+        {
             request = request.header(header::AUTHORIZATION, format!("Bearer {}", self.writer));
             &self.public
         } else {
@@ -374,6 +378,72 @@ async fn feed_expiry_moves_every_expired_item_of_a_type_in_one_run() {
     }
     instance.forward(3 * DAY);
     assert_eq!(instance.run("feed-expiry").await["moved"], 101);
+}
+
+async fn edge(instance: &Instance, edge_type: &str, source: &str, target: &str) {
+    let body = json!({ "source_id": source, "target_id": target, "edge_type": edge_type });
+    instance.ok(Method::POST, "/edges", body).await;
+}
+
+#[tokio::test]
+async fn feed_expiry_takes_a_cascade_only_when_all_of_it_has_expired() {
+    let instance = Instance::start(&[]).await;
+    let type_id = expiring(&instance).await;
+    let parent = instance.item(feed_item(type_id, "feed")).await;
+    let child = instance.item(feed_item(type_id, "feed")).await;
+    let holding = instance.item(feed_item(type_id, "feed")).await;
+    let kept = instance.item(feed_item(type_id, "library")).await;
+    edge(&instance, "parent-of", &parent, &child).await;
+    edge(&instance, "parent-of", &holding, &kept).await;
+
+    instance.forward(3 * DAY);
+    let result = instance.run("feed-expiry").await;
+    assert_eq!(result, json!({ "moved": 2, "held": 1 }));
+    assert_eq!(instance.state(&parent), "trashed");
+    assert_eq!(instance.state(&child), "trashed");
+    assert_eq!(instance.state(&holding), "active");
+    assert_eq!(instance.state(&kept), "active");
+}
+
+#[tokio::test]
+async fn feed_expiry_goes_past_a_whole_chunk_it_holds_back() {
+    let instance = Instance::start(&[]).await;
+    let type_id = expiring(&instance).await;
+    let mut held = Vec::new();
+    for _ in 0..100 {
+        let id = instance.item(feed_item(type_id, "feed")).await;
+        let kept = instance.item(feed_item(type_id, "library")).await;
+        edge(&instance, "parent-of", &id, &kept).await;
+        held.push(id);
+    }
+    let behind = instance.item(feed_item(type_id, "feed")).await;
+
+    instance.forward(3 * DAY);
+    let result = instance.run("feed-expiry").await;
+    assert_eq!(result, json!({ "moved": 1, "held": 100 }));
+    assert_eq!(instance.state(&behind), "trashed");
+    assert_eq!(instance.state(&held[0]), "active");
+}
+
+#[tokio::test]
+async fn trash_purge_removes_edges_and_the_parts_that_went_with_a_host() {
+    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let host = instance.note().await;
+    let part = instance.note().await;
+    let other = instance.note().await;
+    edge(&instance, "comments-on", &part, &host).await;
+    edge(&instance, "derived-from", &other, &host).await;
+    instance
+        .ok(Method::DELETE, &format!("/items/{host}"), json!({}))
+        .await;
+    assert_eq!(instance.state(&part), "trashed");
+
+    instance.forward(2 * DAY);
+    assert_eq!(instance.run("trash-purge").await["deleted"], 2);
+    let left = format!("SELECT count(*) FROM items WHERE id IN ('{host}', '{part}')");
+    assert_eq!(instance.count(&left), 0);
+    assert_eq!(instance.count("SELECT count(*) FROM edges"), 0);
+    assert_eq!(instance.state(&other), "active");
 }
 
 #[tokio::test]

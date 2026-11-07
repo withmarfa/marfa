@@ -22,7 +22,7 @@ BEGIN
     UPDATE items SET restored_at = NEW.updated_at WHERE seq = NEW.seq;
 END;
 
-CREATE INDEX IF NOT EXISTS items_feed_window ON items (type, created_at)
+CREATE INDEX IF NOT EXISTS items_feed_window ON items (type, created_at, id)
     WHERE tier = 'feed' AND state = 'active' AND restored_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS items_bin_age ON items (trashed_at)
