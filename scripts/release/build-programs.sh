@@ -49,6 +49,16 @@ build_and_check() {
   mkdir -p "$OUT"
   rm -f "$OUT/marfa" "$OUT/marfa-server"
   cargo_environment
+  case "$TARGET" in
+    *-unknown-linux-musl)
+      # Without the bundled libunwind (link-self-contained=no), the standard library's
+      # `-lunwind` finds nothing; the script sends it to the toolchain's one unwinder,
+      # as the file reader's build script does for itself.
+      mkdir -p "$CARGO_TARGET_DIR/unwind"
+      echo 'INPUT(-lgcc_eh)' >"$CARGO_TARGET_DIR/unwind/libunwind.a"
+      export RUSTFLAGS="$RUSTFLAGS -L $CARGO_TARGET_DIR/unwind"
+      ;;
+  esac
 
   # The server's native feature turns file reading on; until it has one, nothing differs.
   local native=()
