@@ -419,8 +419,10 @@ export async function bootFreshServer(
   // When the last signal went out, so that `ServerExit.ms` can say how long
   // the stop took.
   let signaledAt: number | undefined;
+  let signaledWith: StopSignal | undefined;
   const signal = (name: StopSignal): void => {
     signaledAt = Date.now();
+    signaledWith = name;
     signalGroup(groupOf(state), name);
   };
   const exit = async (): Promise<ServerExit> => {
@@ -429,7 +431,7 @@ export async function bootFreshServer(
         `the server under ${state} was still running ${String(STOP_GRACE_MS)}ms after it was asked to end`,
       );
     }
-    return readExit(state, signaledAt, false);
+    return readExit(state, signaledAt, signaledWith === "SIGKILL");
   };
   const listArmedFaults = async (): Promise<ArmedFault[]> => {
     const listed = await adapter("fault", "list");

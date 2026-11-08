@@ -507,14 +507,21 @@ async function startServer(args: BootOptions): Promise<Started> {
 
   const port =
     args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
-  const controlDir = realpathSync(
-    mkdtempSync(resolve(tmpdir(), "marfa-control-")),
-  );
-  chmodSync(controlDir, 0o700);
-  const controlSocket = resolve(controlDir, "control.sock");
-  writeFileSync(resolve(args.state, "control-directory"), controlDir, {
-    mode: 0o600,
-  });
+  // A caller that names the socket owns its folder and what stands there.
+  const named = args.env?.MARFA_CONTROL_SOCKET;
+  let controlSocket: string;
+  if (named === undefined) {
+    const controlDir = realpathSync(
+      mkdtempSync(resolve(tmpdir(), "marfa-control-")),
+    );
+    chmodSync(controlDir, 0o700);
+    controlSocket = resolve(controlDir, "control.sock");
+    writeFileSync(resolve(args.state, "control-directory"), controlDir, {
+      mode: 0o600,
+    });
+  } else {
+    controlSocket = resolve(named);
+  }
   const retainedEnv = existsSync(p.env)
     ? parseEnvFile(readFileSync(p.env, "utf8"))
     : {};

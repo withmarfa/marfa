@@ -622,7 +622,7 @@ If the disk store refuses to look for a blob, or its folder or its `.marfa-store
 
 **Reason:** a store that cannot be reached is not healthy because it holds no blob: every name is absent from a folder that is gone.
 
-**Tests:** `compliance/health.test.ts › answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns`.
+**Tests:** `compliance/health.test.ts › answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers the disk component degraded, never down, and blob storage down, when the free space cannot be read and the store refuses, and ok once both are cleared`.
 
 ### `instance/health-contention-degraded`
 
@@ -658,7 +658,7 @@ If the bytes available on either the database's volume or the disk store's volum
 
 **Reason:** only a measured shortage is a failure.
 
-**Tests:** `compliance/health.test.ts › answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns`.
+**Tests:** `compliance/health.test.ts › answers the disk component degraded, never down, and blob storage down, when the free space cannot be read and the store refuses, and ok once both are cleared`.
 
 ### `instance/health-write-reuse`
 
@@ -1366,7 +1366,7 @@ When multiple processes concurrently start their private control listeners on th
 
 While another process is closing its private control listener at the configured socket path, the server MUST refuse to start its own private control listener at that path until the closing process finishes its socket cleanup.
 
-**Tests:** `compliance/control-socket.test.ts › refuses startup until a closing listener has finished its socket cleanup`.
+**Tests:** `compliance/control-socket-close.test.ts › refuses startup until a closing listener has finished its socket cleanup`.
 
 ### `instance/control-nonsocket-refused`
 
