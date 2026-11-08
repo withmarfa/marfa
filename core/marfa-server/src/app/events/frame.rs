@@ -15,6 +15,8 @@ pub struct Filter {
     /// Declared types and patterns; none selects every type.
     pub types: Vec<String>,
     pub edges: bool,
+    /// A copy stream sends the frames of items the source filter leaves out, marked `listed: false`.
+    pub copy: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,9 +58,12 @@ impl Judge<'_, '_> {
             }
             Kind::Item
         };
-        (self.caller.may_read_type(&entry.type_id)
-            && self.caller.lists(self.rules, &entry.type_id, &entry.source))
-        .then_some(kind)
+        (self.caller.may_read_type(&entry.type_id) && (self.filter.copy || self.listed(entry)))
+            .then_some(kind)
+    }
+
+    fn listed(&self, entry: &Entry<'_, '_>) -> bool {
+        self.caller.lists(self.rules, &entry.type_id, &entry.source)
     }
 
     pub fn render(&self, entry: &Entry<'_, '_>, kind: Kind, payload: &str) -> Result<Verdict> {
@@ -107,6 +112,9 @@ impl Judge<'_, '_> {
             && let Some(Value::Object(extensions)) = metadata.get_mut("extensions")
         {
             extensions.retain(|namespace, _| self.caller.may_read_extension(namespace));
+        }
+        if self.filter.copy {
+            body.insert("listed".into(), self.listed(entry).into());
         }
         Ok(Some(true))
     }

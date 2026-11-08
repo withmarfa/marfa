@@ -10,6 +10,8 @@ use super::App;
 use super::access::{Caller, Door, Level, Permission, SchemaKind};
 use super::catalog::{self, Catalog, Snapshot};
 use super::edges;
+use super::instance;
+use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::types::{issues_json, missing_field};
 use super::unit::Unit;
@@ -103,14 +105,11 @@ pub fn all(catalog: &Catalog) -> Result<Vec<Obj>> {
         .collect())
 }
 
-pub async fn list(app: &App) -> Result<Vec<Value>> {
-    let cache = app.catalog_handle();
-    app.db
-        .read(move |tx| {
-            let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            Ok(all(&catalog)?.into_iter().map(presented).collect())
-        })
-        .await
+pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
+    reading(app, caller, |read| {
+        Ok(all(&read.catalog)?.into_iter().map(presented).collect())
+    })
+    .await
 }
 
 /// Registers an edge type, or widens the endpoint constraints of a registered one. The
@@ -212,6 +211,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ],
             )?;
             catalog::raise(unit.tx())?;
+            instance::raise_reach(unit.tx())?;
             unit.audit("edge_type", &id, None)?;
             Ok((true, built))
         })
@@ -274,6 +274,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         unit.tx()
             .execute("DELETE FROM edge_types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
         unit.audit("edge_type", &id, None)?;
         Ok(())
     })
