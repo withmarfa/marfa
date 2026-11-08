@@ -70,7 +70,7 @@ case "$TARGET" in
     docker build --quiet --platform "$platform" -t "$image" "$F/context" >/dev/null || die "could not build $image"
     trap 'docker rmi "$image" >/dev/null 2>&1 || true' EXIT
     code=0
-    docker run --rm --platform "$platform" --read-only --user "$(id -u):$(id -g)" \
+    docker run --rm --platform "$platform" --read-only --tmpfs /tmp:rw,mode=1777 --user "$(id -u):$(id -g)" \
       -v "$findings:/findings" "$image" /marfa-enrichment-fuzz /seeds /findings \
       --seconds "$seconds" --jobs "$jobs" --seed "$seed" ${extra[@]+"${extra[@]}"} 2>&1 | tee "$F/run.log" || code=$?
     ;;
