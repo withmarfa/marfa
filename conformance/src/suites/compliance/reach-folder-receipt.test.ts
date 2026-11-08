@@ -6,12 +6,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
-/**
- * A folder write answers without a reach certificate (`reach/receipt-uncertified`).
- * It lives apart from `reach.test.ts` because the folder door is not served
- * by every target yet, and a target that does not serve it is judged on the
- * rest of the reach contract without it.
- */
+// Folder receipts are judged separately until every target serves folders.
 
 let server: FreshServer;
 

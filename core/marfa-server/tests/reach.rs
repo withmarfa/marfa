@@ -1,5 +1,4 @@
-//! What moves a reach, and what leaves it, read from the instance's own counter, and how a copy
-//! stream ends when it moves.
+//! Reach changes, persistence, and copy stream endings.
 
 use std::sync::Arc;
 
