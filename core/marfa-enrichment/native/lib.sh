@@ -72,24 +72,37 @@ manifest_line() {
   echo "$line"
 }
 
-# download <url> <sha256> <file>: fetches into <file> unless a file with that
-# hash is already there, and stops if what arrives has another hash.
+# download <url> <sha256> <file> [<url>...]: fetches into <file> unless a file with
+# that hash is already there, trying the URLs in the order given, and stops if what
+# arrives has another hash. A URL that cannot be reached, or that serves other bytes,
+# is passed over for the next; the hash is what makes any source safe.
 download() {
   local url=$1 want=$2 file=$3
+  shift 3
   if [ -f "$file" ] && [ "$(sha256_of "$file")" = "$want" ]; then
     return 0
   fi
   rm -f "$file"
-  local part="$file.part.$$"
-  curl --fail --silent --show-error --location --retry 3 --output "$part" "$url" \
-    || die "could not fetch $url"
-  local got
-  got=$(sha256_of "$part")
-  if [ "$got" != "$want" ]; then
+  local part="$file.part.$$" source got tried=
+  set -- "$url" "$@"
+  for source in "$@"; do
+    tried="$tried $source"
     rm -f "$part"
-    die "hash mismatch for $url: the manifest says $want and the download is $got"
-  fi
-  mv "$part" "$file"
+    if ! curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 \
+      --speed-limit 20000 --speed-time 60 --output "$part" "$source"; then
+      echo "native: could not fetch $source" >&2
+      continue
+    fi
+    got=$(sha256_of "$part")
+    if [ "$got" != "$want" ]; then
+      echo "native: hash mismatch for $source: the manifest says $want and the download is $got" >&2
+      continue
+    fi
+    mv "$part" "$file"
+    return 0
+  done
+  rm -f "$part"
+  die "no source gave the file with hash $want; tried:$tried"
 }
 
 # archive_into <name> <folder>: fetches the archive pinned for <name>, and
@@ -155,10 +168,11 @@ need() {
 # Linux only.
 tool_into() {
   local name=$1 folder=$2
-  local _kind _name url sha
-  read -r _kind _name url sha <<<"$(manifest_line tool "$name")"
+  local _kind _name url sha fallbacks
+  read -r _kind _name url sha fallbacks <<<"$(manifest_line tool "$name")"
   local file="$DOWNLOADS/$name.tar"
-  download "$url" "$sha" "$file"
+  # shellcheck disable=SC2086
+  download "$url" "$sha" "$file" $fallbacks
   rm -rf "$folder"
   mkdir -p "$folder"
   tar -xf "$file" -C "$folder" --strip-components=1
