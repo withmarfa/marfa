@@ -157,7 +157,7 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     Ok(Refusal::new(Code::ApiKeyNotFound, message))
 }
 
-fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
+pub(crate) fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
     match live_by_id(tx, id, at)? {
         Some(key) if caller.reaches(&key) => Ok(key),
         _ => Err(unknown(tx, caller, id)?),
@@ -375,7 +375,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     .await
 }
 
-fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
+pub(crate) fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
     unit.tx().execute(
         "UPDATE api_keys SET revoked_at = ?2 WHERE id = ?1",
         [id, &unit.at],

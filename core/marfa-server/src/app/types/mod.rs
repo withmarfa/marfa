@@ -4,7 +4,7 @@ mod read;
 mod write;
 
 pub use read::{get, list, normalize};
-pub use write::{clear_icon, delete, register, replace, set_icon};
+pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 
 use marfa_rules::grammar;
 use marfa_rules::schema::{ChainFault, Issue, Obj, plural_of};

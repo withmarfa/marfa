@@ -11,6 +11,7 @@ mod overview;
 mod profile;
 pub mod reach;
 mod schema;
+mod tools;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};

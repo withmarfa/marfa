@@ -163,10 +163,15 @@ async fn a_direct_write_records_the_address_it_came_from_and_no_via() {
     assert!(entries[0]["details"].get("via").is_none());
 }
 
-fn rpc_request(token: Option<&str>, headers: &[(&str, &str)], body: &Value) -> Request<Body> {
+fn rpc_request(
+    path: &str,
+    token: Option<&str>,
+    headers: &[(&str, &str)],
+    body: &Value,
+) -> Request<Body> {
     let mut builder = Request::builder()
         .method(Method::POST)
-        .uri("/mcp")
+        .uri(path)
         .header(header::CONTENT_TYPE, "application/json");
     if let Some(token) = token {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -209,16 +214,30 @@ impl Tool {
 
 impl Instance {
     async fn rpc(&self, token: Option<&str>, headers: &[(&str, &str)], body: Value) -> Reply {
-        send(&self.public, rpc_request(token, headers, &body)).await
+        self.rpc_at("/mcp", token, headers, body).await
+    }
+
+    async fn rpc_at(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        headers: &[(&str, &str)],
+        body: Value,
+    ) -> Reply {
+        send(&self.public, rpc_request(path, token, headers, &body)).await
     }
 
     async fn tool(&self, token: &str, name: &str, arguments: Value) -> Tool {
+        self.tool_at("/mcp", token, name, arguments).await
+    }
+
+    async fn tool_at(&self, path: &str, token: &str, name: &str, arguments: Value) -> Tool {
         let sent = message(
             1,
             "tools/call",
             json!({ "name": name, "arguments": arguments }),
         );
-        let reply = self.rpc(Some(token), &[], sent).await;
+        let reply = self.rpc_at(path, Some(token), &[], sent).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
         let result = &reply.body["result"];
         assert!(result.is_object(), "{}", reply.body);
@@ -236,8 +255,12 @@ impl Instance {
     }
 
     async fn names(&self, token: &str) -> Vec<String> {
+        self.names_at("/mcp", token).await
+    }
+
+    async fn names_at(&self, path: &str, token: &str) -> Vec<String> {
         let listed = self
-            .rpc(Some(token), &[], message(2, "tools/list", json!({})))
+            .rpc_at(path, Some(token), &[], message(2, "tools/list", json!({})))
             .await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
         listed.body["result"]["tools"]
@@ -261,9 +284,13 @@ impl Instance {
 impl Instance {
     /// Posts `text` as it is written, so a number keeps the digits the client sent.
     async fn raw(&self, token: &str, text: &str) -> Reply {
+        self.raw_at("/mcp", token, text).await
+    }
+
+    async fn raw_at(&self, path: &str, token: &str, text: &str) -> Reply {
         let request = Request::builder()
             .method(Method::POST)
-            .uri("/mcp")
+            .uri(path)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::from(text.to_string()))
@@ -272,12 +299,17 @@ impl Instance {
     }
 
     async fn raw_tool(&self, token: &str, name: &str, arguments: &str) -> Tool {
+        self.raw_tool_at("/mcp", token, name, arguments).await
+    }
+
+    async fn raw_tool_at(&self, path: &str, token: &str, name: &str, arguments: &str) -> Tool {
         let text = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{name}","arguments":{arguments}}}}}"#
         );
-        let reply = self.raw(token, &text).await;
+        let reply = self.raw_at(path, token, &text).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
         let result = &reply.body["result"];
+        assert!(result.is_object(), "{}", reply.body);
         if result["isError"] == true {
             let text = result["content"][0]["text"].as_str().unwrap();
             return Tool {
@@ -447,7 +479,10 @@ async fn a_credential_that_reaches_no_type_is_offered_no_tools_and_no_capability
     let reader = instance
         .key(json!({ "type_permissions": { "core.note": "read" } }))
         .await;
-    assert_eq!(instance.names(&reader).await, ["marfa_find", "marfa_get"]);
+    assert_eq!(
+        instance.names(&reader).await,
+        ["marfa_overview", "marfa_find", "marfa_get"]
+    );
     let started = instance
         .rpc(
             Some(&reader),
@@ -558,6 +593,7 @@ async fn both_revisions_are_offered_the_same_tools_to_the_same_credential() {
     assert_eq!(
         legacy,
         [
+            "marfa_overview",
             "marfa_find",
             "marfa_get",
             "marfa_create",
@@ -1342,4 +1378,817 @@ async fn a_chat_file_is_fetched_under_the_same_rules_and_a_switched_off_instance
         .await;
     assert_eq!(refused.value["error"]["reason"], "disabled");
     assert_eq!(server.contacted(), 1);
+}
+
+const SCHEMA: &str = "/mcp/schema";
+const ADMIN: &str = "/mcp/admin";
+
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
+}
+
+/// The JSON-RPC error a call to a tool the credential is not offered gets.
+async fn unoffered(instance: &Instance, path: &str, token: &str, name: &str, arguments: Value) {
+    let sent = message(
+        1,
+        "tools/call",
+        json!({ "name": name, "arguments": arguments }),
+    );
+    let reply = instance.rpc_at(path, Some(token), &[], sent).await;
+    assert_eq!(
+        reply.body["error"]["code"], -32602,
+        "{name}: {}",
+        reply.body
+    );
+}
+
+#[tokio::test]
+async fn the_overview_is_offered_to_a_credential_that_reaches_a_type_and_tells_what_it_may_do() {
+    let instance = Instance::start(&[]).await;
+    let reader = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    let overview = instance.tool(&reader, "marfa_overview", json!({})).await;
+    assert_eq!(overview.payload()["credential"]["kind"], "key");
+    assert!(
+        overview.payload()["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["id"] == "core.note")
+    );
+    let one = instance
+        .tool(&reader, "marfa_overview", json!({ "type": "core.note" }))
+        .await;
+    assert_eq!(one.payload()["type"]["id"], "core.note");
+    assert!(one.payload()["type"]["fields"]["body"].is_object());
+    let none = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["audit.read"] }))
+        .await;
+    unoffered(&instance, "/mcp", &none, "marfa_overview", json!({})).await;
+}
+
+#[tokio::test]
+async fn the_schema_endpoint_offers_each_tool_only_to_a_credential_that_may_use_it() {
+    let instance = Instance::start(&[]).await;
+    let every = ["marfa_name_source", "marfa_search_docs", "marfa_sources"];
+    let with = |extra: &[&str], base: &[&str]| {
+        let mut names: Vec<String> = base.iter().chain(extra).map(|n| n.to_string()).collect();
+        names.sort();
+        names
+    };
+    let reads = ["marfa_overview", "marfa_find", "marfa_get"];
+    let reader = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    assert_eq!(
+        sorted(instance.names_at(SCHEMA, &reader).await),
+        with(&every, &reads)
+    );
+    let schema_writer = instance
+        .key(json!({
+            "type_permissions": { "core.note": "read" },
+            "permissions": ["schema.write"],
+        }))
+        .await;
+    assert_eq!(
+        sorted(instance.names_at(SCHEMA, &schema_writer).await),
+        with(
+            &["marfa_save_type"],
+            &with(&every, &reads)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        )
+    );
+    let registrar = instance
+        .key(json!({
+            "type_permissions": { "core.note": "read" },
+            "metadata_permissions": { "types": "write" },
+        }))
+        .await;
+    assert!(
+        instance
+            .names_at(SCHEMA, &registrar)
+            .await
+            .contains(&"marfa_save_type".to_string())
+    );
+    let views = instance
+        .key(json!({ "type_permissions": { "system.view": "write" } }))
+        .await;
+    let listed = instance.names_at(SCHEMA, &views).await;
+    assert!(
+        listed.contains(&"marfa_save_view".to_string()),
+        "{listed:?}"
+    );
+    assert!(!listed.contains(&"marfa_save_type".to_string()));
+    // The group's tools are not offered at /mcp.
+    assert!(
+        !instance
+            .names(&schema_writer)
+            .await
+            .contains(&"marfa_save_type".to_string())
+    );
+    // A credential not offered a tool is refused when it calls it anyway.
+    unoffered(
+        &instance,
+        SCHEMA,
+        &reader,
+        "marfa_save_type",
+        json!({ "action": "register", "id": "user.recipe", "fields": {} }),
+    )
+    .await;
+    unoffered(
+        &instance,
+        SCHEMA,
+        &reader,
+        "marfa_save_view",
+        json!({ "title": "Mine" }),
+    )
+    .await;
+    unoffered(
+        &instance,
+        "/mcp",
+        &schema_writer,
+        "marfa_save_type",
+        json!({ "action": "register", "id": "user.recipe", "fields": {} }),
+    )
+    .await;
+}
+
+fn recipe() -> Value {
+    json!({
+        "action": "register",
+        "id": "user.recipe",
+        "label": "Recipe",
+        "fields": { "title": { "type": "string", "required": true }, "serves": { "type": "integer" } },
+    })
+}
+
+#[tokio::test]
+async fn a_type_is_registered_by_a_credential_that_may_register_and_changed_only_by_schema_write() {
+    let instance = Instance::start(&[]).await;
+    let registrar = instance
+        .key(json!({
+            "type_permissions": { "user.*": "write" },
+            "metadata_permissions": { "types": "write" },
+        }))
+        .await;
+    let made = instance
+        .tool_at(SCHEMA, &registrar, "marfa_save_type", recipe())
+        .await;
+    assert_eq!(
+        made.payload()["type"]["id"],
+        "user.recipe",
+        "{}",
+        made.value
+    );
+    // Without schema.write, a change that adds a required field is refused.
+    let refused = instance
+        .tool_at(
+            SCHEMA,
+            &registrar,
+            "marfa_save_type",
+            json!({
+                "action": "change",
+                "id": "user.recipe",
+                "fields": { "chef": { "type": "string", "required": true } },
+            }),
+        )
+        .await;
+    assert!(refused.failed, "{}", refused.value);
+    assert_eq!(refused.code(), "forbidden");
+    let writer = instance
+        .key(json!({
+            "type_permissions": { "user.*": "write" },
+            "permissions": ["schema.write"],
+        }))
+        .await;
+    let changed = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({
+                "action": "change",
+                "id": "user.recipe",
+                "label": "Recipes",
+                "fields": { "chef": { "type": "string" }, "serves": null },
+            }),
+        )
+        .await;
+    assert!(!changed.failed, "{}", changed.value);
+    let fields = &changed.payload()["type"]["fields"];
+    assert!(fields["chef"].is_object());
+    assert!(fields["title"].is_object());
+    assert!(fields.get("serves").is_none());
+    assert_eq!(changed.payload()["type"]["label"], "Recipes");
+    assert_eq!(instance.audited("type.register").await.len(), 1);
+    assert_eq!(
+        instance.audited("type.replace").await[0]["details"]["via"],
+        "mcp"
+    );
+}
+
+#[tokio::test]
+async fn a_view_is_saved_and_changed_from_the_version_read() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({ "type_permissions": { "system.view": "write", "core.note": "read" } }))
+        .await;
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_save_view",
+            json!({ "title": "Notes", "query": { "types": ["core.note"] } }),
+        )
+        .await;
+    let view = made.payload();
+    assert_eq!(view["title"], "Notes", "{}", made.value);
+    let (id, version) = (view["id"].as_str().unwrap(), view["version"].clone());
+    let refused = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_save_view",
+            json!({ "id": id, "title": "Other" }),
+        )
+        .await;
+    assert!(refused.failed, "{}", refused.value);
+    let changed = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_save_view",
+            json!({ "id": id, "version": version, "title": "Other" }),
+        )
+        .await;
+    assert_eq!(changed.payload()["title"], "Other", "{}", changed.value);
+    assert_eq!(
+        instance.audited("view.create").await[0]["details"]["via"],
+        "mcp"
+    );
+}
+
+#[tokio::test]
+async fn sources_are_listed_and_named_through_the_tools() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({ "source": "agent-own", "type_permissions": { "core.note": "write" } }))
+        .await;
+    let named = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_name_source",
+            json!({ "source": "agent-own", "name": "My agent" }),
+        )
+        .await;
+    assert!(!named.failed, "{}", named.value);
+    let read = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_sources",
+            json!({ "source": "agent-own" }),
+        )
+        .await;
+    assert_eq!(read.payload()["sources"][0]["name"], "My agent");
+    let nothing = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_name_source",
+            json!({ "source": "agent-own" }),
+        )
+        .await;
+    assert!(nothing.failed);
+    let other = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_name_source",
+            json!({ "source": "someone-else", "name": "Mine now" }),
+        )
+        .await;
+    assert!(other.failed, "{}", other.value);
+    assert_eq!(other.code(), "forbidden");
+}
+
+#[tokio::test]
+async fn the_documentation_search_names_where_to_search_and_reaches_nowhere() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    let found = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_search_docs",
+            json!({ "query": "view filters" }),
+        )
+        .await;
+    assert_eq!(found.payload()["query"], "view filters");
+    assert!(
+        found.payload()["search_url"]
+            .as_str()
+            .unwrap()
+            .contains("q=view+filters")
+    );
+}
+
+#[tokio::test]
+async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permission() {
+    let instance = Instance::start(&[]).await;
+    let cases: [(&str, &[&str]); 6] = [
+        ("instance.read", &["marfa_health"]),
+        ("connectors.manage", &["marfa_health"]),
+        ("audit.read", &["marfa_audit"]),
+        (
+            "keys.mint",
+            &["marfa_keys", "marfa_manage_key", "marfa_revoke_key"],
+        ),
+        (
+            "keys.manage",
+            &["marfa_keys", "marfa_manage_key", "marfa_revoke_key"],
+        ),
+        ("config.manage", &[]),
+    ];
+    for (permission, tools) in cases {
+        let token = instance
+            .key(json!({ "type_permissions": {}, "permissions": [permission] }))
+            .await;
+        let expected: Vec<String> = sorted(tools.iter().map(|n| n.to_string()).collect());
+        assert_eq!(
+            sorted(instance.names_at(ADMIN, &token).await),
+            expected,
+            "{permission}"
+        );
+    }
+    let nobody = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    assert_eq!(
+        instance.names_at(ADMIN, &nobody).await,
+        ["marfa_overview", "marfa_find", "marfa_get"]
+    );
+    for (name, arguments) in [
+        ("marfa_health", json!({})),
+        ("marfa_audit", json!({})),
+        ("marfa_keys", json!({})),
+        (
+            "marfa_manage_key",
+            json!({ "action": "make", "label": "x", "source": "x" }),
+        ),
+        (
+            "marfa_revoke_key",
+            json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+    ] {
+        unoffered(&instance, ADMIN, &nobody, name, arguments).await;
+    }
+    // The tools of a group are not offered at /mcp.
+    let admin = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["audit.read"] }))
+        .await;
+    assert!(instance.names(&admin).await.is_empty());
+}
+
+#[tokio::test]
+async fn the_audit_tool_reads_the_log_newest_first_and_narrows_it() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({
+            "type_permissions": { "core.note": "write" },
+            "permissions": ["audit.read"],
+        }))
+        .await;
+    instance.note(&token, "one").await;
+    instance.note(&token, "two").await;
+    let all = instance
+        .tool_at(
+            ADMIN,
+            &token,
+            "marfa_audit",
+            json!({ "action": "item.create", "limit": 1 }),
+        )
+        .await;
+    assert_eq!(all.payload()["entries"].as_array().unwrap().len(), 1);
+    assert!(all.payload()["next_cursor"].is_string(), "{}", all.value);
+    let creates = instance
+        .tool_at(
+            ADMIN,
+            &token,
+            "marfa_audit",
+            json!({ "action": "item.create" }),
+        )
+        .await;
+    assert_eq!(creates.payload()["entries"].as_array().unwrap().len(), 2);
+    let silent = instance
+        .tool_at(
+            ADMIN,
+            &token,
+            "marfa_audit",
+            json!({ "action": "no.such.action" }),
+        )
+        .await;
+    assert!(silent.payload()["entries"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_keys_tool_lists_only_the_keys_the_credential_reaches() {
+    let instance = Instance::start(&[]).await;
+    let (minter, minter_id) = instance
+        .key_with_id(json!({
+            "type_permissions": { "core.note": "read" },
+            "permissions": ["keys.mint"],
+        }))
+        .await;
+    let (_, beyond_id) = instance
+        .key_with_id(json!({ "type_permissions": { "*": "write" }, "permissions": ["audit.read"] }))
+        .await;
+    let made = instance
+        .tool_at(
+            ADMIN,
+            &minter,
+            "marfa_manage_key",
+            json!({ "action": "make", "label": "narrow", "source": "narrow-source",
+                    "type_permissions": { "core.note": "read" } }),
+        )
+        .await;
+    let made_id = made.payload()["key"]["id"].as_str().unwrap().to_string();
+    assert!(made.payload()["secret"].is_string());
+    let listed = instance
+        .tool_at(ADMIN, &minter, "marfa_keys", json!({}))
+        .await;
+    let ids: Vec<&str> = listed.payload()["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| key["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&minter_id.as_str()));
+    assert!(ids.contains(&made_id.as_str()));
+    assert!(!ids.contains(&beyond_id.as_str()), "{ids:?}");
+    for key in listed.payload()["keys"].as_array().unwrap() {
+        assert!(key.get("secret").is_none() && key.get("hash").is_none());
+        assert_eq!(key["yours"] == true, key["id"] == minter_id.as_str());
+    }
+    // A key beyond the minter's grants is neither listed nor revocable by it.
+    let refused = instance
+        .tool_at(
+            ADMIN,
+            &minter,
+            "marfa_revoke_key",
+            json!({ "id": beyond_id }),
+        )
+        .await;
+    assert_eq!(refused.code(), "api_key_not_found", "{}", refused.value);
+    let wider = instance
+        .tool_at(
+            ADMIN,
+            &minter,
+            "marfa_manage_key",
+            json!({ "action": "make", "label": "wide", "source": "wide-source",
+                    "permissions": ["audit.read"] }),
+        )
+        .await;
+    assert!(wider.failed, "{}", wider.value);
+}
+
+#[tokio::test]
+async fn a_key_is_narrowed_and_never_widened_through_the_tool() {
+    let instance = Instance::start(&[]).await;
+    let manager = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["keys.mint", "keys.manage"] }))
+        .await;
+    let (secret, id) = instance
+        .key_with_id(json!({ "type_permissions": { "core.note": "write" } }))
+        .await;
+    let narrowed = instance
+        .tool_at(
+            ADMIN,
+            &manager,
+            "marfa_manage_key",
+            json!({ "action": "narrow", "id": id, "type_permissions": { "core.note": "read" } }),
+        )
+        .await;
+    assert_eq!(
+        narrowed.payload()["key"]["type_permissions"]["core.note"],
+        "read",
+        "{}",
+        narrowed.value
+    );
+    let widened = instance
+        .tool_at(
+            ADMIN,
+            &manager,
+            "marfa_manage_key",
+            json!({ "action": "narrow", "id": id, "type_permissions": { "core.note": "write" } }),
+        )
+        .await;
+    assert!(widened.failed, "{}", widened.value);
+    let held = instance
+        .call(
+            &secret,
+            Method::POST,
+            "/items",
+            Some(json!({ "type": "core.note", "properties": { "body": "x" } })),
+        )
+        .await;
+    assert_eq!(held.status, StatusCode::FORBIDDEN, "{}", held.body);
+}
+
+#[tokio::test]
+async fn the_health_tool_reports_to_a_credential_that_holds_instance_read() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["instance.read"] }))
+        .await;
+    let health = instance
+        .tool_at(ADMIN, &token, "marfa_health", json!({}))
+        .await;
+    assert!(
+        health.payload()["health"]["status"].is_string(),
+        "{}",
+        health.value
+    );
+    assert!(health.payload()["health"]["housekeeping"].is_object());
+    let blind = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["connectors.manage"] }))
+        .await;
+    let basic = instance
+        .tool_at(ADMIN, &blind, "marfa_health", json!({}))
+        .await;
+    assert!(basic.payload()["health"].get("housekeeping").is_none());
+}
+
+struct Revocable {
+    admin: String,
+    target_id: String,
+    target: String,
+}
+
+impl Instance {
+    async fn revocable(&self) -> Revocable {
+        let admin = self
+            .key(json!({
+                "type_permissions": { "core.note": "read" },
+                "permissions": ["keys.mint"],
+            }))
+            .await;
+        let made = self
+            .tool_at(
+                ADMIN,
+                &admin,
+                "marfa_manage_key",
+                json!({ "action": "make", "label": "doomed", "source": "doomed-source",
+                        "type_permissions": { "core.note": "read" } }),
+            )
+            .await;
+        Revocable {
+            admin,
+            target_id: made.payload()["key"]["id"].as_str().unwrap().to_string(),
+            target: made.payload()["secret"].as_str().unwrap().to_string(),
+        }
+    }
+
+    async fn works(&self, key: &str) -> bool {
+        self.call(key, Method::GET, "/keys/current", None)
+            .await
+            .status
+            == StatusCode::OK
+    }
+
+    async fn revoke_preview(&self, who: &Revocable) -> String {
+        let shown = self
+            .tool_at(
+                ADMIN,
+                &who.admin,
+                "marfa_revoke_key",
+                json!({ "id": who.target_id }),
+            )
+            .await;
+        assert_eq!(shown.payload()["key"]["id"], who.target_id.as_str());
+        shown.payload()["confirm"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn a_revoke_without_a_confirmation_revokes_nothing_and_the_confirmation_revokes_once() {
+    let instance = Instance::start(&[]).await;
+    let who = instance.revocable().await;
+    let confirm = instance.revoke_preview(&who).await;
+    assert!(instance.works(&who.target).await);
+    let done = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm }),
+        )
+        .await;
+    assert_eq!(
+        done.payload()["revoked"],
+        who.target_id.as_str(),
+        "{}",
+        done.value
+    );
+    assert!(!instance.works(&who.target).await);
+    assert_eq!(
+        instance.audited("key.revoke").await[0]["details"]["via"],
+        "mcp"
+    );
+    let again = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm }),
+        )
+        .await;
+    assert_eq!(again.payload()["already_revoked"], true, "{}", again.value);
+    assert_eq!(instance.audited("key.revoke").await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_revoke_confirmation_sent_by_another_credential_revokes_nothing() {
+    let instance = Instance::start(&[]).await;
+    let who = instance.revocable().await;
+    let confirm = instance.revoke_preview(&who).await;
+    let other = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["keys.manage"] }))
+        .await;
+    let refused = instance
+        .tool_at(
+            ADMIN,
+            &other,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm.clone() }),
+        )
+        .await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(refused.value["error"]["key"]["id"], who.target_id.as_str());
+    assert!(instance.works(&who.target).await);
+    // The witness: the credential it was issued to spends it.
+    let spent = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm }),
+        )
+        .await;
+    assert!(!spent.failed, "{}", spent.value);
+}
+
+#[tokio::test]
+async fn a_revoke_confirmation_sent_after_five_minutes_revokes_nothing() {
+    let instance = Instance::start(&[]).await;
+    let who = instance.revocable().await;
+    let confirm = instance.revoke_preview(&who).await;
+    instance.app.clock.advance(5 * 60_000 + 1).unwrap();
+    let refused = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm }),
+        )
+        .await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert!(
+        refused.value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expired")
+    );
+    assert!(instance.works(&who.target).await);
+}
+
+#[tokio::test]
+async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_does_not_change_it() {
+    let instance = Instance::start(&[]).await;
+    let who = instance.revocable().await;
+    let confirm = instance.revoke_preview(&who).await;
+    // Using the key changes only when it was last used.
+    assert!(instance.works(&who.target).await);
+    let narrowed = instance
+        .local(
+            Method::PATCH,
+            &format!("/keys/{}", who.target_id),
+            Some(json!({ "label": "renamed" })),
+        )
+        .await;
+    assert_eq!(narrowed.status, StatusCode::OK, "{}", narrowed.body);
+    let refused = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": confirm }),
+        )
+        .await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(refused.value["error"]["key"]["label"], "renamed");
+    assert!(instance.works(&who.target).await);
+    // The witness: with only its use between, the confirmation holds.
+    let again = instance.revoke_preview(&who).await;
+    assert!(instance.works(&who.target).await);
+    let done = instance
+        .tool_at(
+            ADMIN,
+            &who.admin,
+            "marfa_revoke_key",
+            json!({ "id": who.target_id, "confirm": again }),
+        )
+        .await;
+    assert!(!done.failed, "{}", done.value);
+}
+
+#[tokio::test]
+async fn no_tool_purges_exports_restores_claims_configures_or_manages_the_owner() {
+    let instance = Instance::start(&[]).await;
+    let everything = instance
+        .key(json!({
+            "type_permissions": { "*": "write" },
+            "metadata_permissions": { "*": "write" },
+            "permissions": [
+                "audit.read", "blobs.manage", "config.manage", "connectors.manage",
+                "grants.manage", "instance.maintain", "instance.read", "items.purge",
+                "keys.manage", "keys.mint", "schema.write", "webhooks.manage",
+            ],
+        }))
+        .await;
+    for path in ["/mcp", SCHEMA, ADMIN] {
+        let names = instance.names_at(path, &everything).await;
+        for name in &names {
+            for banned in [
+                "purge",
+                "export",
+                "restore",
+                "claim",
+                "config",
+                "setting",
+                "owner",
+                "passkey",
+                "sign_in",
+                "storage",
+                "blob",
+                "housekeeping",
+            ] {
+                assert!(!name.contains(banned), "{path} offers {name}");
+            }
+        }
+    }
+    assert!(instance.names_at(ADMIN, &everything).await.len() > 6);
+}
+
+#[tokio::test]
+async fn many_items_are_saved_in_one_call_and_saving_them_again_skips_them() {
+    let instance = Instance::start(&[]).await;
+    let writer = instance.writer().await;
+    let reader = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    unoffered(
+        &instance,
+        SCHEMA,
+        &reader,
+        "marfa_bulk_save",
+        json!({ "items": [{ "type": "core.note", "properties": { "body": "no" } }] }),
+    )
+    .await;
+    assert!(
+        instance
+            .names_at(SCHEMA, &writer)
+            .await
+            .contains(&"marfa_bulk_save".to_string())
+    );
+    let page = json!({ "items": [
+        { "type": "core.note", "source_id": "a", "properties": { "body": "one" } },
+        { "type": "core.note", "source_id": "b", "properties": { "body": "two" } },
+    ] });
+    let first = instance
+        .tool_at(SCHEMA, &writer, "marfa_bulk_save", page.clone())
+        .await;
+    assert_eq!(first.payload()["counts"]["created"], 2, "{}", first.value);
+    let again = instance
+        .tool_at(SCHEMA, &writer, "marfa_bulk_save", page)
+        .await;
+    assert_eq!(again.payload()["counts"]["skipped"], 2, "{}", again.value);
+    // A number past what a client can hold exactly is refused, never rounded.
+    let refused = instance
+        .raw_tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_bulk_save",
+            r#"{"items":[{"type":"core.note","properties":{"body":"x","n":18446744073709551617}}]}"#,
+        )
+        .await;
+    assert!(refused.failed, "{}", refused.value);
+    assert_eq!(refused.code(), "invalid_properties");
 }
