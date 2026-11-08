@@ -703,6 +703,8 @@ CREATE TRIGGER IF NOT EXISTS read_only_claim_removed AFTER DELETE ON api_key_sou
 BEGIN
     INSERT INTO read_only_generation (id, value) VALUES (1, 1)
     ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+
 CREATE TABLE IF NOT EXISTS enrichment_files (
     item_seq INTEGER NOT NULL,
     hash TEXT NOT NULL,
