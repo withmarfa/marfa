@@ -247,8 +247,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `compliance/error-codes.test.ts` holds every refusal's code to the error
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
-  // `ci/ci-required.test.ts` fails when one starts to. The Rust server
-  // embeds `errors.md` to word its refusals, so that chapter also rebuilds it.
+  // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
+  // server holds its refusal codes to `errors.md`, so that chapter reaches it.
   [
     /^conformance\/spec\/errors\.md$/,
     [
