@@ -16,24 +16,37 @@ use tokio::sync::{Notify, oneshot};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
+    /// The next write lands, then the endpoint reaches the other bucket.
+    SwapAfterPut,
+    /// The next `HEAD` that finds its object answers, then the endpoint reaches the other bucket.
+    SwapAfterHead,
     /// Every request answers `404`, as a deleted bucket or a misrouted proxy does.
     AllNotFound,
     /// A body is sent in this many pieces, one a second.
     Trickle(u64),
-    /// The next marker read answers as normal, and every request after it `404`.
-    NotFoundAfterMarker,
+    /// The next this many marker reads answer as normal, and every request after them `404`.
+    NotFoundAfterMarkers(u32),
+}
+
+/// An object's bytes and the `x-amz-meta-` headers it was written with.
+#[derive(Clone, Debug, Default)]
+pub struct Object {
+    bytes: Vec<u8>,
+    metadata: Vec<(String, String)>,
 }
 
 #[derive(Default)]
 struct Held {
-    objects: HashMap<String, Vec<u8>>,
+    objects: HashMap<String, Object>,
     /// The bucket the endpoint reaches after `swap_buckets`.
-    other: HashMap<String, Vec<u8>>,
+    other: HashMap<String, Object>,
     mode: Option<Mode>,
     refused: Vec<String>,
     requests: Vec<(Method, String)>,
     /// The next deletion waits for this, and lands even if its request is given up.
     late_delete: Option<Arc<Notify>>,
+    /// The next marker read says so on the sender and waits for the receiver.
+    marker_held: Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
     landed: usize,
 }
 
@@ -88,6 +101,14 @@ fn deletion_answer(named: &[(String, String)]) -> Response {
 
 async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Response {
     let key = request.uri().path().to_string();
+    let pause = key
+        .ends_with("/.marfa-store")
+        .then(|| held.lock().unwrap().marker_held.take())
+        .flatten();
+    if let Some((began, release)) = pause {
+        let _ = began.send(());
+        let _ = release.await;
+    }
     let (method, headers) = (request.method().clone(), request.headers().clone());
     if method == Method::POST && request.uri().query() == Some("delete") {
         let body = axum::body::to_bytes(request.into_body(), usize::MAX)
@@ -99,8 +120,13 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
         let mut held = held.lock().unwrap();
         held.requests.push((method.clone(), key.clone()));
         let mode = held.mode.unwrap_or(Mode::Normal);
-        if mode == Mode::NotFoundAfterMarker && key.ends_with("/.marfa-store") {
-            held.mode = Some(Mode::AllNotFound);
+        if let Mode::NotFoundAfterMarkers(left) = mode
+            && key.ends_with("/.marfa-store")
+        {
+            held.mode = Some(match left {
+                0 | 1 => Mode::AllNotFound,
+                left => Mode::NotFoundAfterMarkers(left - 1),
+            });
         }
         let refused = held.refused.iter().any(|prefix| key.starts_with(prefix));
         (mode, refused)
@@ -119,7 +145,24 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
             let body = axum::body::to_bytes(request.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            held.lock().unwrap().objects.insert(key, body.to_vec());
+            let metadata = headers
+                .iter()
+                .filter(|(name, _)| name.as_str().starts_with("x-amz-meta-"))
+                .filter_map(|(name, value)| {
+                    Some((name.to_string(), value.to_str().ok()?.to_string()))
+                })
+                .collect();
+            let mut held = held.lock().unwrap();
+            let object = Object {
+                bytes: body.to_vec(),
+                metadata,
+            };
+            held.objects.insert(key, object);
+            if mode == Mode::SwapAfterPut {
+                let held = &mut *held;
+                std::mem::swap(&mut held.objects, &mut held.other);
+                held.mode = Some(Mode::Normal);
+            }
             Response::builder()
                 .header(header::ETAG, "\"e\"")
                 .body(Body::empty())
@@ -129,11 +172,23 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
             let Some(object) = held.lock().unwrap().objects.get(&key).cloned() else {
                 return not_found();
             };
+            let Object {
+                bytes: object,
+                metadata,
+            } = object;
             let size = object.len();
-            let builder = Response::builder()
+            let mut builder = Response::builder()
                 .header(header::ETAG, "\"e\"")
                 .header(header::LAST_MODIFIED, LAST_MODIFIED);
+            for (name, value) in metadata {
+                builder = builder.header(name, value);
+            }
             if method == Method::HEAD {
+                if mode == Mode::SwapAfterHead {
+                    let held = &mut *held.lock().unwrap();
+                    std::mem::swap(&mut held.objects, &mut held.other);
+                    held.mode = Some(Mode::Normal);
+                }
                 return builder
                     .header(header::CONTENT_LENGTH, size)
                     .body(Body::empty())
@@ -241,13 +296,41 @@ impl FakeS3 {
         self.held.lock().unwrap().mode = Some(mode);
     }
 
+    /// Holds the next marker read until released, and answers when it arrives.
+    pub fn hold_marker(&self) -> (oneshot::Sender<()>, oneshot::Receiver<()>) {
+        let (release, released) = oneshot::channel();
+        let (began, arrived) = oneshot::channel();
+        self.held.lock().unwrap().marker_held = Some((began, released));
+        (release, arrived)
+    }
+
     pub fn object(&self, key: &str) -> Option<Vec<u8>> {
+        let held = self.held.lock().unwrap();
+        held.objects.get(key).map(|object| object.bytes.clone())
+    }
+
+    /// The object at `key` as the store holds it, metadata included.
+    pub fn stored(&self, key: &str) -> Option<Object> {
         self.held.lock().unwrap().objects.get(key).cloned()
     }
 
+    pub fn restore(&self, key: &str, object: Object) {
+        self.held
+            .lock()
+            .unwrap()
+            .objects
+            .insert(key.to_string(), object);
+    }
+
+    /// Puts bytes at `key` with no metadata, as a write the server did not make.
     pub fn put_object(&self, key: &str, bytes: &[u8]) {
-        let mut held = self.held.lock().unwrap();
-        held.objects.insert(key.to_string(), bytes.to_vec());
+        self.restore(
+            key,
+            Object {
+                bytes: bytes.to_vec(),
+                metadata: Vec::new(),
+            },
+        );
     }
 
     /// Refuses with `403` every write of an object whose key starts with `prefix`.

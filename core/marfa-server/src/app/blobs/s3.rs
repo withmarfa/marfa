@@ -18,12 +18,15 @@ use object_store::{
 use uuid::Uuid;
 
 use super::hash::Hash;
+use super::store::Answer;
 use crate::settings::start::ObjectStoreSettings;
 
 /// The most bytes sent in one request; a larger blob goes up in parts of this size.
 const PART: usize = 8 * 1024 * 1024;
 const PARTS_IN_FLIGHT: usize = 2;
 const MARKER: &str = ".marfa-store";
+/// The object metadata that names the store which wrote an object.
+const WRITER: &str = "marfa-store";
 
 #[derive(Debug)]
 pub struct S3 {
@@ -64,9 +67,13 @@ pub enum Marker {
     Refused(io::Error),
 }
 
-/// The bytes of one blob as an object store takes them back.
-pub fn attributes(mime_type: &str, hash: &Hash) -> Attributes {
+/// The bytes of one blob as an object store takes them back, naming the store that wrote them.
+fn attributes(mime_type: &str, hash: &Hash, store_id: &str) -> Attributes {
     let mut attributes = Attributes::new();
+    attributes.insert(
+        Attribute::Metadata(WRITER.into()),
+        store_id.to_string().into(),
+    );
     attributes.insert(Attribute::ContentType, mime_type.to_string().into());
     attributes.insert(
         Attribute::ContentDisposition,
@@ -189,6 +196,26 @@ impl S3 {
         }
     }
 
+    /// What the store answers for the object at `key`: its size only if this store wrote it.
+    pub async fn answer_for(&self, key: &str) -> io::Result<Answer> {
+        let options = GetOptions {
+            head: true,
+            ..GetOptions::default()
+        };
+        match self.client.get_opts(&self.path_of(key), options).await {
+            Ok(found) => {
+                let writer = found.attributes.get(&Attribute::Metadata(WRITER.into()));
+                if writer.is_some_and(|writer| writer.as_ref() == self.id) {
+                    Ok(Answer::Holds(found.meta.size))
+                } else {
+                    Ok(Answer::Foreign)
+                }
+            }
+            Err(error) if is_missing(&error) => Ok(Answer::Missing),
+            Err(error) => Err(failed(error)),
+        }
+    }
+
     /// Every object the store holds for the blob, by name under the prefix, with its size.
     pub async fn objects_of(&self, hash: &Hash) -> io::Result<Vec<(String, u64)>> {
         let root = Path::from(self.prefix.as_str());
@@ -248,7 +275,7 @@ impl S3 {
             }
             hasher.matches(hash, size)?;
             let options = PutOptions {
-                attributes: attributes(mime_type, hash),
+                attributes: attributes(mime_type, hash, &self.id),
                 ..PutOptions::default()
             };
             self.client
@@ -258,7 +285,7 @@ impl S3 {
             return Ok(());
         }
         let options = PutMultipartOptions {
-            attributes: attributes(mime_type, hash),
+            attributes: attributes(mime_type, hash, &self.id),
             ..PutMultipartOptions::default()
         };
         let upload = self

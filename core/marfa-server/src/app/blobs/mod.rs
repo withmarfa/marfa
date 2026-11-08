@@ -46,7 +46,7 @@ use rows::Held;
 pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
 use s3::{Marker, S3};
 pub use store::ByteStream;
-use store::{CHECK_DEADLINE, Failed, Gate, Store};
+use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
 
 pub const DEFAULT_TYPE: &str = "application/octet-stream";
 const REPLICATE: &str = "blob-replicate";
@@ -255,29 +255,30 @@ impl Blobs {
         self.attached().into_iter().find(|store| store.id() == id)
     }
 
-    /// Whether the store holds the blob in `object`, and at what size, within the time a store
-    /// is given.
-    async fn size_of(
+    /// What the store answers for the blob in `object`, within the time a store is given. An
+    /// object store answers for an object only with the id of the store that wrote it.
+    async fn answer_of(
         &self,
         store: &Store,
         hash: &Hash,
         object: &str,
-    ) -> std::result::Result<Option<u64>, Failed> {
+    ) -> std::result::Result<Answer, Failed> {
         let asked = async {
             self.faults.hold(HOLD_BLOB_HAS, None).await;
             match store {
                 Store::Disk(disk) => {
                     match self.faults.lie(hash.as_str()) {
-                        Some(Lie::Lost) => return Ok(None),
+                        Some(Lie::Lost) => return Ok(Answer::Missing),
                         Some(Lie::Unreadable) => return Err(store::unreadable()),
                         Some(Lie::Damaged) | None => {}
                     }
                     let (disk, hash) = (disk.clone(), hash.clone());
-                    tokio::task::spawn_blocking(move || disk.size_of(&hash))
+                    let size = tokio::task::spawn_blocking(move || disk.size_of(&hash))
                         .await
-                        .map_err(io::Error::other)?
+                        .map_err(io::Error::other)??;
+                    Ok(size.map_or(Answer::Missing, Answer::Holds))
                 }
-                Store::S3(s3) => s3.size_of(object).await,
+                Store::S3(s3) => s3.answer_for(object).await,
             }
         };
         match tokio::time::timeout(self.check(), asked).await {
@@ -406,7 +407,8 @@ impl Blobs {
         }
     }
 
-    /// Checks the marker after the answer used to change the copy record.
+    /// Whether an object store answers with its own marker, as each change to the copy record on
+    /// its answers needs.
     async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;
@@ -1048,12 +1050,12 @@ impl App {
         let answers = join_all(
             others
                 .iter()
-                .map(|(other, object)| self.blobs.size_of(other, &found.hash, object)),
+                .map(|(other, object)| self.blobs.answer_of(other, &found.hash, object)),
         )
         .await;
         let mut confirmed = 0;
         for ((other, _), answer) in others.iter().zip(&answers) {
-            if matches!(answer, Ok(Some(size)) if *size == found.size_bytes)
+            if matches!(answer, Ok(Answer::Holds(size)) if *size == found.size_bytes)
                 && self.blobs.is_itself(other).await
             {
                 confirmed += 1;
@@ -1072,7 +1074,12 @@ impl App {
             if ((holders.len() - 1) as u64) < min_copies {
                 return Err(below(holders.len(), min_copies));
             }
-            rows::remove_copy(unit.tx(), &blob, &dropped, &unit.at)?;
+            let object = holders
+                .iter()
+                .find(|held| held.store_id == dropped)
+                .map(|held| held.object.as_str())
+                .ok_or_else(copy_not_found)?;
+            rows::remove_copy(unit.tx(), &blob, &dropped, object, &unit.at)?;
             unit.audit("blob", blob.as_str(), Some(json!({ "store_id": dropped })))
         })
         .await?;

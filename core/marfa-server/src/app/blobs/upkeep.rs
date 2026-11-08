@@ -2,7 +2,7 @@
 //! lacks, `blob-integrity` checks the copies and finishes queued deletions, and
 //! `blob-orphans` reports and purges what nothing references.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::rows::Held;
 use super::s3::S3;
-use super::store::{self, Failed, Store};
+use super::store::{self, Answer, Failed, Store};
 use super::{App, Hash, room, rows};
 use crate::app::access::Caller;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
@@ -178,6 +178,24 @@ async fn copy_to(
     Ok(Copy::Skipped)
 }
 
+/// Whether an object store's new copy answers as the object this store wrote, at its size, and
+/// the store then answers with its own marker.
+async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object: &str) -> bool {
+    if matches!(target, Store::Disk(_)) {
+        return true;
+    }
+    match app.blobs.answer_of(target, &blob.hash, object).await {
+        Ok(Answer::Holds(size)) if size == blob.size_bytes => app.blobs.is_itself(target).await,
+        answer => {
+            tracing::warn!(
+                ?answer,
+                "The object store did not answer for the copy it took"
+            );
+            false
+        }
+    }
+}
+
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.settings.live();
@@ -234,7 +252,9 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         } else {
             Copy::Skipped
         };
-        if matches!(made, Copy::Made { .. }) && !app.blobs.is_itself(&target).await {
+        if let Copy::Made { object, .. } = &made
+            && !written_by_target(&app, &target, &pair.blob, object).await
+        {
             made = Copy::TargetSilent;
         }
         let (from, object) = match made {
@@ -284,11 +304,13 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
 enum Checked {
     Intact,
     Damaged,
+    /// Struck only once the store answers with its own marker after.
+    Missing,
     Silent,
 }
 
-/// Reads a disk copy through, or asks the object store its size. Only a store that answers
-/// can show a copy missing or altered.
+/// Reads a disk copy through, or asks the object store for the object it wrote. Only a store
+/// that answers can show a copy missing or altered.
 async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
     let blobs = &app.blobs;
     match store {
@@ -323,9 +345,11 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
                 Err(_) => Checked::Silent,
             }
         }
-        Store::S3(_) => match blobs.size_of(store, &copy.hash, &copy.object).await {
-            Ok(Some(size)) if size == copy.size => Checked::Intact,
-            Ok(_) => Checked::Damaged,
+        Store::S3(_) => match blobs.answer_of(store, &copy.hash, &copy.object).await {
+            Ok(Answer::Holds(size)) if size == copy.size => Checked::Intact,
+            Ok(Answer::Holds(_)) => Checked::Damaged,
+            // An object the store did not write is not the copy it wrote.
+            Ok(Answer::Missing | Answer::Foreign) => Checked::Missing,
             Err(failure) => {
                 tracing::warn!(?failure, "The object store did not answer for a copy");
                 Checked::Silent
@@ -347,7 +371,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
         .await?;
     let (mut verified, mut struck, mut bytes, mut checked) = (0u64, 0u64, 0u64, 0u64);
     let mut seen = HashSet::new();
-    let mut vouched: BTreeMap<String, Vec<(Hash, String)>> = BTreeMap::new();
+    let mut marked = HashSet::new();
     'run: loop {
         let left_out: Vec<String> = unreachable.iter().cloned().collect();
         let limit = batch.saturating_add(seen.len() as u64);
@@ -371,6 +395,15 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
             let Some(store) = app.blobs.store(&copy.store_id) else {
                 continue;
             };
+            // A strike on a missing copy needs the marker both before and after the answer.
+            if matches!(store, Store::S3(_))
+                && !marked.contains(&copy.store_id)
+                && !app.blobs.is_itself(&store).await
+            {
+                unreachable.insert(copy.store_id.clone());
+                break;
+            }
+            marked.insert(copy.store_id.clone());
             if app.blobs.gate.unfinished(&copy.hash) {
                 continue;
             }
@@ -379,7 +412,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                 continue;
             }
             let mut checked_now = check(&app, &store, &copy).await;
-            if matches!(checked_now, Checked::Damaged) && !app.blobs.is_itself(&store).await {
+            if matches!(checked_now, Checked::Missing) && !app.blobs.is_itself(&store).await {
                 checked_now = Checked::Silent;
             }
             match checked_now {
@@ -387,25 +420,30 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                     unreachable.insert(copy.store_id.clone());
                     break;
                 }
-                Checked::Intact if matches!(store, Store::S3(_)) => {
-                    vouched
-                        .entry(copy.store_id.clone())
-                        .or_default()
-                        .push((copy.hash.clone(), app.clock.stamp()));
-                }
                 Checked::Intact => {
-                    let (hash, id) = (copy.hash.clone(), copy.store_id.clone());
+                    let (hash, id, object) = (
+                        copy.hash.clone(),
+                        copy.store_id.clone(),
+                        copy.object.clone(),
+                    );
                     let at = app.clock.stamp();
-                    app.db
-                        .write(Write::own(), move |tx| rows::verified(tx, &hash, &id, &at))
+                    let stamped = app
+                        .db
+                        .write(Write::own(), move |tx| {
+                            rows::verified(tx, &hash, &id, &object, &at)
+                        })
                         .await?;
-                    verified += 1;
+                    if stamped {
+                        verified += 1;
+                    }
                 }
-                Checked::Damaged => {
+                Checked::Damaged | Checked::Missing => {
                     let (hash, id, kind) = (copy.hash.clone(), copy.store_id.clone(), store.kind());
+                    let object = copy.object.clone();
                     let removed = app
                         .write(&Caller::Server, "blob.copy_struck", move |unit| {
-                            let removed = rows::remove_copy(unit.tx(), &hash, &id, &unit.at)?;
+                            let removed =
+                                rows::remove_copy(unit.tx(), &hash, &id, &object, &unit.at)?;
                             if removed {
                                 unit.audit(
                                     "blob",
@@ -436,26 +474,6 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
         if unreachable.len() == before || !any {
             break;
         }
-    }
-    // An object store's answers are stamped only once it answers as itself after them.
-    for (id, copies) in vouched {
-        let itself = match app.blobs.store(&id) {
-            Some(store) => !unreachable.contains(&id) && app.blobs.is_itself(&store).await,
-            None => false,
-        };
-        if !itself {
-            unreachable.insert(id);
-            continue;
-        }
-        verified += copies.len() as u64;
-        app.db
-            .write(Write::own(), move |tx| {
-                for (hash, at) in &copies {
-                    rows::verified(tx, hash, &id, at)?;
-                }
-                Ok(())
-            })
-            .await?;
     }
     Ok(Report::done(json!({
         "verified": verified,

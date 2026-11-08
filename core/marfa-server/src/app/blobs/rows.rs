@@ -539,17 +539,22 @@ pub fn record_copy(
 }
 
 /// Takes a copy out of the copy record and queues the deletion of its bytes, in one step.
-pub fn remove_copy(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<bool> {
-    let removed: Option<String> = tx
+pub fn remove_copy(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+    object: &str,
+    at: &str,
+) -> Result<bool> {
+    let removed = tx
         .prepare_cached(
-            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 RETURNING object",
+            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
         )?
-        .query_row(params![hash.as_str(), store_id], |row| row.get(0))
-        .optional()?;
-    let Some(object) = removed else {
+        .execute(params![hash.as_str(), store_id, object])?;
+    if removed == 0 {
         return Ok(false);
-    };
-    queue_deletion(tx, hash, store_id, &object, at)?;
+    }
+    queue_deletion(tx, hash, store_id, object, at)?;
     Ok(true)
 }
 
@@ -670,10 +675,21 @@ pub fn to_check(tx: &Transaction<'_>, left_out: &[String], limit: u64) -> Result
     Ok(found)
 }
 
-pub fn verified(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<()> {
-    tx.prepare_cached("UPDATE blob_copies SET verified_at = ?3 WHERE hash = ?1 AND store_id = ?2")?
-        .execute(params![hash.as_str(), store_id, at])?;
-    Ok(())
+/// Stamps the copy only while it is still the object that was checked.
+pub fn verified(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+    object: &str,
+    at: &str,
+) -> Result<bool> {
+    let stamped = tx
+        .prepare_cached(
+            "UPDATE blob_copies SET verified_at = ?4 \
+             WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+        )?
+        .execute(params![hash.as_str(), store_id, object, at])?;
+    Ok(stamped > 0)
 }
 
 /// Adds every blob nothing references to the report, keeping the time of an earlier report,

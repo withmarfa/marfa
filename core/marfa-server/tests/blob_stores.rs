@@ -839,7 +839,7 @@ async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more
     let (gone, kept) = (hashes[0].clone(), hashes[1].clone());
     s3.remove_object(&object_key(&s3, "blobs", &gone));
 
-    s3.set_mode(Mode::NotFoundAfterMarker);
+    s3.set_mode(Mode::NotFoundAfterMarkers(2));
     let result = instance.run("blob-integrity").await;
     assert_eq!(result["struck"], 1, "{result}");
     assert_eq!(result["unreachable"], 1, "{result}");
@@ -884,6 +884,162 @@ async fn an_object_store_reaching_another_bucket_takes_no_copy_and_the_blob_surv
     assert_eq!(run["copied"], 1, "{run}");
     object_key(&s3, "blobs", &hash);
     assert_eq!(instance.copies(&hash).await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_copy_written_to_another_bucket_than_the_one_answering_after_is_not_recorded() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.stored(b"written where the marker is not").await;
+
+    s3.swap_buckets();
+    s3.set_mode(Mode::SwapAfterPut);
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 0, "{run}");
+    assert_eq!(instance.copies(&hash).await.len(), 1);
+
+    // The witness: the same run against one bucket throughout records the copy.
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_drop_is_not_confirmed_by_an_object_this_store_did_not_write() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"held by the disk and by a bucket the store never wrote to";
+    let hash = instance.replicated(&s3, bytes).await;
+    let key = object_key(&s3, "blobs", &hash);
+    let written = s3.stored(&key).unwrap();
+    let disk = instance.disk().await;
+    let door = format!("/blobs/{hash}/copies/{disk}");
+
+    s3.remove_object(&key);
+    s3.swap_buckets();
+    s3.put_object(&key, bytes);
+    s3.set_mode(Mode::SwapAfterHead);
+    let refused = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.code(), "copies_below_minimum");
+    assert!(instance.file(&hash).is_file());
+
+    // The witness: the object the store wrote, answering at the same name, confirms the drop.
+    s3.swap_buckets();
+    s3.set_mode(Mode::SwapAfterHead);
+    s3.restore(&key, written);
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert!(!instance.file(&hash).exists());
+}
+
+#[tokio::test]
+async fn integrity_strikes_a_copy_whose_object_the_store_did_not_write_and_it_is_copied_again() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"overwritten by hand with the same bytes";
+    let replaced = instance.replicated(&s3, bytes).await;
+    let kept = instance
+        .replicated(&s3, b"left as the store wrote it")
+        .await;
+    let key = object_key(&s3, "blobs", &replaced);
+    s3.put_object(&key, bytes);
+
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["struck"], 1, "{run}");
+    assert_eq!(run["unreachable"], 0, "{run}");
+    assert_eq!(instance.copies(&replaced).await.len(), 1);
+    // The witness: the object the store wrote is kept and stamped.
+    let copies = instance.copies(&kept).await;
+    assert_eq!(copies.len(), 2);
+    assert!(
+        copies.iter().all(|copy| !copy["verified_at"].is_null()),
+        "{copies:?}"
+    );
+
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
+    assert_eq!(instance.copies(&replaced).await.len(), 2);
+}
+
+/// Replaces the blob's object-store copy while an integrity run waits on the store's marker,
+/// keeping the replaced object in the store if `kept`. Answers the run's result, the blob and
+/// the object store's id.
+async fn replaced_during_integrity(kept: bool) -> (Instance, FakeS3, Value, String, String) {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .replicated(&s3, b"replaced while integrity runs")
+        .await;
+    let copies = instance.copies(&hash).await;
+    let id = copies.iter().find(|copy| copy["kind"] == "s3").unwrap()["store_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let key = object_key(&s3, "blobs", &hash);
+    let replaced = s3.stored(&key).unwrap();
+
+    let (release, arrived) = s3.hold_marker();
+    let control = instance.control.clone();
+    let integrity = tokio::spawn(async move {
+        let run = Request::builder()
+            .method(Method::POST)
+            .uri("/housekeeping/blob-integrity/run")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        send(&control, run).await
+    });
+    tokio::time::timeout(Duration::from_secs(5), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    let door = format!("/blobs/{hash}/copies/{id}");
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    instance.app.clock.advance(1000).unwrap();
+    let copied = instance.run("blob-replicate").await;
+    assert_eq!(copied["copied"], 1, "{copied}");
+    if kept {
+        s3.restore(&key, replaced);
+    }
+    release.send(()).unwrap();
+    let run = integrity.await.unwrap();
+    assert_eq!(run.status, StatusCode::OK, "{}", run.body);
+    let result = run.body["result"].clone();
+    (instance, s3, result, hash, id)
+}
+
+/// The copy in `store`, which the run left unchecked, is stamped by the next run.
+async fn unchecked_until_the_next_run(instance: &Instance, hash: &str, store: &str) {
+    let stamped = |copies: Vec<Value>| {
+        copies
+            .into_iter()
+            .find(|copy| copy["store_id"] == store)
+            .map(|copy| !copy["verified_at"].is_null())
+    };
+    assert_eq!(stamped(instance.copies(hash).await), Some(false));
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["struck"], 0, "{run}");
+    assert_eq!(stamped(instance.copies(hash).await), Some(true));
+}
+
+#[tokio::test]
+async fn a_copy_replaced_during_an_integrity_run_is_not_struck_for_the_object_it_replaced() {
+    let (instance, _s3, result, hash, id) = replaced_during_integrity(false).await;
+    assert_eq!(result["struck"], 0, "{result}");
+    unchecked_until_the_next_run(&instance, &hash, &id).await;
+}
+
+#[tokio::test]
+async fn a_copy_replaced_during_an_integrity_run_is_not_stamped_for_the_object_it_replaced() {
+    let (instance, _s3, result, hash, id) = replaced_during_integrity(true).await;
+    assert_eq!(result["verified"], 1, "{result}");
+    unchecked_until_the_next_run(&instance, &hash, &id).await;
 }
 
 #[tokio::test]

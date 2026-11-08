@@ -48,6 +48,16 @@ impl Store {
     }
 }
 
+/// What a store answered for one copy's bytes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Answer {
+    Missing,
+    /// Bytes of this size that the store wrote itself.
+    Holds(u64),
+    /// An object the store did not write, so not the copy.
+    Foreign,
+}
+
 /// A store that did not answer in time, or answered with a failure.
 #[derive(Debug)]
 pub enum Failed {
