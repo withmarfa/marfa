@@ -1384,7 +1384,7 @@ mod tests {
     }
 
     #[test]
-    fn a_named_body_holds_a_million_units_and_other_text_a_hundred_thousand() {
+    fn a_named_body_holds_a_million_characters_and_other_text_a_hundred_thousand() {
         let catalog = with_bodies(Some("body"), None);
         let refused = |field, text| refused_field(&catalog, "parent", field, text);
         assert_eq!(refused("body", "x".repeat(1_000_000)), None);
@@ -1400,15 +1400,15 @@ mod tests {
     }
 
     #[test]
-    fn a_character_outside_the_basic_plane_counts_two_units_against_both_limits() {
+    fn a_character_outside_the_basic_plane_counts_one_against_both_limits() {
         let catalog = with_bodies(Some("body"), None);
         let refused = |field, text| refused_field(&catalog, "parent", field, text);
         let astral = |before| format!("{}\u{1F600}", "x".repeat(before));
-        assert_eq!(refused("body", astral(999_998)), None);
-        assert_eq!(refused("body", astral(999_999)).as_deref(), Some("body"));
-        assert_eq!(refused("description", astral(99_998)), None);
+        assert_eq!(refused("body", astral(999_999)), None);
+        assert_eq!(refused("body", astral(1_000_000)).as_deref(), Some("body"));
+        assert_eq!(refused("description", astral(99_999)), None);
         assert_eq!(
-            refused("description", astral(99_999)).as_deref(),
+            refused("description", astral(100_000)).as_deref(),
             Some("description")
         );
     }

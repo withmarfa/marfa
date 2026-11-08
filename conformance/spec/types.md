@@ -528,11 +528,19 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 **Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`.
 
+### `types/email-value`
+
+When an item names a value for an `email` field, an element of an array field whose `items_type` is `email`, or an `email` member of an entry of a list, the server MUST take the value only where it is one local part, an `@` and a domain, the local part of ASCII letters, digits and `_ + - . '`, nonempty, not starting with a dot, ending in a letter, digit or one of `_ + -`, and the domain of two or more labels joined by dots, each starting with an ASCII letter or digit and holding only ASCII letters, digits and hyphens, the last of at least two ASCII letters, with no two dots together anywhere in the value.
+
+**Reason:** a device judges the same value offline as the server does online (`device/declared-checked`), and one narrow, plain rule serves every client better than a full address grammar that few mail systems accept.
+
+**Tests:** `compliance/field-types.test.ts › takes the email %s`, `› refuses an email that %s, naming the field`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+
 ### `types/url-value`
 
-When an item names a value for a `url` field, an element of an array field whose `items_type` is `url`, or a `url` member of an entry of a list, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
+When an item names a value for a `url` field, an element of an array field whose `items_type` is `url`, or a `url` member of an entry of a list, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the Unicode `White_Space` characters are removed from both ends.
 
-**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The Node versions the server supports judge some hosts differently from each other and from the standard, so the server runs the standard with `whatwg-url`, its reference implementation, and does not use the platform's `URL`.
+**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The standard's parser, not a platform's own, decides which values are URLs.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
 
@@ -562,7 +570,7 @@ If a `url` value of a special scheme has a host that holds a forbidden domain co
 
 ### `types/url-stored`
 
-When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
+When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the Unicode `White_Space` trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
 
 **Reason:** this holds at every door that writes properties: a create, an update (at the current version and a passed one), an upsert onto an existing item and a bulk entry.
 
@@ -1604,7 +1612,7 @@ When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MU
 
 ## Item names
 
-In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminator` characters, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is a control character and neither whitespace nor a line end, and U+FEFF is whitespace. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
+In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
 
 ### `types/item-name-fields`
 

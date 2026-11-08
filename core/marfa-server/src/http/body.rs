@@ -446,7 +446,7 @@ fn nested_too_deep() -> Refusal {
 }
 
 fn ill_formed(pointer: String) -> Refusal {
-    let message = "The body holds text that is not well-formed UTF-16.";
+    let message = "The body holds text that is not well-formed: a surrogate escape has no partner.";
     Refusal::validation(message)
         .with_detail("errors", json!([{ "path": pointer, "message": message }]))
 }

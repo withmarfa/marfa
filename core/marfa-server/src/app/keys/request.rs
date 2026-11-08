@@ -5,7 +5,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::sources;
 
 const MAX_CLAIMS: usize = 1000;
-const MAX_SOURCE_UNITS: usize = 200;
+const MAX_SOURCE_LENGTH: usize = 200;
 const RESERVED_SOURCES: [&str; 2] = ["oauth:", "restored:"];
 
 pub const MINT_FIELDS: [&str; 12] = [
@@ -138,7 +138,7 @@ fn reserved(source: &str) -> bool {
 
 fn held_source(text: &str, field: &str) -> Result<String> {
     let trimmed = text.trim();
-    if trimmed.is_empty() || sources::units(trimmed) > MAX_SOURCE_UNITS {
+    if trimmed.is_empty() || sources::length(trimmed) > MAX_SOURCE_LENGTH {
         return Err(Refusal::validation(format!(
             "{field} must hold 1 to 200 characters once trimmed."
         )));

@@ -51,6 +51,14 @@ const SHARED = JSON.parse(
   ),
 ) as Shared;
 
+// Cases whose rule the Rust server changed (whitespace is Unicode White_Space,
+// positions count characters); the frozen parser here keeps the old rule.
+const RUST_ONLY = new Set([
+  "a byte order mark, which is not whitespace",
+  "a next-line character, which is whitespace",
+  "a character outside the grammar after an emoji, at its position counted in characters",
+]);
+
 function field(model: ModelField): FilterCondition["field"] {
   switch (model.kind) {
     case "system":
@@ -104,7 +112,9 @@ describe("the filter expressions the core's model is held to", () => {
     },
   );
 
-  it.each(SHARED.refused)(
+  it.each(
+    SHARED.refused.filter(({ description }) => !RUST_ONLY.has(description)),
+  )(
     "refuses $description with the message the core gives",
     ({ text, code, message, at }) => {
       // Witness for a refusal the SQL builder makes: the parser takes it.

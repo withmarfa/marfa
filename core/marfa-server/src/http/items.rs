@@ -660,13 +660,13 @@ pub async fn titles(State(app): State<Arc<App>>, caller: Caller, body: JsonBody)
     }
     if wanted
         .iter()
-        .any(|name| name.encode_utf16().count() > names::MAX_NAME_UNITS)
+        .any(|name| name.chars().count() > names::MAX_NAME_LENGTH)
     {
         return Err(invalid_field(
             "names",
             format!(
-                "A name must contain at most {} UTF-16 code units",
-                names::MAX_NAME_UNITS
+                "A name must contain at most {} characters",
+                names::MAX_NAME_LENGTH
             ),
         )
         .into());

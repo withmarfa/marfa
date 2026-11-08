@@ -115,7 +115,7 @@ fn from_cursor(cursor: &str) -> Option<(String, String)> {
 }
 
 fn instant(value: &str, field: &str) -> Result<String> {
-    marfa_rules::time::normalize(value, field)
+    marfa_rules::time::normalize_bound(value, field)
         .map_err(|_| Refusal::validation(format!("{field} is not a time.")))
 }
 

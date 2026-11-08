@@ -79,7 +79,7 @@ impl Judge<'_, '_> {
                 let mut data = Map::new();
                 data.insert("event_type".into(), entry.event_type.clone().into());
                 data.extend(body);
-                match marfa_rules::js::to_vec(&Value::Object(data)) {
+                match marfa_rules::number::to_vec(&Value::Object(data)) {
                     Ok(json) => Verdict::Send(event_text(entry.id, &entry.event_type, &json)),
                     Err(_) => Verdict::Unreadable,
                 }
@@ -164,7 +164,7 @@ pub(super) fn marker(event_type: &str, fields: Vec<(&str, Value)>) -> Result<Str
     for (name, value) in fields {
         data.insert(name.into(), value);
     }
-    let json = marfa_rules::js::to_vec(&Value::Object(data))
+    let json = marfa_rules::number::to_vec(&Value::Object(data))
         .map_err(|_| Refusal::internal("a stream frame did not print"))?;
     Ok(format!(
         "event: {event_type}\ndata: {}\n\n",

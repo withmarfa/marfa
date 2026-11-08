@@ -221,7 +221,7 @@ fn named(pairs: &[(String, String)], parameter: &str) -> Option<String> {
 
 fn moment_of(pairs: &[(String, String)], parameter: &str) -> Result<Option<String>> {
     named(pairs, parameter)
-        .map(|value| time::normalize(&value, parameter).map_err(ruled))
+        .map(|value| time::normalize_bound(&value, parameter).map_err(ruled))
         .transpose()
 }
 

@@ -239,14 +239,13 @@ describe("a key minted with an expiry", () => {
     expect(await expiryOf(minted.id)).toBeNull();
   });
 
-  it("reads an expires_at with no zone as UTC", async () => {
-    const minted = await mint("zoneless", "2999-01-01T00:00:00");
-    expect(minted.expires_at).toBe(SOON);
-  });
-
   it.each([
     ["is not a timestamp", "tomorrow"],
     ["is a date with no time", "2999-01-01"],
+    ["has a time and no zone", "2999-01-01T00:00:00"],
+    ["has no seconds", "2999-01-01T00:00Z"],
+    ["has hour 24", "2999-01-01T24:00:00Z"],
+    ["has an offset with no colon", "2999-01-01T00:00:00+0100"],
     ["has a UTC year of 10000", "9999-12-31T23:59:59-01:00"],
     ["is not ahead of now", PAST],
   ])(

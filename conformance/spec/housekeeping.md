@@ -183,49 +183,11 @@ Where enrichment is on, if reading a document needs more memory than `MARFA_ENRI
 
 ### `housekeeping/enrichment-text-whole`
 
-Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` UTF-16 code units, then the server MUST write an `extracted_text` that ends before any character the limit would cut in two.
+Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` characters, then the server MUST write an `extracted_text` of exactly that many characters.
 
-**Reason:** a character outside the Basic Multilingual Plane takes two code units, and half of one is text that is not well-formed (`items/json-text-well-formed`).
+**Reason:** the limit counts Unicode characters, so a character outside the Basic Multilingual Plane counts once and is never cut in two.
 
-**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at the limit without cutting a character in two`.
-
-### `housekeeping/enrichment-document-no-text`
-
-If the enrichment sweep skips a document for a limit, then the server MUST NOT write an `extracted_text` onto its item.
-
-**Tests:** `compliance/enrichment-document-bounds.test.ts › is skipped, writes no text, and leaves the server answering, beside a document that reads`.
-
-### `housekeeping/enrichment-document-keeps-serving`
-
-If the enrichment sweep meets a document that asks for more than extraction may use, then the server MUST go on answering requests.
-
-**Tests:** `compliance/enrichment-document-bounds.test.ts › is skipped, writes no text, and leaves the server answering, beside a document that reads`.
-
-### `housekeeping/enrichment-document-left`
-
-If the enrichment sweep has skipped a document for a limit, then the server MUST NOT offer the document to the next sweep while both limits stand.
-
-**Tests:** `compliance/enrichment-document-bounds.test.ts › is skipped, writes no text, and leaves the server answering, beside a document that reads`.
-
-### `housekeeping/enrichment-document-limit-raised`
-
-When `MARFA_ENRICHMENT_MAX_INFLATED_BYTES` or `MARFA_ENRICHMENT_MAX_MEMORY_BYTES` is raised to cover a document the sweep skipped for it, the server MUST write the document's `extracted_text` at the next `enrichment-sweep` run.
-
-**Tests:** `compliance/enrichment-document-bounds.test.ts › is read once the limits are raised`.
-
-### `housekeeping/enrichment-interrupted-counted`
-
-If the server is stopped, as many times as `MARFA_ENRICHMENT_MAX_ATTEMPTS`, while the enrichment sweep extracts the text of an item, then the server MUST NOT offer that item to the next `enrichment-sweep` run.
-
-**Reason:** an item that stops the server every time is otherwise offered again at every start, as if it had never been tried, and takes the server down each time.
-
-**Tests:** `compliance/enrichment-interrupted.test.ts › is not offered to the next sweep once its attempts are used, beside an item that reads`.
-
-### `housekeeping/enrichment-image-by-type`
-
-Where enrichment is on, the server MUST write `width` and `height` from the image bytes of an item whose type inherits from `core.file.image`, whatever the type is named.
-
-**Tests:** `compliance/enrichment-by-inheritance.test.ts › takes a type inheriting from a file type as that file, whatever its name`.
+**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at a number of characters`.
 
 ### `housekeeping/enrichment-text-by-type`
 

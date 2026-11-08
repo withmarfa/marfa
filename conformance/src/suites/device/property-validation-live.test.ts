@@ -631,8 +631,8 @@ it.each([
     URL_VALUE,
   ],
   [
-    "a leading and trailing byte order mark",
-    `\ufeff${URL_VALUE}\ufeff`,
+    "a leading and trailing next-line character",
+    `\u0085${URL_VALUE}\u0085`,
     URL_VALUE,
   ],
   ["ASCII spaces", `  ${URL_VALUE}  `, URL_VALUE],
@@ -718,7 +718,7 @@ it.each([
 
 it.each([
   ["not a url"],
-  ["\u0085" + URL_VALUE],
+  [`\ufeff${URL_VALUE}`],
   ["http://xn--é/"],
   ["http://xn--%e9/"],
   ["http://xn--%2f/"],

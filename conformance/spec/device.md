@@ -1094,7 +1094,7 @@ When a hydration or a catch-up reads a row whose text holds a surrogate pair, in
 
 **Reason:** the server holds a character outside the Basic Multilingual Plane only as a surrogate pair (`items/json-text-well-formed`).
 
-**Tests:** `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
+**Tests:** `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the row that is`.
 
 ## Catch-up
 
@@ -1696,15 +1696,17 @@ If a local list or a local search names a filter that the server's listing gramm
 
 ### `device/filter-limits-answered`
 
-A device MUST answer a filter of ten conditions, and one of 2048 UTF-16 code units.
+A device MUST answer a filter of ten conditions, and one of 2048 characters.
 
-**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› counts a filter's length in UTF-16 code units, as the server does`.
+**Tests:** `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› counts a filter's length in characters, as the server does`.
 
-### `device/filter-length-units`
+### `device/filter-length-characters`
 
-If a filter is longer than 2048 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`, however few characters it holds.
+If a filter is longer than 2048 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
-**Tests:** `device/local-refusals.test.ts › counts a filter's length in UTF-16 code units, as the server does`.
+**Reason:** a character outside the Basic Multilingual Plane counts once (`search-and-filters/filter-over-length`).
+
+**Tests:** `device/local-refusals.test.ts › counts a filter's length in characters, as the server does`.
 
 ### `device/filter-null-message`
 
@@ -1964,7 +1966,7 @@ If a local list names the sort `properties.<field>` with a field outside `^[a-z0
 
 ### `device/time-bound-server`
 
-When a local list names a time bound, a device MUST read it as the server reads it, as the same instant to the millisecond in UTC.
+When a local list names a time bound, a device MUST read it as the server reads it: an RFC 3339 date-time as the same instant to the millisecond in UTC, and a date alone as its midnight in UTC.
 
 **Tests:** `device/time-comparisons-live.test.ts › normalizes exclusive time bounds as the server does`.
 
@@ -5020,7 +5022,7 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 ### `device/number-exact`
 
-If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
+If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
@@ -5028,9 +5030,9 @@ If a write to an item, or to an edge or an item's extension, names a value, at a
 
 ### `device/number-exact-folder-flagged`
 
-If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest digits that name the 64-bit float it parses to, or a `-` followed by zeros, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
+If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest decimal that reads back as the same IEEE 754 double, or a `-` followed by zeros, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
 
-**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits. A YAML loader reads `-0` as the integer 0 and drops the sign, so the device reads the written text: a plain `-` followed by zeros is the `-0` that `items/property-number-exact` refuses, and `0` is taken.
+**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a double by the time a parser hands it over, so the device reads the written digits. A YAML loader reads `-0` as the integer 0 and drops the sign, so the device reads the written text: a plain `-` followed by zeros is the `-0` that `items/property-number-exact` refuses, and `0` is taken.
 
 **Tests:** `device/property-validation.test.ts › flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended`.
 
@@ -5332,7 +5334,7 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, exactly `.` or `..`, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, only Unicode `White_Space`, exactly `.` or `..`, or longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`, `items/tag-dot-segment`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
@@ -5354,7 +5356,7 @@ When a device refuses a tag `validation`, a device MUST save and queue nothing o
 
 ### `device/tag-bound-taken`
 
-When a write adds a tag the server takes, a device MUST take it and queue it, a tag of 128 UTF-16 code units and a row of 100 tags included.
+When a write adds a tag the server takes, a device MUST take it and queue it, a tag of 128 characters and a row of 100 tags included.
 
 **Tests:** `device/name-bounds-live.test.ts › takes a tag the server takes, queues it, and has it accepted when the queue drains`, `› refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does`.
 
@@ -5392,13 +5394,13 @@ While a device holds a create that the server has not answered, a device MUST ho
 
 **Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
 
-### `device/order-array-index`
+### `device/order-written`
 
-A device MUST hold a property whose name is an array index before every other property, in numeric order.
+A device MUST hold the properties of an item in the order their names were written, whatever the names are, including names that read as numbers.
 
-**Reason:** the server is JavaScript, whose objects put such names first (`items/property-order-index`).
+**Reason:** the server answers them so (`items/property-order-index`), and a copy that held another order would move a person's fields as the queue drained.
 
-**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
+**Tests:** `device/property-order-live.test.ts › holds a property named by a number in the order it was written, as the server answers it`.
 
 ### `device/order-merge`
 
@@ -7082,7 +7084,7 @@ When a double quote in a query is not the first and the last character of a phra
 
 ### `device/search-trim`
 
-When a query has whitespace or byte-order marks around it, a device MUST ignore them.
+When a query has Unicode `White_Space` around it, a device MUST ignore it.
 
 **Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
