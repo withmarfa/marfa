@@ -1,13 +1,15 @@
 //! A JSON body, read only once the handler has checked what comes before it.
 
+use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{FromRequest, Request, State};
-use axum::http::{Extensions, HeaderMap, header};
+use axum::http::{Extensions, HeaderMap, HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body::{Frame, SizeHint};
@@ -91,6 +93,77 @@ impl HttpBody for Shared {
     }
 }
 
+/// How long a request on the private control socket has to arrive whole, from
+/// the moment its head is in.
+pub const CONTROL_BODY_DEADLINE: Duration = Duration::from_secs(30);
+
+#[derive(Debug, thiserror::Error)]
+#[error("the body did not arrive in time")]
+struct Late;
+
+/// A body that ends in an error once its deadline passes before it is whole.
+struct Due {
+    body: Body,
+    until: Pin<Box<tokio::time::Sleep>>,
+    late: Arc<AtomicBool>,
+}
+
+impl HttpBody for Due {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        if let Poll::Ready(frame) = Pin::new(&mut self.body).poll_frame(context) {
+            return Poll::Ready(frame);
+        }
+        if self.until.as_mut().poll(context).is_pending() {
+            return Poll::Pending;
+        }
+        self.late.store(true, Ordering::Release);
+        Poll::Ready(Some(Err(axum::Error::new(Late))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.body.size_hint()
+    }
+}
+
+fn due(body: Body, within: Duration, late: Arc<AtomicBool>) -> Body {
+    Body::new(Due {
+        body,
+        until: Box::pin(tokio::time::sleep(within)),
+        late,
+    })
+}
+
+/// Holds each request's body to arriving whole within `within`. A body that
+/// does not is answered `408`, and its connection is not kept.
+pub async fn due_within(State(within): State<Duration>, request: Request, next: Next) -> Response {
+    let late = Arc::new(AtomicBool::new(false));
+    let request = request.map(|body| due(body, within, late.clone()));
+    let mut response = next.run(request).await;
+    if late.load(Ordering::Acquire) {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+    response
+}
+
+fn arrived_late(error: &axum::Error) -> bool {
+    std::iter::successors(Some(error as &(dyn std::error::Error + 'static)), |error| {
+        error.source()
+    })
+    .any(|error| error.is::<Late>())
+}
+
 pub struct JsonBody {
     headers: HeaderMap,
     body: Body,
@@ -169,6 +242,12 @@ async fn buffered(body: Body, limit: usize) -> Result<Bytes, Stopped> {
             .is_some_and(|source| source.is::<http_body_util::LengthLimitError>());
         if over {
             too_large(limit).into()
+        } else if arrived_late(&error) {
+            Refusal::new(
+                Code::RequestTimeout,
+                "The body did not arrive in the time allowed.",
+            )
+            .into()
         } else {
             Stopped::ClientClosed
         }
@@ -392,4 +471,57 @@ pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) 
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
+}
+
+#[cfg(test)]
+mod due_tests {
+    use super::*;
+
+    /// A body that sends one frame and then nothing more.
+    struct Stalled(bool);
+
+    impl HttpBody for Stalled {
+        type Data = Bytes;
+        type Error = axum::Error;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+            if self.0 {
+                return Poll::Pending;
+            }
+            self.0 = true;
+            Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"{")))))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_that_stops_arriving_is_answered_408_at_its_deadline() {
+        let late = Arc::new(AtomicBool::new(false));
+        let body = due(
+            Body::new(Stalled(false)),
+            Duration::from_millis(50),
+            late.clone(),
+        );
+        let started = std::time::Instant::now();
+        match buffered(body, 1024).await {
+            Err(Stopped::Refused(refusal)) => assert_eq!(refusal.code, Code::RequestTimeout),
+            other => panic!("{other:?}"),
+        }
+        assert!(started.elapsed() >= Duration::from_millis(50));
+        assert!(late.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn a_body_that_arrives_in_time_is_read_whole() {
+        let late = Arc::new(AtomicBool::new(false));
+        let body = due(Body::from("{}"), Duration::from_millis(50), late.clone());
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            buffered(body, 1024).await.unwrap(),
+            Bytes::from_static(b"{}")
+        );
+        assert!(!late.load(Ordering::Acquire));
+    }
 }

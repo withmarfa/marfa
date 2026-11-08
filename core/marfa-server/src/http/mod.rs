@@ -305,5 +305,10 @@ pub fn control(app: Arc<App>) -> Router {
                     .delete(test_hooks::clear_faults),
             );
     }
-    finished(routes, app, Declaration::control()).layer(middleware::from_fn(no_store))
+    finished(routes, app, Declaration::control())
+        .layer(middleware::from_fn(no_store))
+        .layer(from_fn_with_state(
+            body::CONTROL_BODY_DEADLINE,
+            body::due_within,
+        ))
 }

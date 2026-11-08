@@ -13,7 +13,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use marfa_rules::conflict::copy_id;
 use marfa_server::app::App;
-use marfa_server::http::listening::Tcp;
+use marfa_server::http::listening::{PUBLIC_HEADER_READ_TIMEOUT, Tcp};
 use marfa_server::http::{control, public, serve};
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
@@ -739,6 +739,7 @@ async fn a_refusal_that_leaves_the_body_unread_still_reaches_the_client() {
         Tcp::new(listener, "public"),
         router,
         std::future::pending(),
+        PUBLIC_HEADER_READ_TIMEOUT,
     ));
 
     let answers = tokio::task::spawn_blocking(move || {
