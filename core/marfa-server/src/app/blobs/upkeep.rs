@@ -421,6 +421,14 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         .await?;
     let mut purged = 0u64;
     if !candidates.is_empty() && run.go_on().await {
+        // The scan of every stored row runs outside the writer. A write after it that names a
+        // candidate adds its reference in its own transaction, which takes the candidate off
+        // the report, so the check below inside the writer still sees it.
+        let hexes: HashSet<String> = candidates
+            .iter()
+            .map(|hash| hash.hex().to_string())
+            .collect();
+        let named = app.db.read(move |tx| rows::named(tx, &hexes)).await?;
         app.faults.hold(HOLD_BLOB_PURGE, None).await;
         let stores: Vec<String> = app
             .blobs
@@ -437,9 +445,6 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                     .into_iter()
                     .filter(|hash| still.contains(hash))
                     .collect();
-                let hexes: HashSet<String> =
-                    chosen.iter().map(|hash| hash.hex().to_string()).collect();
-                let named = rows::named(tx, &hexes)?;
                 let mut gone = Vec::new();
                 for hash in chosen {
                     if named.contains(hash.hex()) {
