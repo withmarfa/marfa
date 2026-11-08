@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
@@ -16,7 +16,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::connectors::Window;
 use crate::app::faults::HOLD_INBOUND_RESERVED;
-use crate::app::inbound::{self, Arrival, Listing, Mark, NewEndpoint, Sent};
+use crate::app::inbound::{self, Arrival, Full, Listing, Mark, NewEndpoint, Reservation, Sent};
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::{
     INBOUND_IN_FLIGHT_BYTES, INBOUND_MAX_BYTES, INBOUND_READ_TIMEOUT_MS,
@@ -187,50 +187,72 @@ fn headers_of(request: &Request) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The frames of a body, joined once into one buffer.
-enum Gathered {
-    /// A declared length, whose buffer is made once and filled as the frames come.
-    Sized(Vec<u8>),
-    /// No length declared: the frames are kept and joined at the end.
-    Framed(Vec<Bytes>, usize),
+/// The first growth of a buffer for a body of no declared length, in bytes.
+const FIRST_GROWTH: usize = 4096;
+/// The most a buffer grows by in one step, so what it holds past what it needs stays bounded.
+const LAST_GROWTH: usize = 1 << 20;
+
+/// A body gathered into one buffer, whatever frames it arrives in.
+struct Gathered {
+    bytes: Vec<u8>,
+    /// What the reservation holds for the buffer's capacity, when no length was declared.
+    charged: usize,
+    /// Whether the buffer was made whole for a declared length, and the reservation already holds it.
+    sized: bool,
 }
 
 impl Gathered {
     fn new(declared: Option<u64>) -> Gathered {
         match declared.and_then(|length| usize::try_from(length).ok()) {
-            Some(length) => Gathered::Sized(Vec::with_capacity(length)),
-            None => Gathered::Framed(Vec::new(), 0),
+            Some(length) => Gathered {
+                bytes: Vec::with_capacity(length),
+                charged: 0,
+                sized: true,
+            },
+            None => Gathered {
+                bytes: Vec::new(),
+                charged: 0,
+                sized: false,
+            },
         }
     }
 
     fn len(&self) -> usize {
-        match self {
-            Gathered::Sized(bytes) => bytes.len(),
-            Gathered::Framed(_, len) => *len,
-        }
+        self.bytes.len()
     }
 
-    fn push(&mut self, data: Bytes) {
-        match self {
-            Gathered::Sized(bytes) => bytes.extend_from_slice(&data),
-            Gathered::Framed(frames, len) => {
-                *len += data.len();
-                frames.push(data);
+    /// Adds a frame, first taking from `reservation` the growth of the buffer's capacity it needs.
+    fn push(
+        &mut self,
+        data: &[u8],
+        reservation: &mut Reservation,
+        flight: u64,
+        limit: u64,
+    ) -> Result<(), Full> {
+        let needed = self.bytes.len().saturating_add(data.len());
+        if !self.sized && needed > self.charged {
+            let step = self.charged.clamp(FIRST_GROWTH, LAST_GROWTH);
+            let ceiling = usize::try_from(limit).unwrap_or(usize::MAX);
+            let mut target = needed
+                .max(self.charged.saturating_add(step))
+                .min(ceiling.max(needed));
+            // A step that does not fit falls back to just what the frame needs.
+            if reservation
+                .take((target - self.charged) as u64, flight)
+                .is_err()
+            {
+                reservation.take((needed - self.charged) as u64, flight)?;
+                target = needed;
             }
+            self.bytes.reserve_exact(target - self.bytes.len());
+            self.charged = target;
         }
+        self.bytes.extend_from_slice(data);
+        Ok(())
     }
 
     fn finish(self) -> Vec<u8> {
-        match self {
-            Gathered::Sized(bytes) => bytes,
-            Gathered::Framed(frames, len) => {
-                let mut bytes = Vec::with_capacity(len);
-                for frame in frames {
-                    bytes.extend_from_slice(&frame);
-                }
-                bytes
-            }
-        }
+        self.bytes
     }
 }
 
@@ -292,18 +314,12 @@ pub async fn receive(
         if bytes.len() as u64 + more > limit {
             return refused(&too_large(limit));
         }
-        match declared {
-            Some(declared) if bytes.len() as u64 + more > declared => {
-                return refused(&Refusal::validation("The body did not arrive whole."));
-            }
-            Some(_) => {}
-            None => {
-                if let Err(full) = reservation.take(more, flight) {
-                    return refused(&full.refusal());
-                }
-            }
+        if declared.is_some_and(|declared| bytes.len() as u64 + more > declared) {
+            return refused(&Refusal::validation("The body did not arrive whole."));
         }
-        bytes.push(data);
+        if let Err(full) = bytes.push(&data, &mut reservation, flight, limit) {
+            return refused(&full.refusal());
+        }
     }
     let landed = inbound::receive(
         &app,
@@ -325,20 +341,69 @@ pub async fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::inbound::InFlight;
 
     #[test]
-    fn a_declared_length_makes_the_buffer_once_and_frames_are_joined_once() {
+    fn a_declared_length_makes_the_buffer_once_and_takes_nothing_more() {
+        let flight = InFlight::default();
+        let mut reservation = flight.reservation("a");
         let mut sized = Gathered::new(Some(6));
-        sized.push(Bytes::from_static(b"abc"));
-        sized.push(Bytes::from_static(b"def"));
+        assert_eq!(sized.push(b"abc", &mut reservation, 0, 6), Ok(()));
+        assert_eq!(sized.push(b"def", &mut reservation, 0, 6), Ok(()));
         let joined = sized.finish();
         assert_eq!((joined.as_slice(), joined.capacity()), (&b"abcdef"[..], 6));
+    }
 
-        let mut framed = Gathered::new(None);
-        framed.push(Bytes::from_static(b"abc"));
-        framed.push(Bytes::from_static(b"de"));
-        assert_eq!(framed.len(), 5);
-        let joined = framed.finish();
-        assert_eq!((joined.as_slice(), joined.capacity()), (&b"abcde"[..], 5));
+    #[test]
+    fn many_tiny_frames_are_charged_by_the_capacity_that_holds_them() {
+        let limit = 4 << 20;
+        let flight = InFlight::default();
+        let mut reservation = flight.reservation("a");
+        let mut chunked = Gathered::new(None);
+        for _ in 0..limit {
+            assert_eq!(
+                chunked.push(&[7], &mut reservation, 8 * limit as u64, limit as u64),
+                Ok(())
+            );
+        }
+        assert_eq!(chunked.len(), limit);
+        assert_eq!(chunked.charged, chunked.bytes.capacity());
+        assert!(chunked.charged <= 2 * chunked.len());
+        // The source holds the capacity, no less: what is left of its half is all another request of it may take.
+        let (flight_limit, rest) = (6 * limit as u64, 3 * limit as u64 - chunked.charged as u64);
+        let mut other = flight.reservation("a");
+        assert_eq!(other.take(rest, flight_limit), Ok(()));
+        assert_eq!(other.take(1, flight_limit), Err(Full::Source));
+        let joined = chunked.finish();
+        assert!(joined.iter().all(|byte| *byte == 7));
+    }
+
+    #[test]
+    fn a_growth_that_passes_the_bound_is_refused_before_the_buffer_grows() {
+        let flight = InFlight::default();
+        let mut reservation = flight.reservation("a");
+        let mut chunked = Gathered::new(None);
+        // A source may hold half of 16384, which two growths of 4096 and 4096 fill.
+        for _ in 0..8192 {
+            assert_eq!(chunked.push(&[1], &mut reservation, 16384, 1 << 20), Ok(()));
+        }
+        assert_eq!(chunked.charged, 8192);
+        assert_eq!(
+            chunked.push(&[1], &mut reservation, 16384, 1 << 20),
+            Err(Full::Source)
+        );
+        assert_eq!((chunked.len(), chunked.bytes.capacity()), (8192, 8192));
+    }
+
+    #[test]
+    fn a_step_that_does_not_fit_leaves_a_body_that_does_its_exact_need() {
+        let flight = InFlight::default();
+        let mut reservation = flight.reservation("a");
+        let mut chunked = Gathered::new(None);
+        // A source may hold half of 12000, which a second step of 4096 would pass at 5000 bytes.
+        for _ in 0..5000 {
+            assert_eq!(chunked.push(&[1], &mut reservation, 12000, 1 << 20), Ok(()));
+        }
+        assert_eq!((chunked.len(), chunked.charged), (5000, 5000));
     }
 }

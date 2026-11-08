@@ -18,7 +18,9 @@ use super::connectors::{self, Registration, Window};
 use super::keys;
 use super::refusal::{Code, Refusal, Result};
 pub use cleanup::delivery_cleanup;
-pub use receive::{Arrival, InFlight, Landed, Place, Sent, admit, head_charge, receive};
+pub use receive::{
+    Arrival, Full, InFlight, Landed, Place, Reservation, Sent, admit, head_charge, receive,
+};
 pub use request::{Mark, NewEndpoint, state_of};
 use store::{Delivery, Endpoint};
 

@@ -214,14 +214,60 @@ describe("the bytes in flight, across bodies", () => {
       .sort((a, b) => a - b);
   }
 
+  /** A whole receipt of `size` bytes, sent as a held body is. */
+  function receipt(path: string, size: number): Promise<RawAnswer> {
+    const open = openBody(server.apiUrl, path, size, "z".repeat(size));
+    open.finish("");
+    return open.answer;
+  }
+
+  /** What the headers and query of a stored receipt hold, as the server counts them. */
+  function headOf(row: InboundDeliveryRow): number {
+    return row.headers.reduce(
+      (sum, [name, value]) =>
+        sum + Buffer.byteLength(name) + Buffer.byteLength(value),
+      Buffer.byteLength(row.query),
+    );
+  }
+
+  /** The head a receipt of `size` bytes holds, read back from one that was kept. */
+  async function headFor(
+    owner: Registration,
+    path: string,
+    size: number,
+  ): Promise<number> {
+    idOf(await receipt(path, size));
+    const row = (await stored(owner)).find((each) => each.size === size);
+    if (row === undefined) throw new Error("the receipt was not kept");
+    return headOf(row);
+  }
+
   it("refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off", async () => {
     const prober = await register(server, "in-flight-prober");
     const probe = await endpoint(prober);
+    // The head of a receipt grows with the digits of its length, so each
+    // width a charge below is made of is read back from a kept receipt.
+    const head4 = await headFor(prober, probe.path, 1000);
+    const head3 = await headFor(prober, probe.path, 100);
 
     // Two sources hold bodies of 1800 and 1500 bytes, with 3300 and the
     // headers counted of the 4096.
     const first = await hold("in-flight-first", 1800);
     const second = await hold("in-flight-second", 1500);
+
+    // A third source's receipt that brings the instance exactly to the bound
+    // is taken, and one byte more is refused. Neither source holding a body
+    // is the one asking, and the receipt is under a source's half.
+    const room = IN_FLIGHT_BYTES - (1800 + head4) - (1500 + head4);
+    const exact = room - head3;
+    expect(exact).toBeGreaterThanOrEqual(100);
+    expect(exact).toBeLessThan(1000);
+    expect(room).toBeLessThan(PER_SOURCE);
+    const one = await receipt(probe.path, exact + 1);
+    expect(one.status).toBe(503);
+    expect(codeOf(one)).toBe("inbound_unavailable");
+    expectRetryAfter(one, "one byte past the bytes in flight");
+    idOf(await receipt(probe.path, exact));
 
     const over = await send(server.apiUrl, probe.path, "p".repeat(1000));
     expect(over.status).toBe(503);
