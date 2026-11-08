@@ -1346,7 +1346,7 @@ mod faults {
             })?;
             std::thread::sleep(Duration::from_millis(5));
         };
-        // It has to be past its setup, or stdin's close says nothing of the watchdog.
+        // It has to be past its setup, or the parent's death says nothing of the watchdog.
         std::thread::sleep(Duration::from_millis(200));
         check(is_running(child), || "the witness: it runs".into())?;
         if stop_and_continue {

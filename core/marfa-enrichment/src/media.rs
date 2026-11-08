@@ -48,8 +48,8 @@ pub(crate) fn read(mut source: Source, matroska: bool) -> Result<Media, Refusal>
     }
 }
 
-/// MP3, WAV, AIFF, FLAC, Ogg and MP4, which Symphonia takes apart. It does not read
-/// WebM or Matroska to the end of what a duration needs.
+/// MP3, WAV, FLAC, Ogg and MP4, which Symphonia takes apart. It states no duration
+/// for WebM or Matroska.
 fn containers(source: Source) -> Result<Media, Refusal> {
     let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
     let tags = MetadataOptions::default()

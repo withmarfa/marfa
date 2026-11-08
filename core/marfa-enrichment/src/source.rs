@@ -16,7 +16,7 @@ pub(crate) struct Source<'a> {
 
 impl<'a> Source<'a> {
     /// `len` is the length the file had when the caller looked, and a read never goes
-    /// past it. Asking the file would take a call the child is not allowed.
+    /// past it, so a file that grows while it is read is not followed.
     pub(crate) fn new(file: &'a File, len: u64) -> Self {
         Self {
             file,

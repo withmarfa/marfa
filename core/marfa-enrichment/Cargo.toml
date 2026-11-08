@@ -1,6 +1,6 @@
 [package]
 name = "marfa-enrichment"
-description = "Reads the text and the size out of a file's bytes, for search."
+description = "Reads the text, the size and the length out of a file, for search."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

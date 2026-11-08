@@ -1,8 +1,8 @@
 //! A Matroska or WebM file's length and picture size, from its element headers.
 //!
 //! The file is walked by element headers and each element it does not need is stepped
-//! over, so the cost grows with the number of elements read and never with the size
-//! of the file.
+//! over. A walk reads at most `MOST_ELEMENTS` headers, so the cost does not grow with
+//! the size of the file.
 
 use std::io::{self, ErrorKind, Read, Seek, SeekFrom};
 
@@ -52,7 +52,8 @@ struct Found {
     height: Option<u32>,
     cluster_time: i64,
     block_start: i64,
-    /// The end of the last block seen, in ticks.
+    /// The latest block start seen, or block end where a block states its length, in
+    /// ticks.
     latest: Option<i64>,
     /// Where the last cluster with a stated size holds its data, and where it ends.
     last_cluster: Option<(u64, u64)>,

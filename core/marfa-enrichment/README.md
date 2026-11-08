@@ -36,7 +36,7 @@ The file must be a regular file open for reading only. The child reads it by pos
 | EPUB | Chapters in spine order. |
 | `image/*` | Width and height from the header. |
 | MP3, WAV, FLAC, Ogg (Vorbis, Opus), MP4, M4A, M4B, MOV, 3GP | `symphonia`, container only: the length, and for a video the picture size, from the headers. Nothing is decoded and the file is not held in memory. An MP3 with no length header is sized from its bytes as constant bitrate. An AAC track states a few tens of milliseconds of encoder padding. |
-| WebM, Matroska | A reader of its own, because `symphonia` states no length for them. The length is the stated duration, or the end of the last block when none is stated. |
+| WebM, Matroska | A reader of its own, because `symphonia` states no length for them. The length is the stated duration, or the start of the last block when none is stated (its end, where a block states its length). |
 | Pictures, with `native` and `Options::ocr` | Text, read by Tesseract. |
 | PDF, with `native` | Text, page by page, through PDFium. A page with almost no text is drawn and read by OCR when `Options::ocr` is set. Without `native` a PDF is `Refusal::Unsupported`. |
 
