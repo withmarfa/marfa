@@ -25,7 +25,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::Refused { status, .. } => refused(refused_code(*status)),
         CliError::Usage(_) => "the command line was wrong",
         CliError::Install(_) => {
-            "The service manager, Docker or Tailscale did not do what the server install needs"
+            "the service manager, Docker or Tailscale did not do what the server install needs"
         }
         CliError::NoStoreNamed | CliError::NoStoreAt(_) => {
             "no working copy was named, or none exists where it was named"
