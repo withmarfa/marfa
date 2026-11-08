@@ -360,3 +360,111 @@ fn a_picture_of_no_size_is_no_picture() {
     near(reading.duration, 1.0, "a length with no picture");
     assert_eq!(reading.dimensions, None);
 }
+
+/// A cluster that starts at `millis`, with `blocks` blocks a millisecond apart.
+fn live_cluster(millis: u32, blocks: i16, open: bool) -> Vec<u8> {
+    let blocks: Vec<Vec<u8>> = (0..blocks).map(|at| block(&[0xA3], at)).collect();
+    let body = [element(&[0xE7], &millis.to_be_bytes()), blocks.concat()].concat();
+    if open {
+        open_element(&[0x1F, 0x43, 0xB6, 0x75], &body)
+    } else {
+        element(&[0x1F, 0x43, 0xB6, 0x75], &body)
+    }
+}
+
+/// A recording of `seconds` made of clusters that state no size, as a browser
+/// writes while it is still recording, and no duration.
+fn live_recording(seconds: u32, blocks: i16) -> Vec<u8> {
+    let clusters: Vec<u8> = (0..seconds)
+        .flat_map(|second| live_cluster(second * 1000, blocks, true))
+        .collect();
+    matroska(&scale(), &clusters, true)
+}
+
+#[test]
+fn a_live_recording_is_as_long_as_its_last_block() {
+    let bytes = live_recording(600, 100);
+    near(
+        read(&bytes, "video/webm").duration,
+        599.099,
+        "a live recording within the limit",
+    );
+}
+
+#[test]
+fn a_recording_over_the_limit_of_elements_is_measured_from_its_last_cluster() {
+    // More headers than one walk reads: the walk is cut off in the middle.
+    let bytes = live_recording(1500, 800);
+    let began = std::time::Instant::now();
+    near(
+        read(&bytes, "video/webm").duration,
+        1499.799,
+        "a live recording over the limit",
+    );
+    assert!(began.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn clusters_of_a_stated_size_over_the_limit_are_measured_from_the_last_one() {
+    let clusters: Vec<u8> = (0..1_100_000u32)
+        .flat_map(|millis| live_cluster(millis, 1, false))
+        .collect();
+    let bytes = matroska(&scale(), &clusters, false);
+    near(
+        read(&bytes, "video/webm").duration,
+        1100.0,
+        "sized clusters over the limit",
+    );
+}
+
+#[test]
+fn a_cut_off_walk_that_finds_no_last_cluster_states_no_length() {
+    // One cluster that never ends, with millions of blocks: the only cluster is both
+    // the first and the last, and no walk of it reaches its end.
+    let empty = [0xA3, 0x80];
+    let blocks: Vec<u8> = std::iter::repeat_n(empty, 2_000_000).flatten().collect();
+    for opening in [
+        // With no timecode it cannot be told from bytes inside a block.
+        Vec::new(),
+        element(&[0xE7], &[0x05]),
+    ] {
+        let cluster = open_element(
+            &[0x1F, 0x43, 0xB6, 0x75],
+            &[opening, blocks.clone()].concat(),
+        );
+        let bytes = matroska(&scale(), &cluster, true);
+        let reading = read(&bytes, "video/webm");
+        assert_eq!(reading.duration, None);
+        let size = reading.dimensions.expect("the picture is still told");
+        assert_eq!((size.width, size.height), (640, 360));
+    }
+}
+
+#[test]
+fn the_bytes_of_a_cluster_id_inside_a_block_are_no_cluster() {
+    let impostor = element(
+        &[0xA3],
+        &[
+            &[0x81, 0x00, 0x00, 0x80][..],
+            &[0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xFF],
+        ]
+        .concat(),
+    );
+    let body = [
+        element(&[0xE7], &[0x00]),
+        block(&[0xA3], 0),
+        block(&[0xA3], 750),
+        impostor,
+    ]
+    .concat();
+    let mut clusters: Vec<u8> = (0..1_050_000u32)
+        .flat_map(|_| element(&[0xEC], &[]))
+        .collect();
+    clusters.extend(open_element(&[0x1F, 0x43, 0xB6, 0x75], &body));
+    let bytes = matroska(&scale(), &clusters, true);
+    near(
+        read(&bytes, "video/webm").duration,
+        0.75,
+        "an id inside a block",
+    );
+}
