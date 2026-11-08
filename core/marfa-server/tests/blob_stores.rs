@@ -1,5 +1,8 @@
 //! Every copy of a blob kept safe on the disk store: what start refuses, what the jobs strike
-//! and purge, and what the drop door refuses.
+//! and purge, and what the drop door refuses, with an object store beside it where a test
+//! says so.
+
+mod fake_s3;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,6 +19,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tower::ServiceExt;
+
+use fake_s3::{FakeS3, Mode};
 
 struct Instance {
     dir: TempDir,
@@ -68,6 +73,21 @@ async fn send(router: &Router, request: Request<Body>) -> Reply {
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         bytes,
     }
+}
+
+fn pairs(owned: &[(String, String)]) -> Vec<(&str, &str)> {
+    owned
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect()
+}
+
+/// An endpoint nothing listens on.
+async fn closed_endpoint() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    endpoint
 }
 
 impl Instance {
@@ -509,4 +529,221 @@ async fn an_upload_waits_on_a_late_deletion_of_its_bytes_and_answers_503_until_i
         instance.count("SELECT count(*) FROM blob_pending_deletions"),
         0
     );
+}
+
+const BUCKET: &str = "marfa";
+
+/// The key a blob's object has in the fake store, in `prefix`.
+fn object_key(prefix: &str, hash: &str) -> String {
+    format!(
+        "/{BUCKET}/{prefix}/{}",
+        hash.strip_prefix("sha256:").unwrap()
+    )
+}
+
+fn marker_key(prefix: &str) -> String {
+    format!("/{BUCKET}/{prefix}/.marfa-store")
+}
+
+impl Instance {
+    /// Stores the bytes and copies them into the object store.
+    async fn replicated(&self, s3: &FakeS3, bytes: &[u8]) -> String {
+        let hash = self.stored(bytes).await;
+        self.run("blob-replicate").await;
+        assert!(s3.object(&object_key("blobs", &hash)).is_some());
+        assert_eq!(self.copies(&hash).await.len(), 2);
+        hash
+    }
+}
+
+#[tokio::test]
+async fn an_object_store_that_answers_404_everywhere_has_nothing_struck() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.replicated(&s3, b"kept in two stores").await;
+
+    s3.set_mode(Mode::AllNotFound);
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 0, "{result}");
+    assert_eq!(result["unreachable"], 1, "{result}");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+
+    s3.set_mode(Mode::Normal);
+    let marker = s3.object(&marker_key("blobs")).unwrap();
+    s3.put_object(
+        &marker_key("blobs"),
+        uuid::Uuid::now_v7().to_string().as_bytes(),
+    );
+    s3.remove_object(&object_key("blobs", &hash));
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 0, "{result}");
+    assert_eq!(result["unreachable"], 1, "{result}");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+
+    // The witness: the store answering as itself has its missing copy struck.
+    s3.put_object(&marker_key("blobs"), &marker);
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 1, "{result}");
+    let copies = instance.copies(&hash).await;
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["kind"], "disk");
+}
+
+#[tokio::test]
+async fn a_start_falls_back_to_the_recorded_object_store_only_when_it_is_not_reached() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    instance
+        .replicated(&s3, b"a copy in the object store")
+        .await;
+
+    s3.set_mode(Mode::AllNotFound);
+    let refused = App::start(settings(instance.dir.path(), &pairs(&env))).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(message.contains("s3://marfa/blobs"), "{message}");
+
+    let mut closed = env.clone();
+    closed[2].1 = closed_endpoint().await;
+    let again = App::start(settings(instance.dir.path(), &pairs(&closed))).await;
+    assert!(
+        again.is_ok(),
+        "{:?}",
+        again.err().map(|failure| failure.to_string())
+    );
+}
+
+#[tokio::test]
+async fn a_start_refused_for_its_object_store_leaves_the_blob_folder_untouched() {
+    let dir = TempDir::new().unwrap();
+    let endpoint = closed_endpoint().await;
+    let env = [
+        ("S3_BUCKET", BUCKET),
+        ("S3_ENDPOINT", endpoint.as_str()),
+        ("S3_ACCESS_KEY_ID", "test-key"),
+        ("S3_SECRET_ACCESS_KEY", "test-secret"),
+    ];
+    let refused = App::start(settings(dir.path(), &env)).await;
+    assert!(refused.is_err());
+    assert!(!dir.path().join("blobs").exists());
+}
+
+#[tokio::test]
+async fn a_missing_folder_is_filled_only_from_an_object_store_the_server_kept_copies_in() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.replicated(&s3, b"rebuilt from the bucket").await;
+    let folder = instance.folder();
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    let fresh = s3.settings(BUCKET, "elsewhere");
+    let refused = App::start(settings(instance.dir.path(), &pairs(&fresh))).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(message.contains(folder.to_str().unwrap()), "{message}");
+    assert!(!folder.exists());
+    assert!(s3.object(&marker_key("elsewhere")).is_none());
+
+    let mut closed = env.clone();
+    closed[2].1 = closed_endpoint().await;
+    let refused = App::start(settings(instance.dir.path(), &pairs(&closed))).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(message.contains(folder.to_str().unwrap()), "{message}");
+    assert!(!folder.exists());
+
+    let rebuilt = App::start(settings(instance.dir.path(), &pairs(&env)))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    rebuilt.clock.pause(true);
+    let control = control(rebuilt.clone());
+    let run = |job: &'static str| {
+        let control = control.clone();
+        async move {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri(format!("/housekeeping/{job}/run"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            send(&control, request).await
+        }
+    };
+    assert_eq!(run("blob-replicate").await.body["result"]["copied"], 1);
+    let request = Request::builder()
+        .uri(format!("/blobs/{hash}"))
+        .body(Body::empty())
+        .unwrap();
+    let fetched = send(&control, request).await;
+    assert_eq!(fetched.status, StatusCode::OK);
+    assert_eq!(fetched.bytes, b"rebuilt from the bucket");
+    assert!(instance.file(&hash).is_file());
+}
+
+#[tokio::test]
+async fn a_head_asks_the_object_store_and_reads_no_bytes() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .replicated(&s3, b"held only by the object store")
+        .await;
+    std::fs::remove_file(instance.file(&hash)).unwrap();
+    assert_eq!(instance.run("blob-integrity").await["struck"], 1);
+    let key = object_key("blobs", &hash);
+    let before = s3.requests(&Method::GET, &key);
+
+    let headed = instance
+        .call(Method::HEAD, &format!("/blobs/{hash}"), None)
+        .await;
+    assert_eq!(headed.status, StatusCode::OK);
+    assert_eq!(s3.requests(&Method::GET, &key), before);
+    assert!(s3.requests(&Method::HEAD, &key) > 0);
+
+    s3.remove_object(&key);
+    let headed = instance
+        .call(Method::HEAD, &format!("/blobs/{hash}"), None)
+        .await;
+    assert_eq!(headed.status, StatusCode::SERVICE_UNAVAILABLE);
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn a_blob_that_never_copies_does_not_hold_back_the_others() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push(("MARFA_BLOB_REPLICATE_BATCH".to_string(), "1".to_string()));
+    let instance = Instance::start(&pairs(&env)).await;
+    let stuck = b"refused by the object store";
+    s3.refuse_writes(&object_key("blobs", &hash_of(stuck)));
+    instance.stored(stuck).await;
+    instance.app.clock.advance(5).unwrap();
+    let other = instance.stored(b"copied all the same").await;
+
+    for _ in 0..3 {
+        instance.run("blob-replicate").await;
+    }
+    assert_eq!(instance.copies(&other).await.len(), 2);
+    assert_eq!(instance.copies(&hash_of(stuck)).await.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_object_store_body_that_outlasts_thirty_seconds_arrives_whole() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes: Vec<u8> = (0..65_536u32).map(|at| (at % 251) as u8).collect();
+    let hash = instance.replicated(&s3, &bytes).await;
+    std::fs::remove_file(instance.file(&hash)).unwrap();
+    assert_eq!(instance.run("blob-integrity").await["struck"], 1);
+
+    s3.set_mode(Mode::Trickle(33));
+    let began = Instant::now();
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK);
+    assert!(began.elapsed() > Duration::from_secs(30));
+    assert_eq!(fetched.bytes.len(), bytes.len());
+    assert!(fetched.bytes == bytes);
 }
