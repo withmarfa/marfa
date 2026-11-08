@@ -35,7 +35,7 @@ The file must be a regular file open for reading only. The child reads it by pos
 | ODS | A reader of its own, because `calamine` turns 600 bytes of repeated cells into 8 GB. |
 | EPUB | Chapters in spine order. |
 | `image/*` | Width and height from the header. |
-| MP3, WAV, FLAC, Ogg (Vorbis, Opus), MP4, M4A, M4B, MOV, 3GP | `symphonia`, container only: the length, and for a video the picture size, from the headers. Nothing is decoded and the file is not held in memory. An MP3 with no length header is sized from its bytes as constant bitrate. An AAC track states a few tens of milliseconds of encoder padding. |
+| MP3, WAV, FLAC, Ogg (Vorbis, Opus; an Ogg video gives its length only), MP4, M4A, M4B, MOV, 3GP | `symphonia`, container only: the length, and for a video the picture size, from the headers. Nothing is decoded and the file is not held in memory. An MP3 with no length header is sized from its bytes as constant bitrate. An AAC track states a few tens of milliseconds of encoder padding. |
 | WebM, Matroska | A reader of its own, because `symphonia` states no length for them. The length is the stated duration, or the start of the last block when none is stated (its end, where a block states its length). |
 | Pictures, with `native` and `Options::ocr` | Text, read by Tesseract. |
 | PDF, with `native` | Text, page by page, through PDFium. A page with almost no text is drawn and read by OCR when `Options::ocr` is set. Without `native` a PDF is `Refusal::Unsupported`. |
@@ -162,6 +162,6 @@ cargo nextest run -p marfa-enrichment --features fault-injection
 
 The `fault-injection` feature makes a child misbehave on marked bytes. `src/isolated/fault.rs` lists the faults, among them each call the sandbox must refuse and each thing a taken-over child could say. On Linux these tests need a kernel with seccomp and require `Sandbox::Full`. `build.rs` stops a release build that has the feature, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
 
-`fixtures/` holds the files the tests read, among them a short sound and video of each format. Four generated pictures (a sentence in three languages, an upright sentence as a CMYK JPEG, an EXIF-rotated JPEG, and a two-page TIFF), a binary workbook, and a password-protected PDF from PDFium's own test files are ones nothing else here can write. No test covers `.xlsb`.
+`fixtures/` holds the files the tests read, among them a short sound and video of each format. `sample.ogv` is `sample.ogg` behind the first header of a Theora stream, since no encoder for Theora was at hand: it shows that a video stream the reader does not read does not stop the sound beside it from being measured. Four generated pictures (a sentence in three languages, an upright sentence as a CMYK JPEG, an EXIF-rotated JPEG, and a two-page TIFF), a binary workbook, and a password-protected PDF from PDFium's own test files are ones nothing else here can write. No test covers `.xlsb`.
 
 With the native build, add `--features native` and set `MARFA_NATIVE_PREFIX`. One ignored test, `measure`, reads the file named by `MARFA_MEASURE_FILE` and prints the text and the time, for use under `/usr/bin/time -l`.

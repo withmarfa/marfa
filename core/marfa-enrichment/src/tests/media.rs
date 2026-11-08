@@ -9,6 +9,9 @@ const FIXTURES: &[Stated] = &[
     ("sample.flac", "audio/flac", 1.5, None),
     ("sample.ogg", "audio/ogg", 1.5, None),
     ("sample.opus", "audio/opus", 1.5065, None),
+    // An Ogg video: its length comes from the Vorbis track, and the picture of a
+    // Theora track is not read, so there is no size.
+    ("sample.ogv", "video/ogg", 1.5, None),
     // An AAC track counts the encoder's padding in its length.
     ("sample.m4a", "audio/mp4", 1.564, None),
     ("sample-audio.webm", "audio/webm", 1.508, None),

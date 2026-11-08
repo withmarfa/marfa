@@ -297,6 +297,7 @@ read_cases() {
   check length-flac 0 "duration: 1.5 seconds" $R read "$f/sample.flac"
   check length-ogg 0 "duration: 1.5 seconds" $R read "$f/sample.ogg"
   check length-opus 0 "duration: 1.50" $R read "$f/sample.opus"
+  check length-ogv 0 "duration: 1.5 seconds" $R read "$f/sample.ogv"
   check length-m4a 0 "duration: 1.56" $R read "$f/sample.m4a"
   check length-mp4 0 "duration: 1.0|size: 160 x 120" $R read "$f/sample.mp4"
   check length-mov 0 "duration: 1.5 seconds|size: 96 x 64" $R read "$f/sample.mov"

@@ -179,6 +179,7 @@ fn reads_the_length_of_a_sound_and_a_video() -> Result<(), Failed> {
         ("sample.flac", "audio/flac", 1.5),
         ("sample.ogg", "audio/ogg", 1.5),
         ("sample.opus", "audio/opus", 1.5065),
+        ("sample.ogv", "video/ogg", 1.5),
         ("sample.m4a", "audio/mp4", 1.564),
         ("sample-audio.webm", "audio/webm", 1.508),
         ("sample.mp4", "video/mp4", 1.0),

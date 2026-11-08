@@ -91,9 +91,11 @@ impl Kind {
             | "application/vnd.oasis.opendocument.spreadsheet-template" => Self::Sheet(Sheet::Ods),
             "audio/mpeg" | "audio/mp3" | "audio/wav" | "audio/x-wav" | "audio/wave"
             | "audio/vnd.wave" | "audio/flac" | "audio/x-flac" | "audio/ogg" | "audio/opus"
-            | "audio/vorbis" | "application/ogg" | "audio/mp4" | "audio/x-m4a" | "audio/m4a"
-            | "audio/x-m4b" | "audio/3gpp" | "audio/3gpp2" | "video/mp4" | "video/x-m4v"
-            | "video/quicktime" | "video/3gpp" | "video/3gpp2" => Self::Media { matroska: false },
+            | "audio/vorbis" | "application/ogg" | "video/ogg" | "audio/mp4" | "audio/x-m4a"
+            | "audio/m4a" | "audio/x-m4b" | "audio/3gpp" | "audio/3gpp2" | "video/mp4"
+            | "video/x-m4v" | "video/quicktime" | "video/3gpp" | "video/3gpp2" => {
+                Self::Media { matroska: false }
+            }
             "video/webm" | "audio/webm" | "video/x-matroska" | "audio/x-matroska"
             | "video/matroska" | "audio/matroska" => Self::Media { matroska: true },
             "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/tiff"

@@ -39,6 +39,7 @@ pub fn guess_type(file: &Path) -> Option<&'static str> {
         "flac" => "audio/flac",
         "ogg" | "oga" => "audio/ogg",
         "opus" => "audio/opus",
+        "ogv" => "video/ogg",
         "mp4" | "m4v" => "video/mp4",
         "mov" => "video/quicktime",
         "webm" => "video/webm",
