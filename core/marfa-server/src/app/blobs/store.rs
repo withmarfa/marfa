@@ -164,7 +164,8 @@ impl Gate {
     }
 
     /// Runs a write or a deletion on a task of its own and waits `deadline` for it. One that
-    /// takes longer goes on, and its blob stays unfinished until it ends.
+    /// takes longer, or whose wait is dropped, goes on, and its blob stays unfinished until it
+    /// ends.
     pub async fn outlast<T, W>(
         self: &Arc<Gate>,
         hash: &Hash,
@@ -175,33 +176,26 @@ impl Gate {
         T: Send + 'static,
         W: Future<Output = io::Result<T>> + Send + 'static,
     {
-        #[derive(PartialEq)]
-        enum Phase {
-            Running,
-            Late,
-            Done,
-        }
         let phase = Arc::new(Mutex::new(Phase::Running));
-        let (gate, blob, watched) = (self.clone(), hash.clone(), phase.clone());
+        let ending = Ending {
+            gate: self.clone(),
+            hash: hash.clone(),
+            phase: phase.clone(),
+        };
         let mut task = tokio::spawn(async move {
-            let outcome = work.await;
-            let mut phase = held(&watched);
-            if *phase == Phase::Late {
-                gate.unmark(&blob);
-            }
-            *phase = Phase::Done;
-            outcome
+            let _ending = ending;
+            work.await
         });
+        let waiting = Waiting {
+            gate: self.clone(),
+            hash: hash.clone(),
+            phase,
+        };
         let joined = match tokio::time::timeout(deadline, &mut task).await {
             Ok(joined) => joined,
             Err(_) => {
-                {
-                    let mut phase = held(&phase);
-                    if *phase != Phase::Done {
-                        *phase = Phase::Late;
-                        self.mark(hash);
-                        return Err(Failed::Late);
-                    }
+                if waiting.leave() {
+                    return Err(Failed::Late);
                 }
                 task.await
             }
@@ -209,6 +203,56 @@ impl Gate {
         joined
             .map_err(|error| Failed::Io(io::Error::other(error)))?
             .map_err(Failed::Io)
+    }
+}
+
+#[derive(PartialEq)]
+enum Phase {
+    Running,
+    Late,
+    Done,
+}
+
+/// Held by the work, which ends with it even by a panic, and frees a blob left unfinished.
+struct Ending {
+    gate: Arc<Gate>,
+    hash: Hash,
+    phase: Arc<Mutex<Phase>>,
+}
+
+impl Drop for Ending {
+    fn drop(&mut self) {
+        let mut phase = held(&self.phase);
+        if *phase == Phase::Late {
+            self.gate.unmark(&self.hash);
+        }
+        *phase = Phase::Done;
+    }
+}
+
+/// Held by the wait. Leaving it, by a deadline or by being dropped, while the work runs marks
+/// the blob unfinished.
+struct Waiting {
+    gate: Arc<Gate>,
+    hash: Hash,
+    phase: Arc<Mutex<Phase>>,
+}
+
+impl Waiting {
+    /// Whether the work is still running.
+    fn leave(&self) -> bool {
+        let mut phase = held(&self.phase);
+        if *phase == Phase::Running {
+            *phase = Phase::Late;
+            self.gate.mark(&self.hash);
+        }
+        *phase != Phase::Done
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.leave();
     }
 }
 
@@ -344,6 +388,35 @@ mod tests {
         finish.send(()).unwrap();
         end.await.unwrap();
         tokio::task::yield_now().await;
+        let began = std::time::Instant::now();
+        while gate.unfinished(&hash) && began.elapsed() < Duration::from_secs(2) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(!gate.unfinished(&hash));
+    }
+
+    #[tokio::test]
+    async fn work_whose_wait_is_dropped_leaves_its_blob_unfinished_until_it_ends() {
+        let gate = Arc::new(Gate::default());
+        let hash = Hash::from_digest(&Sha256::digest(b"abandoned"));
+        let (finish, finished) = oneshot::channel::<()>();
+        let (ended, end) = oneshot::channel::<()>();
+        let work = async move {
+            let _ = finished.await;
+            let _ = ended.send(());
+            Ok(())
+        };
+
+        let waited = tokio::time::timeout(
+            Duration::from_millis(20),
+            gate.outlast(&hash, Duration::from_secs(60), work),
+        )
+        .await;
+        assert!(waited.is_err());
+        assert!(gate.unfinished(&hash));
+
+        finish.send(()).unwrap();
+        end.await.unwrap();
         let began = std::time::Instant::now();
         while gate.unfinished(&hash) && began.elapsed() < Duration::from_secs(2) {
             tokio::time::sleep(Duration::from_millis(1)).await;
