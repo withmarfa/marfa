@@ -65,8 +65,7 @@ pub fn write_deadline(check: Duration, size: u64) -> Duration {
     check + Duration::from_secs(size / BYTES_PER_SECOND)
 }
 
-/// How long work the server stopped waiting for may go on before it is dropped, so that a
-/// peer that stalls cannot keep a blob unfinished until the server restarts.
+/// Bounds background work after its caller stops waiting.
 pub fn stall_limit(deadline: Duration) -> Duration {
     deadline * 4
 }

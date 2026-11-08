@@ -86,9 +86,7 @@ impl S3 {
             .with_bucket_name(&settings.bucket)
             .with_region(&settings.region)
             .with_retry(retry)
-            // A limit on a whole request would cut a large or slow transfer part-way. The
-            // server's own deadlines bound each wait, and `store::stall_limit` ends work the
-            // server stopped waiting for.
+            // Store deadlines allow large transfers to outlast a single request timeout.
             .with_client_options(
                 ClientOptions::new()
                     .with_timeout_disabled()
@@ -154,9 +152,7 @@ impl S3 {
             .map_err(failed)
     }
 
-    /// Whether the store answers with its own marker. A bucket that was deleted or replaced,
-    /// an endpoint that moved and a proxy that answers `404` all fail this, and each would
-    /// otherwise show every copy as missing.
+    /// A missing marker distinguishes an unavailable bucket from a missing copy.
     pub async fn is_itself(&self) -> io::Result<()> {
         match self.marker().await {
             Marker::Id(id) if id == self.id => Ok(()),

@@ -381,10 +381,7 @@ impl Blobs {
         }
     }
 
-    /// Whether a store answers as itself, asked once a run of each store that is about to
-    /// have a copy struck. A disk store shows a lost folder on every read; an object store is
-    /// asked for its marker, since a bucket that was replaced or a proxy that answers `404`
-    /// shows every copy as missing.
+    /// A marker check distinguishes an unavailable bucket from a missing copy.
     async fn is_itself(&self, store: &Store, confirmed: &mut HashSet<String>) -> bool {
         let Store::S3(s3) = store else {
             return true;

@@ -157,9 +157,7 @@ async fn copy_to(
     Copy::Skipped
 }
 
-/// Gives every attached store a copy of every blob, within the run's bounds: the copies that
-/// failed in the fewest runs first, then the oldest blob first, so a blob that cannot be copied
-/// never holds back the others.
+/// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.settings.live();
     let (batch, batch_bytes) = (
@@ -441,9 +439,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         .await?;
     let mut purged = 0u64;
     if !candidates.is_empty() && run.go_on().await {
-        // The scan of every stored row runs outside the writer. A write after it that names a
-        // candidate adds its reference in its own transaction, which takes the candidate off
-        // the report, so the check below inside the writer still sees it.
+        // The writer's index recheck protects references committed after this scan.
         let hexes: HashSet<String> = candidates
             .iter()
             .map(|hash| hash.hex().to_string())

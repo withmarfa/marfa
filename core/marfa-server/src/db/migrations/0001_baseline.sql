@@ -542,8 +542,7 @@ CREATE TABLE IF NOT EXISTS blob_copies (
 
 CREATE INDEX IF NOT EXISTS blob_copies_store ON blob_copies (store_id, verified_at);
 
--- How many replication runs in a row failed to copy a blob into a store that
--- lacks it. A run tries the fewest failed first.
+-- Failure counts keep one uncopyable blob from monopolizing replication.
 CREATE TABLE IF NOT EXISTS blob_copy_failures (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
