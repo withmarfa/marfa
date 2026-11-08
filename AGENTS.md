@@ -1,10 +1,12 @@
 # Marfa
 
-The server (`packages/`), the Rust core every native client embeds (`core/`), and the contract both are held to (`conformance/`). The Swift SDK lives in `withmarfa/marfa-swift`.
+Marfa's server, the Rust core every native client embeds (`core/`), and the contract they are held to (`conformance/`). The server is moving from TypeScript (`packages/`) to Rust (`core/marfa-server/`). The Swift SDK lives in `withmarfa/marfa-swift`.
 
-## The server may move to Rust
+## The server is moving to Rust
 
-Rewriting the server in Rust is being considered, and nothing about it is decided yet. Weigh it when reasoning about server work: effort that a rewrite would throw away, such as reshaping or optimizing server code, may not be worth spending now. Such a move would carry no legacy: no compatibility with how the TypeScript server works today, only with what the contract states. It would aim to be done well rather than quickly. Do not treat today's server design, or earlier advice against Rust, as settled.
+Marfa's server is being rewritten in Rust as `core/marfa-server/`, and that server becomes 0.1. It carries no legacy: it does what the contract states, not what the TypeScript server does, and the contract changes wherever a client does not need an old shape. Its pure rules live in `core/marfa-rules/`, shared with the core and the command line.
+
+The TypeScript server in `packages/server/` is frozen. It takes only fixes for a fault that exposes an instance's data or loses data for good, and it stays until the Rust server replaces it. Until then it judges every contract test file the Rust server does not: `conformance/src/utils/rust-judged.ts` lists the files the Rust server judges, and a file is listed once it passes whole there. Build nothing in `packages/server/` that the Rust server would replace.
 
 ## Working here
 
@@ -19,7 +21,7 @@ Rewriting the server in Rust is being considered, and nothing about it is decide
 - Every job has a `timeout-minutes` of about twice its slowest recent run, and an artifact is uploaded only after a failure, but for the conformance shards' server logs, which `Conformance statuses` reads, the benchmarks' load reports, and the Rust server's build and the reports of its contract shards, which the jobs after them read (`ci/job-limits.test.ts` pins them).
 - A failed scheduled run of `ci.yml`, `core.yml` or `benchmarks.yml` opens one issue titled `Nightly failed: <workflow>`, or comments on it while it is open, from the `report-failure` job that ends each of those workflows and runs `scripts/report-nightly-failure.sh`. Only a schedule reports, so no pull request run can open an issue; a scheduled workflow added later gets the same job (`ci/nightly-report.test.ts` pins both).
 - `codeql.yml` analyzes the whole tree once a week, and a push to `main` or a pull request that is not a draft unless it changes only Markdown, the license, `.claude/`, `.codex/`, issue templates, `assets/` or `deploy/` (a Dockerfile, a shell script and a Litestream configuration, none in a language it analyzes). It is not a required check, so a `paths-ignore` filter starts no run at all for documentation; `ci/ci-required.test.ts` pins it.
-- SQLite is the only database. Removed means gone: no shims, aliases or compatibility flags. A schema change ships as a numbered migration in `packages/server/src/storage/sqlite/migrations.ts`, and no schema version before its baseline is migrated.
+- SQLite is the only database. Removed means gone: no shims, aliases or compatibility flags. A schema change ships as a numbered migration in `packages/server/src/storage/sqlite/migrations.ts`, and no schema version before its baseline is migrated. The Rust server has one migration, `core/marfa-server/src/db/migrations/0001_baseline.sql`, which grows until 0.1 ships.
 - No personal details of any machine or person: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value. No time estimates.
 - No test touches the login keychain or raises a dialog.
 - The core's `crate::fault` helpers exist only with debug assertions, and CI also builds the tests in release, so a test or a line that uses them is gated on `#[cfg(debug_assertions)]`; a missing gate fails only in CI's release build, after the push.
@@ -88,5 +90,7 @@ Report only a real problem: one that breaks the issue's acceptance criteria, a r
 - **Keep what people made.** A refused, failed or uncertain write is kept where the person can get it back, never dropped or rolled over newer work. Clean-up acts only on what it proved gone, and an edit keeps every byte it did not mean to change.
 - **Real conditions.** Real clocks and dates, number ranges across languages and SQLite, runtime limits, slow or absent peers, untidy input, other platforms and file systems. One bad item, slow peer or hiccup stays contained and never takes down the batch, the folder or the job.
 - **Flaky tests.** An unexplained flaky test is a finding: reproduce it, or say exactly why it cannot recur.
+
+- **Rust.** In the Rust server, every item, edge and type write goes through its area's one write function inside `App::write`, and every permission is decided in `app/access` on the state that write commits: a door that checks a permission only before the write is a finding. SQL stays private to its area's module. Server code never panics on a request or a stored value: no `unwrap`, `expect` or unchecked index on either, and a stored value that does not read is refused or reported, never quietly defaulted. Blocking work (password hashing, file reading, SQLite outside the writer thread) runs off the async runtime. A setting, column, name or shape kept only because the TypeScript server had it, or a comment that names the TypeScript server, a session or a contract statement's history, is a finding.
 
 Mark a finding blocking when it changes how Marfa behaves or breaks a criterion or rule, and a quick fix when it is a name, a stale reference or a wrong count. Keep a problem that was there before the change apart from findings against it, and list it only if it is clearly wrong and would keep coming up.
