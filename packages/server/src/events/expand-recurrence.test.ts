@@ -11,7 +11,8 @@
  * arithmetic, which is exactly the blindness that let the double
  * conversion ship.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { setFault, clearFaults } from "../control/faults.js";
 import {
   expandSeries,
   MAX_OCCURRENCES_PER_SERIES,
@@ -31,6 +32,31 @@ const weekly = (over: Partial<RecurrenceSeries> = {}): RecurrenceSeries => ({
 });
 
 describe("expandSeries", () => {
+  it("forces deadline expiry even when the clock does not advance", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    const read = () =>
+      expandSeries(
+        weekly({
+          starts_at: "2041-08-01T21:30:00Z",
+          ends_at: null,
+          timezone: "UTC",
+          recurrence: ["RRULE:FREQ=MINUTELY"],
+        }),
+        new Date("2041-09-01T22:00:00Z"),
+        new Date("2041-09-01T22:01:00Z"),
+      );
+    try {
+      expect(read()).toHaveLength(1);
+      setFault("unfold-deadline", "1");
+      expect(read).toThrow("takes too long to unfold");
+      clearFaults("unfold-deadline");
+      expect(read()).toHaveLength(1);
+    } finally {
+      clearFaults("unfold-deadline");
+      clock.mockRestore();
+    }
+  });
+
   it("returns nothing for a series carrying no rule", () => {
     expect(
       expandSeries(

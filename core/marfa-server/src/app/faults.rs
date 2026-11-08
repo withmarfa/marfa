@@ -250,7 +250,7 @@ fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
         .and_then(|text| text.parse::<u64>().ok())
         .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
         .ok_or_else(|| {
-            format!("{UNFOLD_DEADLINE} takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}")
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
         })
 }
 
@@ -510,12 +510,11 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
-    pub fn unfold_deadline(&self) -> Option<Duration> {
+    pub fn unfold_deadline(&self) -> Option<u64> {
         self.armed()
             .iter()
             .find(|fault| fault.name == UNFOLD_DEADLINE)
             .and_then(|fault| fault.number)
-            .map(Duration::from_millis)
     }
 
     pub fn limit(&self, lane: &str) -> Option<i64> {
@@ -704,14 +703,14 @@ mod tests {
     }
 
     #[test]
-    fn the_unfold_deadline_is_a_whole_number_of_milliseconds() {
+    fn the_unfold_deadline_names_a_deadline_check() {
         assert!(refused("unfold-deadline", None));
         assert!(refused("unfold-deadline", Some("0")));
         assert!(refused("unfold-deadline", Some("soon")));
         let faults = Faults::default();
         assert_eq!(faults.unfold_deadline(), None);
         faults.set("unfold-deadline", Some("1")).unwrap();
-        assert_eq!(faults.unfold_deadline(), Some(Duration::from_millis(1)));
+        assert_eq!(faults.unfold_deadline(), Some(1));
     }
 
     #[test]

@@ -254,8 +254,14 @@ fn walk_days(
                 if y > LAST_YEAR {
                     return Ok(());
                 }
-                let first = days_from_civil(y, 1, 1);
-                let last = days_from_civil(y, 12, 31);
+                let (first, last) = if rule.byweekno.is_some() {
+                    (
+                        week_start(days_from_civil(y, 1, 4), rule.wkst),
+                        week_start(days_from_civil(y + 1, 1, 4), rule.wkst) - 1,
+                    )
+                } else {
+                    (days_from_civil(y, 1, 1), days_from_civil(y, 12, 31))
+                };
                 let ranges = match (&rule.bymonth, &rule.bynweekday) {
                     (Some(months), Some(_)) => months
                         .iter()
@@ -272,7 +278,11 @@ fn walk_days(
                     first,
                     last,
                     ranges,
-                    months: rule.bymonth.as_ref(),
+                    months: if rule.byweekno.is_some() {
+                        None
+                    } else {
+                        rule.bymonth.as_ref()
+                    },
                 }
             }
             MONTHLY => {

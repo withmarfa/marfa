@@ -42,6 +42,115 @@ fn between(schedule: &Schedule, from: &str, to: &str) -> Vec<String> {
 }
 
 #[test]
+fn week_year_boundaries() {
+    for (start, rule, from, to, expected) in [
+        (
+            "2021-01-04T09:00:00Z",
+            "RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=1;BYDAY=MO",
+            "2024-12-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            "2024-12-30T09:00:00Z",
+        ),
+        (
+            "2018-01-01T09:00:00Z",
+            "RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=-1;BYDAY=SU",
+            "2020-12-01T00:00:00Z",
+            "2021-02-01T00:00:00Z",
+            "2021-01-03T09:00:00Z",
+        ),
+        (
+            "2018-01-01T09:00:00Z",
+            "RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=53;BYDAY=SU",
+            "2020-12-01T00:00:00Z",
+            "2021-02-01T00:00:00Z",
+            "2021-01-03T09:00:00Z",
+        ),
+        (
+            "2021-01-04T09:00:00Z",
+            "RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=1;WKST=SU;BYSETPOS=1",
+            "2024-12-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            "2024-12-29T09:00:00Z",
+        ),
+    ] {
+        assert_eq!(
+            between(&series(start, None, &[rule]), from, to),
+            [expected],
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn spring_gap_does_not_end_utc_until_early() {
+    let schedule = compile(&Input {
+        starts_at: "2027-03-28T00:00:00Z",
+        ends_at: None,
+        duration: None,
+        all_day: false,
+        timezone: Some("Europe/London"),
+        recurrence: &["RRULE:FREQ=MINUTELY;INTERVAL=40;UNTIL=20270328T011000Z"],
+    })
+    .unwrap();
+    assert_eq!(
+        between(&schedule, "2027-03-28T00:45:00Z", "2027-03-28T02:00:00Z"),
+        ["2027-03-28T01:00:00Z"]
+    );
+}
+
+#[test]
+fn spring_gap_count_and_window_end_follow_wall_candidates() {
+    for (rule, expected) in [
+        (
+            "RRULE:FREQ=MINUTELY;INTERVAL=40;COUNT=4",
+            vec!["2027-03-28T01:00:00Z"],
+        ),
+        ("RRULE:FREQ=MINUTELY;INTERVAL=40;COUNT=3", vec![]),
+        (
+            "RRULE:FREQ=MINUTELY;INTERVAL=40",
+            vec!["2027-03-28T01:00:00Z"],
+        ),
+    ] {
+        let schedule = compile(&Input {
+            starts_at: "2027-03-28T00:00:00Z",
+            ends_at: None,
+            duration: None,
+            all_day: false,
+            timezone: Some("Europe/London"),
+            recurrence: &[rule],
+        })
+        .unwrap();
+        assert_eq!(
+            between(&schedule, "2027-03-28T00:45:00Z", "2027-03-28T01:10:00Z"),
+            expected,
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn fractional_starts_match_moved_slots() {
+    let schedule = series(
+        "2027-01-01T09:00:00.500Z",
+        None,
+        &["RRULE:FREQ=DAILY;COUNT=2"],
+    );
+    let slot = ms("2027-01-02T09:00:00.500Z");
+    let rows = schedule
+        .unfold(
+            ms("2027-01-01"),
+            ms("2027-01-03"),
+            &mut Meter::new(WORK_LIMIT),
+            10,
+            &[slot],
+        )
+        .unwrap();
+    assert_eq!(rows[0].start_ms, ms("2027-01-01T09:00:00.500Z"));
+    assert_eq!(rows[1].start_ms, slot);
+    assert_eq!(rows[1].replaced_by, Some(0));
+}
+
+#[test]
 fn every_frequency_with_its_parts() {
     let cases: [Case; 8] = [
         Case(

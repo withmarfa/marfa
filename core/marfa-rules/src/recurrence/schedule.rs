@@ -100,14 +100,14 @@ pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
             .ok_or_else(|| "starts_at cannot be read".to_string())?;
         (zone.midnight(day), day * DAY)
     } else {
-        let start_ms = parsed_start.div_euclid(1000) * 1000;
+        let start_ms = parsed_start;
         (start_ms, zone.wall_of(start_ms))
     };
     let start_time = start_wall.rem_euclid(DAY);
     let anchor = |value: DateValue| match value {
         DateValue::Instant(ms) => ms,
         DateValue::Date(day) if input.all_day => zone.midnight(day),
-        DateValue::Date(day) => zone.instant_of(day * DAY + start_time),
+        DateValue::Date(day) => zone.instant_of(day * DAY + start_time) + start_ms.rem_euclid(1000),
         DateValue::Floating(wall) if input.all_day => zone.midnight(wall.div_euclid(DAY)),
         DateValue::Floating(wall) => zone.instant_of(wall),
     };
@@ -273,7 +273,7 @@ impl Schedule {
         if self.all_day {
             self.zone.midnight(wall.div_euclid(DAY))
         } else {
-            self.zone.instant_of(wall)
+            self.zone.instant_of(wall) + self.start_ms.rem_euclid(1000)
         }
     }
 
@@ -348,7 +348,7 @@ impl Schedule {
                     return Ok(ControlFlow::Break(()));
                 }
                 if rule.until.is_some_and(|until| self.past_until(until, wall)) {
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Continue(()));
                 }
                 produced += 1;
                 if wall >= low_wall {

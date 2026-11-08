@@ -211,7 +211,7 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
         let mut unexpanded: usize = 0;
         let mut unproductive: u64 = 0;
         let mut consumed: HashSet<usize> = HashSet::new();
-        let deadline = faults.unfold_deadline().unwrap_or(TIME_BOUND);
+        let forced_check = faults.unfold_deadline();
 
         for &at in &series_rows {
             let row = &rows[at];
@@ -254,7 +254,11 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             let slots = moved.get(&at).map(Vec::as_slice).unwrap_or_default();
             let named: Vec<i64> = slots.iter().map(|(_, slot)| *slot).collect();
             let started = Instant::now();
-            let expired = || started.elapsed() >= deadline;
+            let checks = std::cell::Cell::new(0_u64);
+            let expired = || {
+                checks.set(checks.get() + 1);
+                forced_check.is_some_and(|at| checks.get() >= at) || started.elapsed() >= TIME_BOUND
+            };
             let mut meter = Meter::with_clock(WORK_LIMIT, &expired);
             let unfolded = schedule.unfold(window.from, window.to, &mut meter, SERIES_OCCURRENCE_LIMIT, &named);
             match unfolded {
