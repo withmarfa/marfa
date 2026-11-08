@@ -321,7 +321,7 @@ pub fn page(
 }
 
 /// One due delivery per idle subscription, oldest wait first within each subscription.
-pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Vec<i64>> {
+pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Result<Vec<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     let mut statement = tx.prepare_cached(
@@ -329,9 +329,10 @@ pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Vec<i64>> 
          (PARTITION BY webhook_id ORDER BY due_at, seq) AS turn \
          FROM webhook_deliveries WHERE status = 'pending' AND due_at <= ?1 \
          AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq",
+         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq LIMIT ?3",
     )?;
-    let rows = statement.query_map(params![now_ms, busy], |row| row.get(0))?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let rows = statement.query_map(params![now_ms, busy, limit], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -355,8 +356,9 @@ fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
     tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
         INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
         (3, 'b', 'pending', 0), (4, 'c', 'pending', 5);").unwrap();
-    assert_eq!(due(&tx, 0, &[]).unwrap(), vec![1, 3]);
-    assert_eq!(due(&tx, 0, &[1]).unwrap(), vec![3]);
+    assert_eq!(due(&tx, 0, &[], 10).unwrap(), vec![1, 3]);
+    assert_eq!(due(&tx, 0, &[], 1).unwrap(), vec![1]);
+    assert_eq!(due(&tx, 0, &[1], 10).unwrap(), vec![3]);
     assert_eq!(next_due(&tx, &[1, 3]).unwrap(), Some(5));
 }
 
