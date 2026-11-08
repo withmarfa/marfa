@@ -31,6 +31,12 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "GET /.well-known/oauth-protected-resource/{*path}",
         "the same for the resource at a path",
     ),
+    (
+        "POST /mcp",
+        "the Model Context Protocol endpoint, which its own protocol describes",
+    ),
+    ("GET /mcp", "answers 405: the endpoint opens no stream"),
+    ("DELETE /mcp", "answers 405: the endpoint holds no session"),
     ("GET /auth/sign-in", "the sign-in page"),
     ("POST /auth/sign-in", "its form post"),
     (

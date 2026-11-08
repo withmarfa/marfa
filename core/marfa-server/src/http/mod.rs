@@ -28,6 +28,7 @@ pub mod listening;
 mod listing;
 mod lookup;
 mod named_instance;
+mod mcp;
 mod oauth;
 pub mod observe;
 mod overview;
@@ -295,6 +296,7 @@ fn public_doors(app: Arc<App>) -> Routes {
         .merge(oauth::grant_doors().unjudged())
         .merge(auth::doors().unjudged())
         .merge(oauth::doors().unjudged())
+        .merge(mcp::doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
