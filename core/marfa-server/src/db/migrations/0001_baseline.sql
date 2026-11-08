@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS edges (
 
 CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type, created_at, id);
-CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type);
+CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_newest ON edges (created_at, id);
 CREATE INDEX IF NOT EXISTS edges_changed ON edges (updated_at, id);
 

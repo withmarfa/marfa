@@ -28,6 +28,7 @@ mod listing;
 mod lookup;
 mod oauth;
 pub mod observe;
+mod overview;
 pub mod pages;
 mod profile;
 mod query;
@@ -124,6 +125,12 @@ async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) ->
         return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await
+}
+
+fn overview_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/overview", get(overview::read))
+        .route_layer(from_fn_with_state(app, within_a_map))
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
@@ -246,6 +253,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(item_doors(app.clone()))
         .merge(folder_doors())
         .merge(blob_doors())
+        .merge(overview_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())

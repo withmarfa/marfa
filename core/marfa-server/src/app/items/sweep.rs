@@ -15,7 +15,7 @@ use super::super::refusal::{Refusal, Result};
 use super::super::unit::Unit;
 use super::plan::{Act, Asked, Gate, plan};
 use super::rows;
-use super::write::announce;
+use super::write::purge;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 /// Rows one write takes. A run ends with the first write that removes any,
@@ -155,8 +155,7 @@ fn purge_batch(unit: &Unit<'_, '_>, app: &App, after: &Position) -> Result<Batch
                 for (edge, source) in &row.edges {
                     purge_edge(unit, edge, source, &row.item.id)?;
                 }
-                rows::purge(tx, &row.item, &unit.at)?;
-                announce(unit, "item.purged", &row.item)?;
+                purge(unit, &row.item)?;
             }
             gone = purging.len();
             Ok(())

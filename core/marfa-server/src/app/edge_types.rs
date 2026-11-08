@@ -93,17 +93,23 @@ fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()
     })
 }
 
-pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
-    let registered = reading(app, caller, |read| Ok(read.catalog.edge_types.clone())).await?;
+/// Every edge type, the shipped ones and the registered ones.
+pub fn all(catalog: &Catalog) -> Result<Vec<Obj>> {
     let held = builtin::shipped_edge_types()
         .map_err(|error| Refusal::internal(&format!("the shipped edge types: {error}")))?;
     Ok(held
         .iter()
         .filter_map(Value::as_object)
         .cloned()
-        .chain(registered)
-        .map(presented)
+        .chain(catalog.edge_types.iter().cloned())
         .collect())
+}
+
+pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
+    reading(app, caller, |read| {
+        Ok(all(&read.catalog)?.into_iter().map(presented).collect())
+    })
+    .await
 }
 
 /// Registers an edge type, or widens the endpoint constraints of a registered one. The

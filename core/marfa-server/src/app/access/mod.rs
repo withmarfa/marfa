@@ -6,6 +6,7 @@ mod edges;
 mod items;
 mod levers;
 mod maps;
+mod overview;
 mod profile;
 pub mod reach;
 mod schema;
@@ -22,6 +23,7 @@ use super::refusal::{Code, Refusal, Result};
 pub use items::printable;
 pub use levers::{Levers, OwnLevers, Standing, report_unread};
 pub use maps::{Axis, Level, Map};
+pub use overview::Described;
 pub use schema::{Door, SchemaKind};
 
 pub const SIGN_IN_AGAIN: &str = "Sign in again to perform this operation";
