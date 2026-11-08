@@ -7,9 +7,11 @@
 #
 # MARFA_SERVER_ENV: where the env file goes. Set it to clean up after a failed
 # boot, since the default directory's name is printed only on success.
-# MARFA_SERVER_REPO: the checkout to boot; this one by default.
+# MARFA_SERVER_BIN: the `marfa-server` program to boot. By default the release
+# build in this checkout (`cargo build --release -p marfa-server` under core/),
+# or in MARFA_SERVER_REPO's checkout when that names one.
 # MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
-# secrets, data and keys; server-down.sh leaves it in place.
+# data, secrets and keys; server-down.sh leaves it in place.
 # PORT: the operating system assigns one by default.
 #
 # A boot also creates an owner, so sign-in and the owner's pages can be tried
@@ -23,11 +25,11 @@ umask 077
 source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# The server imports its page assets from a generated file Git does not track.
-# Standard output carries the environment this script prints, so the build
-# reports on standard error.
-(cd "${repo}/packages/server" && node --import tsx scripts/build-page-assets.ts >&2) ||
-  { echo "server-up: building the page assets failed" >&2; exit 1; }
+server_bin="${MARFA_SERVER_BIN:-${CARGO_TARGET_DIR:-${repo}/core/target}/release/marfa-server}"
+[[ -f "${server_bin}" && -x "${server_bin}" ]] || {
+  echo "server-up: ${server_bin} is not a built server; run cargo build --release -p marfa-server under core/" >&2
+  exit 1
+}
 keep=""
 if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
   state="${MARFA_SERVER_KEEP}"
@@ -38,7 +40,7 @@ else
 fi
 state="$(cd "${state}" && pwd -P)"
 
-# flock belongs to the inherited open file description. The real Node process
+# flock belongs to the inherited open file description. The server process
 # keeps both reservations until it exits, including after this helper returns.
 reserve_fd() {
   python3 -c 'import fcntl,sys
@@ -61,8 +63,6 @@ if [[ -f "${boot}" ]]; then
   # shellcheck disable=SC1090
   source "${boot}"
   PORT="${BOOT_PORT}"
-  MARFA_AUTH_SECRET="${BOOT_AUTH_SECRET}"
-  API_KEY_SALT="${BOOT_KEY_SALT}"
   kept_key="${BOOT_KEY}"
   owner_email="${BOOT_OWNER_EMAIL:-}"
   owner_password="${BOOT_OWNER_PASSWORD:-}"
@@ -81,8 +81,6 @@ export SQLITE_PATH="${state}/marfa.db"
 export BLOB_PATH="${state}/blobs"
 export PORT="${port}"
 export MARFA_LISTEN_HOST="127.0.0.1"
-export MARFA_AUTH_SECRET="${MARFA_AUTH_SECRET:-$(openssl rand -hex 32)}"
-export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
 
 # A kept data directory can exceed the Unix socket path limit, especially
 # under macOS temporary roots. The private listener gets its own short path.
@@ -92,8 +90,8 @@ export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
 # The recorded process owns the listener and both file reservations.
 (
-  cd "${repo}/packages/server"
-  exec node --import tsx --import ./src/instrumentation.ts src/index.ts
+  cd "${state}"
+  exec "${server_bin}"
 ) >"${log}" 2>&1 &
 pid=$!
 
@@ -169,8 +167,6 @@ write_env "${key}"
 if [[ -n "${keep}" ]]; then
   {
     echo "BOOT_PORT='${port}'"
-    echo "BOOT_AUTH_SECRET='${MARFA_AUTH_SECRET}'"
-    echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
     echo "BOOT_KEY='${key}'"
     echo "BOOT_OWNER_EMAIL='${owner_email}'"
     echo "BOOT_OWNER_PASSWORD='${owner_password}'"

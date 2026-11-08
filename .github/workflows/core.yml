@@ -4,21 +4,15 @@ name: Core
 # and a dispatch. A pull request runs them as the `core` job of `ci.yml`,
 # which `Full CI` waits for, when `scripts/ci-required.ts` says the change can
 # affect them; a draft runs none of them. A push to `main` also runs them for
-# the server the live tests boot, so a server pull request does not hold a
-# macOS runner. Push paths omit changes the live tests do not read.
+# the Rust server the live tests boot, so a server pull request does not hold
+# a macOS runner. Push paths omit changes the live tests do not read.
 on:
   push:
     branches: [main]
     paths:
       - "core/**"
       - "openapi.json"
-      - "packages/server/**"
-      - "packages/shared/**"
-      - "packages/types/**"
       - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "tsconfig.base.json"
       - ".github/workflows/core.yml"
       - ".github/workflows/core-live.yml"
       - "!**/*.md"
