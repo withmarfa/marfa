@@ -1620,7 +1620,7 @@ When computing the name of an item that `types/item-name-part` does not name, th
 
 **Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename. A highlight's passage is its body but never its name, however short, so `core.highlight` sets `name_from_body` to `false` and a highlight whose source cannot name it is `Untitled`.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`, `› names a highlight after the item it is an excerpt of, and never by its passage`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`, `compliance/item-summaries.test.ts › names a highlight after the item it is an excerpt of, and never by its passage`.
 
 ### `types/item-name-part`
 
@@ -1636,7 +1636,7 @@ When a name field contains text, the server MUST trim its surrounding whitespace
 
 **Reason:** A device names an item by the same rule (`device/item-name`), so the server and a device show one name for one item.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-markdown`
 
@@ -1644,13 +1644,13 @@ When computing an item's name from its effective `display_hints.body_field`, `bo
 
 **Reason:** A body is Markdown, so a note whose body starts `# Plan` is named `Plan`, and a body that is only Markdown syntax gives no name. The other name fields hold plain text and keep every character.
 
-**Tests:** `compliance/item-summaries.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-empty`
 
 When no name candidate produces nonblank text, the server MUST return `Untitled` as the item's name.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/delete-owner`
 
