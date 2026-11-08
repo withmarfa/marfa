@@ -65,8 +65,10 @@ describe("the formula is written from the release's checksum file", () => {
     const { status, out } = formula("0.0.23", SUMS);
     expect(status).toBe(0);
     const base = "https://github.com/withmarfa/marfa/releases/download/v0.0.23";
-    expect(out).toContain(
-      `url "${base}/marfa-0.0.23-darwin-arm64.tar.gz"\n    sha256 "${MAC}"`,
+    expect(out).toMatch(
+      new RegExp(
+        `on_macos do\\n\\s+depends_on arch: :arm64\\n\\n\\s+on_arm do\\n\\s+url "${base}/marfa-0.0.23-darwin-arm64.tar.gz"\\n\\s+sha256 "${MAC}"`,
+      ),
     );
     expect(out).toMatch(
       new RegExp(

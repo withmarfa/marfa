@@ -45,15 +45,17 @@ cat <<FORMULA
 # Written by the release workflow of withmarfa/marfa from the release's
 # checksum file. A change made here by hand is replaced by the next release.
 class Marfa < Formula
-  desc "Marfa, a self-hosted personal data store: the command line and the server"
+  desc "Command-line interface and server for Marfa, a self-hosted personal data store"
   homepage "https://github.com/withmarfa/marfa"
   license "Apache-2.0"
 
   on_macos do
     depends_on arch: :arm64
 
-    url "$base/marfa-$version-darwin-arm64.tar.gz"
-    sha256 "$mac"
+    on_arm do
+      url "$base/marfa-$version-darwin-arm64.tar.gz"
+      sha256 "$mac"
+    end
   end
 
   on_linux do

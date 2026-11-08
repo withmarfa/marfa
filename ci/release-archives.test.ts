@@ -112,20 +112,17 @@ describe("the workflow builds the programs for every platform", () => {
     expect(JSON.stringify(jobs)).not.toContain("darwin-x86_64");
   });
 
-  it("restores the native downloads from main and saves them only from main", () => {
+  it("restores the native downloads and never saves them", () => {
     for (const name of ["programs-macos", "programs-linux"]) {
       const steps = jobs[name]?.steps ?? [];
       const restore = steps.filter((step) =>
         step.uses?.startsWith("actions/cache/restore@"),
       );
       const save = steps.filter((step) =>
-        step.uses?.startsWith("actions/cache/save@"),
+        /^actions\/cache(\/save)?@/.test(step.uses ?? ""),
       );
       expect(restore, name).toHaveLength(1);
-      expect(save, name).toHaveLength(1);
-      expect(JSON.stringify(save[0])).toContain(
-        "github.ref == 'refs/heads/main'",
-      );
+      expect(save, name).toHaveLength(0);
     }
   });
 
