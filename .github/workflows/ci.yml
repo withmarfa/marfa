@@ -379,7 +379,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-fault-injection != 'false') }}
     name: Core fault injection (Linux)
-    timeout-minutes: 15
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -426,7 +426,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-native != 'false') }}
     name: Core native (x86_64 Linux)
-    timeout-minutes: 90
+    timeout-minutes: 50
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
