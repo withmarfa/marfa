@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params, params_from_iter};
 
 use super::Blob;
 use super::hash::Hash;
@@ -92,30 +92,54 @@ pub fn lenders<'a, 'c>(tx: &'a Transaction<'c>, hash: &'a Hash) -> Lenders<'a, '
         tx,
         hash,
         after: Some(Default::default()),
+        deepest: 0,
     }
 }
 
-const LENDER_AFTER: &str = "SELECT kind, item_type, edge_type, namespace FROM blob_references \
-     WHERE hash = ?1 AND lends = 1 AND (kind, item_type, edge_type, namespace) > (?2, ?3, ?4, ?5) \
-     ORDER BY kind, item_type, edge_type, namespace LIMIT 1";
+/// The next distinct answer after the one read, each a seek past every row that shares
+/// the answer up to one column. SQLite seeks a row-value comparison on its first column
+/// alone, so a single `(a, b) > (?, ?)` would walk every row that lends alike.
+const LENDER_AFTER: [&str; 4] = [
+    "SELECT kind, item_type, edge_type, namespace FROM blob_references \
+     WHERE hash = ?1 AND lends = 1 AND kind > ?2 \
+     ORDER BY kind, item_type, edge_type, namespace LIMIT 1",
+    "SELECT kind, item_type, edge_type, namespace FROM blob_references \
+     WHERE hash = ?1 AND lends = 1 AND kind = ?2 AND item_type > ?3 \
+     ORDER BY item_type, edge_type, namespace LIMIT 1",
+    "SELECT kind, item_type, edge_type, namespace FROM blob_references \
+     WHERE hash = ?1 AND lends = 1 AND kind = ?2 AND item_type = ?3 AND edge_type > ?4 \
+     ORDER BY edge_type, namespace LIMIT 1",
+    "SELECT kind, item_type, edge_type, namespace FROM blob_references \
+     WHERE hash = ?1 AND lends = 1 AND kind = ?2 AND item_type = ?3 AND edge_type = ?4 \
+     AND namespace > ?5 ORDER BY namespace LIMIT 1",
+];
 
 pub struct Lenders<'a, 'c> {
     tx: &'a Transaction<'c>,
     hash: &'a Hash,
     /// The last answer read, or `None` once the walk has ended.
     after: Option<[String; 4]>,
+    /// How many of `after`'s columns hold an answer, less one.
+    deepest: usize,
 }
 
 impl Lenders<'_, '_> {
     fn step(&self, after: &[String; 4]) -> Result<Option<[String; 4]>> {
-        Ok(self
-            .tx
-            .prepare_cached(LENDER_AFTER)?
-            .query_row(
-                params![self.hash.as_str(), after[0], after[1], after[2], after[3]],
-                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]),
-            )
-            .optional()?)
+        for depth in (0..=self.deepest).rev() {
+            let bound = after[..=depth].iter().map(String::as_str);
+            let found = self
+                .tx
+                .prepare_cached(LENDER_AFTER[depth])?
+                .query_row(
+                    params_from_iter(std::iter::once(self.hash.as_str()).chain(bound)),
+                    |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]),
+                )
+                .optional()?;
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -127,6 +151,7 @@ impl Iterator for Lenders<'_, '_> {
         let [kind, item_type, edge_type, namespace] = match self.step(&after) {
             Ok(Some(found)) => {
                 self.after = Some(found.clone());
+                self.deepest = LENDER_AFTER.len() - 1;
                 found
             }
             Ok(None) => return None,
@@ -326,7 +351,7 @@ pub fn stores(tx: &Transaction<'_>) -> Result<Vec<StoreRecord>> {
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::Connection;
+    use rusqlite::{Connection, StatementStatus};
 
     use super::*;
     use crate::db::migrate::MIGRATIONS;
@@ -379,15 +404,29 @@ mod tests {
             ]
         );
 
-        let plan: Vec<String> = tx
-            .prepare(&format!("EXPLAIN QUERY PLAN {LENDER_AFTER}"))
-            .unwrap()
-            .query_map(params![hash.as_str(), "", "", "", ""], |row| row.get(3))
-            .unwrap()
-            .map(|detail| detail.unwrap())
-            .collect();
-        let plan = plan.join("; ");
-        assert!(plan.contains("COVERING INDEX blob_lenders (hash=? AND (kind,item_type,edge_type,namespace)>(?,?,?,?))"), "{plan}");
-        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+        let steps: i32 = LENDER_AFTER
+            .iter()
+            .map(|sql| {
+                let statement = tx.prepare_cached(sql).unwrap();
+                statement.get_status(StatementStatus::VmStep)
+            })
+            .sum();
+        assert!(
+            steps < 1_000,
+            "{steps} steps for 4,000 rows that lend alike"
+        );
+        for (depth, sql) in LENDER_AFTER.iter().enumerate() {
+            let bound = vec![""; depth + 2];
+            let plan: Vec<String> = tx
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap()
+                .query_map(params_from_iter(bound), |row| row.get(3))
+                .unwrap()
+                .map(|detail| detail.unwrap())
+                .collect();
+            let plan = plan.join("; ");
+            assert!(plan.contains("COVERING INDEX blob_lenders"), "{plan}");
+            assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+        }
     }
 }
