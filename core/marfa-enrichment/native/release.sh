@@ -72,6 +72,7 @@ select_root
 
 CRATE=$(cd "$NATIVE_DIR/.." && pwd)
 CORE=$(cd "$CRATE/.." && pwd)
+REPOSITORY=$(cd "$CORE/.." && pwd)
 OUT="$ROOT/out/$TARGET"
 started=$SECONDS
 stage_start=$SECONDS
@@ -111,12 +112,12 @@ case "$TARGET" in
     # caller names is a mount from the host and does not.
     inside() {
       docker run --rm --platform linux/amd64 \
-        -v "$ROOT:/native-root" -v "$volume:/work" -v "$CORE:/core:ro" \
+        -v "$ROOT:/native-root" -v "$volume:/work" -v "$REPOSITORY:/repository:ro" \
         -e MARFA_NATIVE_ROOT=/native-root -e MARFA_NATIVE_WORK=/work -e CARGO_HOME=/work/cargo-home \
         -e MARFA_KEEP_WORK="${MARFA_KEEP_WORK:-}" \
         "$image" "$@"
     }
-    here=/core/marfa-enrichment/native
+    here=/repository/core/marfa-enrichment/native
     stage "build the libraries (native/build.sh), in the image"
     inside "$here/build.sh" "$TARGET"
     if [ -n "$server" ]; then
