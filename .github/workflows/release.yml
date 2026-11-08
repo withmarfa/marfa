@@ -12,7 +12,10 @@ name: Release
 # to read a picture under the full sandbox; the Linux programs are static, so
 # they run on any distribution, and each runs on its own architecture before a
 # release is made. There is no Intel Mac build. A release is not published
-# unless every archive and the image built and ran.
+# unless every archive and the image built and ran, and the install proof held:
+# on a clean runner of each platform the collected archives go through
+# `scripts/install.sh` and `marfa server install` (the image too, on Linux)
+# behind HTTPS, in a dry run as in a release, and nothing is published by it.
 #
 # The Homebrew formula is written every run and held with the release's files.
 # It is pushed to `withmarfa/homebrew-tap` only when the repository variable
@@ -762,6 +765,53 @@ jobs:
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
           if-no-files-found: error
 
+  # What a person does with a release, on a clean runner of each platform and
+  # with the files this run collected, not the ones a tag would publish:
+  # `scripts/install.sh` installs them, `marfa server install` runs the server
+  # as a service of the machine, Caddy puts HTTPS in front with a certificate
+  # authority of its own, and the owner claims the instance on the private
+  # socket. The Linux x86_64 runner does the install as root, with the system
+  # unit and the `marfa` account, and again with Docker on an image built here
+  # from the same archives. The arm64 runner runs a systemd user unit. A Mac
+  # with Docker cannot run on GitHub, so Docker on a Mac is proved by hand.
+  # It publishes nothing, and a release waits for it: an archive that does not
+  # install is not a release.
+  install-proof:
+    name: Prove the install (${{ matrix.platform }})
+    needs: [version, collect]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-26
+            modes: native-user
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+            modes: native-root docker
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            modes: native-user
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      MODES: ${{ matrix.modes }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/release
+
+      - name: Install, claim and reach the server behind HTTPS
+        run: |
+          read -ra modes <<< "$MODES"
+          bash scripts/release/install-proof.sh "$RUNNER_TEMP/release" "$VERSION" "${modes[@]}"
+
   # Never reached by a dry run. Ordered so a failure part way leaves what a
   # re-run of the same tag can finish, and never a version half out: the
   # preflight asks every registry what it holds, and every registry that
@@ -786,7 +836,7 @@ jobs:
   # on.
   publish:
     name: Publish
-    needs: [version, collect, run-linux, image]
+    needs: [version, collect, run-linux, image, install-proof]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
