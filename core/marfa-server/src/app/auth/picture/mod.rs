@@ -96,8 +96,6 @@ impl App {
         door.admit(caller, &self.clock.stamp())
     }
 
-    /// Keeps the picture's bytes, then swaps them in for the owner's picture in one write. A
-    /// refusal keeps the previous picture.
     pub async fn put_picture(
         &self,
         caller: &Caller,

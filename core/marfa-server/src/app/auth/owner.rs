@@ -253,8 +253,6 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
     .await
 }
 
-/// What a key or an app may change of the owner's profile: the name, and the picture by
-/// removing it.
 #[derive(Debug)]
 pub struct ProfileUpdate {
     name: Option<String>,
@@ -293,7 +291,6 @@ impl ProfileUpdate {
     }
 }
 
-/// Every field changes, or none does: each is checked on the state the write commits.
 pub async fn update_profile(
     app: &App,
     caller: &Caller,

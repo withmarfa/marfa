@@ -76,8 +76,6 @@ fn le24(bytes: &[u8], from: usize) -> Option<u32> {
     at::<3>(bytes, from).map(|[a, b, c]| u32::from_le_bytes([a, b, c, 0]))
 }
 
-/// A chain of chunks that starts with the header, holds image data and ends with `IEND` as
-/// the file's last twelve bytes.
 fn png(bytes: &[u8]) -> Found {
     let (mut next, mut sides, mut data) = (PNG_SIGNATURE.len(), None, false);
     loop {
@@ -251,7 +249,7 @@ fn kind_of(bytes: &[u8]) -> Option<Kind> {
     }
 }
 
-/// The kind of a whole, well-formed picture whose sides are 1 to 4096 pixels.
+/// Checks container markers and dimensions without decoding pixels.
 pub fn of(bytes: &[u8]) -> Result<Kind, Refusal> {
     let kind = kind_of(bytes).ok_or(Fault::Unknown)?;
     let (width, height) = match kind {
