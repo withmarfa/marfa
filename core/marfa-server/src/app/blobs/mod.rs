@@ -116,7 +116,10 @@ fn insufficient() -> Refusal {
 
 /// A write that ran out of room is `507`; any other failure is the store's.
 fn unwritable(error: io::Error) -> Refusal {
-    if error.kind() == io::ErrorKind::StorageFull {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    ) {
         return insufficient();
     }
     tracing::error!(%error, "A blob write failed");
@@ -156,6 +159,13 @@ pub struct Intake {
 }
 
 impl Intake {
+    /// Removes the file on a blocking task, so that when this returns it is gone.
+    pub async fn discard(mut self) {
+        if let Some(staged) = self.staged.take() {
+            let _ = tokio::task::spawn_blocking(move || staged.discard()).await;
+        }
+    }
+
     pub async fn push(&mut self, bytes: impl AsRef<[u8]> + Send + 'static) -> Result<()> {
         let Some(mut staged) = self.staged.take() else {
             return Err(Refusal::internal("an upload was pushed after it finished"));
@@ -224,22 +234,27 @@ impl App {
         let Some(mut staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
-        if staged.size() == 0 {
-            return Err(
-                Refusal::validation("The body is empty; send the bytes to keep.")
-                    .with_detail("field", "body"),
-            );
-        }
         let disk = intake.disk.clone();
         let (hash, size) = joined(
             tokio::task::spawn_blocking(move || {
-                let hash = staged.seal()?;
-                disk.publish(&mut staged, &hash)?;
-                Ok::<_, io::Error>((hash, staged.size()))
+                if staged.size() == 0 {
+                    staged.discard();
+                    return Ok::<_, io::Error>(None);
+                }
+                let placed = staged
+                    .seal()
+                    .and_then(|hash| disk.publish(&mut staged, &hash).map(|()| hash));
+                let size = staged.size();
+                staged.discard();
+                placed.map(|hash| Some((hash, size)))
             })
             .await,
         )?
-        .map_err(unwritable)?;
+        .map_err(unwritable)?
+        .ok_or_else(|| {
+            Refusal::validation("The body is empty; send the bytes to keep.")
+                .with_detail("field", "body")
+        })?;
         let blob = Blob {
             hash,
             mime_type: intake.mime_type.clone(),
