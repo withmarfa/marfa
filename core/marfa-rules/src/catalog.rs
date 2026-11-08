@@ -907,6 +907,9 @@ impl Catalog {
             fields.insert(name.as_str(), definition);
         }
         crate::validation::properties(&fields, properties, complete)?;
+        if complete {
+            self.judge_schedule(type_id, properties)?;
+        }
         if let Some(status) = StatusField::of(type_id, &resolved)
             && let Some(value) = written.get(&status.name)
             && !value.is_null()
@@ -928,6 +931,35 @@ impl Catalog {
             )]));
         }
         Ok(())
+    }
+
+    /// An event's schedule and a task's `recurrence` are judged on the item a write leaves.
+    fn judge_schedule(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+    ) -> Result<(), RuleError> {
+        let issues = if self.matches("core.event", type_id) {
+            crate::recurrence::event_issues(properties)
+        } else if self.matches("core.task", type_id) {
+            crate::recurrence::task_issues(properties)
+        } else {
+            return Ok(());
+        };
+        if issues.is_empty() {
+            return Ok(());
+        }
+        let summary = issues
+            .iter()
+            .map(|issue| format!("{}: {}", issue.field, issue.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(RuleError::new(Code::InvalidProperties, summary).with_fields(
+            issues
+                .into_iter()
+                .map(|issue| FieldError::new(issue.field, field_code::INVALID_VALUE, issue.message))
+                .collect(),
+        ))
     }
 
     /// Merged root to leaf. A type the copy does not hold declares none.
