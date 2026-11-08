@@ -51,6 +51,10 @@ impl Reach {
         Ok(reach)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.open.is_empty() && self.held.is_empty()
+    }
+
     pub fn narrowed(&self, keep: impl Fn(&str) -> bool) -> Reach {
         let kept = |types: &[String]| {
             types

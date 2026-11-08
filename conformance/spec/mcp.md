@@ -228,6 +228,22 @@ If a `marfa_delete` call carries a `confirm` token from a preview more than five
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a confirmation once five minutes have passed since the preview`.
 
+### `mcp/delete-single-use`
+
+If a `marfa_delete` call carries a `confirm` token that an earlier call already used, then the server MUST NOT move any item to the trash on it.
+
+**Reason:** a person agreed once. The server records a used token until it expires, in the transaction that moved the items, so a retry, a replay or a second client holding the token cannot trash again what was restored in between.
+
+**Tests:** `compliance/mcp-single-use.test.ts › moves nothing to the trash again on a confirmation an earlier call used`.
+
+### `mcp/delete-repeated`
+
+When a `marfa_delete` call carries a `confirm` token that an earlier call used to move the same IDs to the trash, by the same credential, the server MUST answer `already_trashed` as `true` and the `total` that call moved.
+
+**Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
+
+**Tests:** `compliance/mcp-single-use.test.ts › says a repeated confirmation already moved the items to the trash`.
+
 ## Moving items to another type
 
 `marfa_move_items` moves every item of one type to another in two calls, as `marfa_delete` trashes: a preview that names the items the move would take, with a `confirm` token, and a call with that token, which starts the move as a job. A token is refused, as `marfa_delete`'s is, when another credential sends it or five minutes have passed.
@@ -342,11 +358,27 @@ If the address `marfa_create` names answers with a redirect, then the server MUS
 
 **Tests:** `compliance/mcp-scripted.test.ts › does not follow a redirect, and answers file_not_fetched with reason redirect`.
 
+### `mcp/fetch-settings`
+
+When an authorized caller replaces or updates the configuration, the server MUST accept `mcp_fetch_enabled` as true or false, `mcp_fetch_max_bytes` as a whole number of bytes of 1 or more, and `mcp_fetch_timeout_ms` as a whole number of milliseconds from 1 to 3600000.
+
+**Reason:** the owner decides whether agents may make the server fetch files, how large a file it fetches and how long it waits for one. Raising the largest file also needs a longer wait for it, so the time is a setting beside the size. They are stored in the instance and have no environment setting.
+
+**Tests:** `compliance/mcp-scripted.test.ts › applies a stored mcp_fetch_max_bytes and mcp_fetch_enabled to the next fetch without a restart`.
+
+### `mcp/fetch-settings-live`
+
+When a stored `mcp_fetch_enabled`, `mcp_fetch_max_bytes` or `mcp_fetch_timeout_ms` changes, the server MUST apply the stored value to the next fetch without a restart.
+
+**Reason:** a fetch already running keeps the limits it started with, and the next one follows the owner's change.
+
+**Tests:** `compliance/mcp-scripted.test.ts › applies a stored mcp_fetch_max_bytes and mcp_fetch_enabled to the next fetch without a restart`.
+
 ### `mcp/file-too-large`
 
-If the file `marfa_create` names is larger than `mcp_fetch_max_bytes`, then the server MUST answer a tool error with code `file_not_fetched` and reason `too_large`.
+If the file `marfa_create` names is larger than the stored `mcp_fetch_max_bytes`, then the server MUST answer a tool error with code `file_not_fetched` and reason `too_large`.
 
-**Tests:** `compliance/mcp-scripted.test.ts › refuses a file larger than MARFA_MCP_FETCH_MAX_BYTES with reason too_large and saves nothing`.
+**Tests:** `compliance/mcp-scripted.test.ts › refuses a file larger than mcp_fetch_max_bytes with reason too_large and saves nothing`.
 
 ### `mcp/file-status`
 
@@ -404,6 +436,6 @@ Where rate limiting is on, if one credential's tool calls ask to fetch more than
 
 ### `mcp/file-disabled`
 
-While `mcp_fetch_enabled` is off, if `marfa_create` is asked to save a file from `url` or `file`, then the server MUST answer a tool error with code `file_not_fetched` and reason `disabled` without connecting to the address.
+While the stored `mcp_fetch_enabled` is false, if `marfa_create` is asked to save a file from `url` or `file`, then the server MUST answer a tool error with code `file_not_fetched` and reason `disabled` without connecting to the address.
 
-**Tests:** `compliance/mcp-scripted.test.ts › refuses url and file with reason disabled while MARFA_MCP_FETCH_ENABLED is off, without connecting`.
+**Tests:** `compliance/mcp-scripted.test.ts › refuses url and file with reason disabled while mcp_fetch_enabled is false, without connecting`.

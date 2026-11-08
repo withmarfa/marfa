@@ -58,7 +58,15 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_WRITE_WAIT_MS",
         "How long a write waits for the one writer before it fails, in milliseconds.",
     ),
+    plain(
+        "MARFA_CONNECTOR_HOLD_MS",
+        "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.",
+    ),
     plain("MARFA_BLOB_PATH", "Where the server keeps files."),
+    plain(
+        "MARFA_ENRICHMENT_TESSDATA_DIR",
+        "A folder of `<language>.traineddata` files that OCR reads beside the models the server carries, and in place of one of the same language. The server only reads it, and it may be missing.",
+    ),
     plain(
         "MARFA_CONTROL_SOCKET",
         "Where the private socket for the person running the server is.",

@@ -9,6 +9,9 @@
 #   <target>   aarch64-apple-darwin, aarch64-unknown-linux-musl or x86_64-unknown-linux-musl
 #   --full     also run the whole matrix of native/verify.sh (every format, OCR in six
 #              languages, damaged files, injected faults, the memory limit)
+#   --server   build the libraries and the server with them linked in
+#              (out/<target>/marfa-server, native/server.sh), and nothing else;
+#              MARFA_SERVER_FEATURES adds cargo features to it
 #   --needs    print what the runner must have, and stop
 #
 # The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa-enrichment-read (what ships),
@@ -56,9 +59,11 @@ EOF
 select_target "${1:-}"
 shift
 full=
+server=
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) full=1; shift ;;
+    --server) server=1; shift ;;
     --needs) needs; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
@@ -68,6 +73,7 @@ select_root
 
 CRATE=$(cd "$NATIVE_DIR/.." && pwd)
 CORE=$(cd "$CRATE/.." && pwd)
+REPOSITORY=$(cd "$CORE/.." && pwd)
 OUT="$ROOT/out/$TARGET"
 started=$SECONDS
 stage_start=$SECONDS
@@ -84,6 +90,11 @@ case "$TARGET" in
     need git curl python3 tar patch cmake ninja cargo rustc xcrun otool vtool codesign
     stage "build the libraries (native/build.sh)"
     "$NATIVE_DIR/build.sh" "$TARGET"
+    if [ -n "$server" ]; then
+      stage "build the server (native/server.sh)"
+      "$NATIVE_DIR/server.sh" "$TARGET"
+      exit 0
+    fi
     stage "build, link and check the programs (native/program.sh)"
     "$NATIVE_DIR/program.sh" "$TARGET"
     stage "gather the licences (native/licenses.sh)"
@@ -102,14 +113,20 @@ case "$TARGET" in
     # caller names is a mount from the host and does not.
     inside() {
       docker run --rm --platform linux/amd64 \
-        -v "$ROOT:/native-root" -v "$volume:/work" -v "$CORE:/core:ro" \
+        -v "$ROOT:/native-root" -v "$volume:/work" -v "$REPOSITORY:/repository:ro" \
         -e MARFA_NATIVE_ROOT=/native-root -e MARFA_NATIVE_WORK=/work -e CARGO_HOME=/work/cargo-home \
-        -e MARFA_KEEP_WORK="${MARFA_KEEP_WORK:-}" \
+        -e MARFA_KEEP_WORK="${MARFA_KEEP_WORK:-}" -e MARFA_SERVER_FEATURES="${MARFA_SERVER_FEATURES:-}" \
         "$image" "$@"
     }
-    here=/core/marfa-enrichment/native
+    here=/repository/core/marfa-enrichment/native
     stage "build the libraries (native/build.sh), in the image"
     inside "$here/build.sh" "$TARGET"
+    if [ -n "$server" ]; then
+      stage "build the server (native/server.sh), in the image"
+      inside "$here/server.sh" "$TARGET"
+      inside chown -R "$(id -u):$(id -g)" /native-root
+      exit 0
+    fi
     stage "build, link and check the programs (native/program.sh), in the image"
     inside "$here/program.sh" "$TARGET"
     stage "gather the licences (native/licenses.sh), in the image"

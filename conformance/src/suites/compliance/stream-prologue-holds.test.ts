@@ -13,16 +13,7 @@ import {
   type StreamTap,
 } from "../../utils/stream-tap.js";
 
-/**
- * What a stream does with the events written while it opens. A stream reads
- * the log a page at a time and judges each page under the credential as it
- * stands when the page is read. The fixtures hold the stream before its
- * replay (`hold:stream-replay`), write while it waits, change the key, and let
- * it go.
- *
- * A server of its own, so a stream sees only what the case wrote. The case
- * that moves the clock is last.
- */
+// The case that moves the clock runs last.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

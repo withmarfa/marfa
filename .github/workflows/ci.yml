@@ -1049,18 +1049,39 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
     name: Rust server (release build)
-    timeout-minutes: 20
+    timeout-minutes: 60
     runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # The server is built with the file readers linked in, the way the
+      # native job builds them: in the pinned image, for the static musl
+      # target, from the sources `native/manifest.txt` pins. The first build
+      # of a target asks for 40 GB of free disk, and the runner starts with
+      # less. These are the toolchains it does not use.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      # The same key as the native job's, so that both restore what a push to
+      # `main` there saved: PDFium's finished library and the pinned downloads.
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        uses: actions/cache/restore@v6
         with:
-          workspaces: core
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
       - name: Build the Rust server
-        working-directory: core
-        run: cargo build --locked --release -p marfa-server --features test-hooks
+        env:
+          MARFA_SERVER_FEATURES: test-hooks
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
       # diagnostic, so it is kept on success like the reports.
@@ -1068,7 +1089,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server
-          path: core/target/release/marfa-server
+          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
           if-no-files-found: error
           retention-days: 3
 

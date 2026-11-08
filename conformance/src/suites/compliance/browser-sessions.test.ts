@@ -417,7 +417,9 @@ describe("a browser session ending", () => {
 
   it("leaves every app connected across a restart of the server", async () => {
     await connectApps(live);
-    await server!.restart({ env: { PORT: new URL(server!.apiUrl).port } });
+    await server!.restart({
+      env: { MARFA_PORT: new URL(server!.apiUrl).port },
+    });
     await expectAppsConnected(live);
 
     expect((await post("/auth/sign-out", live)).status).toBe(200);

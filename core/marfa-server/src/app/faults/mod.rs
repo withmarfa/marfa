@@ -9,10 +9,12 @@ macro_rules! point_list {
         HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
         HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
         HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+        HOLD_BLOB_READ = Hold "blob-read" Nth;
         HOLD_STREAM_OPEN = Hold "stream-open" None;
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
         HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+        HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
         FAIL_STREAM_HEAD = Fail "stream-head" Nth;
         FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
         FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
@@ -34,6 +36,13 @@ macro_rules! point_list {
         REFUSE_BLOB_STORE = Refuse "blob-store" None;
         }
     };
+}
+
+/// `judged>reached` lets a public-address check connect to a local fixture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub judged: Vec<std::net::IpAddr>,
+    pub reached: Vec<std::net::IpAddr>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

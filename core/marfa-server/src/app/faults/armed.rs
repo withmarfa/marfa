@@ -6,7 +6,7 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use super::super::housekeeping;
-use super::{DEVICE_OWNER_INSTANCE_LANE, TYPE_DEFINITION, Volume};
+use super::{DEVICE_OWNER_INSTANCE_LANE, Resolved, TYPE_DEFINITION, Volume};
 use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
@@ -142,7 +142,8 @@ fn is_action(text: &str) -> bool {
 fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     let name = point.name;
     let Some(arg) = arg else {
-        return Ok((point.argument != Argument::None).then_some(Aim {
+        let counted = point.kind != Kind::Hold && point.argument != Argument::None;
+        return Ok(counted.then_some(Aim {
             action: None,
             nth: 1,
         }));
@@ -257,6 +258,17 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        "resolve" => {
+            if rest.is_empty()
+                || !rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+            {
+                return Err("a resolve fault is named for a host name".to_string());
+            }
+            answers(arg.ok_or("a resolve fault takes the addresses the host resolves to")?)?;
+            Ok((None, None))
+        }
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
                 return Err(format!(
@@ -288,10 +300,39 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume>, limit:<lane> or unreadable:<stored>"
+             deadline:<job>, free:<volume>, resolve:<host>, limit:<lane> or unreadable:<stored>"
                 .to_string(),
         ),
     }
+}
+
+/// One answer for each lookup, separated by `;`, each a list of addresses separated by `,`.
+fn answers(arg: &str) -> Result<Vec<Resolved>, String> {
+    let refused = || {
+        format!(
+            "{arg} is not what a host resolves to: write the addresses of each lookup \
+             separated by ',', the lookups separated by ';', and an address as <judged>><reached> \
+             to judge one and reach another"
+        )
+    };
+    arg.split(';')
+        .map(|lookup| {
+            let mut resolved = Resolved {
+                judged: Vec::new(),
+                reached: Vec::new(),
+            };
+            for entry in lookup.split(',') {
+                let (judged, reached) = entry.split_once('>').unwrap_or((entry, entry));
+                resolved
+                    .judged
+                    .push(judged.trim().parse().map_err(|_| refused())?);
+                resolved
+                    .reached
+                    .push(reached.trim().parse().map_err(|_| refused())?);
+            }
+            Ok(resolved)
+        })
+        .collect()
 }
 
 struct Waiting(Arc<AtomicU64>);
@@ -445,6 +486,18 @@ impl Faults {
         }
         fault.fired += 1;
         true
+    }
+
+    /// Each lookup fires once; the last scripted answer repeats.
+    pub fn resolve(&self, host: &str) -> Option<Resolved> {
+        let name = format!("resolve:{host}");
+        let mut armed = self.armed();
+        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        let lookups = answers(fault.arg.as_deref()?).ok()?;
+        let at = (fault.seen as usize).min(lookups.len().saturating_sub(1));
+        fault.seen = fault.seen.saturating_add(1);
+        fault.fired += 1;
+        lookups.into_iter().nth(at)
     }
 
     pub fn deadline(&self, job: &str) -> Option<Duration> {
@@ -677,6 +730,8 @@ mod tests {
     fn takes_the_points_the_fixtures_arm() {
         for (name, arg) in [
             ("hold:bulk-page", Some("2")),
+            ("hold:blob-read", None),
+            ("hold:blob-read", Some("2")),
             ("fail:health-write", None),
             ("refuse:read", None),
             ("refuse:write", None),
@@ -705,6 +760,38 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    async fn waiting_after(faults: &Arc<Faults>, reaches: usize, point: &'static Point) -> u64 {
+        let tasks: Vec<_> = (0..reaches)
+            .map(|_| {
+                let faults = faults.clone();
+                tokio::spawn(async move { faults.hold(point, None).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiting = faults.list()[0].waiting;
+        faults.clear(None);
+        for task in tasks {
+            task.await.unwrap();
+        }
+        waiting
+    }
+
+    #[tokio::test]
+    async fn an_unnumbered_hold_holds_every_reach() {
+        for point in [HOLD_BLOB_READ, HOLD_BULK_PAGE, HOLD_WRITE] {
+            let faults = Arc::new(Faults::default());
+            faults.set(&format!("hold:{}", point.name), None).unwrap();
+            assert_eq!(waiting_after(&faults, 3, point).await, 3, "{}", point.name);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_numbered_hold_holds_only_that_reach() {
+        let faults = Arc::new(Faults::default());
+        faults.set("hold:blob-read", Some("2")).unwrap();
+        assert_eq!(waiting_after(&faults, 3, HOLD_BLOB_READ).await, 1);
     }
 
     #[tokio::test]

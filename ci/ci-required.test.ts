@@ -294,7 +294,7 @@ describe("what a change runs", () => {
       [...RUST, ...ENRICHMENT, "image", "ci-sqlite", "version-fields"],
     ],
     [
-      "the native readers' scripts, pins and patches, which only the native build and the image's programs read",
+      "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run",
       [
         "core/marfa-enrichment/native/release.sh",
         "core/marfa-enrichment/native/manifest.txt",
@@ -302,7 +302,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["ci-sqlite", "core-native", "image"],
+      ["ci-sqlite", "core-native", "image", "rust-contract"],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",
@@ -688,9 +688,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "image"],
     ],
     [
-      "the native readers' scripts, which the image's programs are built with",
+      "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
-      ["ci-sqlite", "core-native", "image"],
+      ["ci-sqlite", "core-native", "image", "rust-contract"],
     ],
     [
       "the settings, whose names the Dockerfile sets",

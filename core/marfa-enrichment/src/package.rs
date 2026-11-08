@@ -7,8 +7,8 @@ use zip::ZipArchive;
 use zip::read::ZipFile;
 use zip::result::ZipError;
 
-use crate::Refusal;
 use crate::xml::{Xml, attribute};
+use crate::{Limit, Refusal};
 use quick_xml::events::Event;
 
 /// Parts a package may hold. A package of more is refused rather than read:
@@ -60,7 +60,7 @@ pub(crate) fn from_io(error: &io::Error) -> Refusal {
         .get_ref()
         .is_some_and(|inner| inner.is::<OutOfBudget>())
     {
-        Refusal::OverLimit(OutOfBudget.to_string())
+        Refusal::OverLimit(Limit::Inflated, OutOfBudget.to_string())
     } else {
         Refusal::Malformed(error.to_string())
     }
@@ -86,9 +86,10 @@ impl<'a> Package<'a> {
     pub(crate) fn open(bytes: &'a [u8], max_inflated_bytes: u64) -> Result<Self, Refusal> {
         let mut zip = ZipArchive::new(Cursor::new(bytes)).map_err(from_zip)?;
         if zip.len() > MAX_ENTRIES {
-            return Err(Refusal::OverLimit(format!(
-                "the package holds more than {MAX_ENTRIES} parts"
-            )));
+            return Err(Refusal::OverLimit(
+                Limit::Fixed,
+                format!("the package holds more than {MAX_ENTRIES} parts"),
+            ));
         }
         let budget = Budget {
             left: Cell::new(max_inflated_bytes),
@@ -98,7 +99,7 @@ impl<'a> Package<'a> {
         // states, since the reader stops it there, so this bounds the package.
         match zip.decompressed_size() {
             Some(total) if total > u128::from(max_inflated_bytes) => {
-                return Err(Refusal::OverLimit(OutOfBudget.to_string()));
+                return Err(Refusal::OverLimit(Limit::Inflated, OutOfBudget.to_string()));
             }
             Some(_) => {}
             // Parts that state no size are counted by inflating them.
@@ -133,6 +134,7 @@ impl<'a> Package<'a> {
         // the bytes that come out are counted as well.
         if part.size() > budget.left.get() {
             return Err(Refusal::OverLimit(
+                Limit::Inflated,
                 "the document inflates past the limit".into(),
             ));
         }

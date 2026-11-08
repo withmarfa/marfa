@@ -1024,7 +1024,7 @@
           "type": "string",
           "maxLength": 500
         },
-        "description": "The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems."
+        "description": "The source's current problems, by opaque key. Each message is at most 500 characters. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems."
       },
       "BulkActionJobStatus": {
         "type": "string",
@@ -10428,7 +10428,7 @@
                 "type": "null"
               }
             ],
-            "description": "The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`."
+            "description": "The item's tags and extensions after the change, or before it on `item.purged`, with only the namespaces you can read. A webhook sends `null`."
           },
           "restored_with": {
             "type": "string",

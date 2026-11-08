@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { AuditEntry, TestContext } from "../../client/types.js";
 import { createNote } from "../../generators/items.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
 import { publishedOperations } from "../../utils/openapi.js";
 import {
@@ -425,7 +426,7 @@ describe("what the server stamps", () => {
 });
 
 describe("a registration that was refused", () => {
-  it("leaves nothing behind when direct owner authority, a name or a description is refused", async () => {
+  it("leaves nothing behind when local authority, a name or a description is refused", async () => {
     const own = await createSecondClient(ctx, "refused");
     const keyId = (await own.getCurrentKey()).data.id;
     const ownerId = (
@@ -447,9 +448,11 @@ describe("a registration that was refused", () => {
       );
       expect(refused.status, JSON.stringify(body).slice(0, 30)).toBe(400);
     }
-    const byOperator = await getOwnerClient().registerConnector({
-      name: "owner",
-    });
+    const byOperator = await controlRequest(
+      process.env.MARFA_CONTROL_SOCKET!,
+      "/connectors",
+      { method: "POST", body: { name: "owner" } },
+    );
     expect(byOperator.status).toBe(403);
 
     const after = (await operator().listConnectors()).data.data;

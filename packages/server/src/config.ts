@@ -298,7 +298,7 @@ export interface AppConfig {
    *  override `MARFA_ENRICHMENT_MAX_INFLATED_BYTES`. */
   enrichmentMaxInflatedBytes?: number;
   /** The most the JavaScript heap of the process that reads one document
-   *  may take; a document that needs more is skipped. Default 256 MiB; env override
+   *  may take; a document that needs more is skipped. Default 1 GiB; env override
    *  `MARFA_ENRICHMENT_MAX_MEMORY_BYTES`. */
   enrichmentMaxMemoryBytes?: number;
   /** OCR of image files. On unless `MARFA_ENRICHMENT_OCR_ENABLED=false`.
@@ -1344,9 +1344,7 @@ const settingsShape = {
   ),
   MARFA_ENRICHMENT_TESSDATA_DIR: grouped(
     { group: "Text from files", label: "Image reader data folder" },
-    optionalText(
-      "The folder where the OCR language model is cached. When unset, it is a `tessdata` folder beside the database file.",
-    ),
+    optionalText("A folder of OCR language models."),
   ),
   MARFA_ENRICHMENT_INTERVAL_MS: grouped(
     { group: "Fine tuning", label: "Read text every" },
@@ -1370,7 +1368,7 @@ const settingsShape = {
     { group: "Text from files", label: "Largest file to read" },
     count(
       20 * 1024 * 1024,
-      "The largest blob the server extracts text from. A larger blob is skipped unread.",
+      "The largest blob the server extracts text from. A larger blob gets no extracted text.",
       { unit: "bytes" },
     ),
   ),
@@ -1394,8 +1392,8 @@ const settingsShape = {
   MARFA_ENRICHMENT_MAX_MEMORY_BYTES: grouped(
     { group: "Text from files", label: "Memory for reading a document" },
     count(
-      256 * 1024 * 1024,
-      "The most the JavaScript heap of the process that reads one document's text may take. That process also holds the document and what it inflates to, outside the heap, so allow this and the two limits above together. A document that needs more is skipped.",
+      1024 * 1024 * 1024,
+      "The most memory reading one file may use. A file that needs more is skipped.",
       { unit: "bytes" },
     ),
   ),
@@ -1847,29 +1845,6 @@ const settingsShape = {
     on(
       false,
       "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
-    ),
-  ),
-  MARFA_MCP_FETCH_ENABLED: grouped(
-    { group: "Connectors and webhooks", label: "Let agents fetch files" },
-    on(
-      true,
-      "Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.",
-    ),
-  ),
-  MARFA_MCP_FETCH_MAX_BYTES: grouped(
-    { group: "Limits", label: "Largest file an agent fetches" },
-    count(
-      50 * 1024 * 1024,
-      "The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.",
-      { unit: "bytes" },
-    ),
-  ),
-  MARFA_MCP_FETCH_TIMEOUT_MS: grouped(
-    { group: "Limits", label: "Time an agent's fetch may take" },
-    count(
-      60_000,
-      "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.",
-      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
     ),
   ),
   MARFA_ERROR_REPORTING_ENABLED: grouped(
@@ -2512,9 +2487,6 @@ export function loadConfig(
     bulkActionPollBackoffMultiplier:
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
-    mcpFetchEnabled: s.MARFA_MCP_FETCH_ENABLED,
-    mcpFetchMaxBytes: s.MARFA_MCP_FETCH_MAX_BYTES,
-    mcpFetchTimeoutMs: s.MARFA_MCP_FETCH_TIMEOUT_MS,
     deploymentEnvironment:
       firstNamed(
         s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"],

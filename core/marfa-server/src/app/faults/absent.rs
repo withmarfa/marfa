@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::Volume;
+use super::{Resolved, Volume};
 use crate::db::Pulse;
 
 #[derive(Debug)]
@@ -35,6 +35,10 @@ impl Faults {
 
     pub fn fail_job(&self, _job: &str) -> bool {
         false
+    }
+
+    pub fn resolve(&self, _host: &str) -> Option<Resolved> {
+        None
     }
 
     pub fn deadline(&self, _job: &str) -> Option<Duration> {

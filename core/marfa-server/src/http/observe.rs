@@ -16,6 +16,7 @@ use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
 use super::pages::{self, Notice};
+use crate::app::provenance::{self, Origin};
 use crate::app::refusal::Code;
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
@@ -109,7 +110,11 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
 
     let span = observed.app.telemetry.begin(request.headers(), &method);
     let upload = super::blobs::is_upload(&request);
-    let mut response = next.run(request).await;
+    let origin = Origin {
+        client_ip: caller_address.map(|address| address.to_string()),
+        via: None,
+    };
+    let mut response = provenance::within(origin, next.run(request)).await;
     if upload && !body.is_whole() {
         // An upload has no size cap, so its unread rest is dropped with the connection, not
         // read and thrown away.

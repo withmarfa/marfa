@@ -971,6 +971,63 @@ async fn a_browser_reads_counts_and_no_other_content_door() {
 }
 
 #[tokio::test]
+async fn a_tool_call_an_app_lacks_a_scope_for_is_challenged_to_step_up() {
+    let instance = Instance::signed_in().await;
+    let scope = "core.task:write core.note:read offline_access";
+    let client = instance.register(scope).await;
+    let issued = instance.tokens(&client, scope).await;
+    let token = text_at(&issued, "access_token");
+    let create = |type_id: &str| {
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "marfa_create",
+                "arguments": { "type": type_id, "properties": { "title": "Needs a scope" } },
+            },
+        });
+        Request::builder()
+            .method(Method::POST)
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(message.to_string()))
+            .unwrap()
+    };
+    let challenged = instance.send(create("core.note")).await;
+    assert_eq!(
+        challenged.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        challenged.text
+    );
+    let header = challenged
+        .headers
+        .get(header::WWW_AUTHENTICATE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let origin = instance.app.addresses().sign_in().origin().to_string();
+    assert!(header.starts_with("Bearer "), "{header}");
+    assert!(header.contains("error=\"insufficient_scope\""), "{header}");
+    assert!(header.contains("scope=\"core.note:write\""), "{header}");
+    assert!(
+        header.contains(&format!(
+            "resource_metadata=\"{origin}/.well-known/oauth-protected-resource/mcp\""
+        )),
+        "{header}"
+    );
+    // The witnesses: the type the token writes is saved, and a type nothing registered is the
+    // tool's error, not a challenge.
+    let saved = instance.send(create("core.task")).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    assert!(saved.text.contains("created"), "{}", saved.text);
+    let unregistered = instance.send(create("user.nothing")).await;
+    assert_eq!(unregistered.status, StatusCode::OK, "{}", unregistered.text);
+    assert!(unregistered.headers.get(header::WWW_AUTHENTICATE).is_none());
+}
+
+#[tokio::test]
 async fn an_app_cannot_write_a_system_type_its_scope_names() {
     let instance = Instance::signed_in().await;
     let scope = "core.note:write system.view:write offline_access";

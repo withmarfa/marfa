@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS edges (
 
 CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type, created_at, id);
-CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type);
+CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_newest ON edges (created_at, id);
 CREATE INDEX IF NOT EXISTS edges_changed ON edges (updated_at, id);
 
@@ -349,6 +349,18 @@ CREATE TABLE IF NOT EXISTS rate_limit_windows (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS rate_limit_windows_expiry ON rate_limit_windows (expires_at);
+
+-- Spent signatures expire at `expires_at`, in milliseconds.
+CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
+    token TEXT PRIMARY KEY NOT NULL,
+    credential TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
+    ON mcp_spent_confirmations (expires_at);
 
 -- What the OAuth server keeps. A secret is held only as a digest, and every
 -- time is in milliseconds.
@@ -605,3 +617,171 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.
+CREATE TABLE IF NOT EXISTS connectors (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    key_id TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL CHECK (length(source) > 0),
+    name TEXT NOT NULL CHECK (length(name) > 0),
+    description TEXT,
+    read_only_types TEXT NOT NULL CHECK (json_valid(read_only_types)),
+    registered_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_heartbeat_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS connector_runs (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    connector_id TEXT NOT NULL REFERENCES connectors (id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    summary TEXT,
+    error TEXT,
+    reported_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS connector_runs_newest
+    ON connector_runs (connector_id, reported_at DESC, seq DESC);
+
+CREATE TABLE IF NOT EXISTS connector_holds (
+    connector_id TEXT PRIMARY KEY REFERENCES connectors (id) ON DELETE CASCADE,
+    process TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS connector_states (
+    source TEXT PRIMARY KEY CHECK (length(source) > 0),
+    state TEXT NOT NULL CHECK (json_valid(state)),
+    problems TEXT NOT NULL CHECK (json_valid(problems)),
+    updated_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS connector_agreements (
+    source TEXT NOT NULL CHECK (length(source) > 0),
+    item_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    waiting INTEGER NOT NULL CHECK (waiting IN (0, 1)),
+    record TEXT NOT NULL CHECK (json_valid(record)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (source, item_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS connector_agreements_order
+    ON connector_agreements (source, updated_at, item_id);
+CREATE INDEX IF NOT EXISTS connector_agreements_item ON connector_agreements (item_id);
+
+-- One row, and an integer by construction: a stored generation always reads.
+CREATE TABLE IF NOT EXISTS read_only_generation (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    value INTEGER NOT NULL
+) STRICT;
+
+-- Raised when a key or a registration changes in a way that decides which items read as read only.
+CREATE TRIGGER IF NOT EXISTS read_only_registered AFTER INSERT ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_declared AFTER UPDATE OF read_only_types ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_removed AFTER DELETE ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_key_changed
+AFTER UPDATE OF source, type_permissions, expires_at, revoked_at ON api_keys
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_key_removed AFTER DELETE ON api_keys
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_claim_changed AFTER INSERT ON api_key_sources
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_claim_removed AFTER DELETE ON api_key_sources
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+
+CREATE TABLE IF NOT EXISTS enrichment_files (
+    item_seq INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    signature TEXT NOT NULL DEFAULT '',
+    -- The limit that stopped an over-limit file, and what it was then.
+    capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
+    capped_at INTEGER,
+    -- A skipped file offered once more because a field a read fills was cleared; the refusal stays.
+    refill INTEGER NOT NULL DEFAULT 0 CHECK (refill IN (0, 1)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (item_seq, hash),
+    CHECK (refill = 0 OR state = 'skipped'),
+    CHECK ((state = 'skipped') = (reason IS NOT NULL)),
+    CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
+    CHECK ((capped_by IS NULL) = (capped_at IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);
+
+-- Delay the wake to group a burst of writes into one run.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_referenced AFTER INSERT ON blob_references
+WHEN NEW.kind = 'item' AND NEW.lends = 1
+BEGIN
+    INSERT OR REPLACE INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+-- An existing reference alone does not queue changed file properties. A skipped file keeps its
+-- refusal and is read once more.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
+WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
+    NEW.type IS NOT OLD.type
+    OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
+    OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
+    OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
+    OR (NEW.properties ->> '$.duration' IS NULL AND OLD.properties ->> '$.duration' IS NOT NULL))
+BEGIN
+    INSERT INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.properties ->> '$.blob_ref', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT (item_seq, hash) DO UPDATE
+    SET state = CASE enrichment_files.state WHEN 'read' THEN 'waiting' ELSE enrichment_files.state END,
+        attempts = 0,
+        reason = CASE enrichment_files.state WHEN 'read' THEN NULL ELSE enrichment_files.reason END,
+        signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
+        refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
+        updated_at = excluded.updated_at
+    WHERE enrichment_files.state IN ('read', 'skipped');
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_unreferenced AFTER DELETE ON blob_references
+WHEN OLD.kind = 'item'
+BEGIN
+    DELETE FROM enrichment_files WHERE item_seq = OLD.seq AND hash = OLD.hash;
+END;

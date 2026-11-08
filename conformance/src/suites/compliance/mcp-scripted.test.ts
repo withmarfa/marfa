@@ -46,9 +46,17 @@ const hosts: Server[] = [];
 
 beforeAll(async () => {
   server = await bootFreshServer("mcp-scripted", {
-    MARFA_MCP_FETCH_MAX_BYTES: String(FETCH_MAX_BYTES),
     MARFA_RATE_LIMIT_ENABLED: "true",
   });
+  const stored = await new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: server.workingKey,
+  }).patchConfig({ mcp_fetch_max_bytes: FETCH_MAX_BYTES });
+  if (stored.status !== 200) {
+    throw new Error(
+      `the fetch limit was not stored: ${JSON.stringify(stored.error)}`,
+    );
+  }
   mcp = await connectMcp(server.apiUrl, server.workingKey);
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -183,7 +191,7 @@ describe("marfa_create with a file", () => {
     expect(inner.hits()).toBe(0);
   });
 
-  it("refuses a file larger than MARFA_MCP_FETCH_MAX_BYTES with reason too_large and saves nothing", async () => {
+  it("refuses a file larger than mcp_fetch_max_bytes with reason too_large and saves nothing", async () => {
     const host = await fileHost((_req, res) => {
       res.writeHead(200, {
         "Content-Type": "video/mp4",
@@ -395,7 +403,7 @@ describe("marfa_create's fetches", () => {
   });
 
   it(
-    "refuses url and file with reason disabled while MARFA_MCP_FETCH_ENABLED is off, without connecting",
+    "refuses url and file with reason disabled while mcp_fetch_enabled is false, without connecting",
     async () => {
       const host = await fileHost((_req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -406,9 +414,12 @@ describe("marfa_create's fetches", () => {
       toolResult(await callTool(mcp, "marfa_create", { url }));
       expect(host.hits()).toBe(1);
 
-      const off = await bootFreshServer("mcp-scripted-off", {
-        MARFA_MCP_FETCH_ENABLED: "false",
-      });
+      const off = await bootFreshServer("mcp-scripted-off");
+      const switched = await new MarfaClient({
+        baseUrl: off.apiUrl,
+        apiKey: off.workingKey,
+      }).patchConfig({ mcp_fetch_enabled: false });
+      expect(switched.status, JSON.stringify(switched.error)).toBe(200);
       await off.setFault(`resolve:off.test=${PUBLIC_ADDRESS}>127.0.0.1`);
       const connection = await connectMcp(off.apiUrl, off.workingKey);
       try {
@@ -428,6 +439,46 @@ describe("marfa_create's fetches", () => {
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it("applies a stored mcp_fetch_max_bytes and mcp_fetch_enabled to the next fetch without a restart", async () => {
+    const host = await fileHost((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("0123456789");
+    });
+    const url = await host.at("stored.test", "/ten.txt");
+    const change = async (changes: Record<string, unknown>) => {
+      const patched = await owner().patchConfig(changes);
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    };
+    try {
+      await change({ mcp_fetch_max_bytes: 5 });
+      expect(
+        toolError(await callTool(mcp, "marfa_create", { url })),
+      ).toMatchObject({ code: "file_not_fetched", reason: "too_large" });
+      await change({ mcp_fetch_max_bytes: FETCH_MAX_BYTES });
+      toolResult(await callTool(mcp, "marfa_create", { url }));
+      await change({ mcp_fetch_enabled: false });
+      expect(
+        toolError(await callTool(mcp, "marfa_create", { url })),
+      ).toMatchObject({ code: "file_not_fetched", reason: "disabled" });
+      await change({ mcp_fetch_enabled: true, mcp_fetch_timeout_ms: 30_000 });
+      toolResult(await callTool(mcp, "marfa_create", { url }));
+      for (const refused of [
+        { mcp_fetch_max_bytes: 0 },
+        { mcp_fetch_timeout_ms: 0 },
+        { mcp_fetch_timeout_ms: 3_600_001 },
+        { mcp_fetch_enabled: "sometimes" },
+      ]) {
+        const patched = await owner().patchConfig(refused);
+        expect(patched.status, JSON.stringify(refused)).toBe(400);
+      }
+    } finally {
+      await owner().patchConfig({
+        mcp_fetch_max_bytes: FETCH_MAX_BYTES,
+        mcp_fetch_enabled: true,
+      });
+    }
+  });
 });
 
 describe("a tool call's writes", () => {

@@ -6,7 +6,7 @@ The source-owned inbound endpoints a current registration exposes are `inbound-w
 
 ## Registering
 
-A registration belongs to one key, and a key holds one. Direct owner authority, local authority and app tokens register nothing.
+A registration belongs to one key, and a key holds one. Local authority and app tokens register nothing, and an owner's browser session reaches no door this chapter states.
 
 ### `connectors/register-created`
 
@@ -30,27 +30,35 @@ While a registration has had no heartbeat or no run, the server MUST answer the 
 
 If `POST /connectors` names a `name` outside 1 to 200 characters, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/connectors.test.ts › refuses a name or a description outside the bounds`, `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`.
+**Tests:** `compliance/connectors.test.ts › refuses a name or a description outside the bounds`, `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`.
 
 ### `connectors/register-name-missing`
 
 If `POST /connectors` names no `name`, then the server MUST answer `400 missing_required_field`.
 
-**Tests:** `compliance/declared-refusals.test.ts › is refused 400 missing_required_field, naming the field`, `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`.
+**Tests:** `compliance/declared-refusals.test.ts › is refused 400 missing_required_field, naming the field`, `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`.
 
 ### `connectors/register-description-bounds`
 
 If `POST /connectors` names a `description` of more than 2000 characters, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/connectors.test.ts › refuses a name or a description outside the bounds`, `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`.
+**Tests:** `compliance/connectors.test.ts › refuses a name or a description outside the bounds`, `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`.
 
 ### `connectors/register-operator-refused`
 
-If direct owner or local authority sends `POST /connectors`, then the server MUST answer `403 forbidden`.
+If local authority sends `POST /connectors`, then the server MUST answer `403 forbidden`.
 
-**Reason:** a connector has a stable ordinary key of its own; direct authority is not a connector identity.
+**Reason:** a connector has a stable ordinary key of its own; local authority is not a connector identity.
 
-**Tests:** `compliance/connectors.test.ts › refuses to register direct owner authority`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
+**Tests:** `compliance/connectors.test.ts › refuses to register local authority`.
+
+### `connectors/owner-session-ignored`
+
+If a request to an operation this chapter states presents an owner's browser session cookie and no other credential, then the server MUST answer `401 unauthorized`.
+
+**Reason:** the owner acts on connectors through the private control socket, so a cookie, which a web page can send without the owner's knowing which door it reaches, is ignored on every connector door this chapter states.
+
+**Tests:** `compliance/connectors.test.ts › answers an owner session cookie 401 on every connector door, where the private socket keeps the owner's reach`.
 
 ### `connectors/register-token-refused`
 
@@ -64,13 +72,13 @@ If an access token an app holds sends `POST /connectors`, then the server MUST a
 
 If the server refuses `POST /connectors`, then the server MUST NOT register the key that sent it.
 
-**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`, `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`, `› refuses more than 1,000 read_only_types and registers nothing`.
+**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on registration, leaving nothing registered`, `compliance/connector-read-only.test.ts › refuses a malformed type identifier and registers nothing`, `› refuses more than 1,000 read_only_types and registers nothing`.
 
 ### `connectors/register-refused-no-audit`
 
 If the server refuses `POST /connectors`, then the server MUST NOT record a `connector.register` audit entry for it.
 
-**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when direct owner authority, a name or a description is refused`.
+**Tests:** `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`.
 
 ### `connectors/register-repeat`
 
@@ -176,7 +184,7 @@ When an ordinary key lacking `connectors.manage` sends `GET /connectors`, the se
 
 ### `connectors/list-operator`
 
-When a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors`, the server MUST list every registration.
+When a caller authorized by `connectors.manage` or local authority sends `GET /connectors`, the server MUST list every registration.
 
 **Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`, `› registers the key as a connector and lists it`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
 
@@ -202,7 +210,7 @@ When a credential sends `GET /connectors`, the server MUST answer the whole list
 
 ### `connectors/read-registration`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}`, the server MUST answer `200` with the registration, as `POST /connectors` answers it.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}`, the server MUST answer `200` with the registration, as `POST /connectors` answers it.
 
 **Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`, `› registers the key as a connector and lists it`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
 
@@ -246,7 +254,7 @@ Removing a source's current registration removes its inbound endpoints and deliv
 
 ### `connectors/delete-answer`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}`, the server MUST answer `200` with `ok` `true`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}`, the server MUST answer `200` with `ok` `true`.
 
 **Tests:** `compliance/connectors.test.ts › removes a registration for its own key or the manager, never another`.
 
@@ -312,13 +320,13 @@ Revoking a key removes nothing the connector registered, and nothing supervises 
 
 ### `connectors/revoked-registration-stays`
 
-When a key is revoked, the server MUST keep its registration, and answer it to a caller authorized by `connectors.manage` or direct owner or local authority with the `key_id`, `source` and `last_heartbeat_at` it had.
+When a key is revoked, the server MUST keep its registration, and answer it to a caller authorized by `connectors.manage` or local authority with the `key_id`, `source` and `last_heartbeat_at` it had.
 
 **Tests:** `compliance/connectors.test.ts › keeps a registration whose key was revoked, until the manager removes it`, `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`.
 
 ### `connectors/revoked-runs-stay`
 
-When a key is revoked, the server MUST keep the runs its connector reported, and list them to a caller authorized by `connectors.manage` or direct owner or local authority.
+When a key is revoked, the server MUST keep the runs its connector reported, and list them to a caller authorized by `connectors.manage` or local authority.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`.
 
@@ -388,7 +396,7 @@ When the server has recorded a heartbeat, the server MUST give the registration 
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/heartbeat`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/heartbeat-refused-keeps`
 
@@ -450,7 +458,7 @@ If a run names no `started_at` or no `finished_at`, then the server MUST answer 
 
 ### `connectors/run-time-invalid`
 
-If a run names a `started_at` or a `finished_at` that is not a timestamp, then the server MUST answer `400 validation_error`.
+If a run names a `started_at` or a `finished_at` that is not an RFC 3339 timestamp, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
 
@@ -474,17 +482,19 @@ If a run names a `summary` or an `error` of more than 2000 characters, then the 
 
 ### `connectors/run-times-utc`
 
-When the server records a run, the server MUST answer its `started_at` and `finished_at`, on the `201` and in `GET /connectors/{id}/runs`, in UTC at millisecond precision as `YYYY-MM-DDTHH:mm:ss.sssZ`, whatever offset or precision was sent.
+When the server records a run, the server MUST answer its `started_at` and `finished_at`, on the `201` and in `GET /connectors/{id}/runs`, in UTC at millisecond precision as `YYYY-MM-DDTHH:mm:ss.sssZ`, whatever offset or fraction of a second was sent.
 
 **Reason:** every other time Marfa answers is in this one form, so a client that sorts or compares runs by text gets time order.
 
 **Tests:** `compliance/connectors.test.ts › stores a run's times in UTC and compares them as instants`.
 
-### `connectors/run-times-zoneless`
+### `connectors/run-times-strict`
 
-When a run names a time with no zone, the server MUST read it as UTC, as `items/occurred-at-zoneless` does for `occurred_at`.
+If a run names a `started_at` or a `finished_at` that lacks a zone, a time of day, the seconds or a `T`, or that writes hour `24` or an offset without its colon, then the server MUST answer `400 validation_error`; a lowercase `t` or `z`, which RFC 3339 section 5.6 allows, is none of these faults, and the run's times are answered in uppercase.
 
-**Tests:** `compliance/connectors.test.ts › stores a run's times in UTC and compares them as instants`.
+**Reason:** a client that sends `2026` or a time with no zone means something the server cannot know, and reading it as UTC records an instant nobody reported.
+
+**Tests:** `compliance/connectors.test.ts › refuses a run time that is not strict RFC 3339`.
 
 ### `connectors/run-times-instants`
 
@@ -496,7 +506,7 @@ When the server decides whether a run's `finished_at` is before its `started_at`
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/runs`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/run-refused-not-recorded`
 
@@ -512,7 +522,7 @@ When the server records a run, the server MUST NOT record an audit entry for it.
 
 ### `connectors/runs-own-or-operator`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/runs`, the server MUST list the runs of that registration.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/runs`, the server MUST list the runs of that registration.
 
 **Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`, `compliance/management-grants.test.ts › connectors.manage grants administration to keys and apps without connector identity`.
 
@@ -676,7 +686,7 @@ If the server refuses a take with `400`, then the server MUST NOT take or move t
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/hold`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/hold-other-keeps`
 
@@ -718,7 +728,7 @@ If `DELETE /connectors/{id}/hold` names no `process`, then the server MUST answe
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `DELETE /connectors/{id}/hold`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connector-state.test.ts › holds for the connector's own key alone`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
 ## The state document
 
@@ -808,7 +818,7 @@ If the server refuses `PUT /connectors/{id}/state`, then the server MUST leave t
 
 If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `GET /connectors/{id}/state`, `PUT /connectors/{id}/state`, `POST /connectors/{id}/agreements`, `POST /connectors/{id}/agreements/lookup` or `GET /connectors/{id}/agreements`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-state.test.ts › keeps state and agreements to the connector's own key`, `compliance/connector-direct-authority.test.ts › refuses owner session 403 on every own-key read and write`, `› refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connector-state.test.ts › keeps state and agreements to the connector's own key`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
 ### `connectors/state-other-keeps`
 
@@ -846,29 +856,29 @@ When two connectors of different sources each write an agreement for one row, th
 
 ## Clearing what a source kept
 
-`DELETE /connectors/{id}/state` is the one operation under a registration's state that a caller authorized by `connectors.manage` or direct owner or local authority reaches.
+`DELETE /connectors/{id}/state` is the one operation under a registration's state that a caller authorized by `connectors.manage` or local authority reaches.
 
 ### `connectors/clear-answer`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/state`, the server MUST answer `200` with `ok` `true`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}/state`, the server MUST answer `200` with `ok` `true`.
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`.
 
 ### `connectors/clear-state`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority clears a registration's state, the server MUST remove the source's state document.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority clears a registration's state, the server MUST remove the source's state document.
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`.
 
 ### `connectors/clear-agreements`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority clears a registration's state, the server MUST remove every agreement of the source.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority clears a registration's state, the server MUST remove every agreement of the source.
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`.
 
 ### `connectors/clear-unfenced`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority clears a registration's state while a process holds a live hold, the server MUST clear it.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority clears a registration's state while a process holds a live hold, the server MUST clear it.
 
 **Reason:** a clear names no process, so no hold fences it.
 
@@ -876,13 +886,13 @@ When the connector's own key or a caller authorized by `connectors.manage` or di
 
 ### `connectors/clear-operator-whole-source`
 
-When a caller authorized by `connectors.manage` or direct owner or local authority clears through any registration of a source, a registration whose key was revoked included, the server MUST remove the whole store of that source, a successor's live state among it.
+When a caller authorized by `connectors.manage` or local authority clears through any registration of a source, a registration whose key was revoked included, the server MUST remove the whole store of that source, a successor's live state among it.
 
 **Tests:** `compliance/connector-state.test.ts › hands the state and the agreements to the next key with the same source`.
 
 ### `connectors/clear-after-removal`
 
-When a key registers under a source whose earlier registration was removed and a caller authorized by `connectors.manage` or direct owner or local authority clears through the new registration, the server MUST remove what the earlier registration left.
+When a key registers under a source whose earlier registration was removed and a caller authorized by `connectors.manage` or local authority clears through the new registration, the server MUST remove what the earlier registration left.
 
 **Reason:** nothing else removes what a removed registration left, so a source's store is cleared through a registration of that source.
 
@@ -1254,9 +1264,9 @@ If a request to an operation under `/connectors` carries no credential and a bod
 
 ### `connectors/order-operator-before-body`
 
-If direct owner or local authority sends `POST /connectors` with a body the operation would refuse, then the server MUST answer `403 forbidden`.
+If local authority sends `POST /connectors` with a body the operation would refuse, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-check-order.test.ts › answers direct owner authority 403 before a registration body it would be refused for`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
+**Tests:** `compliance/connector-check-order.test.ts › answers local authority 403 before a registration body it would be refused for`.
 
 ### `connectors/order-app-before-body`
 
@@ -1356,13 +1366,13 @@ When an authorized caller sends `DELETE /connectors/{id}/state`, the server MUST
 
 ### `connectors/problems-bounds`
 
-If a `problems` map in `PUT /connectors/{id}/state` exceeds 200 entries, 500 UTF-16 code units in one message or 512 KiB serialized as UTF-8 within the state request cap, then the server MUST answer `400 validation_error`.
+If a `problems` map in `PUT /connectors/{id}/state` exceeds 200 entries, 500 characters in one message or 512 KiB serialized as UTF-8 within the state request cap, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
 
 ### `connectors/problems-independent-cap`
 
-When `PUT /connectors/{id}/state` carries a state and a problems map each within its own 512 KiB serialized UTF-8 cap, with a valid process name of at most 100 UTF-16 code units, the server MUST admit their combined compact JSON envelope within its state request cap of 1049211 bytes.
+When `PUT /connectors/{id}/state` carries a state and a problems map each within its own 512 KiB serialized UTF-8 cap, with a valid process name of at most 100 characters, the server MUST admit their combined compact JSON envelope within its state request cap of 1049211 bytes.
 
 **Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
 
