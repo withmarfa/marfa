@@ -12,7 +12,7 @@ use crate::app::edges::write::{Create, Op};
 use crate::app::items::captions;
 use crate::app::items::write::{self, Change};
 use crate::app::mcp::fetch::{self, Failed, Reason};
-use crate::app::refusal::Code;
+use crate::app::refusal::{Code, Refusal};
 use crate::http::items::put_from;
 use crate::http::mcp::results::{Outcome, Stop};
 
@@ -166,7 +166,12 @@ fn not_fetched(reason: &Reason, from_chat: bool) -> Stop {
     stop
 }
 
-pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
+pub async fn run(
+    app: &Arc<App>,
+    caller: &Caller,
+    arguments: Map<String, Value>,
+    exact: Result<(), Refusal>,
+) -> Outcome {
     let url = text(&arguments, "url");
     let chat_file = arguments.get("file").and_then(Value::as_object);
     let attach_to = text(&arguments, "attach_to");
@@ -245,7 +250,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
             sent.insert(name.into(), value.clone());
         }
     }
-    let put = put_from(sent, || Ok(()))?;
+    let put = put_from(sent, || exact)?;
     let done = write::run(app, caller, None, Change::Put(Box::new(put))).await?;
     let created = parsed(&done.body)?;
     let item = created.get("item").cloned().unwrap_or(Value::Null);

@@ -17,6 +17,7 @@ const KEY_LABEL: &[u8] = b"marfa-mcp-confirmation-key";
 const MESSAGE_LABEL: &str = "marfa-mcp-confirmation\n";
 const SIGNATURE_CHARS: usize = 43;
 
+#[derive(Clone)]
 pub struct Signer(Vec<u8>);
 
 pub struct Token {

@@ -16,9 +16,11 @@ use marfa_rules::{integers, json_text};
 use serde_json::{Map, Value, json};
 
 use super::answer::{Stopped, refusal_answer};
+use super::mcp;
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
+use crate::app::oauth::resource::MCP_PATHS;
 use crate::app::refusal::{Code, Refusal};
 use crate::listener::Transport;
 use crate::settings::registry::MAX_REQUEST_BYTES;
@@ -466,11 +468,20 @@ pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) 
         Ok(bytes) => bytes,
         Err(stopped) => return stopped.into_response(),
     };
+    let for_mcp = MCP_PATHS.contains(&parts.uri.path());
     if json_text::too_deep(&bytes) {
-        return refusal_answer(&nested_too_deep());
+        return if for_mcp {
+            mcp::unreadable(false)
+        } else {
+            refusal_answer(&nested_too_deep())
+        };
     }
     if let Some(pointer) = json_text::ill_formed_at(&bytes) {
-        return refusal_answer(&ill_formed(pointer));
+        return if for_mcp {
+            mcp::unreadable(true)
+        } else {
+            refusal_answer(&ill_formed(pointer))
+        };
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await

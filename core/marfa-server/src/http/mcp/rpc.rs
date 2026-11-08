@@ -5,7 +5,11 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use marfa_rules::integers;
 use serde_json::{Map, Value, json};
+
+use crate::app::items::write::ruled;
+use crate::app::refusal::Refusal;
 
 pub const MODERN: &str = "2026-07-28";
 pub const LEGACY: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -36,6 +40,8 @@ pub struct Call {
     pub method: String,
     pub params: Map<String, Value>,
     pub era: Era,
+    /// Whether the properties a tool is sent keep their digits once stored.
+    pub exact: Result<(), Refusal>,
 }
 
 pub enum Entry {
@@ -319,7 +325,17 @@ pub fn classify(headers: &HeaderMap, body: &[u8]) -> Entry {
         method,
         params: params.as_object().cloned().unwrap_or_default(),
         era,
+        exact: exact_numbers(body),
     })
+}
+
+/// Judges the properties by the digits as written, since parsing has already rounded them.
+fn exact_numbers(body: &[u8]) -> Result<(), Refusal> {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return Ok(());
+    };
+    integers::refuse_inexact_integers_under(text, &["params", "arguments", "properties"])
+        .map_err(ruled)
 }
 
 fn unsupported(id: Value, requested: Option<&str>) -> Reply {

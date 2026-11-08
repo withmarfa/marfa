@@ -376,9 +376,7 @@ async fn record(
         }
     }
     let written = app
-        .write(caller, "mcp.file_fetch", move |unit| {
-            unit.audit_set("url", Some(details))
-        })
+        .audit_attempt(caller, "mcp.file_fetch", "url", details)
         .await;
     if written.is_err() {
         tracing::warn!("A tool's file fetch could not be written to the audit log");

@@ -76,6 +76,7 @@ pub async fn call(
     caller: &Caller,
     name: &str,
     arguments: Map<String, Value>,
+    exact: Result<(), Refusal>,
 ) -> Option<Outcome> {
     let tool = definitions()
         .into_iter()
@@ -87,7 +88,7 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments).await)
+    Some(run(app, caller, tool.name, arguments, exact).await)
 }
 
 async fn run(
@@ -95,13 +96,14 @@ async fn run(
     caller: &Caller,
     name: &str,
     arguments: Map<String, Value>,
+    exact: Result<(), Refusal>,
 ) -> Outcome {
     caller.require_reach()?;
     match name {
         find::NAME => find::run(app, caller, arguments).await,
         get::NAME => get::run(app, caller, arguments).await,
-        create::NAME => create::run(app, caller, arguments).await,
-        update::NAME => update::run(app, caller, arguments).await,
+        create::NAME => create::run(app, caller, arguments, exact).await,
+        update::NAME => update::run(app, caller, arguments, exact).await,
         delete::NAME => delete::run(app, caller, arguments).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }

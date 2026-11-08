@@ -104,6 +104,10 @@ impl Instance {
     }
 
     async fn key(&self, grants: Value) -> String {
+        self.key_with_id(grants).await.0
+    }
+
+    async fn key_with_id(&self, grants: Value) -> (String, String) {
         static KEYS: AtomicUsize = AtomicUsize::new(0);
         let source = format!("agent-{}", KEYS.fetch_add(1, Ordering::Relaxed));
         let mut body = json!({ "label": "agent", "source": source, "permissions": [] });
@@ -112,7 +116,10 @@ impl Instance {
             .extend(grants.as_object().unwrap().clone());
         let minted = self.local(Method::POST, "/keys", Some(body)).await;
         assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
-        minted.body["key"].as_str().unwrap().to_string()
+        (
+            minted.body["key"].as_str().unwrap().to_string(),
+            minted.body["id"].as_str().unwrap().to_string(),
+        )
     }
 
     async fn writer(&self) -> String {
@@ -122,6 +129,11 @@ impl Instance {
 
     async fn call(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
         send(&self.public, request(method, path, Some(token), body)).await
+    }
+
+    async fn stored(&self, settings: Value) {
+        let patched = self.local(Method::PATCH, "/config", Some(settings)).await;
+        assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
     }
 
     async fn audited(&self, action: &str) -> Vec<Value> {
@@ -244,6 +256,155 @@ impl Instance {
         )
         .await
     }
+}
+
+impl Instance {
+    /// Posts `text` as it is written, so a number keeps the digits the client sent.
+    async fn raw(&self, token: &str, text: &str) -> Reply {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(text.to_string()))
+            .unwrap();
+        send(&self.public, from(CALLER, request)).await
+    }
+
+    async fn raw_tool(&self, token: &str, name: &str, arguments: &str) -> Tool {
+        let text = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{name}","arguments":{arguments}}}}}"#
+        );
+        let reply = self.raw(token, &text).await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        let result = &reply.body["result"];
+        if result["isError"] == true {
+            let text = result["content"][0]["text"].as_str().unwrap();
+            return Tool {
+                failed: true,
+                value: serde_json::from_str(text).unwrap(),
+            };
+        }
+        Tool {
+            failed: false,
+            value: result["structuredContent"].clone(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_number_the_rest_api_refuses_is_refused_by_the_tools_and_never_rounded() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let big = "18446744073709551617";
+    let rest = instance
+        .call(
+            &token,
+            Method::POST,
+            "/items",
+            Some(json!({ "type": "core.note", "properties": { "body": "x" } })),
+        )
+        .await;
+    assert_eq!(rest.status, StatusCode::CREATED, "{}", rest.body);
+    let raw_rest = Request::builder()
+        .method(Method::POST)
+        .uri("/items")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(format!(
+            r#"{{"type":"core.note","properties":{{"body":"x","n":{big}}}}}"#
+        )))
+        .unwrap();
+    let refused_rest = send(&instance.public, from(CALLER, raw_rest)).await;
+    assert_eq!(
+        refused_rest.code(),
+        "invalid_properties",
+        "{}",
+        refused_rest.body
+    );
+
+    let created = instance
+        .raw_tool(
+            &token,
+            "marfa_create",
+            &format!(r#"{{"type":"core.note","properties":{{"body":"x","n":{big}}}}}"#),
+        )
+        .await;
+    assert_eq!(created.code(), "invalid_properties", "{}", created.value);
+    let listed = instance
+        .call(&token, Method::GET, "/items?type=core.note", None)
+        .await;
+    assert_eq!(listed.body["data"].as_array().map(Vec::len), Some(1));
+
+    let id = rest.body["item"]["id"].as_str().unwrap();
+    let updated = instance
+        .raw_tool(
+            &token,
+            "marfa_update",
+            &format!(r#"{{"id":"{id}","version":1,"properties":{{"n":{big}}}}}"#),
+        )
+        .await;
+    assert_eq!(updated.code(), "invalid_properties", "{}", updated.value);
+    // The witnesses: digits a float keeps, and the same number as a string, are saved as sent.
+    let kept = instance
+        .raw_tool(
+            &token,
+            "marfa_update",
+            &format!(r#"{{"id":"{id}","version":1,"properties":{{"n":18446744073709552000,"s":"{big}"}}}}"#),
+        )
+        .await;
+    assert!(!kept.failed, "{}", kept.value);
+    let read = instance
+        .call(&token, Method::GET, &format!("/items/{id}"), None)
+        .await;
+    assert_eq!(read.body["item"]["properties"]["s"], big);
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_one_json_message_is_answered_in_json_rpc_at_every_depth_of_failure() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let deep = format!("{}1{}", "[".repeat(80), "]".repeat(80));
+    let lone = r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{"a":"\ud800"}}"#;
+    for (name, text, code) in [
+        ("not JSON", "{".to_string(), -32700),
+        ("a lone surrogate", lone.to_string(), -32700),
+        (
+            "nested too deep",
+            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"ping","params":{{"a":{deep}}}}}"#),
+            -32600,
+        ),
+        ("an array", "[]".to_string(), -32600),
+        ("not a message", r#"{"a":1}"#.to_string(), -32600),
+    ] {
+        let reply = instance.raw(&token, &text).await;
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{name}: {}",
+            reply.body
+        );
+        assert_eq!(reply.body["jsonrpc"], "2.0", "{name}: {}", reply.body);
+        assert_eq!(reply.body["error"]["code"], code, "{name}: {}", reply.body);
+        assert!(reply.body["id"].is_null(), "{name}");
+    }
+    // The witness: the same lone surrogate to a door that is not MCP keeps the server's own refusal.
+    let other = Request::builder()
+        .method(Method::POST)
+        .uri("/items")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(
+            r#"{"type":"core.note","properties":{"body":"\ud800"}}"#,
+        ))
+        .unwrap();
+    let refused = send(&instance.public, from(CALLER, other)).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused.body["error"]["code"].is_string(),
+        "{}",
+        refused.body
+    );
 }
 
 #[tokio::test]
@@ -615,6 +776,63 @@ async fn a_confirmation_sent_after_five_minutes_changes_nothing() {
 }
 
 #[tokio::test]
+async fn a_confirmation_that_expires_while_the_write_waits_changes_nothing() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let id = instance.note(&token, "waits").await.payload()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let confirm = preview(&instance, &token, &[&id]).await;
+    instance
+        .app
+        .faults
+        .set("hold:write", Some("items.trash"))
+        .unwrap();
+    let confirming = instance.tool(
+        &token,
+        "marfa_delete",
+        json!({ "ids": [id.clone()], "confirm": confirm }),
+    );
+    let expiring = async {
+        for _ in 0..500 {
+            if instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        instance.app.clock.advance(5 * 60_000 + 1).unwrap();
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (refused, ()) = tokio::join!(confirming, expiring);
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(state_of(&instance, &token, &id).await, "active");
+    // The witness: the same wait inside the five minutes still trashes.
+    let confirm = preview(&instance, &token, &[&id]).await;
+    instance
+        .app
+        .faults
+        .set("hold:write", Some("items.trash"))
+        .unwrap();
+    let confirming = instance.tool(
+        &token,
+        "marfa_delete",
+        json!({ "ids": [id.clone()], "confirm": confirm }),
+    );
+    let waiting = async {
+        for _ in 0..500 {
+            if instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (done, ()) = tokio::join!(confirming, waiting);
+    assert!(!done.failed, "{}", done.value);
+}
+
+#[tokio::test]
 async fn a_confirmation_does_not_cover_other_items_than_the_ones_it_previewed() {
     let instance = Instance::start(&[]).await;
     let token = instance.writer().await;
@@ -928,7 +1146,10 @@ async fn a_redirect_is_not_followed() {
 
 #[tokio::test]
 async fn a_body_over_the_limit_is_refused_declared_or_not_and_nothing_is_stored() {
-    let instance = Instance::start(&[("MARFA_MCP_FETCH_MAX_BYTES", "1000")]).await;
+    let instance = Instance::start(&[]).await;
+    instance
+        .stored(json!({ "mcp_fetch_max_bytes": 1000 }))
+        .await;
     let token = instance.writer().await;
     let server = files().await;
     instance.resolves(PUBLIC_TO_LOCAL);
@@ -947,7 +1168,10 @@ async fn a_body_over_the_limit_is_refused_declared_or_not_and_nothing_is_stored(
 
 #[tokio::test]
 async fn a_body_that_stops_arriving_ends_at_the_time_limit() {
-    let instance = Instance::start(&[("MARFA_MCP_FETCH_TIMEOUT_MS", "400")]).await;
+    let instance = Instance::start(&[]).await;
+    instance
+        .stored(json!({ "mcp_fetch_timeout_ms": 400 }))
+        .await;
     let token = instance.writer().await;
     let server = files().await;
     instance.resolves(PUBLIC_TO_LOCAL);
@@ -991,6 +1215,55 @@ async fn a_fifth_fetch_at_once_is_refused_busy_and_the_four_finish() {
     }
     // The witness: the four have finished, so the next fetch is let in.
     assert!(!instance.fetch(&token, &server.url("/hello")).await.failed);
+}
+
+#[tokio::test]
+async fn a_fetch_whose_key_is_revoked_while_it_runs_is_still_audited_and_stores_nothing() {
+    let instance = Arc::new(Instance::start(&[]).await);
+    let (token, id) = instance
+        .key_with_id(json!({ "type_permissions": { "*": "write" } }))
+        .await;
+    let server = files().await;
+    instance.resolves(PUBLIC_TO_LOCAL);
+    let fetching = {
+        let (instance, token, url) = (instance.clone(), token.clone(), server.url("/hold"));
+        tokio::spawn(async move { instance.fetch(&token, &url).await })
+    };
+    for _ in 0..1000 {
+        if server.contacted() == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(server.contacted(), 1);
+    let revoked = instance
+        .local(Method::DELETE, &format!("/keys/{id}"), None)
+        .await;
+    assert!(revoked.status.is_success(), "{}", revoked.body);
+    server.release.notify_one();
+    let refused = fetching.await.unwrap();
+    assert_eq!(refused.code(), "unauthorized", "{}", refused.value);
+    let entries = instance.audited("mcp.file_fetch").await;
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0]["key_id"], id.as_str());
+    assert_eq!(entries[0]["details"]["outcome"], "error");
+    let (live, _) = instance
+        .key_with_id(json!({ "type_permissions": { "*": "write" } }))
+        .await;
+    let stored = |instance: &Arc<Instance>, live: String| {
+        let instance = instance.clone();
+        async move {
+            let listed = instance
+                .call(&live, Method::GET, "/items?type=core.file", None)
+                .await;
+            listed.body["data"].as_array().map(Vec::len)
+        }
+    };
+    assert_eq!(stored(&instance, live.clone()).await, Some(0));
+    // The witness: a key that stays live is audited the same way and its file is stored.
+    assert!(!instance.fetch(&live, &server.url("/hello")).await.failed);
+    assert_eq!(stored(&instance, live.clone()).await, Some(1));
+    assert_eq!(instance.audited("mcp.file_fetch").await.len(), 2);
 }
 
 #[tokio::test]

@@ -192,7 +192,11 @@ fn faulted(mut response: Response, stop: &Stop) -> Response {
 
 async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
     let Call {
-        id, params, era, ..
+        id,
+        params,
+        era,
+        exact,
+        ..
     } = call;
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return Reply::in_band(id, rpc::INVALID_PARAMS, "Invalid params: name is required.")
@@ -211,7 +215,7 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
         }
     };
     let Some(outcome): Option<Outcome> =
-        provenance::through("mcp", tools::call(app, caller, name, arguments)).await
+        provenance::through("mcp", tools::call(app, caller, name, arguments, exact)).await
     else {
         return Reply::in_band(id, rpc::INVALID_PARAMS, format!("Unknown tool: {name}"))
             .into_response();
@@ -286,6 +290,20 @@ async fn post(State(app): State<Arc<App>>, request: Request) -> Response {
         }
         Entry::Call(call) => answer(&app, &caller, call).await,
     }
+}
+
+/// The answer to a body the transport cannot read at any MCP path: text that is not JSON,
+/// or JSON that is not a message.
+pub fn unreadable(is_text: bool) -> Response {
+    let (code, message) = if is_text {
+        (rpc::PARSE_ERROR, "Parse error")
+    } else {
+        (
+            rpc::INVALID_REQUEST,
+            "Bad Request: the request body is not a valid JSON-RPC message",
+        )
+    };
+    Reply::error(StatusCode::BAD_REQUEST, Value::Null, code, message, None).into_response()
 }
 
 /// Without sessions or streams, GET and DELETE have no operation.

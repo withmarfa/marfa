@@ -359,7 +359,12 @@ fn restore_only(arguments: &Map<String, Value>) -> bool {
             .all(|key| matches!(key.as_str(), "id" | "version" | "state"))
 }
 
-pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
+pub async fn run(
+    app: &Arc<App>,
+    caller: &Caller,
+    arguments: Map<String, Value>,
+    exact: Result<(), Refusal>,
+) -> Outcome {
     let id = text(&arguments, "id").unwrap_or_default();
     item_id(&id)?;
     let Some(version) = arguments.get("version").and_then(Value::as_i64) else {
@@ -436,7 +441,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         if !cleared.is_empty() {
             sent.insert("clear_properties".into(), json!(cleared));
         }
-        let update = update_from(id.clone(), Settle::Refuse, sent, || Ok(()))
+        let update = update_from(id.clone(), Settle::Refuse, sent, || exact)
             .map_err(|refusal| stop_at("properties".into(), &applied, refusal))?;
         let done = write::run(app, caller, None, Change::Update(Box::new(update)))
             .await

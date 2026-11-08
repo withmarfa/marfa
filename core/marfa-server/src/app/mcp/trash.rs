@@ -76,7 +76,7 @@ pub fn token_for(
     )
 }
 
-/// The trash plan and token spend commit together.
+/// The token's expiry, signature and spend are judged on the clock and state the write commits.
 pub async fn confirmed(
     app: &Arc<App>,
     caller: &Caller,
@@ -84,25 +84,18 @@ pub async fn confirmed(
     fresh: Result<Preview>,
     token: &str,
 ) -> Result<Confirmed> {
-    let now_ms = app.clock.now_ms();
-    let Some(parsed) = confirm::parse(token).filter(|parsed| parsed.expires_at_ms > now_ms) else {
+    let Some(parsed) = confirm::parse(token) else {
         return Ok(Confirmed::Stale);
     };
     let credential = caller.credential_handle();
-    let valid = match &fresh {
-        Ok(preview) => {
-            app.mcp.signer.check(
-                TOOL,
-                &credential,
-                &confirm::subject_digest(&ids, &preview.digest),
-                token,
-                now_ms,
-            )? == Check::Valid
-        }
-        Err(_) => false,
-    };
+    let signer = app.mcp.signer.clone();
+    let token = token.to_string();
     let cache = app.catalog_handle();
     app.write(caller, "items.trash", move |unit| {
+        let now_ms = unit.at_ms;
+        if parsed.expires_at_ms <= now_ms {
+            return Ok(Confirmed::Stale);
+        }
         confirm::sweep(unit.tx(), now_ms)?;
         let named = confirm::ids_digest(&ids);
         if let Some(spent) = confirm::spent(unit.tx(), &parsed.signature)? {
@@ -114,11 +107,11 @@ pub async fn confirmed(
                 },
             );
         }
-        let preview = match fresh {
-            Ok(preview) if valid => preview,
-            Ok(_) => return Ok(Confirmed::Stale),
-            Err(refusal) => return Err(refusal),
-        };
+        let preview = fresh?;
+        let subject = confirm::subject_digest(&ids, &preview.digest);
+        if signer.check(TOOL, &credential, &subject, &token, now_ms)? != Check::Valid {
+            return Ok(Confirmed::Stale);
+        }
         let change = Change::Trash {
             ids,
             digest: Some(preview.digest),

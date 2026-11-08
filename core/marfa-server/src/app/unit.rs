@@ -1,3 +1,4 @@
+use chrono::SecondsFormat;
 use rusqlite::Transaction;
 use serde_json::Value;
 
@@ -15,6 +16,8 @@ pub struct Unit<'t, 'c> {
     action: &'static str,
     pub caller: Caller,
     pub at: String,
+    /// The same instant as `at`, in milliseconds.
+    pub at_ms: i64,
     origin: Origin,
 }
 
@@ -29,6 +32,7 @@ impl<'c> Unit<'_, 'c> {
             action,
             caller: self.caller.clone(),
             at: self.at.clone(),
+            at_ms: self.at_ms,
             origin: self.origin.clone(),
         }
     }
@@ -101,15 +105,49 @@ impl App {
         };
         self.db
             .write(write, move |tx| {
-                let at = clock.stamp();
+                let now = clock.now();
+                let at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+                let at_ms = now.timestamp_millis();
                 let caller = caller.current(tx, &at)?;
                 job(&Unit {
                     tx,
                     action,
                     caller,
                     at,
+                    at_ms,
                     origin,
                 })
+            })
+            .await
+    }
+
+    /// Records an attempt made with `caller`'s credential whatever its authority is now. It
+    /// reads nothing of the credential and writes nothing but the audit entry.
+    pub async fn audit_attempt(
+        &self,
+        caller: &Caller,
+        action: &'static str,
+        resource_type: &'static str,
+        details: Value,
+    ) -> Result<()> {
+        let caller = caller.clone();
+        let clock = self.clock.clone();
+        let origin = provenance::current();
+        self.db
+            .write(Write::caller(action), move |tx| {
+                let at = clock.stamp();
+                audit::record_from(
+                    tx,
+                    &at,
+                    Some(&caller),
+                    origin.client_ip.as_deref(),
+                    Entry {
+                        action,
+                        resource_type,
+                        resource_id: None,
+                        details: origin.mark(Some(details)),
+                    },
+                )
             })
             .await
     }
