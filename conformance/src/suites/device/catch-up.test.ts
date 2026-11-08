@@ -4953,7 +4953,7 @@ describe("what a held stream takes and tells", () => {
           copyFrame(copyItemEvent("11", "item.created", wireItem({ id: "a" }))),
           {
             event: "stream_incomplete",
-            data: { event_type: "stream_incomplete", reason: "replay_failed" },
+            data: { event_type: "stream_incomplete", reason: "read_failed" },
           },
         ],
       },

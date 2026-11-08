@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn terminal_frames_and_crlf_and_a_final_frame_without_its_blank_line() {
         let text = "event: catchup_too_old\r\ndata: {\"event_type\":\"catchup_too_old\"}\r\n\r\n\
-                    event: stream_incomplete\ndata: {\"reason\":\"replay_failed\"}";
+                    event: stream_incomplete\ndata: {\"reason\":\"read_failed\"}";
         assert_eq!(
             frames(text),
             vec![Frame::Event {

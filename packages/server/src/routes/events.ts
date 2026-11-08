@@ -981,7 +981,7 @@ export function eventRoutes(
               // While a replay reads, the id it reads on to at least; the ids
               // of the held frames given up to it that it has not yet passed;
               // and the rows it has passed but could not read, whose live copy
-              // is their one carrier (`events/unreadable-row-live-copy`).
+              // is their one carrier.
               let replayReach: bigint | null = null;
               const givenUp = new Set<bigint>();
               const unreadable = new Set<bigint>();
