@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::App;
 use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
-use super::faults::{FAIL_BLOB_WRITE, Faults, Volume};
+use super::faults::{FAIL_BLOB_WRITE, Faults, HOLD_BLOB_READ, Volume};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
@@ -337,6 +337,7 @@ impl App {
         if !found.held {
             return Err(not_found());
         }
+        self.faults.hold(HOLD_BLOB_READ, None).await;
         let (disk, hash) = (self.blobs.store.disk(), found.blob.hash.clone());
         joined(tokio::task::spawn_blocking(move || disk.open_blob(&hash)).await)?.map_err(|error| {
             tracing::error!(%error, "A recorded copy of a blob did not open");
@@ -359,6 +360,7 @@ impl App {
         let Some(blob) = found else {
             return Ok(None);
         };
+        self.faults.hold(HOLD_BLOB_READ, None).await;
         let (disk, hash) = (self.blobs.store.disk(), blob.hash.clone());
         let file = joined(tokio::task::spawn_blocking(move || disk.open_blob(&hash)).await)?
             .map_err(|error| {

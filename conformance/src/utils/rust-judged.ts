@@ -54,6 +54,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/enrichment-by-inheritance.test.ts",
   "src/suites/compliance/enrichment-document-bounds.test.ts",
   "src/suites/compliance/enrichment-image-headers.test.ts",
+  "src/suites/compliance/enrichment-interrupted.test.ts",
   "src/suites/compliance/enrichment-malformed-image.test.ts",
   "src/suites/compliance/enrichment-reach.test.ts",
   "src/suites/compliance/enrichment-search.test.ts",

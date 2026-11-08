@@ -67,6 +67,7 @@ points! {
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+    HOLD_BLOB_READ = Hold "blob-read" Nth;
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -588,6 +589,8 @@ mod tests {
     fn takes_the_points_the_fixtures_arm() {
         for (name, arg) in [
             ("hold:bulk-page", Some("2")),
+            ("hold:blob-read", None),
+            ("hold:blob-read", Some("2")),
             ("fail:health-write", None),
             ("refuse:read", None),
             ("refuse:write", None),
