@@ -20,7 +20,7 @@ When a sign-in holding only read on `system.folder` submits a valid report to `P
 
 When a sign-in reports to `PUT /folders/{id}/status`, the server MUST attribute the report to the same canonical app-grant or API-key identity used by the sign-in listing.
 
-**Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`, `› uses the browser session identity and makes its reports historical after logout or expiry`, `› uses the app grant identity across token refresh and retains history after grant revocation`.
+**Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`, `› uses the app grant identity across token refresh and retains history after grant revocation`.
 
 ### `folder-status/copy-identity`
 
@@ -48,9 +48,9 @@ When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid repo
 
 ### `folder-status/missing-folder`
 
-When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid report, names an ID that is not a `system.folder`, the server MUST answer `404 item_not_found` to the owner, a private local command, and a credential that reads some type.
+When `GET /folders/{id}/status`, or `PUT /folders/{id}/status` with a valid report, names an ID that is not a `system.folder`, the server MUST answer `404 item_not_found` to a private local command and to a credential that reads some type.
 
-**Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`, `› answers item_not_found to the owner and a local command for an ID that holds no folder`.
+**Tests:** `compliance/folder-status.test.ts › answers distinct authentication, malformed-ID, missing-folder, and malformed-report refusals`, `› answers item_not_found to a local command for an ID that holds no folder`.
 
 ### `folder-status/revoked-folder`
 
@@ -130,7 +130,7 @@ When an authenticated caller that can read a `system.folder` asks for `GET /fold
 
 ### `folder-status/sign-in-order`
 
-When `GET /folders/{id}/status` answers, the server MUST order `sign_ins` by `sign_in.kind` as `app`, `browser`, then `key`, and within a kind by ascending `sign_in.id`.
+When `GET /folders/{id}/status` answers, the server MUST order `sign_ins` by `sign_in.kind` as `app`, then `key`, and within a kind by ascending `sign_in.id`.
 
 **Tests:** `compliance/folder-status.test.ts › orders sign-ins by kind and ID and total problems as they first appear`.
 
@@ -232,15 +232,15 @@ When a credential that reads no type asks for `GET /folders/{id}/status` or `PUT
 
 When the private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-summary`
 
 When `GET /folders` returns a folder summary, the server MUST include only `id`, `title`, and `created_at`.
 
-**Reason:** the console lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
+**Reason:** the inventory lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-title`
 
@@ -280,10 +280,10 @@ If the private local command sends `GET /folders` a `cursor` that is malformed o
 
 When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-authentication`
 
 When an unauthenticated caller asks for `GET /folders`, the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the owner and local command with bounded pages`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`.
