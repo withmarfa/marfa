@@ -32,8 +32,7 @@ impl<'c> Unit<'_, 'c> {
         }
     }
 
-    /// Runs `job` on this write, with what it announces held back from outbound webhooks
-    /// unless `fanout`.
+    /// An inner write cannot re-enable fan-out disabled by its caller.
     pub fn fanning<T>(&self, fanout: bool, job: impl FnOnce(&Unit<'_, 'c>) -> T) -> T {
         if fanout || !self.fanout {
             return job(self);

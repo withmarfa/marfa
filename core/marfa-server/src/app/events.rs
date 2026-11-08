@@ -47,8 +47,7 @@ pub struct Event<'a> {
     pub payload: String,
 }
 
-/// `fanout` says whether outbound webhooks are told of the event; every reader of the log
-/// sees it either way.
+/// Fan-out controls webhooks only; streams still read every event.
 pub(super) fn append(
     tx: &Transaction<'_>,
     at: &str,
