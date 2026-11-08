@@ -29,6 +29,7 @@ mod lookup;
 mod mcp;
 mod oauth;
 pub mod observe;
+mod occurrences;
 mod overview;
 pub mod pages;
 mod profile;
@@ -145,6 +146,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items", post(items::create).get(listing::items))
         .route("/search", get(listing::search))
         .route("/events", get(events::open))
+        .route("/occurrences", get(occurrences::list))
         .route("/views", post(views::create))
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))

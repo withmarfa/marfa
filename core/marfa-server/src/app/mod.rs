@@ -23,6 +23,7 @@ pub mod items;
 pub mod keys;
 pub mod mcp;
 pub mod oauth;
+pub mod occurrences;
 pub mod overview;
 pub mod provenance;
 pub mod query;

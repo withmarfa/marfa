@@ -15,6 +15,7 @@ pub mod js;
 pub mod json_text;
 pub mod names;
 pub mod query;
+pub mod recurrence;
 pub mod schema;
 pub mod search;
 pub mod thumbnail;
