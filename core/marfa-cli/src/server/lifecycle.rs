@@ -6,7 +6,7 @@ use super::docker::{self, Docker};
 use super::install::{CONTAINER_REFUSED, Watch, wait_until_healthy, write_compose};
 use super::prompt::Prompter;
 use super::run::{self, REFUSED_DATABASE};
-use super::service::{Control, Service};
+use super::service::{Control, Manager, Service};
 use super::{
     Access, DirArgs, Folder, IMAGE, Runtime, StartArgs, State, Steps, UninstallArgs, UpgradeArgs,
     checked_release, files, http_agent, launchd, native, own_release, refuse_older, tailscale,
@@ -69,16 +69,18 @@ fn upgrade_native(
     let server = run::locate()?;
     let binary = native::stable_binary_of_this()?;
     let unchanged = target == state.release;
-    steps.say(&format!(
-        "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
-    ));
+    if !unchanged {
+        steps.say(&format!(
+            "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
+        ));
+    }
     let mark = service.mark();
     // The service is written again, because the binary it names may have
-    // moved with the release; it starts the server when it was stopped and
-    // restarts it when it ran.
+    // moved with the release. A changed service restarts by itself; a new
+    // release needs the restart even when the service is the same.
     let was_running = service.running();
-    service.on(state.autostart, &binary, &server)?;
-    if was_running {
+    let started = service.on(state.autostart, &binary, &server)?;
+    if was_running && !unchanged && !started.changed {
         service.restart()?;
     }
     let watch = Watch::Process {
@@ -554,6 +556,9 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                 }
             }
             Runtime::Native => {
+                if state.manager == Some(Manager::Launchd) {
+                    launchd::remove_logs(&state.name);
+                }
                 let data = native::Layout::new(&folder.dir).data();
                 match std::fs::remove_dir_all(&data) {
                     Ok(()) => {}

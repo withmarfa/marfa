@@ -145,6 +145,21 @@ pub fn agent_log(name: &str) -> Result<PathBuf, CliError> {
     Ok(logs()?.join(format!("{name}.launchd.log")))
 }
 
+/// Removes the server's log, the one rotated out of it and the agent's own.
+pub fn remove_logs(name: &str) {
+    let Ok(server) = server_log(name) else {
+        return;
+    };
+    let mut older = server.clone().into_os_string();
+    older.push(".1");
+    for path in [Some(server), Some(older.into()), agent_log(name).ok()]
+        .into_iter()
+        .flatten()
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 fn at_login_file(name: &str) -> Result<PathBuf, CliError> {
     Ok(home()?
         .join("Library/LaunchAgents")

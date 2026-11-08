@@ -252,6 +252,7 @@ struct Rig {
     port: u16,
     stop: Arc<AtomicBool>,
     health: Vec<JoinHandle<()>>,
+    isolated: std::cell::Cell<bool>,
 }
 
 impl Rig {
@@ -284,6 +285,7 @@ impl Rig {
             std::thread::spawn(move || serve_health(port, &state, &stop))
         };
         Rig {
+            isolated: std::cell::Cell::new(false),
             dir: root.join("install"),
             root,
             state,
@@ -297,8 +299,26 @@ impl Rig {
         self.marfa_with(args, &[])
     }
 
+    /// Runs `marfa` from a copy beside the stand-in `marfa-server`, so that a
+    /// real `marfa-server` built next to the test binary is never the one found.
+    fn isolate(&self) {
+        let copy = self.root.join("bin/marfa");
+        if !copy.exists() {
+            fs::copy(env!("CARGO_BIN_EXE_marfa"), &copy).unwrap();
+        }
+        self.isolated.set(true);
+    }
+
+    fn command(&self) -> Command {
+        if self.isolated.get() {
+            quiet::quiet(Command::new(self.root.join("bin/marfa")))
+        } else {
+            quiet::marfa()
+        }
+    }
+
     fn marfa_with(&self, args: &[&str], env: &[(&str, &Path)]) -> (i32, String, String) {
-        let mut command = quiet::marfa();
+        let mut command = self.command();
         command
             .arg("server")
             .args(args)
@@ -2002,6 +2022,7 @@ fn an_install_keeps_its_runtime_and_a_release_is_for_docker() {
 #[test]
 fn a_server_that_is_missing_or_of_another_release_is_refused_before_anything_is_written() {
     let rig = Rig::new("n-server");
+    rig.isolate();
     fs::remove_file(rig.root.join("bin/marfa-server")).unwrap();
     let (code, _, stderr) = rig.native(&["--access", "local"]);
     assert_eq!(code, 3, "{stderr}");
@@ -2009,6 +2030,7 @@ fn a_server_that_is_missing_or_of_another_release_is_refused_before_anything_is_
     assert!(!rig.dir.exists());
 
     let rig = Rig::new("n-version");
+    rig.isolate();
     let (code, _, stderr) = rig.marfa_with(
         &[
             "install",
@@ -2097,9 +2119,18 @@ fn a_native_server_stops_starts_and_upgrades_with_its_service() {
     let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.9"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("scripts/install.sh"), "{stderr}");
+    let calls = rig.manager_log().lines().count();
     let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("Already on 0.0.0"), "{stdout}");
+    assert!(
+        !rig.manager_log()
+            .lines()
+            .skip(calls)
+            .any(|line| line.contains("kickstart") || line.contains("restart")),
+        "an upgrade to the same release restarted the server: {}",
+        rig.manager_log()
+    );
 
     // An install made by a newer release is not taken back to an older one.
     fs::write(
@@ -2143,9 +2174,20 @@ fn uninstalling_a_native_server_keeps_its_data_unless_told_to_delete_it() {
     fs::write(rig.dir.join("marfa.env"), secrets_copy).unwrap();
     rig.native_installed(&["--access", "local"]);
 
+    let logs = rig.home().join("Library/Logs/Marfa");
+    fs::create_dir_all(&logs).unwrap();
+    for name in ["marfa.log", "marfa.log.1", "marfa.launchd.log"] {
+        fs::write(logs.join(name), "line").unwrap();
+    }
     let (code, _, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(!rig.dir.exists(), "the folder and its data were left");
+    if cfg!(target_os = "macos") {
+        assert!(
+            fs::read_dir(&logs).unwrap().next().is_none(),
+            "the logs were left"
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2182,7 +2224,8 @@ fn a_user_service_asks_for_lingering_and_says_the_one_line_when_it_is_refused() 
 impl Rig {
     /// `marfa server run` as a child process that outlives the call.
     fn run_server(&self, env: &[(&str, &str)]) -> std::process::Child {
-        let mut command = quiet::marfa();
+        self.isolate();
+        let mut command = self.command();
         command
             .args(["server", "run", "--dir"])
             .arg(&self.dir)

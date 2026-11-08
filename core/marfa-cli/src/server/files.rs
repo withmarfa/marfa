@@ -57,8 +57,8 @@ volumes:
 ";
 
 pub const DOTENV_HEADER: &str = "\
-# Read by Docker Compose, not by the server. Change a value, then run
-# `marfa server install` again (or `docker compose up -d`).";
+# What `marfa server` records about this install; the server does not read
+# it. Change a value, then run `marfa server install` again.";
 
 pub const SETTINGS_HEADER: &str = "\
 # The server's settings: https://docs.marfa.so/run/settings
