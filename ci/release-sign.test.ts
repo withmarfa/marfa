@@ -1,8 +1,9 @@
 /**
  * A browser marks the archive it downloads, and macOS refuses to run a marked
  * binary that Apple has not notarized. The release signs and notarizes the
- * `marfa` binary before it packs it, so the archive on the release page runs
- * however it was downloaded.
+ * programs before it packs them, so the archive on the release page runs
+ * however it was downloaded, and the signed file reader is made to read a
+ * picture under the full sandbox.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,8 +42,9 @@ interface Job {
 }
 
 interface ReleaseJobs {
-  build: Job;
+  "programs-macos": Job;
   sign: Job;
+  collect: Job;
   publish: Job;
 }
 
@@ -60,14 +62,18 @@ function runSign(env: Record<string, string>, binary: string) {
   });
 }
 
-describe("the release signs the binary in a job of its own", () => {
-  const { build, sign, publish } = jobs();
+const PROGRAMS = ["marfa", "marfa-server", "marfa-enrichment-read"];
+
+describe("the release signs the programs in a job of its own", () => {
+  const { sign, collect } = jobs();
+  const build = jobs()["programs-macos"];
   const index = (steps: Step[], pattern: RegExp) =>
     steps.findIndex((step) => pattern.test(step.run ?? ""));
+  const needs = (job: Job) => [job.needs ?? []].flat();
 
-  it("hands the unsigned binary from the build to the sign job, which publishing waits for", () => {
+  it("hands the unsigned programs from the build to the sign job, which publishing waits for", () => {
     expect(
-      index(build.steps, /cargo build --release -p marfa-cli/),
+      index(build.steps, /build-programs\.sh "\$target"/),
     ).toBeGreaterThanOrEqual(0);
     const upload = build.steps.find((step) =>
       step.uses?.startsWith("actions/upload-artifact"),
@@ -76,13 +82,13 @@ describe("the release signs the binary in a job of its own", () => {
       step.uses?.startsWith("actions/download-artifact"),
     );
     expect(upload?.with?.name).toBe(
-      "build-${{ steps.version.outputs.version }}",
+      "build-${{ needs.version.outputs.version }}",
     );
     expect(download?.with?.name).toBe(
-      "build-${{ needs.build.outputs.version }}",
+      "build-${{ needs.version.outputs.version }}",
     );
-    expect(sign.needs).toBe("build");
-    expect(publish.needs).toContain("collect");
+    expect(needs(sign)).toContain("programs-macos");
+    expect(needs(collect)).toContain("sign");
   });
 
   it("installs and builds nothing where the signing identity is", () => {
@@ -91,7 +97,7 @@ describe("the release signs the binary in a job of its own", () => {
         /setup-node|rust-toolchain|pnpm|cache/,
       );
       expect(step.run ?? "").not.toMatch(
-        /\b(pnpm|npm|npx|cargo|yarn|swift build)\b/,
+        /\b(pnpm|npm|npx|cargo|yarn|brew|rustup|swift build)\b/,
       );
     }
     for (const step of build.steps) {
@@ -102,9 +108,9 @@ describe("the release signs the binary in a job of its own", () => {
   it("signs before it packs, and no condition can skip the signing", () => {
     const signing = index(
       sign.steps,
-      /sign-binary\.sh "\$RUNNER_TEMP\/artifacts\/marfa-\$arch"/,
+      /sign-binary\.sh "\$RUNNER_TEMP\/build\/\$program"/,
     );
-    const pack = index(sign.steps, /pack-cli\.sh/);
+    const pack = index(sign.steps, /pack-programs\.sh/);
     expect(signing).toBeGreaterThanOrEqual(0);
     expect(pack).toBeGreaterThan(signing);
     expect(sign.if).toBeUndefined();
@@ -113,17 +119,37 @@ describe("the release signs the binary in a job of its own", () => {
     expect(step?.["continue-on-error"]).toBeUndefined();
   });
 
-  it("signs both macOS binaries, and no Linux one", () => {
+  it("signs both programs and the file reader, packs only the programs, and builds nothing for Intel Macs", () => {
     const step = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("sign-binary.sh"),
     );
-    expect(step?.run).toMatch(/for arch in darwin-arm64 darwin-x86_64; do/);
+    expect(step?.run).toContain(`for program in ${PROGRAMS.join(" ")}; do`);
     const packing = sign.steps.find((candidate) =>
-      (candidate.run ?? "").includes("pack-cli.sh"),
+      (candidate.run ?? "").includes("pack-programs.sh"),
     );
-    expect(packing?.run).toContain('"marfa-$VERSION-darwin-arm64.tar.gz"');
-    expect(packing?.run).toContain('"marfa-$VERSION-darwin-x86_64.tar.gz"');
+    expect(packing?.run).toContain("marfa-$VERSION-darwin-arm64.tar.gz");
+    expect(packing?.run).not.toContain("marfa-enrichment-read");
     expect(packing?.run).not.toContain("linux");
+    expect(JSON.stringify(jobs())).not.toContain("x86_64-apple-darwin");
+    expect(JSON.stringify(jobs())).not.toContain("darwin-x86_64");
+  });
+
+  it("proves the sandbox survives signing, and runs the signed programs from the archive", () => {
+    const steps = sign.steps;
+    const signing = index(steps, /sign-binary\.sh/);
+    const read = steps.findIndex((step) =>
+      step.name?.startsWith("Read a picture with the signed reader"),
+    );
+    expect(read).toBeGreaterThan(signing);
+    const reading = steps[read]?.run ?? "";
+    expect(reading).toContain("core/marfa-enrichment/fixtures/sentence.png");
+    expect(reading).toContain("env -i ");
+    expect(reading).toContain("sandbox: Full");
+    expect(reading).toContain("Marfa reads this sentence upright.");
+    const pack = steps.find((step) =>
+      (step.run ?? "").includes("pack-programs.sh"),
+    );
+    expect(pack?.run).toContain("check-archive.sh");
   });
 
   it("gives the signing step every secret it reads, from the repository's secrets", () => {
@@ -137,8 +163,8 @@ describe("the release signs the binary in a job of its own", () => {
   });
 });
 
-describe("the build hands on exactly the two binaries and the two packages", () => {
-  const hold = jobs().build.steps.find((step) =>
+describe("the build hands on exactly the programs and the two packages", () => {
+  const hold = jobs()["programs-macos"].steps.find((step) =>
     (step.run ?? "").includes("hold-artifacts.sh"),
   )?.run;
 
@@ -158,19 +184,21 @@ describe("the build hands on exactly the two binaries and the two packages", () 
   }
 
   const build = [
-    "marfa-darwin-arm64",
-    "marfa-darwin-x86_64",
+    "NOTICES.txt",
+    ...PROGRAMS,
     "withmarfa-client-0.0.9.tgz",
     "withmarfa-core-0.0.9.tgz",
   ];
 
-  it("accepts the unsigned binaries beside the two packages", () => {
+  it("accepts the unsigned programs beside the two packages", () => {
     expect(holdBuild(build)).toBe(0);
   });
 
-  it("refuses a build missing a binary, or carrying an archive already", () => {
+  it("refuses a build missing a program, or carrying an archive already", () => {
     expect(holdBuild(build.slice(1))).not.toBe(0);
-    expect(holdBuild(build.filter((name) => name !== build[1]))).not.toBe(0);
+    expect(holdBuild(build.filter((name) => name !== "marfa-server"))).not.toBe(
+      0,
+    );
     expect(holdBuild([...build, "marfa-0.0.9-darwin-arm64.tar.gz"])).not.toBe(
       0,
     );

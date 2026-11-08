@@ -164,7 +164,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
     "DELETE /connectors/{id}/endpoints/{endpoint_id}",
-    "DELETE /webhooks/{id}",
     "GET /attention",
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
@@ -174,11 +173,7 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /folders/{id}/status",
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
-    "GET /webhooks",
-    "GET /webhooks/{id}",
-    "GET /webhooks/{id}/deliveries",
     "PATCH /folders/{id}",
-    "PATCH /webhooks/{id}",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
     "POST /folders",
@@ -187,8 +182,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
     "POST /types/{id}/move",
-    "POST /webhooks",
-    "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
     "PUT /folders/{id}/status",
 ];
 

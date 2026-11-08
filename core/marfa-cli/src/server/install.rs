@@ -108,6 +108,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         &folder.dir,
         root_install,
         account::lookup(account::NAME).map(|identity| identity.gid),
+        runtime == Runtime::Native,
     )?;
     let native_server = match runtime {
         Runtime::Docker => {

@@ -412,6 +412,60 @@ CREATE TABLE IF NOT EXISTS auth_oauth_consent (
     PRIMARY KEY (client_id, user_id)
 ) STRICT, WITHOUT ROWID;
 
+-- starts_after excludes events committed before registration.
+CREATE TABLE IF NOT EXISTS webhooks (
+    id TEXT PRIMARY KEY NOT NULL,
+    url TEXT NOT NULL,
+    events TEXT NOT NULL CHECK (json_valid(events)),
+    type_filter TEXT,
+    secret TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    starts_after INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
+
+-- Payloads outlive log expiry; cycle_attempt restarts on redelivery.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    webhook_id TEXT NOT NULL REFERENCES webhooks (id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'dead_letter', 'canceled')),
+    status_code INTEGER,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    cycle_attempt INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    due_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (webhook_id, event_id),
+    CHECK (payload IS NOT NULL OR status IN ('success', 'canceled'))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due
+    ON webhook_deliveries (due_at, seq) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS webhook_deliveries_newest ON webhook_deliveries (webhook_id, seq);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_settled
+    ON webhook_deliveries (created_at) WHERE status <> 'pending';
+
+-- A missing position is a scheduling fault.
+CREATE TABLE IF NOT EXISTS webhook_position (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    event_id INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO webhook_position (id, event_id) VALUES (1, 0);
+
 -- The redirect URIs a person approved. Only an approval adds a row, so a later
 -- change to the client's own list reaches nothing here. `page_origin` is what
 -- the URI allowed as a web page's origin when it was approved.

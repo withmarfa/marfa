@@ -229,7 +229,6 @@ describe("an outbound delivery's history", () => {
       expect(accepted.data.id).toBe(kept!.id);
       // What was kept is what is sent: the same event, a second time.
       await waitFor("the redelivery to be sent", async () => {
-        await run("webhook-poll");
         return sentTo("history-dead-letter", kept!.id).length >= 2
           ? true
           : undefined;
@@ -258,8 +257,8 @@ describe("an outbound delivery's history", () => {
         ),
       );
       expect(pending).toMatchObject({ status: "pending", status_code: 503 });
-      // Both far past the retention, and the pending one due, so the run
-      // below could attempt it as soon as the sweep has had its say.
+      // Both far past the retention, and the pending one due, so the server
+      // may attempt it before or after the sweep.
       await clock.advance(10 * RETENTION_MS);
 
       await run("audit-cleanup");
@@ -273,13 +272,12 @@ describe("an outbound delivery's history", () => {
       });
 
       // And what it kept is what was needed to send it: the receiver takes
-      // it on the next attempt. A poll between the move and the sweep may
+      // it on the next attempt. An attempt between the move and the sweep may
       // have tried it again and set the next attempt a backoff on, so the
       // clock moves past that too.
       answer = 200;
       await clock.advance(DAY_MS);
       await waitFor("the delivery to be sent", async () => {
-        await run("webhook-poll");
         const row = (await deliveries(id)).find((r) => r.id === pending!.id);
         return row?.status === "success" ? row : undefined;
       });
@@ -301,7 +299,6 @@ describe("an outbound delivery's history", () => {
         `the redelivery was refused: ${JSON.stringify(accepted.error)}`,
       ).toBe(202);
       const again = await waitFor("the redelivery to be refused", async () => {
-        await run("webhook-poll");
         const row = (await deliveries(id)).find((r) => r.id === failed!.id);
         return row?.status === "dead_letter" && row.attempt === 2
           ? row
@@ -369,7 +366,6 @@ describe("an outbound delivery's history", () => {
       const cycle = async (from: number): Promise<WebhookDelivery> => {
         let recorded = from;
         for (let round = 0; round < 12; round += 1) {
-          await run("webhook-poll");
           const current = await waitFor(
             "an attempt to be recorded",
             async () => {

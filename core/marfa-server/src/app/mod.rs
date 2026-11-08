@@ -24,6 +24,7 @@ pub mod keys;
 pub mod mcp;
 pub mod oauth;
 pub mod occurrences;
+pub mod outbound;
 pub mod overview;
 pub mod provenance;
 pub mod query;
@@ -34,6 +35,7 @@ pub mod stored;
 pub mod types;
 pub mod unit;
 pub mod views;
+pub mod webhooks;
 
 use std::sync::{Arc, OnceLock};
 
@@ -69,6 +71,7 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub webhooks: webhooks::Webhooks,
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
@@ -142,6 +145,7 @@ impl App {
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            webhooks: webhooks::Webhooks::default(),
             blobs,
             mcp,
             telemetry: Telemetry::default(),

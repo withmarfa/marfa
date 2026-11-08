@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use tokio::sync::watch;
 
 pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
 const MAX_INSTANT_MS: i64 = 8_640_000_000_000_000;
@@ -17,6 +18,7 @@ struct State {
 #[derive(Debug)]
 pub struct Clock {
     state: Mutex<State>,
+    moved: watch::Sender<u64>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -38,6 +40,7 @@ impl Clock {
                 offset_ms,
                 paused_at_ms: None,
             }),
+            moved: watch::Sender::new(0),
         }
     }
 
@@ -71,6 +74,19 @@ impl Clock {
         self.state().offset_ms
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.state().paused_at_ms.is_some()
+    }
+
+    /// Changes each time the clock is moved or paused, so a wait on it can be measured again.
+    pub fn moves(&self) -> watch::Receiver<u64> {
+        self.moved.subscribe()
+    }
+
+    fn tell_moved(&self) {
+        self.moved.send_modify(|count| *count += 1);
+    }
+
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
         let mut state = self.state();
         let offset = state
@@ -83,6 +99,8 @@ impl Clock {
             return Err(Refused::PastLastInstant);
         }
         state.offset_ms = offset;
+        drop(state);
+        self.tell_moved();
         Ok(offset)
     }
 
@@ -94,6 +112,8 @@ impl Clock {
         } else {
             None
         };
+        drop(state);
+        self.tell_moved();
     }
 }
 
