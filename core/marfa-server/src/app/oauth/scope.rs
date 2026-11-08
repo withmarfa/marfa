@@ -479,22 +479,22 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
     }
 }
 
-/// The content category goes first and every other type scope over it: a type named beside
-/// `content:read` reaches that type, and a `system` or `marfa` type reached by nothing else
-/// stays out. So `*:read content:read` reaches less than `*:read` alone.
+/// A set reaches what each of its scopes reaches: `content` all but `system` and `marfa`, `*` all.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
+    let (mut content, mut all) = (None, None);
+    for scope in granted.scopes() {
+        match scope {
+            Scope::Content(verb) => content = content.max(Some(verb)),
+            Scope::Type { pattern, verb } if pattern == ALL => all = all.max(Some(verb)),
+            _ => {}
+        }
+    }
     let mut types = Entries::new();
-    if let Some(verb) = granted
-        .scopes()
-        .filter_map(|scope| match scope {
-            Scope::Content(verb) => Some(verb),
-            _ => None,
-        })
-        .max()
-    {
+    if let Some(verb) = content {
         types.insert(ALL.to_string(), Value::from(verb.word()));
+        let not_content = all.map_or(Level::None.word(), Verb::word);
         for root in NOT_CONTENT {
-            types.insert(format!("{root}.*"), Value::from(Level::None.word()));
+            types.insert(format!("{root}.*"), Value::from(not_content));
         }
     }
     let mut edges = Entries::new();
@@ -906,9 +906,46 @@ mod tests {
             Level::Read
         );
         assert_eq!(level("*:read", Axis::Type, "system.folder"), Level::Read);
+    }
+
+    #[test]
+    fn a_content_write_beside_all_data_write_reaches_system_types_at_write() {
         assert_eq!(
-            level("*:read content:read", Axis::Type, "system.folder"),
-            Level::None
+            level("content:write *:write", Axis::Type, "system.connection"),
+            Level::Write
+        );
+    }
+
+    #[test]
+    fn a_content_read_beside_all_data_read_reaches_system_types_at_read() {
+        assert_eq!(
+            level("*:read content:read", Axis::Type, "system.connection"),
+            Level::Read
+        );
+        assert_eq!(
+            level("*:read content:write", Axis::Type, "marfa.thing"),
+            Level::Read
+        );
+        assert_eq!(
+            level("*:read content:write", Axis::Type, "core.note"),
+            Level::Write
+        );
+    }
+
+    #[test]
+    fn combining_all_data_with_content_reaches_nothing_new() {
+        // What the two sets reach together is no more than what either
+        // reaches alone.
+        let (held, added) = ("*:read", "content:write *:write");
+        let both = combined(&set(held), &set(added)).to_text();
+        let most = level(held, Axis::Type, "system.connection").max(level(
+            added,
+            Axis::Type,
+            "system.connection",
+        ));
+        assert!(
+            level(&both, Axis::Type, "system.connection") <= most,
+            "{both}"
         );
     }
 
@@ -972,12 +1009,16 @@ mod tests {
 
     #[test]
     fn removing_an_overriding_entry_that_would_widen_a_wildcard_is_beyond_the_grant() {
-        let held = set("*:read content:read");
+        let held = set("content:read");
         assert_eq!(
             first_uncovered(&held, &set("*:read")).as_deref(),
             Some("*:read")
         );
-        assert_eq!(first_uncovered(&held, &set("content:read")), None);
+        assert_eq!(first_uncovered(&set("*:read"), &held), None);
+        assert_eq!(
+            first_uncovered(&set("*:read content:read"), &set("*:read")),
+            None
+        );
         assert_eq!(
             first_uncovered(&set("core.*:read offline_access"), &set("core.note:read")),
             None
