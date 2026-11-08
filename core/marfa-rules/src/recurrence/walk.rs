@@ -8,19 +8,14 @@ use super::calendar::{
 };
 use super::rule::{DAILY, HOURLY, MINUTELY, MONTHLY, Rule, SECONDLY, WEEKLY, YEARLY};
 
-/// Why a walk stopped before it finished.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stop {
-    /// The rule considered more candidates than it may.
     Candidates,
-    /// The caller's clock ran out.
     Time,
-    /// The series has more occurrences in the window than it may unfold.
     Occurrences,
 }
 
-/// Counts the candidates one walk considers. `expired` is the caller's clock, asked every 256
-/// candidates, since a rule's own code reads none.
+/// Counts candidates; `expired` is the caller's clock, asked every 256.
 pub struct Meter<'a> {
     limit: u64,
     spent: u64,
@@ -64,7 +59,6 @@ impl<'a> Meter<'a> {
     }
 }
 
-/// A rule with the parts its start fills in.
 pub struct Walk {
     rule: Rule,
     hours: Vec<i64>,
@@ -123,8 +117,7 @@ fn list_has(list: &Option<Vec<i64>>, value: i64) -> bool {
     list.as_ref().is_none_or(|held| held.contains(&value))
 }
 
-/// Whether `day` passes the day-level parts of `rule`; `marked` holds the days a numbered BYDAY
-/// chose in the current period.
+/// `marked` holds the days a numbered BYDAY chose in the period.
 fn day_matches(rule: &Rule, day: i64, marked: Option<&[i64]>) -> bool {
     let (y, m, d) = civil_from_days(day);
     if !list_has(&rule.bymonth, m) {
@@ -161,7 +154,6 @@ fn day_matches(rule: &Rule, day: i64, marked: Option<&[i64]>) -> bool {
     true
 }
 
-/// The days a numbered BYDAY picks out of each range of a period.
 fn mark_numbered(rule: &Rule, ranges: &[(i64, i64)]) -> Option<Vec<i64>> {
     let numbered = rule.bynweekday.as_ref()?;
     let mut marked = Vec::new();
@@ -180,7 +172,6 @@ fn mark_numbered(rule: &Rule, ranges: &[(i64, i64)]) -> Option<Vec<i64>> {
     Some(marked)
 }
 
-/// The members a period's candidates, `size` of them, are narrowed to: all, or those BYSETPOS names.
 fn positions(bysetpos: &Option<Vec<i64>>, size: usize) -> Box<dyn Iterator<Item = usize>> {
     let Some(wanted) = bysetpos else {
         return Box::new(0..size);
@@ -201,19 +192,16 @@ fn positions(bysetpos: &Option<Vec<i64>>, size: usize) -> Box<dyn Iterator<Item 
     Box::new(picked.into_iter())
 }
 
-/// The days one step of a daily, weekly, monthly or yearly rule covers.
 struct Period<'a> {
     first: i64,
     last: i64,
-    /// The ranges a numbered BYDAY counts within.
     ranges: Vec<(i64, i64)>,
     months: Option<&'a Vec<i64>>,
 }
 
 pub type Emit<'a> = &'a mut dyn FnMut(i64) -> Result<ControlFlow<()>, Stop>;
 
-/// Every reading `walk` produces at or after `start_wall`, ascending, in wall-clock seconds,
-/// until one passes `stop_wall`, `emit` breaks or the calendar ends.
+/// Emits each reading from `start_wall` to `stop_wall`, ascending, in wall-clock seconds.
 pub fn walk_rule(
     walk: &Walk,
     start_wall: i64,
@@ -371,8 +359,6 @@ fn walk_days(
     }
 }
 
-/// Hourly, minutely and secondly: one period per step, skipping a whole day, hour or minute at
-/// once when the parts above the period rule it out.
 fn walk_clock(
     walk: &Walk,
     start_wall: i64,

@@ -9,21 +9,16 @@ use super::walk::{Meter, Stop, prepare, walk_rule};
 use super::{MAX_CHARACTERS, MAX_DATES, MAX_DURATION_SECONDS};
 use crate::time;
 
-/// What a series states about when it happens.
 #[derive(Clone, Copy, Debug)]
 pub struct Input<'a> {
-    /// The first occurrence: an instant, or a bare date for a whole day.
     pub starts_at: &'a str,
     pub ends_at: Option<&'a str>,
-    /// A length in seconds, read when there is no `ends_at`.
     pub duration: Option<f64>,
     pub all_day: bool,
-    /// The IANA zone the schedule keeps its wall clock in; none means UTC.
     pub timezone: Option<&'a str>,
     pub recurrence: &'a [&'a str],
 }
 
-/// One time a series happens, computed from its rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Occurrence {
     pub start_ms: i64,
@@ -54,7 +49,6 @@ pub fn is_duration(duration: f64) -> bool {
     duration.is_finite() && (0.0..=MAX_DURATION_SECONDS).contains(&duration)
 }
 
-/// A bare `YYYY-MM-DD`, as a day number.
 fn bare_day(value: &str) -> Option<i64> {
     let bytes = value.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
@@ -71,9 +65,7 @@ fn day_of_value(value: &str, zone: Zone) -> Option<i64> {
     }
 }
 
-/// The span an event occupies, in milliseconds: a whole-day event from midnight of its first day
-/// to midnight of the day its end names, any other from its start to its end, or to its start
-/// plus its duration. The input's `recurrence` is not read.
+/// The span an event occupies, in milliseconds; the `recurrence` is not read.
 pub fn span(input: &Input<'_>) -> Result<(i64, i64), Refusal> {
     if input.all_day {
         return Ok(compile(&Input {
@@ -94,8 +86,6 @@ pub fn span(input: &Input<'_>) -> Result<(i64, i64), Refusal> {
     Ok((start, end.max(start)))
 }
 
-/// Reads a schedule against its start, refusing what cannot be read or would not be applied as
-/// written.
 pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
     let zone = match input.timezone {
         None => Zone::UTC,
@@ -265,7 +255,6 @@ impl Schedule {
         self.start_ms
     }
 
-    /// When an occurrence starting at `start_ms` ends, in milliseconds.
     pub fn end_of(&self, start_ms: i64) -> i64 {
         match self.length {
             Length::Millis(length) => start_ms + length,
@@ -305,7 +294,6 @@ impl Schedule {
         }
     }
 
-    /// The furthest reading an UNTIL can still admit.
     fn until_stop(&self, until: Option<DateValue>) -> i64 {
         match until {
             None => i64::MAX,
@@ -315,9 +303,7 @@ impl Schedule {
         }
     }
 
-    /// The start of every occurrence overlapping `[from_ms, to_ms)`, ascending, with removed
-    /// dates taken out. An occurrence of no length overlaps where it starts. The series' own
-    /// start is always the first occurrence. More than `cap` occurrences stop the walk.
+    /// Every start overlapping `[from_ms, to_ms)`, ascending; more than `cap` stop the walk.
     pub fn starts(
         &self,
         from_ms: i64,
@@ -377,8 +363,7 @@ impl Schedule {
         Ok(found.into_iter().collect())
     }
 
-    /// The occurrences overlapping the window. A stored exception whose `moved[i]` names an
-    /// occurrence's start takes its place: the occurrence says `replaced_by: Some(i)`.
+    /// `moved[i]` is the start an exception replaces; that occurrence says `replaced_by: Some(i)`.
     pub fn unfold(
         &self,
         from_ms: i64,
@@ -398,8 +383,7 @@ impl Schedule {
             .collect())
     }
 
-    /// Why a rule could not be unfolded when it is written, or `None` when every rule produces an
-    /// occurrence after the start within the meter or ends by its own COUNT or UNTIL.
+    /// Why a rule never repeats within the meter, unless it ends by its own COUNT or UNTIL.
     pub fn problem(&self, meter: &mut Meter<'_>) -> Option<String> {
         for rule in &self.rules {
             if rule.count == Some(1) {
@@ -436,7 +420,7 @@ impl Schedule {
         None
     }
 
-    /// The span the event occupies, single or repeating: its first occurrence.
+    /// The first occurrence.
     pub fn span(&self) -> (i64, i64) {
         (self.start_ms, self.end_of(self.start_ms))
     }

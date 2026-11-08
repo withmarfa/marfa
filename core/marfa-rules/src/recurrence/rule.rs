@@ -20,11 +20,8 @@ const WEEKDAYS: [&str; 7] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DateValue {
-    /// A day number.
     Date(i64),
-    /// Seconds of a wall clock that names no zone.
     Floating(i64),
-    /// Milliseconds since the epoch.
     Instant(i64),
 }
 

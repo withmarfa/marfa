@@ -41,7 +41,7 @@ pub fn days_in_month(y: i64, m: i64) -> i64 {
     }
 }
 
-/// 0 for Monday through 6 for Sunday, RFC 5545's order.
+/// 0 for Monday through 6 for Sunday.
 pub fn weekday(day: i64) -> i64 {
     (day + 3).rem_euclid(7)
 }
@@ -50,7 +50,7 @@ pub fn week_start(day: i64, wkst: i64) -> i64 {
     day - (weekday(day) - wkst).rem_euclid(7)
 }
 
-/// The week number RFC 5545 gives `day` under `wkst`, and the count of weeks in that week's year.
+/// The week number under `wkst`, and the weeks in that week's year.
 pub fn week_number(day: i64, wkst: i64) -> (i64, i64) {
     let start = week_start(day, wkst);
     let (week_year, _, _) = civil_from_days(start + 3);
@@ -63,7 +63,7 @@ pub fn ceil_div(a: i64, b: i64) -> i64 {
     -((-a).div_euclid(b))
 }
 
-/// A zone as the wall clock turns an instant into a reading and back; no zone is UTC.
+/// No zone is UTC.
 #[derive(Clone, Copy, Debug)]
 pub struct Zone(Option<Tz>);
 
@@ -91,9 +91,7 @@ impl Zone {
             )
     }
 
-    /// The instant, in milliseconds, at which the zone reads `wall`. A reading a clock change
-    /// skips takes the offset in force before the gap, so it lands later by the gap; a reading it
-    /// repeats names its first occurrence.
+    /// A reading a clock change skips takes the offset before the gap; one it repeats, the first.
     pub fn instant_of(self, wall: i64) -> i64 {
         let Some(tz) = self.0 else {
             return wall * 1000;

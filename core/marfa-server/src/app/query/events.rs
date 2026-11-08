@@ -40,8 +40,7 @@ fn text(path: &str) -> String {
     )
 }
 
-/// The active events the caller reads, of every event type: a `type` filter decides what is
-/// answered, not which series and exceptions are matched.
+/// Every active event the caller reads: a `type` filter narrows the answer, not the matching.
 pub(crate) fn events(read: &Reader<'_, '_>, named: Option<&str>) -> Result<Vec<Event>> {
     let reach = Reach::of(read)?;
     if let Some(named) = named {

@@ -7,7 +7,6 @@ use super::schedule::{Input, compile, is_duration};
 use super::walk::Meter;
 use super::{MAX_DURATION_SECONDS, WORK_LIMIT};
 
-/// One refused field and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Issue {
     pub field: &'static str,
@@ -21,13 +20,11 @@ fn issue(field: &'static str, message: impl Into<String>) -> Issue {
     }
 }
 
-/// Whether `name` is an IANA zone name in its canonical spelling. A numeric offset names no zone
-/// and keeps no wall clock across a change.
+/// Whether `name` is an IANA zone name, spelled as the database spells it.
 pub fn is_event_time_zone(name: &str) -> bool {
     Zone::named(name).is_some()
 }
 
-/// The issues the schedule fields of an event raise.
 pub fn event_issues(properties: &Map<String, Value>) -> Vec<Issue> {
     let mut issues = Vec::new();
     if let Some(duration) = properties.get("duration").and_then(Value::as_f64)
@@ -69,8 +66,7 @@ pub fn event_issues(properties: &Map<String, Value>) -> Vec<Issue> {
     issues
 }
 
-/// The issues the `recurrence` of a task raises. A task's rule starts at its `due_at`, or at its
-/// `starts_at` when it has no `due_at`, and advances in UTC.
+/// A task's rule starts at its `due_at`, or its `starts_at`, and advances in UTC.
 pub fn task_issues(properties: &Map<String, Value>) -> Vec<Issue> {
     let start = properties
         .get("due_at")

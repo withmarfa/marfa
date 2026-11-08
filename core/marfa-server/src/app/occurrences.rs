@@ -1,5 +1,4 @@
-//! `GET /occurrences`: the events overlapping a window, each series unfolded from its rule, a
-//! moved occurrence shown in place of the slot it left. Nothing is stored.
+//! `GET /occurrences`: nothing is stored, every series is unfolded from its rule on the read.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -20,8 +19,7 @@ pub const MAX_WINDOW_DAYS: i64 = 400;
 pub const MAX_OCCURRENCES: usize = 5000;
 const MAX_SERIES_ERRORS: usize = 500;
 const MAX_ERROR_CHARACTERS: usize = 200;
-/// Candidates the series of one request may spend while unfolding to nothing, before the rest
-/// are left unreached.
+/// Candidates the series of one request may spend unfolding to nothing before the rest go unreached.
 const UNPRODUCTIVE_BUDGET: u64 = 2_000_000;
 const TIME_BOUND: Duration = Duration::from_millis(1000);
 
@@ -37,8 +35,7 @@ pub fn iso(ms: i64) -> String {
         .unwrap_or_default()
 }
 
-/// An event that starts before the window ends and ends after it opens; one with no length
-/// overlaps where it starts.
+/// One with no length overlaps where it starts.
 fn overlaps(start: i64, end: i64, window: &Window) -> bool {
     if start >= window.to {
         return false;
@@ -91,7 +88,6 @@ fn input(event: &Event) -> Option<Input<'_>> {
     })
 }
 
-/// The lines of a series' rule, and what was wrong with them. A row with no lines is no series.
 fn rule_lines(event: &Event) -> (Option<Vec<&str>>, Option<String>) {
     let id = &event.id;
     match &event.recurrence {
@@ -138,8 +134,7 @@ fn is_series(event: &Event) -> bool {
     }
 }
 
-/// What an item is shown as: a whole-day item by the span its zone gives it, any other by its own
-/// times. A row whose start cannot be read is shown at `slot`.
+/// A row whose start cannot be read is shown at `slot`.
 fn shown_times(event: &Event, slot: i64) -> (i64, Option<i64>) {
     let Some(base) = input(event) else {
         return (slot, None);
@@ -371,13 +366,14 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
         let items = listed(read, &seqs, &Many::default())?;
         let data: Vec<String> = shown
             .iter()
-            .map(|entry| {
+            .filter_map(|entry| {
+                let item = place.get(&entry.row).and_then(|at| items.get(*at))?;
                 let mut out = format!("{{\"starts_at\":\"{}\"", iso(entry.start));
                 if let Some(end) = entry.end {
                     out.push_str(&format!(",\"ends_at\":\"{}\"", iso(end)));
                 }
                 out.push_str(",\"item\":");
-                out.push_str(&items[place[&entry.row]]);
+                out.push_str(item);
                 if let Some(series) = entry.series {
                     out.push_str(&format!(",\"series_id\":{}", json!(rows[series].id)));
                 }
@@ -385,7 +381,7 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
                     out.push_str(&format!(",\"replaces\":\"{}\"", iso(slot)));
                 }
                 out.push('}');
-                out
+                Some(out)
             })
             .collect();
 
