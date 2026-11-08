@@ -298,7 +298,7 @@ export interface AppConfig {
    *  override `MARFA_ENRICHMENT_MAX_INFLATED_BYTES`. */
   enrichmentMaxInflatedBytes?: number;
   /** The most the JavaScript heap of the process that reads one document
-   *  may take; a document that needs more is skipped. Default 256 MiB; env override
+   *  may take; a document that needs more is skipped. Default 1 GiB; env override
    *  `MARFA_ENRICHMENT_MAX_MEMORY_BYTES`. */
   enrichmentMaxMemoryBytes?: number;
   /** OCR of image files. On unless `MARFA_ENRICHMENT_OCR_ENABLED=false`.
@@ -1345,7 +1345,7 @@ const settingsShape = {
   MARFA_ENRICHMENT_TESSDATA_DIR: grouped(
     { group: "Text from files", label: "Image reader data folder" },
     optionalText(
-      "A folder of `<language>.traineddata` files that OCR reads beside the models the server carries, and in place of one of the same language. The server only reads it, and it may be missing.",
+      "A folder of OCR language models.",
     ),
   ),
   MARFA_ENRICHMENT_INTERVAL_MS: grouped(
@@ -1370,7 +1370,7 @@ const settingsShape = {
     { group: "Text from files", label: "Largest file to read" },
     count(
       20 * 1024 * 1024,
-      "The largest blob the server extracts text from. A larger blob is skipped unread, but for a sound or a video, which is read whatever its size.",
+      "The largest blob the server extracts text from. A larger blob gets no extracted text.",
       { unit: "bytes" },
     ),
   ),
@@ -1395,7 +1395,7 @@ const settingsShape = {
     { group: "Text from files", label: "Memory for reading a document" },
     count(
       1024 * 1024 * 1024,
-      "The most memory the process that reads one file may take. A file that needs more is skipped.",
+      "The most memory reading one file may use. A file that needs more is skipped.",
       { unit: "bytes" },
     ),
   ),
