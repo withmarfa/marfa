@@ -166,7 +166,7 @@ If the server cannot read the head of the log within the bound of a copy stream'
 
 **Reason:** a marker invented without a head would certify a head the server did not read.
 
-**Tests:** `compliance/stream-opening-faults.test.ts › ends a copy stream with stream_incomplete, and sends neither stream_cursor nor stream_live`.
+**Tests:** `compliance/stream-copy-opening-faults.test.ts › ends a copy stream with stream_incomplete, and sends neither stream_cursor nor stream_live`.
 
 ## What a reach is bound to
 

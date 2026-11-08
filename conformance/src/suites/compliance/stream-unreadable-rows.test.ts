@@ -10,8 +10,9 @@ import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * A replay is built from what the log stores, and a stored row the server
- * can no longer read is withheld rather than guessed at.
+ * A stream is built from what the log stores, and a stored row the server can
+ * no longer read ends the stream with catchup_too_old rather than being
+ * skipped or guessed at.
  *
  * No request can write such a row, so the server is told to read one stored
  * row as damaged.
@@ -44,9 +45,9 @@ const itemOf = (e: SseEvent): string | undefined =>
 const edgeOf = (e: SseEvent): string | undefined =>
   (e.data as { edge?: { id?: string } }).edge?.id;
 
-describe("a replay over a row the server cannot read", () => {
+describe("a stream that reaches a row the server cannot read", () => {
   it(
-    "does not replay an event it cannot read",
+    "ends with catchup_too_old at an event it cannot read, and does not send it",
     async ({ signal }) => {
       const fresh = server!;
       const before = await note("readable-before");
@@ -66,28 +67,38 @@ describe("a replay over a row the server cannot read", () => {
       const edge = created.data.edge.id;
       const after = await note("readable-after");
 
-      const idsOf = async (
-        client: FreshServer,
-      ): Promise<{ events: SseEvent[]; of: (e: SseEvent) => bigint }> => {
-        const { events } = await withStream(
-          client.apiUrl,
-          client.workingKey,
-          { lastEventId: "0" },
-          (stream) =>
-            collectUntil(
-              stream,
-              (seen) => seen.some((e) => itemOf(e) === after),
-              `the replay from cursor 0 to reach ${after}`,
-              signal,
-            ),
+      const stream = async (
+        lastEventId: string,
+        until: (seen: SseEvent[]) => boolean,
+        what: string,
+      ): Promise<SseEvent[]> =>
+        (
+          await withStream(
+            fresh.apiUrl,
+            fresh.workingKey,
+            { lastEventId },
+            (opened) => collectUntil(opened, until, what, signal),
+          )
+        ).events;
+      const endsTooOld = (lastEventId: string): Promise<SseEvent[]> =>
+        stream(
+          lastEventId,
+          (seen) => seen.some((e) => e.event === "catchup_too_old"),
+          `catchup_too_old on the replay from cursor ${lastEventId}`,
         );
-        return { events, of: (e) => BigInt(e.id!) };
-      };
 
-      const intact = await idsOf(fresh);
-      const rows = intact.events.filter((e) => e.id !== undefined);
+      // The witness: with nothing damaged, the replay from the start sends
+      // every row, the damaged ones included.
+      const intact = (
+        await stream(
+          "0",
+          (seen) => seen.some((e) => itemOf(e) === after),
+          `the replay from cursor 0 to reach ${after}`,
+        )
+      ).filter((e) => e.id !== undefined);
+      const oldest = intact[0]!.id!;
       const rowOf = (match: (e: SseEvent) => boolean): number => {
-        const at = rows.findIndex(match);
+        const at = intact.findIndex(match);
         expect(at, "the event is not in the log").toBeGreaterThanOrEqual(0);
         return at + 1;
       };
@@ -109,37 +120,59 @@ describe("a replay over a row the server cannot read", () => {
         },
       ];
 
+      const expectTooOld = (events: SseEvent[], requested: string): void => {
+        const last = events.at(-1)!;
+        expect(last.event).toBe("catchup_too_old");
+        expect(last.id).toBeUndefined();
+        expect(last.data).toEqual({
+          event_type: "catchup_too_old",
+          min_retained_id: oldest,
+          requested,
+        });
+        expect(
+          events.some((e) => e.event === "stream_live"),
+          "the stream went live over a row it cannot read",
+        ).toBe(false);
+      };
+
       for (const { name, fault, row } of damaged) {
+        const id = BigInt(intact[row - 1]!.id!);
+
+        // From the start: the readable rows before the damage are sent, and
+        // the stream then ends in place of the damaged row.
         await fresh.setFault(`${fault}=${String(row)}`);
-        let replayed: Awaited<ReturnType<typeof idsOf>>;
+        let ended: SseEvent[];
         try {
-          replayed = await idsOf(fresh);
+          ended = await endsTooOld("0");
         } finally {
           await fresh.clearFault(fault);
         }
-        const sent = replayed.events.filter((e) => e.id !== undefined);
-        const sentIds = sent.map((e) => replayed.of(e));
+        const sent = ended.filter((e) => e.id !== undefined);
+        expect(
+          sent.map((e) => e.id),
+          `the replay did not send every row before the ${name} row`,
+        ).toEqual(intact.slice(0, row - 1).map((e) => e.id));
+        expect(
+          sent.some((e) => itemOf(e) === before),
+          `the replay did not send ${before}, a row it can read`,
+        ).toBe(true);
+        expectTooOld(ended, "0");
 
-        // The witness: the replay ran across the damaged row. The rows on
-        // either side of it, and the edge's two items, are sent.
-        for (const item of [before, from, to, after]) {
-          expect(
-            sent.some((e) => itemOf(e) === item),
-            `the replay did not send ${item}, a row it can read`,
-          ).toBe(true);
+        // From just before it: nothing is sent, and the stream names the
+        // cursor the client sent.
+        const cursor = String(id - 1n);
+        await fresh.setFault(`${fault}=1`);
+        let reached: SseEvent[];
+        try {
+          reached = await endsTooOld(cursor);
+        } finally {
+          await fresh.clearFault(fault);
         }
-        expect(sentIds).toEqual([...sentIds].sort((a, b) => (a < b ? -1 : 1)));
         expect(
-          sentIds.includes(intact.of(rows[row - 1]!)),
-          `the replay sent event ${String(row)}, whose stored ${name} row cannot be read`,
+          reached.some((e) => e.id !== undefined),
+          `the replay sent a frame at or past the ${name} row, which cannot be read`,
         ).toBe(false);
-        expect(
-          replayed.events.some(
-            (e) =>
-              e.event === "stream_incomplete" || e.event === "catchup_too_old",
-          ),
-          "the replay ended instead of passing the row it cannot read",
-        ).toBe(false);
+        expectTooOld(reached, cursor);
       }
     },
     2 * FRESH_SERVER_TIMEOUT_MS,

@@ -551,7 +551,44 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
     Ok(())
 }
 
-/// An upload that is arriving. Its file goes when this does, unless `finish_upload` placed it.
+/// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
+pub struct Placed {
+    recording: Recording,
+    held: store::Held,
+}
+
+impl Placed {
+    /// What records the bytes inside the write; the lock stays with `self`, past the commit.
+    pub fn recording(&self) -> Recording {
+        self.recording.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct Recording {
+    blob: Blob,
+    store_id: String,
+    replicates: bool,
+}
+
+impl Recording {
+    /// Records the blob and its copy, and the uploader's proof where there is one.
+    pub fn record(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        holder: Option<&str>,
+        at: &str,
+    ) -> Result<Blob> {
+        let recorded = rows::record_upload(tx, &self.blob, &self.store_id, holder, at)?;
+        rows::deleted(tx, &self.blob.hash, &self.store_id, "")?;
+        if self.replicates {
+            housekeeping::bring_forward(tx, REPLICATE, at)?;
+        }
+        Ok(recorded)
+    }
+}
+
+/// An upload that is arriving. Its file goes when this does, unless `place_upload` placed it.
 pub struct Intake {
     staged: Option<Staged>,
     disk: Arc<Disk>,
@@ -626,9 +663,8 @@ impl App {
         Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
     }
 
-    /// Places the bytes on the disk, and only then records them: a file with no record is
-    /// never served, and a recorded one is never removed.
-    pub async fn finish_upload(&self, caller: &Caller, mut intake: Intake) -> Result<Blob> {
+    /// Places the bytes on the disk. Nothing serves them until a record names them.
+    pub async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(mut staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
@@ -672,13 +708,35 @@ impl App {
                 Failed::Late => unavailable(),
                 Failed::Io(error) => unwritable(error),
             })?;
-        let blob = Blob {
-            hash,
-            mime_type: intake.mime_type.clone(),
-            size_bytes: size,
-        };
-        let store_id = self.blobs.disk.id().to_string();
-        let replicates = self.blobs.s3.is_some();
+        Ok(Placed {
+            recording: Recording {
+                blob: Blob {
+                    hash,
+                    mime_type: intake.mime_type.clone(),
+                    size_bytes: size,
+                },
+                store_id: self.blobs.disk.id().to_string(),
+                replicates: self.blobs.s3.is_some(),
+            },
+            held,
+        })
+    }
+
+    /// Unlocks placed bytes once the write that records them has ended, and replicates them if
+    /// it committed.
+    pub fn release_upload(&self, placed: Placed, committed: bool) {
+        let Placed { recording, held } = placed;
+        drop(held);
+        if committed && recording.replicates {
+            housekeeping::wake(self);
+        }
+    }
+
+    /// Places the bytes on the disk, and only then records them: a file with no record is
+    /// never served, and a recorded one is never removed.
+    pub async fn finish_upload(&self, caller: &Caller, intake: Intake) -> Result<Blob> {
+        let placed = self.place_upload(intake).await?;
+        let recording = placed.recording();
         let cache = self.catalog_handle();
         let recorded = self
             .write(caller, "blob.upload", move |unit| {
@@ -686,20 +744,11 @@ impl App {
                 unit.caller
                     .require_upload(catalog.provenance.keys().map(String::as_str))?;
                 let holder = unit.caller.credential_handle();
-                let recorded =
-                    rows::record_upload(unit.tx(), &blob, &store_id, Some(&holder), &unit.at)?;
-                rows::deleted(unit.tx(), &blob.hash, &store_id, "")?;
-                if replicates {
-                    housekeeping::bring_forward(unit.tx(), REPLICATE, &unit.at)?;
-                }
-                Ok(recorded)
+                recording.record(unit.tx(), Some(&holder), &unit.at)
             })
-            .await?;
-        drop(held);
-        if replicates {
-            housekeeping::wake(self);
-        }
-        Ok(recorded)
+            .await;
+        self.release_upload(placed, recorded.is_ok());
+        recorded
     }
 
     /// Carries out the queued deletions of a store's bytes of a blob, each of an object no copy
@@ -737,7 +786,8 @@ impl App {
         Ok(())
     }
 
-    fn found_in(
+    /// A blob held in the store, by a caller's right to read it where one is given.
+    pub(crate) fn found_in(
         tx: &rusqlite::Transaction<'_>,
         caller: Option<&Caller>,
         hash: &Hash,

@@ -145,7 +145,10 @@ pub async fn claim(
     let mut answer = if browser {
         redirect(StatusCode::SEE_OTHER, AFTER_CLAIM)?
     } else {
-        json_answer(StatusCode::CREATED, &owner.to_json())
+        json_answer(
+            StatusCode::CREATED,
+            &owner.to_json(app.addresses().sign_in().origin()),
+        )
     };
     answer = with_cookie(answer, cookies::setup_ended(&app.addresses().sign_in())?);
     if let Some(session) = session {

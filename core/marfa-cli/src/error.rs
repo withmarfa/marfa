@@ -753,7 +753,7 @@ mod tests {
         assert!(ended.envelope()["error"]["server"].is_null());
         // The witness: any other reason is the environment's.
         let behind = CliError::from(CoreError::StreamIncomplete {
-            reason: "reader_behind".into(),
+            reason: "read_failed".into(),
         });
         assert_eq!(behind.code(), "stream_incomplete");
         assert_eq!(behind.exit(), Exit::Environment);

@@ -118,20 +118,25 @@ impl Ask {
 }
 
 pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
-    let rules = &read.catalog.rules;
     for entry in &ask.types {
-        marfa_rules::query::refuse_unknown_type(rules, Some(entry)).map_err(ruled)?;
-        if entry.ends_with(".*")
-            || read.caller.may_read_type(entry)
-            || rules
-                .descendants(entry)
-                .any(|below| read.caller.may_read_type(below))
-        {
-            continue;
-        }
-        read.caller.require_type(entry, Level::Read)?;
+        judge_type(read, entry)?;
     }
     judge_terms(read, ask)
+}
+
+/// A type the catalog lacks is unknown; one the caller reads neither itself nor below it is not permitted.
+pub(crate) fn judge_type(read: &Reader<'_, '_>, entry: &str) -> Result<()> {
+    let rules = &read.catalog.rules;
+    marfa_rules::query::refuse_unknown_type(rules, Some(entry)).map_err(ruled)?;
+    if entry.ends_with(".*")
+        || read.caller.may_read_type(entry)
+        || rules
+            .descendants(entry)
+            .any(|below| read.caller.may_read_type(below))
+    {
+        return Ok(());
+    }
+    read.caller.require_type(entry, Level::Read)
 }
 
 pub fn judge_terms(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
