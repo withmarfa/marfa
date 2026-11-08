@@ -36,15 +36,26 @@ const CONFIG_PATH: &str = "/config";
 /// sent with it. `finish` keeps reading in the background so a refusal that leaves a
 /// body unread still arrives.
 #[derive(Clone)]
-pub struct Shared(Arc<Mutex<Body>>);
+pub struct Shared {
+    body: Arc<Mutex<Body>>,
+    ended: Arc<AtomicBool>,
+}
 
 impl Shared {
     pub fn new(body: Body) -> Shared {
-        Shared(Arc::new(Mutex::new(body)))
+        Shared {
+            ended: Arc::new(AtomicBool::new(body.is_end_stream())),
+            body: Arc::new(Mutex::new(body)),
+        }
     }
 
     fn held(&self) -> MutexGuard<'_, Body> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.body.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the body has been read to its end.
+    pub fn is_whole(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     pub fn finish(mut self) {
@@ -76,11 +87,19 @@ impl HttpBody for Shared {
         self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
-        Pin::new(&mut *self.held()).poll_frame(context)
+        let polled = Pin::new(&mut *self.held()).poll_frame(context);
+        if matches!(polled, Poll::Ready(None)) {
+            self.ended.store(true, Ordering::Release);
+        }
+        polled
     }
 
     fn is_end_stream(&self) -> bool {
-        self.held().is_end_stream()
+        let end = self.held().is_end_stream();
+        if end {
+            self.ended.store(true, Ordering::Release);
+        }
+        end
     }
 
     fn size_hint(&self) -> SizeHint {
@@ -141,6 +160,9 @@ fn due(body: Body, within: Duration, late: Arc<AtomicBool>) -> Body {
 /// Holds each request's body to arriving whole within `within`. A body that
 /// does not is answered `408`, and its connection is not kept.
 pub async fn due_within(State(within): State<Duration>, request: Request, next: Next) -> Response {
+    if super::blobs::is_upload(&request) {
+        return next.run(request).await;
+    }
     let late = Arc::new(AtomicBool::new(false));
     let request = request.map(|body| due(body, within, late.clone()));
     let mut response = next.run(request).await;
@@ -433,7 +455,10 @@ fn ill_formed(pointer: String) -> Refusal {
 /// the cap is left to its operation, which answers the credential first.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let limit = cap_on(&app, request.uri().path(), request.extensions());
-    if request.body().is_end_stream() || declared_length(request.headers()) > Some(limit) {
+    if super::blobs::is_upload(&request)
+        || request.body().is_end_stream()
+        || declared_length(request.headers()) > Some(limit)
+    {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();

@@ -72,6 +72,7 @@ points! {
     FAIL_COMMIT = Fail "commit" Write;
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
+    FAIL_BLOB_WRITE = Fail "blob-write" Nth;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
