@@ -260,25 +260,37 @@ fn is_ours(name: &str) -> bool {
 /// any of them. Otherwise the user running the command must own the folder
 /// and what a restore put in it, and nobody else can write to it. Every file
 /// the command keeps in it belongs to that owner.
+/// `native` is an install whose server keeps its private socket below the
+/// folder, which the server refuses below a folder others can change.
 pub fn admit_folder(
     dir: &Path,
     root_install: bool,
     account_gid: Option<u32>,
+    native: bool,
 ) -> Result<(), CliError> {
     // SAFETY: `geteuid` cannot fail.
-    admit(dir, root_install, account_gid, unsafe { libc::geteuid() })
+    admit(dir, root_install, account_gid, native, unsafe {
+        libc::geteuid()
+    })
 }
 
 fn admit(
     dir: &Path,
     root_install: bool,
     account_gid: Option<u32>,
+    native: bool,
     user: u32,
 ) -> Result<(), CliError> {
     let found = match fs::symlink_metadata(dir) {
         Ok(found) => found,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return check_parents(dir, if root_install { 0 } else { user });
+            return if root_install {
+                check_parents(dir, 0)
+            } else if native {
+                check_parents(dir, user)
+            } else {
+                Ok(())
+            };
         }
         Err(error) => return Err(error.into()),
     };
@@ -319,7 +331,9 @@ fn admit(
                 dir.display()
             )));
         }
-        check_parents(dir, user)?;
+        if native {
+            check_parents(dir, user)?;
+        }
     }
     let mut names = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -570,24 +584,26 @@ mod tests {
     fn an_install_folder_is_absent_empty_or_an_earlier_install() {
         let dir = scratch("admit");
         let folder = dir.join("folder");
-        admit_folder(&folder, false, None).unwrap();
+        admit_folder(&folder, false, None, true).unwrap();
         fs::create_dir(&folder).unwrap();
-        admit_folder(&folder, false, None).unwrap();
+        admit_folder(&folder, false, None, true).unwrap();
         // What a restore puts there.
         fs::write(folder.join("marfa.env"), "").unwrap();
         fs::create_dir(folder.join("data")).unwrap();
-        admit_folder(&folder, false, None).unwrap();
+        admit_folder(&folder, false, None, true).unwrap();
         // Someone's folder.
         fs::write(folder.join("notes.txt"), "mine").unwrap();
-        let error = admit_folder(&folder, false, None).unwrap_err().to_string();
+        let error = admit_folder(&folder, false, None, true)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("notes.txt"), "{error}");
         // An earlier install keeps whatever else the person put beside it.
         fs::write(folder.join(".env"), "MARFA_NAME=x\n").unwrap();
-        admit_folder(&folder, false, None).unwrap();
+        admit_folder(&folder, false, None, true).unwrap();
         // A file is not a folder.
         let file = dir.join("file");
         fs::write(&file, "").unwrap();
-        assert!(admit_folder(&file, false, None).is_err());
+        assert!(admit_folder(&file, false, None, true).is_err());
     }
 
     #[test]
@@ -596,7 +612,9 @@ mod tests {
         let mine = unsafe { libc::geteuid() };
         // A folder owned by anyone but root is refused for the account's install.
         if mine != 0 {
-            let error = admit_folder(&dir, true, Some(988)).unwrap_err().to_string();
+            let error = admit_folder(&dir, true, Some(988), true)
+                .unwrap_err()
+                .to_string();
             assert!(error.contains("not owned by root"), "{error}");
         }
     }
@@ -652,13 +670,15 @@ mod tests {
         let dir = parent.join("marfa");
         fs::create_dir_all(&parent).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
-        admit(&dir, false, None, me).unwrap();
+        admit(&dir, false, None, true, me).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o775)).unwrap();
-        let error = admit(&dir, false, None, me).unwrap_err().to_string();
+        let error = admit(&dir, false, None, true, me).unwrap_err().to_string();
         assert!(error.contains("written by group or others"), "{error}");
+        // A Docker install keeps its socket in the container, so its folder's parents are not judged.
+        admit(&dir, false, None, false, me).unwrap();
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(admit(&dir, false, None, me).is_err());
+        assert!(admit(&dir, false, None, true, me).is_err());
     }
 
     #[test]
@@ -697,7 +717,7 @@ mod tests {
             return;
         }
         let top = scratch("root-parents");
-        let error = admit_folder(&top.join("marfa"), true, Some(988))
+        let error = admit_folder(&top.join("marfa"), true, Some(988), true)
             .unwrap_err()
             .to_string();
         assert!(error.contains("belongs to another account"), "{error}");
@@ -707,8 +727,8 @@ mod tests {
     fn a_folder_another_account_owns_is_not_installed_into() {
         let me = unsafe { libc::geteuid() };
         let dir = scratch("user-owner");
-        admit(&dir, false, None, me).unwrap();
-        let error = admit(&dir, false, None, me.wrapping_add(1))
+        admit(&dir, false, None, true, me).unwrap();
+        let error = admit(&dir, false, None, true, me.wrapping_add(1))
             .unwrap_err()
             .to_string();
         assert!(error.contains("belongs to another account"), "{error}");
@@ -720,11 +740,11 @@ mod tests {
         let dir = scratch("user-open");
         for open in [0o770, 0o707, 0o777] {
             fs::set_permissions(&dir, fs::Permissions::from_mode(open)).unwrap();
-            let error = admit(&dir, false, None, me).unwrap_err().to_string();
+            let error = admit(&dir, false, None, true, me).unwrap_err().to_string();
             assert!(error.contains("written by more than its owner"), "{error}");
         }
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
-        admit(&dir, false, None, me).unwrap();
+        admit(&dir, false, None, true, me).unwrap();
     }
 
     #[test]
@@ -733,16 +753,18 @@ mod tests {
         let dir = scratch("user-restore");
         fs::write(dir.join("marfa.env"), "").unwrap();
         fs::create_dir(dir.join("data")).unwrap();
-        admit(&dir, false, None, me).unwrap();
+        admit(&dir, false, None, true, me).unwrap();
         // Seen from another account, the folder and what is in it are strangers'.
-        let error = admit(&dir, false, None, me.wrapping_add(1))
+        let error = admit(&dir, false, None, true, me.wrapping_add(1))
             .unwrap_err()
             .to_string();
         assert!(error.contains("belongs to another account"), "{error}");
         // A link where `data` should be is refused, not followed.
         let linked = scratch("user-restore-link");
         std::os::unix::fs::symlink(&dir, linked.join("data")).unwrap();
-        let error = admit(&linked, false, None, me).unwrap_err().to_string();
+        let error = admit(&linked, false, None, true, me)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("symbolic link"), "{error}");
     }
 
@@ -761,9 +783,9 @@ mod tests {
             } else {
                 fs::write(&path, "").unwrap();
             }
-            admit(&dir, false, None, 0).unwrap();
+            admit(&dir, false, None, true, 0).unwrap();
             std::os::unix::fs::chown(&path, Some(41_003), None).unwrap();
-            let error = admit(&dir, false, None, 0).unwrap_err().to_string();
+            let error = admit(&dir, false, None, true, 0).unwrap_err().to_string();
             assert!(error.contains(&path.display().to_string()), "{error}");
             assert!(error.contains("belongs to another account"), "{error}");
         }
