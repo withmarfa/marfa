@@ -769,6 +769,7 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
     };
     assert_eq!(named("API_KEY_SALT")["set"], true);
     assert_eq!(named("MARFA_HEARTBEAT_URL")["set"], false);
+    assert_eq!(named("MARFA_ERROR_WEBHOOK_TIMEOUT_MS")["secret"], false);
 
     let line = listed.body["data"]
         .as_array()
