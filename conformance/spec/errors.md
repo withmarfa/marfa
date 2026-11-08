@@ -286,6 +286,14 @@ When a request other than `OPTIONS` names a method no operation serves on a path
 
 **Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`.
 
+### `errors/unmatched-options`
+
+When an `OPTIONS` request is not a preflight that `keys-and-oauth/page-origin-allowed`, `keys-and-oauth/origin-configured` or `keys-and-oauth/register-preflight` answers, the server MUST answer `404 not_found`.
+
+**Reason:** no operation takes `OPTIONS`, so a `204` to any other would say one does. A browser reads a preflight without `Access-Control-Allow-Origin` as a refusal whatever its status.
+
+**Tests:** `compliance/unmatched-paths.test.ts › answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none`.
+
 ### `errors/unmatched-reach`
 
 When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the server MUST answer `400 validation_error`, whether or not the request carries a credential.

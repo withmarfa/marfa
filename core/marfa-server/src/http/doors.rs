@@ -1,6 +1,7 @@
 //! The one table every router is built from. In a test build a door cannot be
 //! added without being recorded, so `served` is what the router answers.
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -112,6 +113,8 @@ impl Handlers {
 #[derive(Default)]
 pub struct Doors {
     router: Inner,
+    paths: Vec<&'static str>,
+    unjudged: HashSet<&'static str>,
     #[cfg(test)]
     served: Vec<Door>,
 }
@@ -130,10 +133,24 @@ impl Doors {
                 .map(|method| Door { method, path }),
         );
         self.router = self.router.route(path, handlers.router);
+        self.paths.push(path);
         self
     }
 
+    /// Marks every path held so far as one `X-Marfa-Instance-Id` is not judged at: a door
+    /// whose caller holds no copy of the instance.
+    pub fn unjudged(mut self) -> Self {
+        self.unjudged.extend(self.paths.iter().copied());
+        self
+    }
+
+    pub(super) fn unjudged_paths(&self) -> HashSet<&'static str> {
+        self.unjudged.clone()
+    }
+
     pub fn merge(mut self, other: Doors) -> Self {
+        self.paths.extend(other.paths);
+        self.unjudged.extend(other.unjudged);
         #[cfg(test)]
         self.served.extend(other.served);
         self.router = self.router.merge(other.router);

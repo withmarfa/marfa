@@ -25,6 +25,7 @@ mod keys;
 pub mod listening;
 mod listing;
 mod lookup;
+mod named_instance;
 mod oauth;
 pub mod observe;
 mod overview;
@@ -41,9 +42,8 @@ mod views;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -62,11 +62,7 @@ use doors::{Doors, delete, get, patch, post, put};
 type Routes = Doors;
 
 async fn unmatched(method: Method, headers: HeaderMap) -> Response {
-    let mut response = if method == Method::OPTIONS {
-        let mut empty = Response::new(Body::empty());
-        *empty.status_mut() = StatusCode::NO_CONTENT;
-        empty
-    } else if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
+    let mut response = if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
         refusal_answer(&Refusal::validation(
             "No operation at this path takes X-Marfa-Reach.",
         ))
@@ -245,11 +241,14 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
         .merge(profile_doors())
-        .merge(oauth::grant_doors())
         .merge(config_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
+    let judging = named_instance::Judging {
+        app: app.clone(),
+        unjudged: Arc::new(routes.unjudged_paths()),
+    };
     let observed = Observed {
         app: app.clone(),
         listener: Arc::new(listener),
@@ -258,6 +257,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
+        .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
@@ -272,8 +272,13 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// A door judges `X-Marfa-Instance-Id` unless its group is marked `unjudged`, whatever a
+/// later piece adds. The sign-in, grant and OAuth doors hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
-    shared(app).merge(auth::doors()).merge(oauth::doors())
+    shared(app)
+        .merge(oauth::grant_doors().unjudged())
+        .merge(auth::doors().unjudged())
+        .merge(oauth::doors().unjudged())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
@@ -291,6 +296,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
 
 fn control_doors(app: &Arc<App>) -> Routes {
     let mut routes = shared(app.clone())
+        .merge(oauth::grant_doors())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))

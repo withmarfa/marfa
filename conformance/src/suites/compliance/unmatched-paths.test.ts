@@ -130,6 +130,35 @@ describe("a request no door serves", () => {
     expect([...answer.metadata.tags].sort()).toEqual(["added", "kept"]);
   });
 
+  it("answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none", async () => {
+    // The witness: a served door answers the same caller.
+    expect((await ask("GET", "/items", asKey())).status).toBe(200);
+
+    const preflight = {
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization",
+    };
+    for (const [path, headers] of [
+      ["/items", {}],
+      ["/items", { Origin: "https://nobody-approved.example" }],
+      ["/items", { Origin: "https://nobody-approved.example", ...preflight }],
+      [
+        "/no-such-door",
+        { Origin: "https://nobody-approved.example", ...preflight },
+      ],
+    ] as const) {
+      const res = await fetch(`${apiUrl}${path}`, {
+        method: "OPTIONS",
+        headers,
+      });
+      const body = (await res.json()) as { error?: { code?: string } };
+      const label = `${path} ${JSON.stringify(headers)}`;
+      expect(res.status, label).toBe(404);
+      expect(body.error?.code, label).toBe("not_found");
+      expect(res.headers.get("Access-Control-Allow-Origin"), label).toBeNull();
+    }
+  });
+
   it("answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Reach, to a caller with a credential and to one without", async () => {
     // The witness: the same request without the header is the 404 above.
     expect((await ask("GET", "/no-such-door", asKey())).status).toBe(404);
