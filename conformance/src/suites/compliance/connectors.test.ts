@@ -6,9 +6,10 @@ import {
   createSecondClient,
   cleanup,
   getManagementClient,
-  getOwnerClient,
   removeTrackedRegistrations,
+  requireApiUrl,
 } from "../../utils/setup.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -32,6 +33,12 @@ afterAll(async () => {
   // through the operator first.
   await cleanup(ctx);
 });
+
+function socket(): string {
+  const path = process.env.MARFA_CONTROL_SOCKET;
+  if (!path) throw new Error("MARFA_CONTROL_SOCKET is required");
+  return path;
+}
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -138,20 +145,80 @@ describe("registration", () => {
     expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
   });
 
-  it("refuses to register direct owner authority", async () => {
-    const operator = getOwnerClient();
+  it("refuses to register local authority", async () => {
     // The witness: the same door registers a working key.
     const witness = await createSecondClient(ctx, "register-witness");
     const mine = await witness.registerConnector({
       name: `${ctx.runId} witness`,
     });
     expect(mine.status).toBe(201);
-    const refused = await operator.registerConnector({
-      name: `${ctx.runId} operator`,
+    const refused = await controlRequest(socket(), "/connectors", {
+      method: "POST",
+      body: { name: `${ctx.runId} operator` },
     });
     expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.body).toMatchObject({ error: { code: "forbidden" } });
     expect((await witness.deleteConnector(mine.data.id)).status).toBe(200);
+  });
+
+  it("answers an owner session cookie 401 on every connector door, where the private socket keeps the owner's reach", async () => {
+    const mine = await register(client, `${ctx.runId} cookie`);
+    const cookie = process.env.MARFA_OWNER_COOKIE;
+    expect(cookie, "the owner's cookie").toBeTruthy();
+    const base = `/connectors/${mine.data.id}`;
+    const doors: [string, string, unknown?][] = [
+      ["POST", "/connectors", { name: "x" }],
+      ["GET", "/connectors"],
+      ["GET", base],
+      ["DELETE", base],
+      ["GET", `${base}/runs`],
+      ["POST", `${base}/heartbeat`],
+      [
+        "POST",
+        `${base}/runs`,
+        {
+          outcome: "failed",
+          started_at: "2026-10-05T18:00:00Z",
+          finished_at: "2026-10-05T18:00:00Z",
+        },
+      ],
+      ["POST", `${base}/hold`, { process: "p" }],
+      ["DELETE", `${base}/hold?process=p`],
+      ["GET", `${base}/state`],
+      ["PUT", `${base}/state`, { process: "p", state: {} }],
+      ["DELETE", `${base}/state`],
+      ["POST", `${base}/agreements`, { process: "p", set: [] }],
+      ["POST", `${base}/agreements/lookup`, { item_ids: [] }],
+      ["GET", `${base}/agreements`],
+    ];
+    for (const [method, path, body] of doors) {
+      const response = await fetch(`${requireApiUrl()}${path}`, {
+        method,
+        headers: {
+          Cookie: cookie!,
+          Origin: new URL(requireApiUrl()).origin,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      expect(response.status, `${method} ${path}`).toBe(401);
+      expect(await response.json()).toMatchObject({
+        error: { code: "unauthorized" },
+      });
+    }
+    // The witness: the private socket reaches the same doors as the owner.
+    const listed = await controlRequest(socket(), "/connectors");
+    expect(listed.status).toBe(200);
+    const read = await controlRequest(socket(), base);
+    expect(read.status).toBe(200);
+    expect(read.body).toMatchObject({ id: mine.data.id });
+    const cleared = await controlRequest(socket(), `${base}/state`, {
+      method: "DELETE",
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      (await controlRequest(socket(), base, { method: "DELETE" })).status,
+    ).toBe(200);
   });
 
   it("refuses a name or a description outside the bounds", async () => {
@@ -506,14 +573,6 @@ describe("heartbeats and runs", () => {
     expect(offset.status).toBe(201);
     expect(offset.data.started_at).toBe("2026-10-05T16:00:00.000Z");
     expect(offset.data.finished_at).toBe("2026-10-05T23:30:00.500Z");
-    const bare = await client.reportConnectorRun(mine.data.id, {
-      outcome: "succeeded",
-      started_at: "2026-10-05T18:00",
-      finished_at: "2026-10-06",
-    });
-    expect(bare.status).toBe(201);
-    expect(bare.data.started_at).toBe("2026-10-05T18:00:00.000Z");
-    expect(bare.data.finished_at).toBe("2026-10-06T00:00:00.000Z");
     // 19:00 at +02:00 is before 18:00Z, though the text sorts after it.
     const ordered = await client.reportConnectorRun(mine.data.id, {
       outcome: "succeeded",
@@ -529,7 +588,7 @@ describe("heartbeats and runs", () => {
     expect(inverted.status).toBe(400);
     expect(inverted.error?.error.code).toBe("validation_error");
     const listed = (await client.listConnectorRuns(mine.data.id)).data.data;
-    expect(listed).toHaveLength(3);
+    expect(listed).toHaveLength(2);
     for (const run of listed) {
       expect(run.started_at).toMatch(ISO);
       expect(run.finished_at).toMatch(ISO);
@@ -537,8 +596,46 @@ describe("heartbeats and runs", () => {
     expect(listed.map((r) => r.started_at).sort()).toEqual([
       "2026-10-05T16:00:00.000Z",
       "2026-10-05T17:00:00.000Z",
-      "2026-10-05T18:00:00.000Z",
     ]);
+  });
+
+  it("refuses a run time that is not strict RFC 3339", async () => {
+    const mine = await register(client, `${ctx.runId} strict times`);
+    const report = (started_at: string, finished_at: string) =>
+      client.reportConnectorRun(mine.data.id, {
+        outcome: "succeeded",
+        started_at,
+        finished_at,
+      });
+    const witness = await report(
+      "2026-10-05T18:00:00Z",
+      "2026-10-05T18:00:01Z",
+    );
+    expect(witness.status).toBe(201);
+    for (const [what, text] of [
+      ["only a year", "2026"],
+      ["a date", "2026-10-06"],
+      ["no zone", "2026-10-05T18:00:00"],
+      ["no zone, with a fraction", "2026-10-05T18:00:00.5"],
+      ["no seconds", "2026-10-05T18:00Z"],
+      ["hour 24", "2026-10-05T24:00:00Z"],
+      ["an offset with no colon", "2026-10-05T18:00:00+0200"],
+    ] as const) {
+      for (const [field, started, finished] of [
+        ["started_at", text, "2026-10-06T00:00:00Z"],
+        ["finished_at", "2026-10-05T00:00:00Z", text],
+      ] as const) {
+        const refused = await report(started, finished);
+        expect(refused.status, `${what} as ${field}`).toBe(400);
+        expect(refused.error?.error.code, `${what} as ${field}`).toBe(
+          "validation_error",
+        );
+      }
+    }
+    expect(
+      (await client.listConnectorRuns(mine.data.id)).data.data,
+    ).toHaveLength(1);
+    expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
   it("records a run from the connector's key and refuses an outcome it does not know", async () => {

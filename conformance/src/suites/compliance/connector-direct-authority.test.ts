@@ -100,30 +100,11 @@ function doors(): Door[] {
   ];
 }
 
-async function refusesDirectAuthority(
-  authority: "owner session" | "private socket",
-): Promise<void> {
+async function refusesDirectAuthority(): Promise<void> {
   for (const door of doors()) {
     const path = `/connectors/${id}${door.path}`;
-    const response =
-      authority === "private socket"
-        ? await controlRequest(server.controlSocket, path, door)
-        : await (async () => {
-            const res = await fetch(`${server.apiUrl}${path}`, {
-              method: door.method,
-              headers: {
-                Cookie: server.ownerCookie,
-                Origin: new URL(server.apiUrl).origin,
-                ...(door.body === undefined
-                  ? {}
-                  : { "Content-Type": "application/json" }),
-              },
-              body:
-                door.body === undefined ? undefined : JSON.stringify(door.body),
-            });
-            return { status: res.status, body: await res.json() };
-          })();
-    expect(response.status, `${authority}: ${door.method} ${door.path}`).toBe(
+    const response = await controlRequest(server.controlSocket, path, door);
+    expect(response.status, `private socket: ${door.method} ${door.path}`).toBe(
       403,
     );
     expect(response.body).toMatchObject({ error: { code: "forbidden" } });
@@ -148,12 +129,8 @@ async function refusesDirectAuthority(
 }
 
 describe("direct authority on own-key connector operations", () => {
-  it("refuses owner session 403 on every own-key read and write", async () => {
-    await refusesDirectAuthority("owner session");
-  });
-
   it("refuses private socket 403 on every own-key read and write", async () => {
-    await refusesDirectAuthority("private socket");
+    await refusesDirectAuthority();
   });
 
   it("keeps missing credentials at 401 and another key at 403", async () => {
