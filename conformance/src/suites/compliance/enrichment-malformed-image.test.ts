@@ -24,7 +24,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -103,8 +102,7 @@ describe("a malformed image", () => {
 
     // The fourth sweep must leave this item's exhausted attempts alone,
     // regardless of what other items the sweep processes.
-    let exhausted: unknown;
-    for (const [i, attempts] of [1, 2, 3, 3].entries()) {
+    for (const [i, failed] of [1, 1, 1, 0].entries()) {
       // A fresh control makes the final sweep observable even though the
       // malformed item's attempts have run out.
       const controlId =
@@ -113,15 +111,7 @@ describe("a malformed image", () => {
       const label = `sweep ${String(i + 1)}`;
       expect(run.status, label).toBe(200);
       expect(run.data.outcome, label).toBe("ok");
-      const state = withInstanceDatabase(server.sqlitePath, (db) =>
-        db
-          .prepare("SELECT * FROM enrichment_state WHERE item_id = ?")
-          .get(broken),
-      );
-      expect(state, label).toMatchObject({ status: "failed", attempts });
-      expect(state?.error, label).toContain("Error attempting to read image");
-      if (i === 2) exhausted = state;
-      if (i === 3) expect(state, label).toEqual(exhausted);
+      expect(run.data.result, label).toMatchObject({ failed });
       const control = await client.getItem(controlId);
       expect(control.status, label).toBe(200);
       expect(control.data.item.properties.width, label).toBe(1700);

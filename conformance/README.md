@@ -162,13 +162,12 @@ deletes what it created.
 ## Target interface
 
 The harness starts, stops and arranges the server under test through one
-adapter command, `scripts/marfa-server.ts`. Most fixtures then reach it only
-over HTTP, but not all: some read or write the server's database or its private
-files to arrange a state or to check one. A second implementation is judged by
-the fixtures that reach it only through this adapter and HTTP when it supplies
-an adapter with the same commands and output. Those that reach past them hold
-today's server to its own storage, so they do not yet judge a second
-implementation.
+adapter command, `scripts/marfa-server.ts`. Fixtures reach the server under
+test only through this adapter, HTTP and its private control socket, so a
+second implementation that supplies an adapter with the same commands and
+output is judged by them. A few fixtures still reach a server's own files,
+because the files are the subject of what they check; "Fixtures that reach
+past the target interface" lists them.
 
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.
@@ -183,6 +182,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                                                                                                                      |
 | `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                                                                                                                                |
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. |
+| `image [--state <dir>] --to <dir>`                               | Copies the instance's data as it stands at one instant to `<dir>`, pausing the target while it copies and then letting it go on, as a snapshot a second target can boot from with `up --state <dir>`. The copy leaves out the target's process, log and exit records, its control directory and the harness's session file.                               |
 | `log`                                                            | Prints everything the target has written: its log, then what it printed to stderr.                                                                                                                                                                                                                                                                        |
 
 ### Fixtures that reach past the API
@@ -333,6 +333,7 @@ the answer stored for a repeated request.
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
 A name is `hold:<point>`, `fail:<point>`, `refuse:<point>`, `release:<point>`, `deadline:<job>`, `free:<volume>`,
+`lose:blob`, `damage:blob`, `damage:blob-unreadable`, `hide:event`, `hide:webhook-position`,
 `unfold-deadline`, `store-check-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
@@ -390,6 +391,12 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:blob-read[=<n>]`               | A read of a blob's bytes from a store waits before it opens the bytes, until the fault is cleared or the target gives the request up. With no argument every read waits; with `=<n>` only the nth read after the fault is set does.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `hold:blob-write`                    | A store waits before it places a blob's bytes, until the fault is cleared. The target can stop waiting for the write, but the write carries on once the fault is cleared, as a store's can after its caller stops waiting.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `hold:blob-delete`                   | A store waits before it deletes a blob's bytes, until the fault is cleared. The target can stop waiting for the deletion, but the deletion carries on once the fault is cleared, as a store's can after its caller stops waiting.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hold:admission[=<n>]`               | A request's transaction waits before it asks for the writer, once it is in a request and not inside another transaction, until the fault is cleared. The request's credential is judged when the transaction runs, so a fixture that changes the credential while the request waits sees the request judged on the change. With no argument every such transaction waits; with `=<n>` only the nth after the fault is set.                                                                                                                                                                                                                                                                             |
+| `lose:blob=<hashes>`                 | The disk store answers that each named blob is absent, from now until it deletes that blob or places it again, or the fault is cleared or set again. `<hashes>` is a list of `sha256:` names separated by `,`. The bytes are not touched, so clearing the fault gives the store back what it held.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `damage:blob=<hashes>`               | The disk store returns each named blob with its first byte changed and the same length, until it deletes that blob or the fault is cleared or set again. Placing a blob already held does not end it, as a store leaves bytes already under a name alone. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `damage:blob-unreadable=<hashes>`    | A read of each named blob from the disk store, and a question whether the disk store holds it, fail with `EIO`, until the store deletes that blob or the fault is cleared or set again. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `hide:event=<first>[-<last>]`        | Each run of `webhook-schedule` reads the events with ids from `<first>` to `<last>` (one id when `-<last>` is left out) as absent from the event log, until the fault is cleared or set again. The server's own checks of its place in the log then meet the gap. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                 |
+| `hide:webhook-position`              | Each run of `webhook-schedule` reads the place it keeps in the event log as absent, until the fault is cleared. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `store-check-deadline=<ms>`          | Shortens the 15,000 ms the target waits for a store to answer whether it holds a blob, to open its bytes, or to delete them, and the 15,000 ms a write waits before the time it allows for the blob's size, so a fixture shows what a store that does not answer does without waiting out the 15 seconds. It tests the bound, not the 15,000 ms.                                                                                                                                                                                                                                                                                                                                                       |
 
 For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.
@@ -467,6 +474,7 @@ it.
 | `fail:edge-source-type[=<n>]`      | Each edge event published by a write, before it is logged or announced.                                                     | The nth event carries no source type in either its stored payload or its live announcement. The source item and edge remain unchanged. A later rollback does not refund the reach.                                                                              |
 | `fail:health-write[=<n>]`          | Each time `GET /health` probes that the database accepts a write.                                                           | The probe's write fails with `SQLITE_IOERR`, and the `database_write` component reports it.                                                                                                                                                                     |
 | `fail:event-stamp[=<n>]`           | Each event a write appends to the event log.                                                                                | The nth event is stamped a year after the target's clock.                                                                                                                                                                                                       |
+| `fail:folder-status-report[=<n>]`  | In `PUT /folders/{id}/status`, after the report is stored and before the transaction commits.                               | The request fails with `SQLITE_IOERR` and its transaction rolls back, so the folder keeps its earlier report.                                                                                                                                                   |
 | `refuse:read`                      | Every read of the database, until the fault is cleared.                                                                     | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
 | `refuse:write`                     | Every write, before it takes the write lock, until the fault is cleared.                                                    | The write fails with `SQLITE_IOERR`.                                                                                                                                                                                                                            |
 | `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                    | The write waits for the lock as if another connection held it. When its busy budget (`SQLITE_BUSY_BUDGET_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                     |
@@ -490,14 +498,32 @@ The one thing a target scripts for a delivery is a name lookup, with `resolve`,
 so that a fixture can answer the same name differently on each lookup and see
 which address the delivery connects to.
 
+The disk store's physical holdings are read through `GET /_control/test/blob-stores`,
+which `src/utils/store-faults.ts` wraps. With `?hash=<sha256:...>` it answers each attached store's
+`id`, `kind`, whether it `holds` that blob and whether the bytes it holds are `intact` (hash to the
+name), without a `lose:blob` or `damage:blob` fault changing the answer. It always answers
+`spool`, the name and size in bytes of each file the disk store keeps while it receives bytes.
+
 ### Who can reach the hooks
 
-The clock and fault routes (`/_control/test/clock` and `/_control/test/faults`)
-exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
+and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
 `true`. They are never on the HTTP listener, and the server refuses to start with
 the setting under `NODE_ENV=production`, which the released image sets. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
 these rules.
+
+### Fixtures that reach past the target interface
+
+These fixtures read or change files of the server under test, so they judge
+only a server that keeps the same files. Each stays because the files are the
+thing it checks.
+
+- `blob-store-folders` moves, empties and unmarks the disk store's folder,
+  and looks inside it. A store is its folder, so the folder and its marker
+  are the subject.
+- `inbound-faults`, `inbound-logs` and the other fixtures that read the log
+  through `serverOutput` check what the server logged. The log is the subject.
 
 ### The device's binding
 

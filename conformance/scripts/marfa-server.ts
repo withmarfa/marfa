@@ -78,6 +78,7 @@ import { tmpdir } from "node:os";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -105,6 +106,8 @@ import {
 import { silenceTelemetry } from "../../vitest.shared.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 import {
+  groupOf,
+  signalGroup,
   STOP_SIGNALS,
   stopWithSignal,
   type StopSignal,
@@ -137,8 +140,11 @@ interface Args {
     | "restart"
     | "clock"
     | "fault"
+    | "image"
     | "log";
   state: string;
+  /** For `image`: the directory the copy is made into. */
+  to?: string;
   port?: number;
   nodeEnv?: string;
   env: Record<string, string>;
@@ -176,6 +182,7 @@ const COMMANDS = [
   "restart",
   "clock",
   "fault",
+  "image",
   "log",
 ] as const;
 
@@ -183,7 +190,7 @@ function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | log [--state <dir>]",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | image [--state <dir>] --to <dir> | log [--state <dir>]",
     );
   }
   const args: Args = {
@@ -202,6 +209,8 @@ function parseArgs(argv: string[]): Args {
       if (!Number.isInteger(args.port) || args.port < 0 || args.port > 65_535) {
         throw new Error("--port needs an integer from 0 to 65535");
       }
+    } else if (arg === "--to" && args.command === "image") {
+      args.to = resolve(rest[++i] ?? "");
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
     } else if (arg === "--env") {
@@ -993,6 +1002,29 @@ async function refuseToClearUnderALiveServer(state: string): Promise<void> {
   }
 }
 
+/**
+ * Copies the instance's data directory as it stands at one instant, as a
+ * volume snapshot would, into the empty directory `to`. The server's whole
+ * process group is stopped while the copy is taken and then resumed, so no
+ * write lands between one file and the next. What the running process owns
+ * rather than holds is left out.
+ */
+export function takeImage(state: string, to: string): void {
+  const group = groupOf(state);
+  signalGroup(group, "SIGSTOP");
+  try {
+    cpSync(state, to, {
+      recursive: true,
+      filter: (source) =>
+        !/server\.(pid|log|exit)$/.test(source) &&
+        !/\/control-directory$/.test(source) &&
+        !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
+    });
+  } finally {
+    signalGroup(group, "SIGCONT");
+  }
+}
+
 /** What the server wrote to stdout, then to stderr. */
 function printLog(state: string): void {
   const p = paths(state);
@@ -1154,7 +1186,11 @@ if (
     if (args.command === "up") await bootServer(boot);
     else if (args.command === "refused") await bootRefused(boot);
     else if (args.command === "restart") await restartServer(boot, args.signal);
-    else if (args.command === "log") printLog(args.state);
+    else if (args.command === "image") {
+      if (args.to === undefined) throw new Error("image needs --to <dir>");
+      takeImage(args.state, args.to);
+      console.log(`[marfa-server] image of ${args.state} in ${args.to}`);
+    } else if (args.command === "log") printLog(args.state);
     else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);
     } else if (args.command === "down") {

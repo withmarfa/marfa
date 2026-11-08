@@ -22,6 +22,7 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
+import { webhookPositionHidden } from "../../control/faults.js";
 
 function ownerOf(row: typeof outboundWebhooks.$inferSelect): WebhookOwner {
   if (row.key_id !== null) return { kind: "key", keyId: row.key_id };
@@ -86,7 +87,9 @@ export class SqliteWebhookStore implements WebhookStore {
   }
 
   async checkpoint(): Promise<WebhookCheckpoint> {
-    const row = await this.db.select().from(outboundWebhookCheckpoint).get();
+    const row = webhookPositionHidden()
+      ? undefined
+      : await this.db.select().from(outboundWebhookCheckpoint).get();
     if (!row)
       throw new Error(
         "Outbound webhook checkpoint is missing on a populated instance",
