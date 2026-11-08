@@ -398,8 +398,9 @@ impl Blobs {
     /// Deletes a blob's bytes from a store on a task that outlasts the wait for it.
     async fn delete(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
         let (faults, store, blob) = (self.faults.clone(), store.clone(), hash.clone());
+        let deadline = self.check();
         self.gate
-            .outlast(hash, self.check(), async move {
+            .outlast(hash, deadline, async move {
                 faults.hold(HOLD_BLOB_DELETE, None).await;
                 if faults.fail(FAIL_BLOB_DELETE, None) {
                     return Err(io::Error::other("the store failed the delete"));
@@ -413,7 +414,9 @@ impl Blobs {
                         faults.heal(blob.as_str(), false);
                         Ok(())
                     }
-                    Store::S3(s3) => s3.delete(&blob).await,
+                    Store::S3(s3) => {
+                        store::within(store::stall_limit(deadline), s3.delete(&blob)).await
+                    }
                 }
             })
             .await

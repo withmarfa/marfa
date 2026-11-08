@@ -113,6 +113,7 @@ async fn copy_to(
                 continue;
             }
         };
+        let bytes = store::idle_limited(bytes, blobs.check());
         let (hash, size, mime_type) = (blob.hash.clone(), blob.size_bytes, blob.mime_type.clone());
         let written = match target {
             Store::Disk(disk) => {
@@ -133,9 +134,10 @@ async fn copy_to(
             }
             Store::S3(s3) => {
                 let s3 = s3.clone();
+                let limit = store::stall_limit(store::write_deadline(blobs.check(), size));
                 blobs
                     .writing(&blob.hash, size, async move {
-                        s3.write(&hash, &mime_type, size, bytes).await
+                        store::within(limit, s3.write(&hash, &mime_type, size, bytes)).await
                     })
                     .await
             }

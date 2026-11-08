@@ -86,7 +86,14 @@ impl S3 {
             .with_bucket_name(&settings.bucket)
             .with_region(&settings.region)
             .with_retry(retry)
-            .with_client_options(ClientOptions::new().with_connect_timeout(Duration::from_secs(5)));
+            // A limit on a whole request would cut a large or slow transfer part-way. The
+            // server's own deadlines bound each wait, and `store::stall_limit` ends work the
+            // server stopped waiting for.
+            .with_client_options(
+                ClientOptions::new()
+                    .with_timeout_disabled()
+                    .with_connect_timeout(Duration::from_secs(5)),
+            );
         if let Some(endpoint) = &settings.endpoint {
             builder = builder
                 .with_endpoint(endpoint)

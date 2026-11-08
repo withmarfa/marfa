@@ -65,6 +65,44 @@ pub fn write_deadline(check: Duration, size: u64) -> Duration {
     check + Duration::from_secs(size / BYTES_PER_SECOND)
 }
 
+/// How long work the server stopped waiting for may go on before it is dropped, so that a
+/// peer that stalls cannot keep a blob unfinished until the server restarts.
+pub fn stall_limit(deadline: Duration) -> Duration {
+    deadline * 4
+}
+
+/// Runs work against an object store, which ends as a failure once it outlasts `limit`.
+pub async fn within<T>(
+    limit: Duration,
+    work: impl Future<Output = io::Result<T>>,
+) -> io::Result<T> {
+    tokio::time::timeout(limit, work).await.unwrap_or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the object store stalled",
+        ))
+    })
+}
+
+/// `bytes`, failing once the next chunk takes longer than `idle` to arrive.
+pub fn idle_limited(bytes: ByteStream, idle: Duration) -> ByteStream {
+    stream::unfold(Some(bytes), move |bytes| async move {
+        let mut bytes = bytes?;
+        match tokio::time::timeout(idle, bytes.next()).await {
+            Ok(Some(chunk)) => Some((chunk, Some(bytes))),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the store stopped sending",
+                )),
+                None,
+            )),
+        }
+    })
+    .boxed()
+}
+
 fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -331,5 +369,37 @@ mod tests {
             .await;
         assert!(matches!(failed, Err(Failed::Io(_))));
         assert!(!gate.unfinished(&hash));
+    }
+
+    #[tokio::test]
+    async fn a_store_that_stalls_ends_its_work_and_frees_its_blob() {
+        let gate = Arc::new(Gate::default());
+        let hash = Hash::from_digest(&Sha256::digest(b"stalled"));
+        let stalled = within(
+            Duration::from_millis(60),
+            std::future::pending::<io::Result<()>>(),
+        );
+        let late = gate
+            .outlast(&hash, Duration::from_millis(20), stalled)
+            .await;
+        assert!(matches!(late, Err(Failed::Late)));
+        let began = std::time::Instant::now();
+        while gate.unfinished(&hash) && began.elapsed() < Duration::from_secs(2) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!gate.unfinished(&hash));
+    }
+
+    #[tokio::test]
+    async fn a_source_that_stops_sending_fails_the_stream_after_the_idle_limit() {
+        let first = stream::once(async { Ok(Bytes::from_static(b"some")) });
+        let bytes = idle_limited(
+            first.chain(stream::pending()).boxed(),
+            Duration::from_millis(30),
+        );
+        let read: Vec<io::Result<Bytes>> = bytes.collect().await;
+        assert_eq!(read.len(), 2);
+        assert!(matches!(&read[0], Ok(chunk) if chunk.as_ref() == b"some"));
+        assert!(matches!(&read[1], Err(error) if error.kind() == io::ErrorKind::TimedOut));
     }
 }
