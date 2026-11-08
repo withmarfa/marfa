@@ -21,15 +21,15 @@ pub fn changed() -> Refusal {
 
 impl Caller {
     /// Write levels and profile permissions do not change working-copy read authority.
-    fn read_authority(&self) -> Value {
+    fn read_authority(&self) -> Result<Value> {
         let grants = self.whole_set();
-        json!({
+        Ok(json!({
             "types": Axis::Type.read_form(grants.map(Axis::Type)),
             "edges": Axis::Edge.read_form(grants.map(Axis::Edge)),
             "metadata": Axis::Metadata.read_form(grants.map(Axis::Metadata)),
             "extensions": Axis::Extension.read_form(grants.map(Axis::Extension)),
-            "source_filter": self.holding().source_filter_form(),
-        })
+            "source_filter": self.levers()?.source_filter_form(),
+        }))
     }
 }
 
@@ -58,7 +58,7 @@ impl Judge {
             self.instance_id,
             instance::reach_counter(tx)?,
             caller.credential_handle(),
-            caller.read_authority(),
+            caller.read_authority()?,
         ]);
         self.secret.certify(SCOPE, &form.to_string())
     }
@@ -184,17 +184,24 @@ mod tests {
             .unwrap();
             Standing::of(Some(&levers), None)
                 .holding()
+                .unwrap()
                 .source_filter_form()
         };
         assert_eq!(filter(json!(["y", "x"])), filter(json!(["x", "y", "x"])));
         assert_ne!(filter(json!(["x"])), filter(json!(["y"])));
         assert_ne!(
             filter(json!(["x"])),
-            Standing::of(None, None).holding().source_filter_form()
+            Standing::of(None, None)
+                .holding()
+                .unwrap()
+                .source_filter_form()
         );
         assert_ne!(
-            Standing::closed().holding().source_filter_form(),
-            Standing::of(None, None).holding().source_filter_form()
+            Standing::closed().holding().unwrap().source_filter_form(),
+            Standing::of(None, None)
+                .holding()
+                .unwrap()
+                .source_filter_form()
         );
     }
 }

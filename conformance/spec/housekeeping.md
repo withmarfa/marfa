@@ -37,7 +37,7 @@ The server registers the following jobs when their settings and required stores 
 
 ### `housekeeping/list-jobs`
 
-When a caller authorized by `instance.read` or direct owner or local authority sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_ms`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
+When a caller authorized by `instance.read` or local authority sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_ms`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
 
 **Reason:** what runs, when it is next due and what its last run did are answered in one place.
 
@@ -81,7 +81,7 @@ What the server answers to a run asked for while the same job is running is `err
 
 ### `housekeeping/run-now`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority sends `POST /housekeeping/{name}/run` naming a job the server runs, the server MUST run that job before it answers, and answer with the run's `name`, `started_at`, `finished_at`, `outcome`, `result` and `error`.
+When a caller authorized by `instance.maintain` or local authority sends `POST /housekeeping/{name}/run` naming a job the server runs, the server MUST run that job before it answers, and answer with the run's `name`, `started_at`, `finished_at`, `outcome`, `result` and `error`.
 
 **Tests:** `compliance/housekeeping.test.ts › runs a housekeeping job on demand and the listing records the run`.
 
@@ -107,19 +107,19 @@ When a run finishes, the server MUST hold the job's `next_run_at` later than the
 
 ### `housekeeping/run-unknown-name`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
+When a caller authorized by `instance.maintain` or local authority asks to run a name the server runs no job under, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/housekeeping.test.ts › answers 404 for a name the instance does not run, where a listed one runs`.
 
 ### `housekeeping/switched-off-not-run`
 
-Where a machine-only setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
+Where a machine-only setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `housekeeping/run-malformed-name`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority asks to run a name that does not match `^[a-z][a-z0-9-]*$`, the server MUST answer `400 validation_error`.
+When a caller authorized by `instance.maintain` or local authority asks to run a name that does not match `^[a-z][a-z0-9-]*$`, the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`.
 

@@ -48,7 +48,7 @@ let ctx: TestContext;
 let apiUrl: string;
 /** The file's own credential, for the export half. */
 let fileKey: string;
-/** The direct owner's client, for the restore half. */
+/** The local command's client, for the restore half. */
 let owner: MarfaClient;
 
 beforeAll(async () => {
@@ -476,9 +476,9 @@ describe("restore", () => {
     expect(restored.data.imported).toBe(1);
   });
 
-  it("requires direct owner authority", async () => {
-    // A credential holding write on every type. The archive routes take the
-    // direct owner, which is a different thing from holding every permission:
+  it("requires local authority", async () => {
+    // A credential holding write on every type. Restoring takes the local
+    // command, which is a different thing from holding every permission:
     // running the instance is fenced outside the model.
     const keyResp = await client.createKey({
       label: "archive-working",

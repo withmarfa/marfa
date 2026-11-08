@@ -8,9 +8,9 @@ What one deployment says about itself, and what happens to it as an owner runs i
 
 ### `instance/attention-authority`
 
-When the owner or a private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title`, `description`, and a local console `href`.
+When the private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title` and `description`.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys`.
 
 ### `instance/attention-credentials`
 
@@ -18,7 +18,7 @@ When a key or delegated credential sends `GET /attention`, the server MUST answe
 
 **Reason:** the aggregate includes the owner's folder and key inventories, which management permissions alone do not grant.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys`.
 
 ### `instance/attention-concerns`
 
@@ -26,19 +26,19 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys`.
 
 ### `instance/attention-unavailable`
 
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys`.
 
 ### `instance/attention-empty`
 
 When every attention check completes without finding a concern, the server MUST return an empty `data` array from `GET /attention`.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys`.
 
 ## Background work
 
@@ -688,7 +688,7 @@ While a component is `degraded` or `down` and the database can read the table of
 
 ### `instance/health-error-others`
 
-When a request without direct owner/local authority or `instance.read` sends `GET /health`, the server MUST NOT answer an `error` on any component.
+When a request without local authority or `instance.read` sends `GET /health`, the server MUST NOT answer an `error` on any component.
 
 **Reason:** the text is the database's or the operating system's own and carries paths and driver detail.
 
@@ -907,54 +907,6 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 **Reason:** the one address answers a page or the description by what the caller asks for, and a cache must not hand one the other's, nor a refusal to a caller it was not meant for.
 
 **Tests:** `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`, `› sends Vary: Accept on a refusal at the root as on the answers it varies`.
-
-### `instance/root-home`
-
-When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST answer a page headed by the instance's name.
-
-**Reason:** the owner who opens the server's address needs the way into every console page, not the notice a visitor is given.
-
-**Tests:** `compliance/console-pages.test.ts › is shown to the owner's browser, headed by the instance's name`.
-
-### `instance/root-home-search`
-
-When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST include in the page a search field named `q`.
-
-**Reason:** the owner finds a page or a setting by name from Home, without knowing which page holds it.
-
-**Tests:** `compliance/console-pages.test.ts › holds a search for pages and settings`.
-
-### `instance/root-home-no-store`
-
-The server MUST send `Cache-Control: no-store` on the page it answers to the owner's browser session at `GET /`.
-
-**Reason:** the page is the owner's, and a cache must not hand it to a browser without the session.
-
-**Tests:** `compliance/console-pages.test.ts › is not cached`.
-
-### `instance/settings-owner-read`
-
-When the owner's browser session sends `GET /auth/owner/settings.json`, the server MUST answer `200` with a `data` list that holds, for each setting in the table at the end of this chapter, an entry with its `name`, `label`, `group`, `description`, `secret`, `live` and `set`, and its `value` in words unless it holds a secret.
-
-**Reason:** the console's All settings pages and its search read the settings from this one answer. `secret` is true for every setting that holds a credential, `live` is true for a setting the owner can also change while the server runs, and `set` says whether the environment states the setting. Nothing returns a secret's value (`authentication/console-settings-no-secret`).
-
-**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.
-
-### `instance/root-search-key`
-
-When the owner's browser session requests `GET /` for a page with the query key `q`, the server MUST NOT refuse `q` as undeclared.
-
-**Reason:** the search on Home is a form that submits `q` to the root.
-
-**Tests:** `compliance/console-pages.test.ts › takes a search from the owner's browser`.
-
-### `instance/root-search-key-other`
-
-If a request to `GET /` that is not the owner's browser session asking for a page carries the query key `q`, then the server MUST refuse `q` as `search-and-filters/undeclared-key` refuses an undeclared key.
-
-**Reason:** the root declares no query key to a program, and `q` belongs to the page it shows the owner alone.
-
-**Tests:** `compliance/console-pages.test.ts › refuses a search from anybody else, and any other key from everybody`.
 
 ## Pages
 
@@ -1196,7 +1148,7 @@ If a key holding `config.manage` sends `PATCH /config` with a key the server doe
 
 ### `instance/config-audit`
 
-When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and as `key_id` the credential that wrote: the key's id, `owner:<session ID>` for an owner browser session or `local:process` for the private local process.
+When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and as `key_id` the credential that wrote: the key's id or `local:process` for the private local process.
 
 **Tests:** `compliance/instance-config.test.ts › records a config.update audit entry for the key that wrote, and none for a refused write`.
 

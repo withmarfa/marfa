@@ -4,7 +4,7 @@ use marfa_rules::catalog::Catalog as Rules;
 use serde_json::{Map, Value};
 
 use super::page::Entry;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Holding};
 use crate::app::connectors::ReadOnly;
 use crate::app::refusal::{Refusal, Result};
 
@@ -32,6 +32,7 @@ pub(super) enum Verdict {
 
 pub(super) struct Judge<'a> {
     pub caller: &'a Caller,
+    pub levers: &'a Holding,
     pub rules: &'a Rules,
     pub read_only: &'a ReadOnly,
     pub filter: &'a Filter,
@@ -62,7 +63,7 @@ impl Judge<'_> {
     }
 
     fn listed(&self, entry: &Entry<'_, '_>) -> bool {
-        self.caller.lists(self.rules, &entry.type_id, &entry.source)
+        self.levers.lists(self.rules, &entry.type_id, &entry.source)
     }
 
     pub fn render(&self, entry: &Entry<'_, '_>, kind: Kind, payload: &str) -> Result<Verdict> {

@@ -507,7 +507,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
                 if moved.sign_in_moves || plan.origins_change(&writing) {
-                    unit.caller.require_direct()?;
+                    unit.caller.require_local()?;
                 }
                 if moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));

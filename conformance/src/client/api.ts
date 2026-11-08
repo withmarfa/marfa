@@ -1,5 +1,5 @@
 import { ofetch, type FetchOptions } from "ofetch";
-import { authenticateOwner, withOwnerSession } from "./owner-session.js";
+import { Agent } from "undici";
 import type {
   ApiResponse,
   MarfaItem,
@@ -55,16 +55,8 @@ import type {
 export interface MarfaClientOptions {
   baseUrl: string;
   apiKey?: string;
-  ownerCookie?: string;
-  ownerSessionFile?: string;
-  ownerCredentials?: { email: string; password: string };
-  /**
-   * How far the server's clock is ahead of this machine's, in milliseconds.
-   * Clients issue protocol timestamps and judge sign-in age on this clock, so
-   * a fixture that has moved the server's clock names it here, as a number
-   * or as a function for a client that outlives a move.
-   */
-  serverClockOffsetMs?: number | (() => number);
+  /** The private local listener's socket: the client then sends no credential. */
+  controlSocket?: string;
 }
 
 export interface CreateItemInput {
@@ -158,70 +150,26 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
-  private ownerCookie: string | undefined;
-  private ownerCredentials: MarfaClientOptions["ownerCredentials"];
-  private ownerSessionFile: string | undefined;
-  private serverClockOffsetMs: () => number;
-  private ownerAuthenticatedAt = 0;
-  private ownerAuthentication: Promise<void> | undefined;
+  private local: Agent | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey ?? "";
-    this.ownerCookie = options.ownerCookie;
-    this.ownerSessionFile = options.ownerSessionFile;
-    this.ownerCredentials = options.ownerCredentials;
-    const offset = options.serverClockOffsetMs ?? 0;
-    this.serverClockOffsetMs =
-      typeof offset === "number" ? () => offset : offset;
-  }
-
-  /** Long-running fixtures reauthenticate through the real sign-in operation. */
-  private async ensureRecentOwner(): Promise<void> {
-    const credentials = this.ownerCredentials;
-    if (
-      !credentials ||
-      !this.ownerCookie ||
-      Date.now() + this.serverClockOffsetMs() - this.ownerAuthenticatedAt <
-        240_000
-    )
-      return;
-    if (this.ownerAuthentication) return this.ownerAuthentication;
-    const authenticate = async (save?: (cookie: string) => Promise<void>) => {
-      const session = await authenticateOwner(
-        this.baseUrl,
-        this.ownerCookie,
-        credentials,
-        () => Date.now() + this.serverClockOffsetMs(),
-      );
-      this.ownerCookie = session.cookie;
-      this.ownerAuthenticatedAt = session.authenticatedAt;
-      await save?.(session.cookie);
-    };
-    this.ownerAuthentication = this.ownerSessionFile
-      ? withOwnerSession(this.ownerSessionFile, async (session, save) => {
-          if (
-            session.baseUrl !== this.baseUrl ||
-            typeof session.cookie !== "string"
-          )
-            throw new Error(
-              "Shared owner session does not match the target instance",
-            );
-          this.ownerCookie = session.cookie;
-          await authenticate(save);
-        })
-      : authenticate();
-    try {
-      await this.ownerAuthentication;
-    } finally {
-      this.ownerAuthentication = undefined;
-    }
+    this.local =
+      options.controlSocket === undefined
+        ? undefined
+        : new Agent({ connect: { socketPath: options.controlSocket } });
   }
 
   private authHeaders(): Record<string, string> {
-    return this.ownerCookie === undefined
+    return this.local === undefined
       ? { Authorization: `Bearer ${this.apiKey}` }
-      : { cookie: this.ownerCookie, origin: new URL(this.baseUrl).origin };
+      : {};
+  }
+
+  /** Where a request goes: the local listener's socket, or the network. */
+  private transport(): { dispatcher?: Agent } {
+    return this.local === undefined ? {} : { dispatcher: this.local };
   }
 
   /**
@@ -616,6 +564,7 @@ export class MarfaClient {
     try {
       const response = await ofetch.raw(url, {
         headers: { ...this.authHeaders() },
+        ...this.transport(),
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1225,7 +1174,7 @@ export class MarfaClient {
   ): Promise<Response> {
     return fetch(
       `${this.baseUrl}/connectors/${id}/deliveries/${deliveryId}/body`,
-      { headers: { ...this.authHeaders() } },
+      { headers: { ...this.authHeaders() }, ...this.transport() },
     );
   }
 
@@ -1640,12 +1589,6 @@ export class MarfaClient {
     path: string,
     options: FetchOptions = {},
   ): Promise<ApiResponse<T>> {
-    if (
-      !["GET", "HEAD", "OPTIONS"].includes(
-        String(options.method ?? "GET").toUpperCase(),
-      )
-    )
-      await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       ...this.authHeaders(),
@@ -1666,6 +1609,7 @@ export class MarfaClient {
       const response = await ofetch.raw(url, {
         ...options,
         headers,
+        ...this.transport(),
         responseType: "json",
         ignoreResponseError: true,
       });
@@ -1705,6 +1649,7 @@ export class MarfaClient {
       const response = await ofetch.raw(url, {
         method,
         headers: { ...this.authHeaders(), ...extraHeaders },
+        ...this.transport(),
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1754,6 +1699,7 @@ export class MarfaClient {
     try {
       const response = await ofetch.raw(url, {
         headers: { ...this.authHeaders() },
+        ...this.transport(),
         responseType: "text",
         ignoreResponseError: true,
       });
@@ -1802,7 +1748,6 @@ export class MarfaClient {
     body: ArrayBuffer | Uint8Array,
     contentType: string,
   ): Promise<ApiResponse<T>> {
-    await this.ensureRecentOwner();
     const url = `${this.baseUrl}${path}`;
     try {
       const response = await ofetch.raw(url, {
@@ -1811,6 +1756,7 @@ export class MarfaClient {
           ...this.authHeaders(),
           "Content-Type": contentType,
         },
+        ...this.transport(),
         body,
         responseType: "json",
         ignoreResponseError: true,

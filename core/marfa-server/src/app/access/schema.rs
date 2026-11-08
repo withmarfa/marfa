@@ -32,7 +32,8 @@ fn grant(kind: &str, name: &str, level: Level) -> serde_json::Value {
 impl Caller {
     pub(super) fn level_on(&self, axis: Axis, name: &str) -> Level {
         match self {
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => Level::Write,
+            Caller::Local(_) | Caller::Server => Level::Write,
+            Caller::Owner(_) => Level::None,
             Caller::Key(key) | Caller::App { key, .. } => axis.level(key.grants.map(axis), name),
         }
     }

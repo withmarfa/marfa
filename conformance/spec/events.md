@@ -881,37 +881,29 @@ When a credential holding `webhooks.manage` sends `GET /webhooks`, the server MU
 
 ### `events/webhook-direct-read`
 
-When the owner's browser session or private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries`, the server MUST admit reads across every maker without creating a credential.
+When private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries`, the server MUST admit reads across every maker without creating a credential.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-maker`
 
 When the server lists or gets a subscription, the server MUST include its maker's `kind` (`key` or `app`), `id` (key ID or OAuth client ID) and current `name`, with `null` for a name no longer available.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-direct-retry`
 
-When the owner's browser session authenticated within five minutes or private local authority requests redelivery, the server MUST apply the same live subscription, maker, retention and retained-frame checks as a request by the subscription's maker.
+When private local authority requests redelivery, the server MUST apply the same live subscription, maker, retention and retained-frame checks as a request by the subscription's maker.
 
 **Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
-**Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through owner authority without exposing its frame`.
-
-### `events/webhook-direct-retry-recent`
-
-If the owner's browser session that requests redelivery signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A redelivery sends the maker's retained content to the maker's address again, so a browser left signed in, or a copied cookie, cannot cause one without the password.
-
-**Tests:** `compliance/webhooks-owner.test.ts › refuses the owner's redelivery to a browser session that signed in more than five minutes ago, and accepts it from a recent one`.
+**Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through local authority without exposing its frame`.
 
 ### `events/webhook-direct-mutations`
 
-When direct owner or local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.
+When local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-update`
 
@@ -1043,7 +1035,7 @@ If a credential without `webhooks.manage` sends a request to a webhook operation
 
 ### `events/webhook-unauthenticated`
 
-If a request to a webhook operation carries neither a credential nor direct owner or local authority, then the server MUST answer `401 unauthorized`.
+If a request to a webhook operation carries neither a credential nor local authority, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/webhooks.test.ts › refuses every door without a credential`.
 
@@ -1325,7 +1317,7 @@ If `GET /webhooks/{id}/deliveries` names a `limit` that is not a whole number of
 
 ## Retries
 
-A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or direct owner or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
+A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
 
 ### `events/retry-5xx`
 
@@ -1383,7 +1375,7 @@ When a receiver answers every attempt with a retryable failure, the server MUST 
 
 ### `events/retry-poll-run`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
+When a caller authorized by `instance.maintain` or local authority runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`.
 
@@ -1751,7 +1743,7 @@ When a cancellation of a bulk-action job changes nothing, the server MUST NOT re
 
 ### `events/audit-housekeeping-run`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
+When a caller authorized by `instance.maintain` or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
 
 **Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the manager named`.
 
@@ -1762,12 +1754,6 @@ When the server accepts an export, the server MUST record an `export.run` entry 
 **Reason:** an export is a bulk extraction of the instance, so the record exists whether or not the stream that follows completes.
 
 **Tests:** `compliance/audit.test.ts › records export.run before the export's stream begins, and none for an export it refuses`.
-
-### `events/owner-export-actor`
-
-When the server accepts an export through an owner browser session, the server MUST attribute its `export.run` audit entry to `owner:<session ID>`.
-
-**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
 
 ### `events/audit-export-refused`
 

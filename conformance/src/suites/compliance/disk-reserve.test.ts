@@ -8,7 +8,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor } from "../../utils/own-blob-server.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * What an upload and a restore do when the volume cannot keep the instance's
@@ -53,9 +52,7 @@ async function withoutReserve(): Promise<void> {
 function ownerClient(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

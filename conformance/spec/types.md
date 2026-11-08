@@ -1572,7 +1572,7 @@ If `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` names a type nothing regi
 
 ### `types/icon-who`
 
-When the owner's session, a local process, or a key holding `schema.write` and write on the type in its type map sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, the server MUST allow the call.
+When a local process, or a key holding `schema.write` and write on the type in its type map sends `PUT /types/{id}/icon` or `DELETE /types/{id}/icon`, the server MUST allow the call.
 
 **Reason:** the icon is a presentation choice made over the author's, and who may set or clear it is exactly who may replace the type; a key that may not change a type's definition may not change how the owner sees it.
 
@@ -1646,21 +1646,13 @@ When no name candidate produces nonblank text, the server MUST return `Untitled`
 
 ### `types/delete-owner`
 
-When a recent owner session or private local command sends `DELETE /types/{id}`, the server MUST apply the built-in type, existing-item, setting, subtype and compatibility-dependency checks before removing an unused custom type.
+When the private local command sends `DELETE /types/{id}`, the server MUST apply the built-in type, existing-item, setting, subtype and compatibility-dependency checks before removing an unused custom type.
 
 **Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
 
-### `types/delete-owner-recent`
-
-If the browser session sending `DELETE /types/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden` and keep the type.
-
-**Reason:** Removing a type changes what every app can store, so a browser left signed in, or a copied cookie, cannot do it without the password.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and keeps the type, and a fresh session removes it`.
-
 ### `types/delete-owner-force`
 
-If a direct owner or private local command sends `DELETE /types/{id}?force=true`, then the server MUST answer `403 forbidden`.
+If the private local command sends `DELETE /types/{id}?force=true`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
 

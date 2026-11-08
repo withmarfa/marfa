@@ -45,16 +45,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("POST /auth/sign-out", "a browser's sign-out"),
     (
-        "GET /auth/get-session",
-        "the browser session a cookie names",
-    ),
-    ("POST /auth/revoke-sessions", "ends every browser session"),
-    (
-        "POST /auth/revoke-other-sessions",
-        "ends every browser session but the caller's",
-    ),
-    ("POST /auth/change-password", "the owner's password change"),
-    (
         "POST /auth/confirm",
         "the dialog's answer, which renews a stale browser session",
     ),

@@ -1,3 +1,4 @@
+import { localFetch } from "../../utils/control-request.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -89,16 +90,16 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** Answers the owner's own doors, which no key opens. */
-const ownerCookie = process.env.MARFA_OWNER_COOKIE ?? "";
+/** Answers the owner's own doors, which no key opens: the private local command. */
+const LOCAL = "the private local command";
 
 async function read(path: string, key = apiKey): Promise<unknown> {
-  const response = await fetch(`${apiUrl}${path}`, {
-    headers:
-      key === ownerCookie
-        ? { cookie: ownerCookie }
-        : { Authorization: `Bearer ${key}` },
-  });
+  const response =
+    key === LOCAL
+      ? await localFetch(process.env.MARFA_CONTROL_SOCKET!, `${apiUrl}${path}`)
+      : await fetch(`${apiUrl}${path}`, {
+          headers: { Authorization: `Bearer ${key}` },
+        });
   expect(response.status, path).toBe(200);
   return response.json();
 }
@@ -191,7 +192,7 @@ describe("one envelope for every list and search", () => {
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
-    door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
+    door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
   it("names thirty-one doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts

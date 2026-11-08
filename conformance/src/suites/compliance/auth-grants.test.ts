@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -307,12 +308,14 @@ describe("a code whose grant is revoked", () => {
 });
 
 describe("PATCH /auth/grants/{id}", () => {
-  const narrow = (id: string, expected: string[], scopes: string[]) =>
-    fetch(`${server.apiUrl}/auth/grants/${id}`, {
-      method: "PATCH",
-      headers: { cookie, origin, "content-type": "application/json" },
-      body: JSON.stringify({ expected_scopes: expected, scopes }),
-    });
+  const narrow = async (id: string, expected: string[], scopes: string[]) => {
+    const answer = await controlRequest(
+      server.controlSocket,
+      `/auth/grants/${id}`,
+      { method: "PATCH", body: { expected_scopes: expected, scopes } },
+    );
+    return Response.json(answer.body, { status: answer.status });
+  };
 
   it("narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access", async () => {
     const { clientId, access, grant } = await approved();
@@ -419,30 +422,30 @@ describe("PATCH /auth/grants/{id}", () => {
     ).toBe(400);
   });
 
-  it("requires direct owner authority and reports an unknown grant", async () => {
+  it("requires the local command and reports an unknown grant", async () => {
     const { grant } = await approved();
+    const sent = (headers: Record<string, string>) =>
+      fetch(`${server.apiUrl}/auth/grants/${grant.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ expected_scopes: grant.scopes, scopes: [] }),
+      });
     expect(
-      (
-        await fetch(`${server.apiUrl}/auth/grants/${grant.id}`, {
-          method: "PATCH",
-          headers: {
-            authorization: `Bearer ${server.managementKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ expected_scopes: grant.scopes, scopes: [] }),
-        })
-      ).status,
+      (await sent({ authorization: `Bearer ${server.managementKey}` })).status,
     ).toBe(403);
+    expect((await sent({})).status).toBe(401);
+    expect((await sent({ cookie, origin })).status).toBe(401);
     expect((await narrow("missing-grant", [], [])).status).toBe(404);
   });
 
   it("reports the inactivity boundary from last use or approval on the app sign-in", async () => {
     const { grant } = await approved();
-    const response = await fetch(`${server.apiUrl}/owner/sign-ins`, {
-      headers: { cookie },
-    });
+    const response = await controlRequest(
+      server.controlSocket,
+      "/owner/sign-ins",
+    );
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
+    const body = response.body as unknown as {
       data: {
         id: string;
         created_at: string;

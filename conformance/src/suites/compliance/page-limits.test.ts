@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { localFetch } from "../../utils/control-request.js";
 import { servedDocument } from "../../utils/openapi.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
@@ -152,19 +153,16 @@ const refusing = doors.filter((door) => door.capped !== true);
 async function read(door: Door, query = ""): Promise<Answer> {
   const path = door.path();
   const url = `${server.apiUrl}${path}${path.includes("?") ? "&" : "?"}${query}`;
-  const response = await fetch(url, {
-    headers:
-      door.who === "owner"
-        ? {
-            cookie: server.ownerCookie,
-            origin: new URL(server.apiUrl).origin,
-          }
-        : {
+  const response =
+    door.who === "owner"
+      ? await localFetch(server.controlSocket, url)
+      : await fetch(url, {
+          headers: {
             authorization: `Bearer ${
               door.who === "working" ? server.workingKey : server.managementKey
             }`,
           },
-  });
+        });
   const body = (await response.json()) as {
     data?: unknown[];
     next_cursor?: string | null;

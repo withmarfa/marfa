@@ -138,7 +138,7 @@ If a change that needs a sign-in from the last five minutes comes from an owner 
 
 **Reason:** A page recognises this refusal to open the dialog, so every door that needs a recent sign-in refuses in the same words.
 
-**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`, `› refuses a session created more than five minutes ago and ends none, until the owner confirms`.
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`.
 
 ### `authentication/confirm-replaces`
 
@@ -208,76 +208,20 @@ If a request to `POST /auth/confirm` comes from an origin other than the instanc
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
 
-### `authentication/sign-out-others`
-
-When an owner browser session created in the last five minutes sends `POST /auth/revoke-other-sessions`, the server MUST answer `200`, end every other browser session of the owner, and keep the session that sent it.
-
-**Reason:** the Browsers page signs out every browser but the one the owner is using, so the owner is not signed out of the page that asked. The browsers' sessions end and the apps they approved stay connected (`keys-and-oauth/app-outlives-browser`), because an app is not the browser that approved it. A session older than five minutes is refused as `authentication/recent-refusal` says.
-
-**Tests:** `compliance/confirm-sign-in.test.ts › ends every other browser session of the owner and keeps the one that sent it`, `compliance/browser-sessions.test.ts › through ending the other sessions leaves every app connected`.
-
-### `authentication/sign-out-all-recent`
-
-If an owner browser session created more than five minutes ago sends `POST /auth/revoke-sessions`, then the server MUST answer `403 forbidden` and end no session.
-
-**Reason:** The request ends every browser session of the owner, so a browser left signed in, or a copied cookie, cannot lock the owner out without the password.
-
-**Tests:** `compliance/confirm-sign-in.test.ts › ends no browser session for one created more than five minutes ago, until the owner confirms`.
-
 ### `authentication/passkey-register-recent`
 
 If a browser session created more than five minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey registration from a stale session`.
 
-## Console pages
+## Where a browser session counts
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/activity`, `/auth/owner/settings` and the pages under it (`/auth/owner/settings/{group}` and `/auth/owner/settings.json`), `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/connectors` and `/auth/owner/connectors/{id}`, `/auth/owner/items`, `/auth/owner/trash`, `/auth/owner/folders` and `/auth/owner/folders/{id}`, and `/auth/owner/types/{id}`, `/auth/owner/export`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), sign-in (`/auth/sign-in` and `/auth/sign-in/email`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, the doors under `/auth/passkey/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
 
-### `authentication/console-sign-in`
+### `authentication/session-pages-only`
 
-When a browser that holds no owner session asks a console page for HTML, the server MUST answer `302` to `/auth/sign-in` with the page's path and query, percent-encoded, as `return_to`, or with `/` as `return_to` when the path and query together are longer than 2048 characters.
+When a request to an operation other than those of the sign-in pages carries the owner's live browser session and no other credential, the server MUST answer it as a request that carries no credential.
 
-**Reason:** a person who opens a bookmarked page after the session ended was handed a bare error with no way on, and signing in then sends them back to where they were (`keys-and-oauth/return-to-kept`). An address longer than that would ride in the sign-in page's own address and form, so the person lands on Home instead. The limit belongs to the console pages: the sign-in page carries any other `return_to`, such as an authorization request, whole.
+**Reason:** Marfa has no owner console, so a session is good only for signing in and approving. A browser left signed in, a copied cookie or a page that rides on the owner's cookie reaches no data and no management operation.
 
-**Tests:** `compliance/console-pages.test.ts › goes to sign in, carrying the page's path and query as where to return`, `compliance/console-pages.test.ts › goes to sign in with no way back for an address too long to carry`, `compliance/console-pages.test.ts › is sent back to the page once it has signed in`, `compliance/console-pages.test.ts › is sent to sign in again when its session has ended`.
-
-### `authentication/console-sign-in-no-store`
-
-The server MUST send `Cache-Control: no-store` on the redirect from a console page to sign in.
-
-**Reason:** the redirect depends on the session the request carries, so a cache must not hand it to another browser.
-
-**Tests:** `compliance/console-pages.test.ts › is not given a redirect that a cache could hand to somebody else`.
-
-### `authentication/console-no-redirect`
-
-If a request for a console page carries an `Authorization` header or does not ask for HTML, then the server MUST NOT answer it with a redirect.
-
-**Reason:** a program reads the refusal it was always given, and a redirect to a sign-in page tells it nothing it can act on.
-
-**Tests:** `compliance/console-pages.test.ts › is not redirected to sign in, whether it asks for JSON, anything, or carries a credential`.
-
-### `authentication/console-unclaimed`
-
-While the instance is unclaimed, when a browser asks a console page for HTML, the server MUST answer `302` to `/setup`.
-
-**Reason:** no one can sign in to an instance that has no owner, so the page a person can use is the one that claims it.
-
-**Tests:** `compliance/console-pages.test.ts › is sent to set the instance up, not to a sign-in nobody can use`.
-
-### `authentication/console-keys-no-plaintext`
-
-The server MUST NOT include a key's plaintext in any page under `/auth/owner/keys`.
-
-**Reason:** the plaintext is shown once, from the answer to the mint (`keys-and-oauth/plaintext-once`), so a page the server draws, which a cache, a log or a later visit can read again, must never hold it.
-
-**Tests:** `compliance/console-pages.test.ts › never carry a key's plaintext, even for the key just made`.
-
-### `authentication/console-settings-no-secret`
-
-Where a setting holds a secret, the server MUST NOT include its value in any page under `/auth/owner/settings`, in the answer to `GET /auth/owner/settings.json`, or in Home; those say only whether it is set.
-
-**Reason:** the settings are read once, from the environment, and are not written anywhere the owner can read them again, so a page the server draws, which a cache, a log or a later visit can read, must never hold a secret that was never meant to be shown (`instance/settings-refused-secret-hidden` holds the same line for the log).
-
-**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.
+**Tests:** `compliance/browser-sessions.test.ts › answers the owner's live session on every door but the sign-in pages' own as a request with no credential`.

@@ -109,14 +109,7 @@ pub fn doors() -> Routes {
         .route("/auth/device", get(pages::device))
         .route("/setup", get(pages::setup))
         .route("/auth/sign-in/email", post(sign_in::email))
-        .route("/auth/get-session", get(sign_in::get_session))
         .route("/auth/sign-out", post(sign_in::sign_out))
-        .route("/auth/change-password", post(sign_in::change_password))
-        .route("/auth/revoke-sessions", post(sign_in::revoke_sessions))
-        .route(
-            "/auth/revoke-other-sessions",
-            post(sign_in::revoke_other_sessions),
-        )
         .route("/auth/confirm", post(sign_in::confirm))
         .route(
             "/auth/passkey/generate-register-options",

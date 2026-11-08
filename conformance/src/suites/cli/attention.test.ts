@@ -6,6 +6,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { Cli, requireBinary } from "./harness.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { localFetch } from "../../utils/control-request.js";
 let server: FreshServer;
 let local: Cli;
 beforeAll(async () => {
@@ -31,16 +32,14 @@ interface Inventory {
   }[];
 }
 const owner = (path: string, init: RequestInit = {}) =>
-  fetch(`${server.apiUrl}${path}`, {
+  localFetch(server.controlSocket, `${server.apiUrl}${path}`, {
     ...init,
     headers: {
-      cookie: server.ownerCookie,
-      origin: server.apiUrl,
       "content-type": "application/json",
       ...init.headers,
     },
   });
-it("shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys", async () => {
+it("answers the same attention over HTTP on the local socket and through the command, keeps known concerns, and refuses keys", async () => {
   expect(await local.json(["attention"])).toEqual({ data: [] });
   const key = await owner("/keys", {
     method: "POST",

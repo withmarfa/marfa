@@ -102,6 +102,13 @@ const FEATURE_DOORS: {
   },
 ];
 
+/** The run owner's browser session, which `pnpm marfa:up` writes. */
+function ownerCookie(): string {
+  const cookie = process.env.MARFA_OWNER_COOKIE;
+  expect(cookie, "MARFA_OWNER_COOKIE is required").toBeTruthy();
+  return cookie!;
+}
+
 describe("the instance", () => {
   it("answers /health without a credential and names its components", async () => {
     const r = await fetch(`${apiUrl}/health`);
@@ -317,10 +324,12 @@ describe("the instance", () => {
       ["/auth/device", 200, false, false],
       ["/no-such-page", 404, false, false],
     ] as const;
-    for (const [path, status, connects, consolePage] of pages) {
+    for (const [path, status, connects, passkeyPage] of pages) {
       const res =
         path === "/auth/owner/passkeys"
-          ? await getOwnerClient().rawRequest(path, { headers: asBrowser })
+          ? await fetch(`${apiUrl}${path}`, {
+              headers: { ...asBrowser, cookie: ownerCookie() },
+            })
           : await fetch(`${apiUrl}${path}`, { headers: asBrowser });
       expect(res.status, path).toBe(status);
       expect(res.headers.get("content-type"), path).toContain("text/html");
@@ -343,7 +352,7 @@ describe("the instance", () => {
         connects ? ["'self'"] : undefined,
       );
       expect(directives.get("img-src"), path).toEqual(
-        consolePage ? ["'self'", "data:"] : ["data:"],
+        passkeyPage ? ["'self'", "data:"] : ["data:"],
       );
       expect(policy, path).not.toContain("unsafe-inline");
       nonces.add(nonce ?? "");
@@ -490,9 +499,9 @@ describe("the instance", () => {
         await fetch(`${apiUrl}/auth/sign-in`, { headers: asBrowser }),
       ],
       [
-        "the sign-in library's own answer",
-        200,
-        await fetch(`${apiUrl}/auth/get-session`),
+        "a sign-in page's own answer",
+        401,
+        await fetch(`${apiUrl}/owner/passkeys`),
       ],
       ["an event stream", 200, stream],
       [

@@ -55,7 +55,7 @@ function archiveOf(count: number): { ids: string[]; bytes: Uint8Array } {
 function ownerOf(server: FreshServer): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
+    controlSocket: server.controlSocket,
   });
 }
 

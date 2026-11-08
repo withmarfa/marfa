@@ -44,11 +44,11 @@ function client(key: string): MarfaClient {
   return new MarfaClient({ baseUrl: server!.apiUrl, apiKey: key });
 }
 
-/** The instance's owner, who reads every maker's subscriptions. */
+/** The private local command, which reads every maker's subscriptions. */
 function person(): MarfaClient {
   return new MarfaClient({
     baseUrl: server!.apiUrl,
-    ownerCookie: server!.ownerCookie,
+    controlSocket: server!.controlSocket,
   });
 }
 

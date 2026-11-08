@@ -440,7 +440,7 @@ async fn an_unavailable_owner_is_refused_and_nothing_is_stored() {
 }
 
 #[tokio::test]
-async fn the_owner_door_takes_a_recent_sign_in_and_the_profile_door_a_key_that_may_write() {
+async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_may_write() {
     let instance = Instance::start(true).await;
     let cookie = instance.cookie().await;
     let kept = png(9);
@@ -456,8 +456,10 @@ async fn the_owner_door_takes_a_recent_sign_in_and_the_profile_door_a_key_that_m
     };
     assert_eq!(
         send(&instance.public, signed_in(&kept)).await.status,
-        StatusCode::OK
+        StatusCode::UNAUTHORIZED
     );
+    assert_eq!(instance.pictures(), 0);
+    assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
 
     let writer = instance.key(json!({ "avatar": "write" })).await;
     let over_http = send(&instance.public, {
@@ -496,11 +498,8 @@ async fn the_owner_door_takes_a_recent_sign_in_and_the_profile_door_a_key_that_m
     assert_eq!(reply.json(), json!({ "ok": true }));
     assert_eq!(instance.served().await.bytes, next);
 
-    instance.app.clock.advance(300_001).unwrap();
-    let late = send(&instance.public, signed_in(&kept)).await;
-    assert_eq!(late.status, StatusCode::FORBIDDEN);
-    assert_eq!(instance.served().await.bytes, next);
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
+    assert_eq!(instance.served().await.bytes, kept);
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ An endpoint belongs to one source. The source's current registration exposes its
 
 ### `inbound-webhooks/endpoint-created`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
@@ -66,7 +66,7 @@ If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELET
 
 ### `inbound-webhooks/endpoint-list`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`, `› retires an endpoint, after which its address is not served`.
 
@@ -78,7 +78,7 @@ When the server lists endpoints, the server MUST list the newest endpoint first.
 
 ### `inbound-webhooks/endpoint-list-whole`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
 
 **Reason:** the operation takes no `limit` and no `cursor`.
 
@@ -92,7 +92,7 @@ If a registration holds ten live endpoints and the server would otherwise take a
 
 ### `inbound-webhooks/order-body-before-endpoint-limit`
 
-If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
+If the connector's own key or a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a body the door refuses 400 before the limit of ten live endpoints' 409`.
 
@@ -110,7 +110,7 @@ When twenty requests to `POST /connectors/{id}/endpoints` arrive at once for a r
 
 ### `inbound-webhooks/endpoint-key-dead`
 
-If the key of a registration is revoked or past its `expires_at` when a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, then the server MUST answer `409 conflict` with `details.key_id` naming the key, and make no endpoint.
+If the key of a registration is revoked or past its `expires_at` when a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints`, then the server MUST answer `409 conflict` with `details.key_id` naming the key, and make no endpoint.
 
 **Reason:** an address on such a registration answers `404` for as long as its key stays dead (`inbound-webhooks/address-key-revoked`), so a `201` would hand out an address that never works.
 
@@ -118,7 +118,7 @@ If the key of a registration is revoked or past its `expires_at` when a caller a
 
 ### `inbound-webhooks/endpoint-retire`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`.
 
@@ -136,7 +136,7 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 ### `inbound-webhooks/endpoint-retire-unknown`
 
-If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
+If the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 

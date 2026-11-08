@@ -5,9 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
-import { issuerOrigin } from "../../utils/signed-in.js";
-import { TEST_OWNER } from "../../utils/target.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 import { waitFor } from "../../utils/wait.js";
 let server: FreshServer;
@@ -17,10 +15,7 @@ let ids: string[];
 let second: string;
 const privateBody = "owner-history-private-body";
 function owner(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
-  headers.set("cookie", server.ownerCookie);
-  headers.set("origin", server.apiUrl);
-  return fetch(server.apiUrl + path, { ...init, headers });
+  return localFetch(server.controlSocket, server.apiUrl + path, init);
 }
 function credential(path: string, key: string, method = "GET", body?: unknown) {
   return fetch(server.apiUrl + path, {
@@ -65,7 +60,7 @@ afterAll(async () => {
   await receiver?.close();
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
-it("reads every maker through owner and local authority while ordinary keys stay isolated", async () => {
+it("reads every maker through local authority while ordinary keys stay isolated", async () => {
   const before = await (await owner("/keys")).json();
   for (const read of [
     owner,
@@ -113,7 +108,7 @@ it("reads every maker through owner and local authority while ordinary keys stay
   expect((await credential(`/webhooks/${ids[0]!}`, second)).status).toBe(404);
   expect(await (await owner("/keys")).json()).toEqual(before);
 });
-it("retries a failed delivery through owner authority without exposing its frame", async () => {
+it("retries a failed delivery through local authority without exposing its frame", async () => {
   expect(
     (
       await credential("/items", server.workingKey, "POST", {
@@ -174,7 +169,7 @@ it("retries a failed delivery through owner authority without exposing its frame
   ).toHaveLength(2);
 });
 
-it("reads a full last delivery page through owner authority", async () => {
+it("reads a full last delivery page through local authority", async () => {
   for (let i = 0; i < 11; i++)
     expect(
       (
@@ -256,43 +251,4 @@ it("names a maker that no longer holds webhooks.manage as the reason the owner's
   expect(await refused.json()).toMatchObject({
     error: { code: "conflict", details: { reason: "credential_unavailable" } },
   });
-});
-
-// Last in the file: the server's clock only moves forward, and every case
-// above reads with the owner's session from the start.
-it("refuses the owner's redelivery to a browser session that signed in more than five minutes ago, and accepts it from a recent one", async () => {
-  const path = `/webhooks/${ids[0]!}/deliveries`;
-  const failed = await waitFor("a failed delivery", async () => {
-    const page = (await (await owner(path)).json()) as {
-      data: { id: string; status: string }[];
-    };
-    return page.data.find((d) => d.status === "dead_letter");
-  });
-  await server.advanceClock(6 * 60_000);
-  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: await issuerOrigin(server),
-    },
-    body: JSON.stringify(TEST_OWNER),
-  });
-  expect(signedIn.status).toBe(200);
-  const recent = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    signedIn.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(recent, "sign-in set no session cookie").toBeTruthy();
-
-  const redeliver = (cookie: string) =>
-    fetch(`${server.apiUrl}${path}/${failed.id}/redeliver`, {
-      method: "POST",
-      headers: { cookie, origin: server.apiUrl },
-    });
-  const refused = await redeliver(server.ownerCookie);
-  expect(refused.status).toBe(403);
-  expect(refused.headers.get("x-error-code")).toBe("forbidden");
-  await refused.body?.cancel();
-  const accepted = await redeliver(recent!);
-  expect(accepted.status).toBe(202);
-  await accepted.body?.cancel();
 });

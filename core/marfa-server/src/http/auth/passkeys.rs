@@ -11,13 +11,14 @@ use super::sign_in::{refuse_elsewhere, signed_in};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
-use crate::app::access::Caller;
+use crate::app::access::{Caller, unauthorized};
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, form_origins, owner};
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
+use crate::http::caller::OnPage;
 use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys};
 
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
@@ -45,7 +46,8 @@ fn response_in(body: &mut Map<String, Value>) -> Result<Value, Refusal> {
     }
 }
 
-pub async fn register_options(State(app): State<Arc<App>>, caller: Caller) -> Answer {
+pub async fn register_options(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     let started = passkeys::begin_adding(app.clone(), &caller).await?;
     begun(&app, started)
 }
@@ -53,9 +55,10 @@ pub async fn register_options(State(app): State<Arc<App>>, caller: Caller) -> An
 pub async fn verify_registration(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    caller: Caller,
+    OnPage(caller): OnPage,
     body: JsonBody,
 ) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     let mut body = body.object(&REGISTRATION_FIELDS).await?;
     let name = match body.get("name") {
         None | Some(Value::Null) => None,
@@ -107,7 +110,8 @@ pub async fn verify_authentication(
     ))
 }
 
-pub async fn list(State(app): State<Arc<App>>, caller: Caller) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     let data: Vec<Value> = passkeys::list(&app, &caller)
         .await?
         .iter()
@@ -122,23 +126,29 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller) -> Answer {
 pub async fn rename(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
-    caller: Caller,
+    OnPage(caller): OnPage,
     body: JsonBody,
 ) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     let body = body.object(&RENAME_FIELDS).await?;
     let name = text_field(&body, "name")?;
     let renamed = passkeys::rename(&app, &caller, id, name).await?;
     Ok(json_answer(StatusCode::OK, &renamed.to_json()))
 }
 
-pub async fn remove(State(app): State<Arc<App>>, Path(id): Path<String>, caller: Caller) -> Answer {
+pub async fn remove(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    OnPage(caller): OnPage,
+) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     passkeys::remove(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 
 /// It carries no credential, so the browser signs in there.
 pub async fn add_url(State(app): State<Arc<App>>, caller: Caller) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let origin = app.addresses().sign_in().origin().to_string();
     let url = format!("{origin}/auth/sign-in?prompt=login&return_to={PAGE}");
     Ok(json_answer(StatusCode::OK, &json!({ "url": url })))
@@ -161,7 +171,7 @@ fn shown(passkey: Listed, host: &str) -> OwnerPasskey {
 }
 
 /// `GET /auth/owner/passkeys`. Anyone but the signed-in owner goes to sign in.
-pub async fn page(State(app): State<Arc<App>>, caller: Option<Caller>) -> Answer {
+pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
     require_safe_transport(&app)?;
     let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
         return redirect(StatusCode::FOUND, SIGN_IN_FOR_PAGE);

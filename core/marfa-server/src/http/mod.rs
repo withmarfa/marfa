@@ -106,20 +106,16 @@ fn schema_doors() -> Routes {
         .route("/edge-types/{id}", delete(edge_types::delete))
 }
 
-/// The instance's own authority, a browser's or the local command's, holds no
-/// type map, and every content door answers within one.
+/// The local command holds no type map, and every content door answers within one.
 async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
-    if matches!(
-        identify(&mut parts, &app).await,
-        Ok(Some(Caller::Local(_) | Caller::Owner(_)))
-    ) {
+    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {
         return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await
 }
 
-/// Counts admit a browser's session and no local command.
+/// Counts answer a credential, and never the local command.
 async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
     if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {

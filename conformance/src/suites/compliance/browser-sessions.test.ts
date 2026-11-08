@@ -10,7 +10,7 @@ import {
 
 /**
  * A person's browser session ending, and the apps they connected. An app is
- * not the browser that approved it, so every door that ends a browser leaves
+ * not the browser that approved it, so every way a browser ends leaves
  * the app's access, refresh and consent as they were. A person has to be
  * signed in, and an instance has one owner, so this file boots a server of
  * its own and claims its owner through the production local command.
@@ -38,7 +38,6 @@ let accessOnly: App;
  *  password sign-in is limited to ten attempts a quarter hour, so no door
  *  signs in more than it must. */
 let live: string;
-let password = OWNER.password;
 
 beforeAll(async () => {
   // A server restarted on the same address with the same secret is the same
@@ -60,11 +59,15 @@ afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-async function signIn(): Promise<string> {
+async function signIn(userAgent = "browser-sessions"): Promise<string> {
   const response = await fetch(`${server!.apiUrl}/auth/sign-in/email`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin },
-    body: JSON.stringify({ email: OWNER.email, password }),
+    headers: {
+      "content-type": "application/json",
+      origin,
+      "user-agent": userAgent,
+    },
+    body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
   });
   expect(response.status).toBe(200);
   const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
@@ -86,11 +89,13 @@ async function post(
   });
 }
 
+/** The passkey page's list is a door a session counts on, so it says whether the session lives. */
 async function browserLive(cookie: string): Promise<boolean> {
-  const response = await fetch(`${server!.apiUrl}/auth/get-session`, {
+  const response = await fetch(`${server!.apiUrl}/owner/passkeys`, {
     headers: { cookie },
   });
-  return (await response.json()) !== null;
+  await response.body?.cancel();
+  return response.status === 200;
 }
 
 async function register(scope: string): Promise<string> {
@@ -247,59 +252,23 @@ describe("a browser session ending", () => {
   });
 
   it("through ending one session leaves every app connected", async () => {
-    const ended = live;
+    const ended = await signIn("browser-sessions-ending");
     await connectApps(ended);
-    live = await signIn();
-    const listed = await fetch(`${server!.apiUrl}/owner/sign-ins`, {
-      headers: { cookie: ended },
-    });
+    const listed = await controlRequest(
+      server!.controlSocket,
+      "/owner/sign-ins",
+    );
     const id = (
-      (await listed.json()) as { data: { id: string; current: boolean }[] }
-    ).data.find((row) => row.current)!.id;
-    const res = await fetch(`${server!.apiUrl}/owner/sign-ins/${id}`, {
-      method: "DELETE",
-      headers: { origin, cookie: live },
-    });
+      listed.body as unknown as { data: { id: string; user_agent: string }[] }
+    ).data.find((row) => row.user_agent === "browser-sessions-ending")!.id;
+    const res = await controlRequest(
+      server!.controlSocket,
+      `/owner/sign-ins/${id}`,
+      { method: "DELETE" },
+    );
     expect(res.status).toBe(200);
     expect(await browserLive(ended)).toBe(false);
     expect(await browserLive(live)).toBe(true);
-
-    await expectAppsConnected(live);
-  });
-
-  it("through ending the other sessions leaves every app connected", async () => {
-    const ended = await signIn();
-    await connectApps(ended);
-    expect((await post("/auth/revoke-other-sessions", live)).status).toBe(200);
-    expect(await browserLive(ended)).toBe(false);
-    expect(await browserLive(live)).toBe(true);
-
-    await expectAppsConnected(live);
-  });
-
-  it("through ending every session leaves every app connected", async () => {
-    const ended = live;
-    await connectApps(ended);
-    expect((await post("/auth/revoke-sessions", live)).status).toBe(200);
-    expect(await browserLive(ended)).toBe(false);
-
-    live = await signIn();
-    await expectAppsConnected(live);
-  });
-
-  it("through a password change that ends the other sessions leaves every app connected", async () => {
-    const ended = await signIn();
-    await connectApps(ended);
-    const next = "a different horse battery";
-    const res = await post("/auth/change-password", live, {
-      currentPassword: password,
-      newPassword: next,
-      revokeOtherSessions: true,
-    });
-    expect(res.status).toBe(200);
-    password = next;
-    expect(await browserLive(live)).toBe(true);
-    expect(await browserLive(ended)).toBe(false);
 
     await expectAppsConnected(live);
   });
@@ -330,7 +299,6 @@ describe("a browser session ending", () => {
       { method: "POST", body: { password: OWNER.password } },
     );
     expect(recovered.status).toBe(200);
-    password = OWNER.password;
     expect(await browserLive(ended)).toBe(false);
     live = await signIn();
     await expectAppsConnected(live);
@@ -343,6 +311,45 @@ describe("a browser session ending", () => {
 
     expect((await post("/auth/sign-out", live)).status).toBe(200);
     await expectAppsConnected(await signIn());
+  });
+
+  it("answers the owner's live session on every door but the sign-in pages' own as a request with no credential", async () => {
+    const browser = await signIn();
+    // The witness: the same cookie is the owner on the passkey page's own door.
+    const own = await fetch(`${server!.apiUrl}/owner/passkeys`, {
+      headers: { cookie: browser },
+    });
+    expect(own.status).toBe(200);
+    await own.body?.cancel();
+    for (const [method, path] of [
+      ["GET", "/items?type=core.note"],
+      ["GET", "/items/stats"],
+      ["GET", "/keys"],
+      ["POST", "/keys"],
+      ["GET", "/owner"],
+      ["GET", "/owner/sign-ins"],
+      ["GET", "/auth/grants"],
+      ["GET", "/trash"],
+      ["GET", "/audit"],
+      ["GET", "/profile"],
+    ] as const) {
+      const answer = await fetch(`${server!.apiUrl}${path}`, {
+        method,
+        headers: {
+          cookie: browser,
+          origin,
+          ...(method === "POST" ? { "content-type": "application/json" } : {}),
+        },
+        ...(method === "POST"
+          ? { body: JSON.stringify({ label: "browser-sessions" }) }
+          : {}),
+      });
+      expect(answer.status, `${method} ${path}`).toBe(401);
+      expect(
+        ((await answer.json()) as { error: { code: string } }).error.code,
+        `${method} ${path}`,
+      ).toBe("unauthorized");
+    }
   });
 
   it("registers an app without a back-channel logout address and does not echo one", async () => {

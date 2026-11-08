@@ -142,10 +142,9 @@ corrupts a copy under it.
 | `MARFA_API_URL`             | The booted server. Unset, the run stops: there is no default target.                                           |
 | `MARFA_API_KEY`             | Ordinary content/provisioning key with the original seven named permissions and write access in all five maps. |
 | `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all twelve named permissions and empty content maps.                      |
-| `MARFA_OWNER_SESSION_FILE`  | Protected shared session file used by owner fixtures to reuse a recent sign-in across test processes.          |
 | `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances.    |
-| `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
-| `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
+| `MARFA_OWNER_COOKIE`        | The owner's sign-in session, for the fixtures of the sign-in pages.                                            |
+| `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket, which owner-only fixtures use.                           |
 | `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures, scenario suite and hydration benchmark drive.                    |
 | `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
 | `MARFA_HYDRATION_ROWS`      | Rows in each set of the hydration benchmark. 2,000 when unset.                                                 |
@@ -219,7 +218,7 @@ stays because that thing is what it checks.
 
 `up` and `restart` write `<state>/env`, one `KEY=value` per line:
 `MARFA_API_URL`, `MARFA_API_KEY`, `MARFA_MANAGEMENT_KEY`, `MARFA_CONTROL_SOCKET`,
-`MARFA_OWNER_COOKIE`, `MARFA_OWNER_SESSION_FILE`, `MARFA_FIXTURE_AUTH_SECRET`,
+`MARFA_OWNER_COOKIE`, `MARFA_FIXTURE_AUTH_SECRET`,
 `MARFA_BLOB_PATH` and `MARFA_STATUS_LOGS`. The file is private to the test
 account.
 
@@ -289,10 +288,8 @@ fixture moves the clock and then runs the job it tests with
 The model is "time passed": the target and every party the harness controls
 use the stated clock. A fixture's process keeps its real clock, so clients
 apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
-when creating or checking protocol timestamps. `MarfaClient` accepts
-`serverClockOffsetMs` as a number or a callback; use the callback when a client
-outlives a clock advance. Client assertions, explicit HTTP `Date` headers and
-signed timestamps must use that stated time.
+when creating or checking protocol timestamps. Client assertions, explicit
+HTTP `Date` headers and signed timestamps must use that stated time.
 
 Webhook receivers in the harness also use the stated clock. Webhook signature
 timestamps, event-body timestamps, absolute `Retry-After` dates and retry

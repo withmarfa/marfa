@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -363,8 +362,7 @@ describe("the feed-expiry job", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: TEST_OWNER,
+      controlSocket: target.controlSocket,
     });
     const imported = await owner.restoreArchive(archive.data);
     expect(imported.ok, JSON.stringify(imported.error)).toBe(true);

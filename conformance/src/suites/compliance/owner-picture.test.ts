@@ -7,7 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import {
@@ -44,13 +44,9 @@ function putOwner(
   body: Uint8Array | null,
   headers: Record<string, string> = {},
 ) {
-  return fetch(address(), {
+  return localFetch(server.controlSocket, address(), {
     method: "PUT",
-    headers: {
-      cookie: server.ownerCookie,
-      origin: server.apiUrl,
-      ...headers,
-    },
+    headers,
     body: body === null ? null : bytesOf(body),
   });
 }
@@ -71,9 +67,7 @@ function putProfile(
 }
 
 function getAsOwner(headers: Record<string, string> = {}) {
-  return fetch(address(), {
-    headers: { cookie: server.ownerCookie, ...headers },
-  });
+  return localFetch(server.controlSocket, address(), { headers });
 }
 
 function getWithKey(key: string) {
@@ -81,13 +75,9 @@ function getWithKey(key: string) {
 }
 
 function patchOwner(body: unknown) {
-  return fetch(`${server.apiUrl}/owner`, {
+  return localFetch(server.controlSocket, `${server.apiUrl}/owner`, {
     method: "PATCH",
-    headers: {
-      "content-type": "application/json",
-      origin: server.apiUrl,
-      cookie: server.ownerCookie,
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -178,9 +168,8 @@ function sendChunked(
     const req = request(address(), {
       method: "PUT",
       agent: false,
+      socketPath: server.controlSocket,
       headers: {
-        cookie: server.ownerCookie,
-        origin: server.apiUrl,
         "content-type": "application/octet-stream",
         "transfer-encoding": "chunked",
       },
@@ -232,10 +221,6 @@ describe("the owner's picture", () => {
     });
     await expectMatchesSchema("PUT", "/owner/picture", 200, updated);
     expect((await ownerNow()).avatar).toBe(address());
-    const read = await fetch(`${server.apiUrl}/owner`, {
-      headers: { cookie: server.ownerCookie },
-    });
-    expect((await read.json()).avatar).toBe(address());
     expect(await served()).toMatchObject({ status: 200, bytes: file });
   });
 
@@ -436,8 +421,9 @@ describe("the owner's picture", () => {
     // Declared: the server answers on the header, with no body behind it.
     const declared = await declareOversizeBody(address(), {
       method: "PUT",
-      headers: { cookie: server.ownerCookie, origin: server.apiUrl },
+      headers: {},
       bytes: MAX_BYTES + 1,
+      socketPath: server.controlSocket,
     });
     expect(declared.status).toBe(413);
     expect(JSON.parse(declared.body).error.code).toBe("request_too_large");
@@ -463,9 +449,8 @@ describe("the owner's picture", () => {
       const req = request(address(), {
         method: "PUT",
         agent: false,
+        socketPath: server.controlSocket,
         headers: {
-          cookie: server.ownerCookie,
-          origin: server.apiUrl,
           "content-length": String(next.length + 16),
         },
       });
@@ -572,7 +557,8 @@ describe("the owner's picture", () => {
   it("serves the picture with the headers that keep its bytes from running", async () => {
     expect((await putOwner(png(8, 8))).status).toBe(200);
     const asKey = await getWithKey(server.workingKey);
-    for (const res of [await getAsOwner(), asKey]) {
+    const asApp = await getWithKey((await app("avatar")).token);
+    for (const res of [asKey, asApp]) {
       expect(res.status).toBe(200);
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("content-security-policy")).toBe(
@@ -672,36 +658,24 @@ describe("the owner's picture", () => {
     ).toMatchObject({ status: 403, code: "forbidden" });
     expect((await putProfile(next, null)).status).toBe(401);
 
-    // The owner door: no sign-in, and a key beside the owner's cookie.
-    expect(
-      (
-        await fetch(address(), {
-          method: "PUT",
-          headers: { origin: server.apiUrl },
-          body: bytesOf(next),
-        })
-      ).status,
-    ).toBe(401);
-    expect(
-      (await putOwner(next, { authorization: `Bearer ${server.workingKey}` }))
-        .status,
-    ).toBe(403);
+    // The owner door: no credential, the owner's browser session, which
+    // counts here as none, and a key.
+    for (const [headers, status] of [
+      [{ origin: server.apiUrl }, 401],
+      [{ origin: server.apiUrl, cookie: server.ownerCookie }, 401],
+      [{ authorization: `Bearer ${server.workingKey}` }, 403],
+    ] as const) {
+      const refused = await fetch(address(), {
+        method: "PUT",
+        headers,
+        body: bytesOf(next),
+      });
+      expect(refused.status).toBe(status);
+    }
     expect((await served()).bytes).toEqual(kept);
 
-    // The witness: the owner a moment after signing in is admitted, and
-    // the same owner past five minutes is not.
+    // The witness: the private local command is admitted.
     expect((await putOwner(next)).status).toBe(200);
-    await server.advanceClock(300_001);
-    expect(await refusal(await putOwner(kept))).toMatchObject({
-      status: 403,
-      code: "forbidden",
-    });
     expect((await served()).bytes).toEqual(next);
-    // The private local command needs no recent sign-in.
-    const local = await controlRequest(server.controlSocket, "/owner/picture", {
-      method: "PUT",
-      body: kept,
-    });
-    expect(local.status).toBe(200);
   });
 });

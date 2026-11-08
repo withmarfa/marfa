@@ -265,7 +265,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns item counts by state, type or source using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.
+         * @description Returns item counts by state, type or source using the filters of `GET /items`. Counts every state unless you name one.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -285,7 +285,7 @@ export interface paths {
         };
         /**
          * List item summaries
-         * @description Returns item names, types, versions, sources and creation times, newest first. Only the owner or a local command can use this operation. Trashed and system items are excluded.
+         * @description Returns item names, types, versions, sources and creation times, newest first. Only the private local command can use this operation. Trashed and system items are excluded.
          */
         get: operations["listItemSummaries"];
         put?: never;
@@ -345,7 +345,7 @@ export interface paths {
         };
         /**
          * List the trash
-         * @description Returns a page of trash summaries, newest creation first, without item content. Only the owner or a local command can use this operation.
+         * @description Returns a page of trash summaries, newest creation first, without item content. Only the private local command can use this operation.
          */
         get: operations["listTrash"];
         put?: never;
@@ -1089,7 +1089,7 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.
+         * @description Returns webhooks and their makers, with secrets redacted. The private local command sees every subscription; keys and apps see only their own.
          */
         get: operations["listWebhooks"];
         put?: never;
@@ -1113,7 +1113,7 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.
+         * @description Returns a webhook and its maker, with its secret redacted. The private local command can read any subscription; keys and apps can read only their own.
          */
         get: operations["getWebhook"];
         put?: never;
@@ -1141,7 +1141,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.
+         * @description Returns delivery metadata without event payloads, newest first. The private local command can inspect any subscription; keys and apps can inspect only their own.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1163,7 +1163,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a webhook delivery
-         * @description Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.
+         * @description Redelivers a failed delivery, queuing it again at the current URL. The private local command can retry any subscription; keys and apps can retry only their own.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -1181,7 +1181,7 @@ export interface paths {
         };
         /**
          * List folders
-         * @description Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.
+         * @description Returns active folder summaries, newest first, for the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.
          */
         get: operations["listFolders"];
         put?: never;
@@ -1625,7 +1625,7 @@ export interface paths {
         };
         /**
          * List sources
-         * @description Returns the sources you can see, each with its name and mark: your own, those you claim, and those of items you can read. `keys.manage` and the owner see every source in use or named.
+         * @description Returns the sources you can see, each with its name and mark: your own, those you claim, and those of items you can read. `keys.manage` and the local command see every source in use or named.
          */
         get: operations["listSources"];
         put?: never;
@@ -1669,7 +1669,7 @@ export interface paths {
         };
         /**
          * List API keys
-         * @description Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
+         * @description Returns key metadata without plaintext. `keys.manage` and local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or local authority.
          */
         get: operations["listKeys"];
         put?: never;
@@ -1716,14 +1716,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.
+         * @description Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.
          */
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.
+         * @description Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or local authority.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1780,14 +1780,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an app grant
-         * @description Revokes the app's tokens and consent. Requires `grants.manage` or direct authority; an owner browser needs a sign-in within five minutes.
+         * @description Revokes the app's tokens and consent. Requires `grants.manage` or local authority.
          */
         delete: operations["revokeAppGrant"];
         options?: never;
         head?: never;
         /**
          * Narrow an app grant
-         * @description Narrows standing access. Requires a recent owner sign-in or private authority. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.
+         * @description Narrows standing access. Requires the private local command. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.
          */
         patch: operations["narrowAppGrant"];
         trace?: never;
@@ -1801,7 +1801,7 @@ export interface paths {
         };
         /**
          * Get the owner
-         * @description Returns the owner of the claimed instance. Requires a direct owner sign-in or local process authority.
+         * @description Returns the owner of the claimed instance. Requires the private local command.
          */
         get: operations["getOwner"];
         put?: never;
@@ -1815,7 +1815,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner
-         * @description Updates the owner's email or name, or removes the picture. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.
+         * @description Updates the owner's email or name, or removes the picture. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.
          */
         patch: operations["updateOwner"];
         trace?: never;
@@ -1853,12 +1853,12 @@ export interface paths {
         };
         /**
          * Get the owner's picture
-         * @description Returns the owner's picture as an image download. Requires an owner sign-in or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.
+         * @description Returns the owner's picture as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.
          */
         get: operations["getOwnerPicture"];
         /**
          * Replace the owner's picture
-         * @description Stores the request body as the owner's picture and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority.
+         * @description Stores the request body as the owner's picture and returns the owner. Requires the private local command.
          */
         put: operations["replaceOwnerPicture"];
         post?: never;
@@ -1897,7 +1897,7 @@ export interface paths {
         };
         /**
          * List sign-ins
-         * @description Returns every browser, app and key that can reach Marfa, marking the browser that sent the request. Requires the owner's browser session or the local command.
+         * @description Returns every browser, app and key that can reach Marfa. Requires the private local command.
          */
         get: operations["listSignIns"];
         put?: never;
@@ -1920,14 +1920,14 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the owner's browser session or the local command. A browser over five minutes old can end only itself, without `revoke_keys`.
+         * @description Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the private local command.
          */
         delete: operations["endSignIn"];
         options?: never;
         head?: never;
         /**
          * Rename a sign-in
-         * @description Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.
+         * @description Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the private local command.
          */
         patch: operations["renameSignIn"];
         trace?: never;
@@ -2073,7 +2073,7 @@ export interface paths {
         };
         /**
          * List attention items
-         * @description Returns current concerns for the owner or a private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.
+         * @description Returns current concerns for the private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.
          */
         get: operations["listAttention"];
         put?: never;
@@ -2173,7 +2173,7 @@ export interface paths {
         };
         /**
          * Export an archive
-         * @description Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.
+         * @description Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. An archive can be read by `POST /restore`.
          */
         get: operations["exportArchive"];
         put?: never;
@@ -2195,7 +2195,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -5218,8 +5218,6 @@ export interface components {
             title: string;
             /** @description What needs attention or remains unknown. */
             description: string;
-            /** @description The local console path for the concern. */
-            href: string;
             /**
              * @description warn: needs a look; danger: a component or connector failed. Present when the concern has a severity.
              * @enum {string}
@@ -5775,8 +5773,6 @@ export interface components {
              * @example Safari on macOS
              */
             name: string;
-            /** @description `true` if this sign-in sent the request. */
-            current: boolean;
             /**
              * @description When the sign-in was made, in UTC. For an app, when the owner last approved it.
              * @example 2026-10-03T09:30:00.000Z
@@ -9948,7 +9944,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the request does not carry direct owner or local authority. */
+            /** @description `forbidden`: the request does not come from the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10416,7 +10412,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires direct owner or local authority, and a recent sign-in for changes. */
+            /** @description `forbidden`: requires the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10561,7 +10557,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires direct owner or local authority, and a recent sign-in for changes. */
+            /** @description `forbidden`: requires the private local command for changes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10748,7 +10744,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires direct owner or local authority, and a recent sign-in for changes. */
+            /** @description `forbidden`: requires the private local command for changes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10935,7 +10931,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires direct owner or local authority, and a recent sign-in for changes. */
+            /** @description `forbidden`: requires the private local command for changes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11136,7 +11132,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires direct owner or local authority, and a recent sign-in for changes. */
+            /** @description `forbidden`: requires the private local command for changes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16055,7 +16051,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you lack `schema.write`, your owner sign-in is too old, or direct authority requested `force=true`.
+             * @description - `forbidden`: you lack `schema.write`, or the local command requested `force=true`.
              *     - `core_type_immutable`: Marfa ships this type, and no credential can delete it.
              *     - `type_not_permitted`: your type map doesn't grant write on the type.
              */
@@ -19822,7 +19818,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20000,7 +19996,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the owner or a private local command can list folders. */
+            /** @description - `forbidden`: only the private local command can list folders. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22149,7 +22145,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is an app's access token, not a key, or direct owner or local authority. */
+            /** @description - `forbidden`: your credential is an app's access token, not a key, or local authority. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26078,7 +26074,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it. */
+            /** @description - `forbidden`: this operation requires its explicit permission or local authority. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26173,7 +26169,7 @@ export interface operations {
                     label: string;
                     /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later. */
                     source: string;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any. */
                     sources?: string[];
                     /** @description The permissions to give the key, such as `audit.read`. */
                     permissions?: components["schemas"]["Permission"][];
@@ -26202,7 +26198,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. */
+            /** @description Returns the new key with its plaintext `key`. When the local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26249,7 +26245,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26564,7 +26560,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission. */
+            /** @description - `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the local command. `details.required_scope` names a missing permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26579,7 +26575,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The owner or local command's message says when the key was already revoked. */
+            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26703,7 +26699,7 @@ export interface operations {
                     /** @description A name for the key, to tell it apart from your other keys. */
                     label?: string;
                     default_tier?: components["schemas"]["Tier"] & unknown;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any. */
                     sources?: string[];
                     /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
@@ -26783,7 +26779,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27288,7 +27284,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `grants.manage`, or the owner must confirm a recent sign-in. */
+            /** @description - `forbidden`: the credential lacks `grants.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27461,7 +27457,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: direct recent owner or private machine authority is required, or the requested scopes widen access. */
+            /** @description - `forbidden`: the private local command is required, or the requested scopes widen access. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27634,7 +27630,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description This operation requires direct owner or local authority. */
+            /** @description This operation requires the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27923,7 +27919,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request needs private machine authority or direct owner authentication within five minutes. */
+            /** @description The request needs the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28597,7 +28593,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request needs private machine authority or direct owner authentication within five minutes. */
+            /** @description The request needs the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28951,7 +28947,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29091,7 +29087,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago and the ID names another sign-in or `revoke_keys` is `true`. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29283,7 +29279,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29456,7 +29452,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires direct owner or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29593,7 +29589,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires direct owner or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29779,7 +29775,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires direct owner or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30717,7 +30713,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the owner or a private local command can read this inventory. */
+            /** @description - `forbidden`: only the private local command can read this inventory. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -31728,7 +31724,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes. */
+            /** @description Requires the private local command. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

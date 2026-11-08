@@ -7,7 +7,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key's `expires_at`: named on a mint, changed by an update, and held to
@@ -44,8 +43,7 @@ beforeAll(async () => {
   });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -440,8 +438,7 @@ describe("a key an app made", () => {
         });
         const person = new MarfaClient({
           baseUrl: own.apiUrl,
-          ownerCookie: own.ownerCookie,
-          ownerCredentials: TEST_OWNER,
+          controlSocket: own.controlSocket,
         });
 
         const made = await app.createKey({

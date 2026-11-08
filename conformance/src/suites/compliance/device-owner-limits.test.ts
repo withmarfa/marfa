@@ -5,6 +5,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { DAY_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
@@ -92,12 +93,13 @@ async function location(response: Response): Promise<string> {
   return response.headers.get("location") ?? "";
 }
 
-async function sessionId(cookie: string): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/get-session`, {
-    headers: { cookie },
-  });
-  expect(response.status).toBe(200);
-  return ((await response.json()) as { session: { id: string } }).session.id;
+/** The IDs of the owner's live browser sessions, through the local command. */
+async function browsers(): Promise<string[]> {
+  const listed = await controlRequest(server.controlSocket, "/owner/sign-ins");
+  expect(listed.status).toBe(200);
+  return (listed.body.data as { id: string; kind: string }[])
+    .filter((row) => row.kind === "browser")
+    .map((row) => row.id);
 }
 
 describe("the owner device lookup lane", () => {
@@ -201,7 +203,7 @@ describe("the owner device lookup lane", () => {
   it("shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart", async () => {
     const first = server.ownerCookie;
     const second = await signIn();
-    expect(await sessionId(first)).not.toBe(await sessionId(second));
+    expect(new Set(await browsers()).size).toBe(2);
     for (let i = 0; i < 8; i++) {
       const cookie = i % 2 ? first : second;
       const address = `192.0.2.${String(i + 1)}`;
@@ -276,7 +278,9 @@ describe("the owner device lookup lane", () => {
     "keeps a %s cookie in the anonymous lane",
     async (state) => {
       let cookie = server.ownerCookie;
-      const id = await sessionId(cookie);
+      const sessions = await browsers();
+      expect(sessions).toHaveLength(1);
+      const id = sessions[0]!;
       expect(await location(await enter(codeFor(900), cookie))).toContain(
         "error=invalid_code",
       );
@@ -284,12 +288,12 @@ describe("the owner device lookup lane", () => {
         cookie = cookie.slice(0, -1) + (cookie.endsWith("A") ? "B" : "A");
       else if (state === "expired") await clock.advance(8 * DAY_MS);
       else {
-        const ended = await fetch(`${server.apiUrl}/owner/sign-ins/${id}`, {
-          method: "DELETE",
-          headers: { cookie, origin },
-        });
+        const ended = await controlRequest(
+          server.controlSocket,
+          `/owner/sign-ins/${id}`,
+          { method: "DELETE" },
+        );
         expect(ended.status).toBe(200);
-        await ended.body?.cancel();
       }
       for (let i = 0; i < 10; i++)
         expect(

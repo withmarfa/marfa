@@ -14,7 +14,6 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 import { damageBlobs } from "../../utils/store-faults.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -127,8 +126,7 @@ function owner(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: "",
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
 }
 

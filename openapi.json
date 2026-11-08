@@ -11,13 +11,17 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "marfa.auth.session_token",
-        "description": "The owner's browser sign-in. Writes require this instance's Origin; sensitive changes require actual authentication within five minutes. Apps cannot use this authority."
+        "description": "The owner's browser sign-in, which only the sign-in pages read: here, the passkey doors. Writes require this instance's Origin, and changes require authentication within five minutes. Apps cannot use this authority."
       },
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "API Key or OAuth Token",
         "description": "Authenticate with an API key (`marfa_k1_…`) or an OAuth access token (`marfa_at_…`)."
+      },
+      "localCommand": {
+        "type": "mutualTLS",
+        "description": "The private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential. The `marfa` command line reaches it with `--socket`."
       }
     },
     "schemas": {
@@ -7489,10 +7493,6 @@
             "type": "string",
             "description": "What needs attention or remains unknown."
           },
-          "href": {
-            "type": "string",
-            "description": "The local console path for the concern."
-          },
           "tone": {
             "type": "string",
             "enum": [
@@ -7506,8 +7506,7 @@
           "kind",
           "reference",
           "title",
-          "description",
-          "href"
+          "description"
         ],
         "description": "One known concern or unavailable check."
       },
@@ -8939,10 +8938,6 @@
             "description": "A readable name: a browser's from its `user_agent`, an app's the owner's name for it or else its registered name, a key's its `label`. A name with a control or bidirectional character, or over 200 characters, gives way to the ID.",
             "example": "Safari on macOS"
           },
-          "current": {
-            "type": "boolean",
-            "description": "`true` if this sign-in sent the request."
-          },
           "created_at": {
             "type": "string",
             "description": "When the sign-in was made, in UTC. For an app, when the owner last approved it.",
@@ -8991,7 +8986,6 @@
           "id",
           "kind",
           "name",
-          "current",
           "created_at",
           "last_used_at",
           "expires_at",
@@ -17280,13 +17274,13 @@
           "Items"
         ],
         "summary": "Get item counts",
-        "description": "Returns item counts by state, type or source using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.",
+        "description": "Returns item counts by state, type or source using the filters of `GET /items`. Counts every state unless you name one.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -17692,10 +17686,10 @@
           "Items"
         ],
         "summary": "List item summaries",
-        "description": "Returns item names, types, versions, sources and creation times, newest first. Only the owner or a local command can use this operation. Trashed and system items are excluded.",
+        "description": "Returns item names, types, versions, sources and creation times, newest first. Only the private local command can use this operation. Trashed and system items are excluded.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -17846,7 +17840,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the request does not carry direct owner or local authority.",
+            "description": "`forbidden`: the request does not come from the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18675,10 +18669,10 @@
           "Trash"
         ],
         "summary": "List the trash",
-        "description": "Returns a page of trash summaries, newest creation first, without item content. Only the owner or a local command can use this operation.",
+        "description": "Returns a page of trash summaries, newest creation first, without item content. Only the private local command can use this operation.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -18816,7 +18810,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: requires direct owner or local authority, and a recent sign-in for changes.",
+            "description": "`forbidden`: requires the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18981,7 +18975,7 @@
         "description": "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -19107,7 +19101,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: requires direct owner or local authority, and a recent sign-in for changes.",
+            "description": "`forbidden`: requires the private local command for changes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19360,7 +19354,7 @@
         "description": "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -19486,7 +19480,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: requires direct owner or local authority, and a recent sign-in for changes.",
+            "description": "`forbidden`: requires the private local command for changes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19739,7 +19733,7 @@
         "description": "Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -19865,7 +19859,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: requires direct owner or local authority, and a recent sign-in for changes.",
+            "description": "`forbidden`: requires the private local command for changes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20118,7 +20112,7 @@
         "description": "Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -20293,7 +20287,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: requires direct owner or local authority, and a recent sign-in for changes.",
+            "description": "`forbidden`: requires the private local command for changes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30364,7 +30358,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -30492,7 +30486,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `schema.write`, your owner sign-in is too old, or direct authority requested `force=true`.\n- `core_type_immutable`: Marfa ships this type, and no credential can delete it.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
+            "description": "- `forbidden`: you lack `schema.write`, or the local command requested `force=true`.\n- `core_type_immutable`: Marfa ships this type, and no credential can delete it.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31538,7 +31532,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -31909,7 +31903,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -36306,7 +36300,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.",
+        "description": "Returns webhooks and their makers, with secrets redacted. The private local command sees every subscription; keys and apps see only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -36563,7 +36557,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.",
+        "description": "Returns a webhook and its maker, with its secret redacted. The private local command can read any subscription; keys and apps can read only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37626,7 +37620,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.",
+        "description": "Returns delivery metadata without event payloads, newest first. The private local command can inspect any subscription; keys and apps can inspect only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37948,7 +37942,7 @@
           "Webhooks"
         ],
         "summary": "Redeliver a webhook delivery",
-        "description": "Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
+        "description": "Redelivers a failed delivery, queuing it again at the current URL. The private local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -38075,7 +38069,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes.",
+            "description": "- `forbidden`: you don't have `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38325,10 +38319,10 @@
           "Folders"
         ],
         "summary": "List folders",
-        "description": "Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
+        "description": "Returns active folder summaries, newest first, for the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -38445,7 +38439,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: only the owner or a private local command can list folders.",
+            "description": "- `forbidden`: only the private local command can list folders.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42578,7 +42572,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is an app's access token, not a key, or direct owner or local authority.",
+            "description": "- `forbidden`: your credential is an app's access token, not a key, or local authority.",
             "content": {
               "application/json": {
                 "schema": {
@@ -49889,13 +49883,13 @@
           "Sources"
         ],
         "summary": "List sources",
-        "description": "Returns the sources you can see, each with its name and mark: your own, those you claim, and those of items you can read. `keys.manage` and the owner see every source in use or named.",
+        "description": "Returns the sources you can see, each with its name and mark: your own, those you claim, and those of items you can read. `keys.manage` and the local command see every source in use or named.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "responses": {
@@ -50125,7 +50119,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -50396,7 +50390,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -50761,7 +50755,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "requestBody": {
@@ -50790,7 +50784,7 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any."
                   },
                   "permissions": {
                     "type": "array",
@@ -50873,7 +50867,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the new key with its plaintext `key`. When the owner or local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source.",
+            "description": "Returns the new key with its plaintext `key`. When the local command creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50960,7 +50954,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
             "content": {
               "application/json": {
                 "schema": {
@@ -51190,13 +51184,13 @@
           "API keys"
         ],
         "summary": "List API keys",
-        "description": "Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+        "description": "Returns key metadata without plaintext. `keys.manage` and local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or local authority.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "responses": {
@@ -51288,7 +51282,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it.",
+            "description": "- `forbidden`: this operation requires its explicit permission or local authority. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -51757,13 +51751,13 @@
           "API keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
+        "description": "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -51877,7 +51871,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission.",
+            "description": "- `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the local command. `details.required_scope` names a missing permission.",
             "content": {
               "application/json": {
                 "schema": {
@@ -51907,7 +51901,7 @@
             }
           },
           "404": {
-            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The owner or local command's message says when the key was already revoked.",
+            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52118,13 +52112,13 @@
           "API keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
+        "description": "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or local authority.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -52179,7 +52173,7 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the owner or local command can grant any."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -52347,7 +52341,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52978,7 +52972,7 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "summary": "List app grants",
@@ -53235,11 +53229,11 @@
         ],
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "summary": "Narrow an app grant",
-        "description": "Narrows standing access. Requires a recent owner sign-in or private authority. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.",
+        "description": "Narrows standing access. Requires the private local command. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.",
         "parameters": [
           {
             "schema": {
@@ -53375,7 +53369,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: direct recent owner or private machine authority is required, or the requested scopes widen access.",
+            "description": "- `forbidden`: the private local command is required, or the requested scopes widen access.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53620,11 +53614,11 @@
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "summary": "Revoke an app grant",
-        "description": "Revokes the app's tokens and consent. Requires `grants.manage` or direct authority; an owner browser needs a sign-in within five minutes.",
+        "description": "Revokes the app's tokens and consent. Requires `grants.manage` or local authority.",
         "parameters": [
           {
             "schema": {
@@ -53729,7 +53723,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the credential lacks `grants.manage`, or the owner must confirm a recent sign-in.",
+            "description": "- `forbidden`: the credential lacks `grants.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53944,10 +53938,10 @@
         "summary": "Get the owner",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Returns the owner of the claimed instance. Requires a direct owner sign-in or local process authority.",
+        "description": "Returns the owner of the claimed instance. Requires the private local command.",
         "responses": {
           "200": {
             "description": "The owner.",
@@ -54037,7 +54031,7 @@
             }
           },
           "403": {
-            "description": "This operation requires direct owner or local authority.",
+            "description": "This operation requires the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -54229,10 +54223,10 @@
         "summary": "Update the owner",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Updates the owner's email or name, or removes the picture. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
+        "description": "Updates the owner's email or name, or removes the picture. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
         "requestBody": {
           "required": true,
           "content": {
@@ -54351,7 +54345,7 @@
             }
           },
           "403": {
-            "description": "The request needs private machine authority or direct owner authentication within five minutes.",
+            "description": "The request needs the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -55490,10 +55484,10 @@
         "summary": "Replace the owner's picture",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Stores the request body as the owner's picture and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority.",
+        "description": "Stores the request body as the owner's picture and returns the owner. Requires the private local command.",
         "requestBody": {
           "required": true,
           "description": "The picture's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side.",
@@ -55595,7 +55589,7 @@
             }
           },
           "403": {
-            "description": "The request needs private machine authority or direct owner authentication within five minutes.",
+            "description": "The request needs the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -55850,13 +55844,13 @@
         "summary": "Get the owner's picture",
         "security": [
           {
-            "ownerSession": []
+            "bearerAuth": []
           },
           {
-            "bearerAuth": []
+            "localCommand": []
           }
         ],
-        "description": "Returns the owner's picture as an image download. Requires an owner sign-in or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.",
+        "description": "Returns the owner's picture as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.",
         "responses": {
           "200": {
             "description": "Returns the picture's bytes.",
@@ -56547,10 +56541,10 @@
         "summary": "List sign-ins",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Returns every browser, app and key that can reach Marfa, marking the browser that sent the request. Requires the owner's browser session or the local command.",
+        "description": "Returns every browser, app and key that can reach Marfa. Requires the private local command.",
         "responses": {
           "200": {
             "description": "Returns every live sign-in.",
@@ -56640,7 +56634,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -56804,10 +56798,10 @@
         "summary": "Rename a sign-in",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+        "description": "Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the private local command.",
         "parameters": [
           {
             "schema": {
@@ -56942,7 +56936,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -57185,10 +57179,10 @@
         "summary": "End a sign-in",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
-        "description": "Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the owner's browser session or the local command. A browser over five minutes old can end only itself, without `revoke_keys`.",
+        "description": "Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the private local command.",
         "parameters": [
           {
             "schema": {
@@ -57314,7 +57308,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago and the ID names another sign-in or `revoke_keys` is `true`.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the private local command.",
             "content": {
               "application/json": {
                 "schema": {
@@ -57560,6 +57554,9 @@
         "security": [
           {
             "ownerSession": []
+          },
+          {
+            "localCommand": []
           }
         ],
         "description": "Returns every registered owner passkey, oldest first. Requires the owner's browser session or private local authority.",
@@ -57652,7 +57649,7 @@
             }
           },
           "403": {
-            "description": "Requires direct owner or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -57817,6 +57814,9 @@
         "security": [
           {
             "ownerSession": []
+          },
+          {
+            "localCommand": []
           }
         ],
         "description": "Renames the passkey and returns its public details. Requires the owner's browser session authenticated within five minutes or private local authority.",
@@ -57953,7 +57953,7 @@
             }
           },
           "403": {
-            "description": "Requires direct owner or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -58197,6 +58197,9 @@
         "security": [
           {
             "ownerSession": []
+          },
+          {
+            "localCommand": []
           }
         ],
         "description": "Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
@@ -58311,7 +58314,7 @@
             }
           },
           "403": {
-            "description": "Requires direct owner or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -60161,10 +60164,10 @@
           "Health and maintenance"
         ],
         "summary": "List attention items",
-        "description": "Returns current concerns for the owner or a private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.",
+        "description": "Returns current concerns for the private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "responses": {
@@ -60256,7 +60259,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: only the owner or a private local command can read this inventory.",
+            "description": "- `forbidden`: only the private local command can read this inventory.",
             "content": {
               "application/json": {
                 "schema": {
@@ -61884,13 +61887,13 @@
           "Export and restore"
         ],
         "summary": "Export an archive",
-        "description": "Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
+        "description": "Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. An archive can be read by `POST /restore`.",
         "security": [
           {
             "bearerAuth": []
           },
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "parameters": [
@@ -62260,10 +62263,10 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
+        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.",
         "security": [
           {
-            "ownerSession": []
+            "localCommand": []
           }
         ],
         "requestBody": {
@@ -62468,7 +62471,7 @@
             }
           },
           "403": {
-            "description": "Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes.",
+            "description": "Requires the private local command.",
             "content": {
               "application/json": {
                 "schema": {

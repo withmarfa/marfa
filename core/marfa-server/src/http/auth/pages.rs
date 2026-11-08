@@ -16,7 +16,7 @@ use crate::app::oauth::signed_link::{self, Verified};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
 use crate::http::answer::{Answer, Page as RefusalMark, asks_for_html, refusal_answer};
-use crate::http::caller::identify;
+use crate::http::caller::browser_owner;
 use crate::http::pages::{
     self, AuthError, AuthErrorCode, DeviceEntry, DeviceProblem, Notice, SetupCode,
     SetupCodeProblem, SetupDetails, SetupFieldErrors, SignIn, SignInProblem, SignedIn, Wait,
@@ -57,7 +57,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     if !claim::is_claimed(&app).await? {
         return Ok(pages::notice(&Notice::no_owner_yet(&name))?.into_response());
     }
-    let (mut parts, _) = request.into_parts();
+    let (parts, _) = request.into_parts();
     let pairs = query::pairs(&parts.uri)?;
     let field = |name: &str| first(&pairs, name);
     let address = app.addresses().sign_in();
@@ -68,7 +68,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         .to_string();
     let sent = authorization(&app, &link);
     if field("prompt") != Some("login") && sent.is_none() {
-        let caller = identify(&mut parts, &app).await?;
+        let caller = browser_owner(&parts, &app).await?;
         if caller.as_ref().and_then(Caller::session).is_some()
             && let Some(found) = owner::find(&app).await?
         {

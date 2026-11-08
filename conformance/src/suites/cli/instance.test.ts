@@ -726,14 +726,13 @@ describe("the instance from the terminal", () => {
       id: string;
       kind: string;
       name: string;
-      current: boolean;
     }
     const listed = await local.json<{ data: SignIn[] }>(["sign-ins", "list"]);
     expect(listed.data.find((row) => row.id === minted.id)).toMatchObject({
       kind: "key",
       name: label,
-      current: false,
     });
+    expect(listed.data.every((row) => !("current" in row))).toBe(true);
     const plain = await local.run(["sign-ins", "list"]);
     expect(plain.code).toBe(0);
     expect(plain.stdout).toContain(`${minted.id}  key      ${label}`);

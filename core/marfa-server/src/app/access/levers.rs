@@ -238,6 +238,11 @@ impl Holding {
             .filter(|scope| scope.types.iter().any(|held| rules.matches(held, type_id)))
             .map(|scope| scope.sources.as_slice())
     }
+
+    pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
+        self.listed_sources(rules, type_id)
+            .is_none_or(|sources| sources.iter().any(|held| held == source))
+    }
 }
 
 static REPORTED: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
@@ -260,7 +265,7 @@ pub fn report_unread(holder: &str, text: &str) {
     }
 }
 
-/// Panics if asked before a transaction has read it: an empty answer would read as no lever at all.
+/// Refused if asked before a transaction has read it: an empty answer would read as no lever at all.
 #[derive(Clone, Debug, Default)]
 pub struct Standing(Option<Arc<Holding>>);
 
@@ -276,10 +281,10 @@ impl Standing {
         })))
     }
 
-    pub fn holding(&self) -> &Holding {
-        self.0
-            .as_deref()
-            .expect("a lever is asked of a caller no transaction has read")
+    pub fn holding(&self) -> Result<&Holding> {
+        self.0.as_deref().ok_or_else(|| {
+            Refusal::internal("a lever was asked of a caller no transaction has read")
+        })
     }
 }
 
@@ -341,20 +346,21 @@ mod tests {
 
         assert!(!Holding::of(Some(&strict), None).filters_sources());
         assert!(Holding::of(None, Some(&filter)).filters_sources());
-        assert!(Standing::closed().holding().filters_sources());
+        assert!(Standing::closed().holding().unwrap().filters_sources());
     }
 
     #[test]
     fn levers_that_do_not_read_hold_every_type_and_allow_no_source() {
         let closed = Standing::closed();
-        assert!(closed.holding().strict_on("a"));
-        assert_eq!(closed.holding().allowed_sources("a"), Some(&[][..]));
+        let held = closed.holding().unwrap();
+        assert!(held.strict_on("a"));
+        assert_eq!(held.allowed_sources("a"), Some(&[][..]));
     }
 
     #[test]
-    #[should_panic(expected = "no transaction has read")]
-    fn a_standing_no_transaction_read_gives_no_answer() {
-        Standing::default().holding();
+    fn a_standing_no_transaction_read_is_refused() {
+        assert!(Standing::default().holding().is_err());
+        assert!(Standing::closed().holding().is_ok());
     }
 
     #[test]

@@ -192,7 +192,7 @@ When an app's access token sends `POST /blobs` and the server takes the upload, 
 
 ### `blobs/upload-operator-key`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
+When a caller authorized by `blobs.manage` or local authority sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
 
 **Tests:** `compliance/blob-reach.test.ts › serves the management key every blob and takes its uploads`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
@@ -334,7 +334,7 @@ If a request to the instance's link names a blob by a malformed hash, then the s
 
 ### `blobs/hash-unknown`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority, or a working key or an access token lacking `blobs.manage` whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, then the server MUST answer `404 blob_not_found`.
+If a caller authorized by `blobs.manage` or local authority, or a working key or an access token lacking `blobs.manage` whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, then the server MUST answer `404 blob_not_found`.
 
 **Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the copies of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the management key the blob doors although it holds no type map`.
 
@@ -498,7 +498,7 @@ If a working key or an app's access token lacking `blobs.manage` whose type map 
 
 ### `blobs/read-operator-key`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
+When a caller authorized by `blobs.manage` or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
 
 **Tests:** `compliance/blob-reach.test.ts › serves the management key every blob and takes its uploads`, `› serves the management key the blob doors although it holds no type map`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
@@ -792,7 +792,7 @@ When a working key sends `GET /export?format=archive`, the server MUST list on e
 
 ### `blobs/restore-standing`
 
-When a recently authenticated direct owner or a local caller sends `POST /restore`, the server MUST make each digest in a restored item, edge or extension lend exactly when its archive line lists it as lending.
+When a local caller sends `POST /restore`, the server MUST make each digest in a restored item, edge or extension lend exactly when its archive line lists it as lending.
 
 **Reason:** every other digest the line names restores as one that does not lend, and `blobs/proof-repair` is how it is repaired.
 
@@ -800,13 +800,13 @@ When a recently authenticated direct owner or a local caller sends `POST /restor
 
 ### `blobs/restore-unlisted`
 
-When a recently authenticated direct owner or a local caller sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
+When a local caller sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
 
 **Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
 
 ### `blobs/restore-reserve`
 
-Where an instance keeps a reserve of free space, if a recently authenticated direct owner or a local caller sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
+Where an instance keeps a reserve of free space, if a local caller sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
 

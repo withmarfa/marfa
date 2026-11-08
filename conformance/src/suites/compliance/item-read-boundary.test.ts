@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { localFetch } from "../../utils/control-request.js";
 
 let server: FreshServer;
 let reader: string;
@@ -26,22 +27,22 @@ async function call(
 
 beforeAll(async () => {
   server = await bootFreshServer("item-read-boundary");
-  const minted = await fetch(`${server.apiUrl}/keys`, {
-    method: "POST",
-    headers: {
-      Cookie: server.ownerCookie,
-      Origin: new URL(server.apiUrl).origin,
-      "Content-Type": "application/json",
+  const minted = await localFetch(
+    server.controlSocket,
+    `${server.apiUrl}/keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "Read boundary",
+        source: "read-boundary",
+        type_permissions: { "core.note": "read", "core.event": "read" },
+        extension_permissions: { "*": "read" },
+        edge_permissions: { "*": "read" },
+        permissions: [],
+      }),
     },
-    body: JSON.stringify({
-      label: "Read boundary",
-      source: "read-boundary",
-      type_permissions: { "core.note": "read", "core.event": "read" },
-      extension_permissions: { "*": "read" },
-      edge_permissions: { "*": "read" },
-      permissions: [],
-    }),
-  });
+  );
   expect(minted.status).toBe(201);
   reader = ((await minted.json()) as { key: string }).key;
   expect(
@@ -257,21 +258,21 @@ it("authorizes occurrence parent relationships with their source state", async (
 });
 
 it("withholds occurrence fields derived from an unreadable relationship", async () => {
-  const minted = await fetch(`${server.apiUrl}/keys`, {
-    method: "POST",
-    headers: {
-      Cookie: server.ownerCookie,
-      Origin: new URL(server.apiUrl).origin,
-      "Content-Type": "application/json",
+  const minted = await localFetch(
+    server.controlSocket,
+    `${server.apiUrl}/keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "Events without relationships",
+        source: "events-only",
+        type_permissions: { "core.event": "read" },
+        edge_permissions: {},
+        permissions: [],
+      }),
     },
-    body: JSON.stringify({
-      label: "Events without relationships",
-      source: "events-only",
-      type_permissions: { "core.event": "read" },
-      edge_permissions: {},
-      permissions: [],
-    }),
-  });
+  );
   expect(minted.status).toBe(201);
   const noEdges = ((await minted.json()) as { key: string }).key;
   const items: string[] = [];

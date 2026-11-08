@@ -53,7 +53,7 @@ pub async fn setup_ticket(State(app): State<Arc<App>>, caller: Caller) -> Answer
 }
 
 pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let body = body.object(&CLAIM_FIELDS).await?;
     let text = |field: &str| body.get(field).and_then(Value::as_str);
     let email = text("email").ok_or_else(owner::incomplete_claim)?;
@@ -70,7 +70,7 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
 }
 
 pub async fn recover_owner(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let body = body.object(&RECOVER_FIELDS).await?;
     let password = body
         .get("password")

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::{Request, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::{Map, Value, json};
@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use super::origin::{self, Source};
 use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
-use crate::app::access::{Caller, unauthorized};
+use crate::app::access::unauthorized;
 use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session::{self, Opened, Session};
@@ -16,10 +16,9 @@ use crate::app::auth::{Visit, form_origins, owner, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
-use crate::http::caller::identify;
+use crate::http::caller::OnPage;
 
 const EMAIL_FIELDS: [&str; 3] = ["email", "password", "rememberMe"];
-const CHANGE_FIELDS: [&str; 3] = ["currentPassword", "newPassword", "revokeOtherSessions"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CONFIRM_PASSWORD_CHARS: usize = 1024;
 
@@ -136,23 +135,6 @@ pub async fn form(
     ))
 }
 
-/// `GET /auth/get-session`. Nobody signed in is an answer, and a session that
-/// could not be read is not that answer.
-pub async fn get_session(State(app): State<Arc<App>>, request: Request) -> Answer {
-    let (mut parts, _) = request.into_parts();
-    let caller = identify(&mut parts, &app).await?;
-    let Some(session) = caller.as_ref().and_then(Caller::session) else {
-        return Ok(json_answer(StatusCode::OK, &Value::Null));
-    };
-    let Some(found) = owner::find(&app).await? else {
-        return Ok(json_answer(StatusCode::OK, &Value::Null));
-    };
-    Ok(json_answer(
-        StatusCode::OK,
-        &signed_in(&app, session, &found),
-    ))
-}
-
 fn ended_cookie(app: &App) -> Result<axum::http::HeaderValue, Refusal> {
     cookies::session_ended(&app.addresses().sign_in())
 }
@@ -164,23 +146,10 @@ fn signed_out(app: &App, value: &Value) -> Result<Response, Refusal> {
     ))
 }
 
-pub async fn sign_out(State(app): State<Arc<App>>, caller: Caller, visit: Visit) -> Answer {
+pub async fn sign_out(State(app): State<Arc<App>>, OnPage(caller): OnPage, visit: Visit) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     session::sign_out(&app, &caller, visit).await?;
     Ok(signed_out(&app, &json!({ "success": true }))?)
-}
-
-pub async fn revoke_sessions(State(app): State<Arc<App>>, caller: Caller, visit: Visit) -> Answer {
-    session::end_many(&app, &caller, false, visit).await?;
-    Ok(signed_out(&app, &json!({ "status": true }))?)
-}
-
-pub async fn revoke_other_sessions(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    visit: Visit,
-) -> Answer {
-    session::end_many(&app, &caller, true, visit).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "status": true })))
 }
 
 enum Proof {
@@ -206,14 +175,14 @@ fn passkey_or_password(body: &Map<String, Value>) -> Result<Proof, Refusal> {
 pub async fn confirm(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    caller: Caller,
+    OnPage(caller): OnPage,
     visit: Visit,
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
-    if caller.session().is_none() {
+    let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
         return Err(unauthorized().into());
-    }
+    };
     let body = body.object(&CONFIRM_FIELDS).await?;
     let address = app.addresses().sign_in();
     let opened = match passkey_or_password(&body)? {
@@ -229,27 +198,4 @@ pub async fn confirm(
         json_answer(StatusCode::OK, &json!({ "ok": true })),
         cookie,
     ))
-}
-
-pub async fn change_password(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    visit: Visit,
-    body: JsonBody,
-) -> Answer {
-    require_safe_caller(&app, &visit)?;
-    if caller.session().is_none() {
-        return Err(unauthorized().into());
-    }
-    let body = body.object(&CHANGE_FIELDS).await?;
-    if !matches!(
-        body.get("revokeOtherSessions"),
-        None | Some(Value::Bool(true))
-    ) {
-        return Err(Refusal::validation("A password change ends every other session.").into());
-    }
-    let current = text_field(&body, "currentPassword")?.to_string();
-    let new = text_field(&body, "newPassword")?.to_string();
-    sign_in::change_password(&app, &caller, current, new, visit).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "status": true })))
 }

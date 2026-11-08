@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { itemsArchive, listTarGzEntries, tarGz } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -22,9 +21,7 @@ const SMALL_CAP = 8192;
 function ownerFor(server: FreshServer): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

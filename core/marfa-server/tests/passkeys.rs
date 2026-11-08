@@ -449,7 +449,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
     let session = signed.session_cookie().unwrap();
     assert_eq!(
-        instance.get("/owner", &session).await.status,
+        instance.get("/owner/passkeys", &session).await.status,
         StatusCode::OK
     );
     let listed = instance.listed().await;
@@ -830,7 +830,11 @@ async fn a_user_handle_must_be_the_owners_when_it_is_sent() {
     let instance = Instance::claimed().await;
     let device = Device::new();
     instance.add(&device).await;
-    let owner = instance.get("/owner", &instance.owner).await;
+    let read = Request::builder()
+        .uri("/owner")
+        .body(Body::empty())
+        .unwrap();
+    let owner = send(instance.control.clone(), read).await;
     let id = uuid::Uuid::parse_str(owner.body["id"].as_str().unwrap()).unwrap();
     for (handle, wanted, counter) in [
         (json!(text(&[7; 16])), StatusCode::UNAUTHORIZED, 1),
@@ -908,7 +912,10 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
     let refused = instance.post("/auth/confirm", &asked.cookie, &body).await;
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     assert!(refused.session_cookie().is_none());
-    assert_eq!(instance.get("/owner", &stale).await.status, StatusCode::OK);
+    assert_eq!(
+        instance.get("/owner/passkeys", &stale).await.status,
+        StatusCode::OK
+    );
 
     let body = json!({ "passkey": device.assertion(&asked.challenge, &instance.saying()) });
     let spent = instance.post("/auth/confirm", &asked.cookie, &body).await;
@@ -922,11 +929,11 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
     assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.text);
     let renewed = confirmed.session_cookie().unwrap();
     assert_eq!(
-        instance.get("/owner", &renewed).await.status,
+        instance.get("/owner/passkeys", &renewed).await.status,
         StatusCode::OK
     );
     assert_eq!(
-        instance.get("/owner", &stale).await.status,
+        instance.get("/owner/passkeys", &stale).await.status,
         StatusCode::UNAUTHORIZED
     );
 }

@@ -181,7 +181,6 @@ pub async fn narrow(
 ) -> Result<ScopeSet> {
     let cache = app.catalog_handle();
     app.write(caller, NARROWED, move |unit| {
-        unit.caller.require_recent(&unit.at)?;
         let tx = unit.tx();
         let consent = of_owner(tx, &id)?.ok_or_else(no_such_grant)?;
         require_as_seen(tx, &consent, &asked.expected)?;
@@ -238,7 +237,6 @@ pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool
     let cache = app.catalog_handle();
     app.write(caller, REVOKED, move |unit| {
         unit.caller.require(Permission::GrantsManage)?;
-        unit.caller.require_recent(&unit.at)?;
         let consent = of_owner(unit.tx(), &id)?.ok_or_else(no_such_grant)?;
         withdraw(unit, &cache, &consent, with_keys)
     })

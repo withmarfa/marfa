@@ -20,7 +20,6 @@ import { HOUR_MS, movedClock, writerOf } from "../../utils/moved-clock.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { openEventStream } from "../../utils/sse.js";
 import { collectUntil } from "../../utils/stream.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
@@ -380,8 +379,7 @@ describe("a connector whose key has expired", () => {
     const clock = movedClock(moving);
     const owner = new MarfaClient({
       baseUrl: moving.apiUrl,
-      ownerCookie: moving.ownerCookie,
-      ownerCredentials: TEST_OWNER,
+      controlSocket: moving.controlSocket,
     });
     const minted = await owner.createKey({
       label: "read-only-expiring",

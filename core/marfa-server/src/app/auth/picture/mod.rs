@@ -25,12 +25,9 @@ pub enum Door {
 }
 
 impl Door {
-    fn admit(self, caller: &Caller, at: &str) -> Result<()> {
+    fn admit(self, caller: &Caller) -> Result<()> {
         match self {
-            Door::Owner => {
-                caller.require_direct()?;
-                caller.require_recent(at)
-            }
+            Door::Owner => caller.require_local(),
             Door::Profile => caller.require_profile("avatar", Level::Write),
         }
     }
@@ -111,7 +108,7 @@ fn set(
 impl App {
     /// Refuses a caller the door does not admit, before a body is read for it.
     pub fn admit_picture(&self, caller: &Caller, door: Door) -> Result<()> {
-        door.admit(caller, &self.clock.stamp())
+        door.admit(caller)
     }
 
     pub async fn put_picture(
@@ -135,7 +132,7 @@ impl App {
         }
         let placed = self.place_upload(intake).await?;
         self.write(caller, door.action(), move |unit| {
-            door.admit(&unit.caller, &unit.at)?;
+            door.admit(&unit.caller)?;
             let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
             let blob = placed.record(unit.tx(), None, &unit.at)?;
             set(

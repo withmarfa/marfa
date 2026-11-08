@@ -31,12 +31,11 @@ pub struct SignIn {
 }
 
 impl SignIn {
-    pub fn to_json(&self, asking: Option<&str>) -> Value {
+    pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "kind": self.kind,
             "name": self.name,
-            "current": asking == Some(self.id.as_str()),
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "expires_at": self.expires_at,
@@ -152,18 +151,7 @@ fn no_such_sign_in() -> Refusal {
     Refusal::new(Code::SignInNotFound, "No live sign-in has this ID.")
 }
 
-/// A browser giving up its own session gives up only authority, so its age does not matter.
-fn to_end(
-    tx: &Transaction<'_>,
-    caller: &Caller,
-    id: &str,
-    with_keys: bool,
-    at: &str,
-) -> Result<Named> {
-    let itself = !with_keys && caller.session().is_some_and(|session| session.id == id);
-    if !itself {
-        caller.require_recent(at)?;
-    }
+fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<Named> {
     match Named::read(tx, id, at)? {
         Named::Nothing => Err(no_such_sign_in()),
         named @ Named::App(_) => Ok(named),
@@ -174,27 +162,21 @@ fn to_end(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Ended {
-    TheSessionThatAsked,
-    Another,
-}
-
 pub async fn end(
     app: &Arc<App>,
     caller: &Caller,
     id: String,
     with_keys: bool,
     visit: Visit,
-) -> Result<Ended> {
+) -> Result<()> {
     let asking = caller.clone();
     let looked_for = id.clone();
     let at = app.clock.stamp();
     let action = app
         .db
         .read(move |tx| {
-            let caller = asking.current(tx, &at)?;
-            Ok(match to_end(tx, &caller, &looked_for, with_keys, &at)? {
+            asking.current(tx, &at)?;
+            Ok(match to_end(tx, &looked_for, with_keys, &at)? {
                 Named::Key(_) => keys::REVOKED,
                 Named::App(_) => grants::REVOKED,
                 _ => ENDED,
@@ -202,10 +184,8 @@ pub async fn end(
         })
         .await?;
     let cache = app.catalog_handle();
-    let asking = caller.session().map(|session| session.id.clone());
-    let ended = id.clone();
     app.write(caller, action, move |unit| {
-        match to_end(unit.tx(), &unit.caller, &id, with_keys, &unit.at)? {
+        match to_end(unit.tx(), &id, with_keys, &unit.at)? {
             Named::Browser(session) => session::ended(
                 unit.tx(),
                 &unit.at,
@@ -220,16 +200,10 @@ pub async fn end(
             Named::Nothing => Err(no_such_sign_in()),
         }
     })
-    .await?;
-    Ok(if asking.as_deref() == Some(ended.as_str()) {
-        Ended::TheSessionThatAsked
-    } else {
-        Ended::Another
-    })
+    .await
 }
 
-fn to_rename(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Named> {
-    caller.require_recent(at)?;
+fn to_rename(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Named> {
     match Named::read(tx, id, at)? {
         Named::Nothing => Err(no_such_sign_in()),
         Named::Browser(_) => Err(Refusal::validation(
@@ -250,8 +224,8 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let action = app
         .db
         .read(move |tx| {
-            let caller = asking.current(tx, &at)?;
-            Ok(match to_rename(tx, &caller, &looked_for, &at)? {
+            asking.current(tx, &at)?;
+            Ok(match to_rename(tx, &looked_for, &at)? {
                 Named::Key(_) => keys::UPDATED,
                 _ => grants::RENAMED,
             })
@@ -261,7 +235,7 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let days = inactivity_days(app);
     app.write(caller, action, move |unit| {
         let tx = unit.tx();
-        match to_rename(tx, &unit.caller, &id, &unit.at)? {
+        match to_rename(tx, &id, &unit.at)? {
             Named::App(consent) => {
                 grants::rename(unit, &cache, &consent, &name)?;
                 app_of(tx, &consent, days)

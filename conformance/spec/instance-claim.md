@@ -46,7 +46,7 @@ When the private local command replaces an unclaimed instance's setup code, the 
 
 When a claim submits a password outside the sign-in provider's length bounds, the server MUST answer `400 validation_error` without consuming the valid setup proof.
 
-**Tests:** `compliance/owner.test.ts › validates the password without consuming valid setup proof`, `› creates exactly one owner and requires owner sign-in to read it`.
+**Tests:** `compliance/owner.test.ts › validates the password without consuming valid setup proof`, `› creates exactly one owner and reads it through the local command`.
 
 ### `instance-claim/owner-undeclared-key`
 
@@ -68,11 +68,11 @@ If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, ca
 
 When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.
 
-**Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› answers the setup routes in snake_case and the claim as the public claim does`.
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`, `› answers the setup routes in snake_case and the claim as the public claim does`.
 
 ### `instance-claim/claim-signs-in`
 
-When a valid claim that carries the instance's own origin in its `Origin` header creates the owner and the password sign-in that follows it succeeds, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner` with it answers `200` and the session counts as a sign-in within the last five minutes.
+When a valid claim that carries the instance's own origin in its `Origin` header creates the owner and the password sign-in that follows it succeeds, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner/passkeys` with it answers `200` and the session counts as a sign-in within the last five minutes.
 
 **Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within five minutes, works without asking again.
 
@@ -108,7 +108,7 @@ When the private local command reads the claim status, the server MUST answer `c
 
 **Reason:** Every field in an answer is snake_case, so a script reading the status finds the same names the public owner answer uses.
 
-**Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› creates exactly one owner and requires owner sign-in to read it`, `› keeps a completed claim and recovered password through restart`.
+**Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`, `› creates exactly one owner and reads it through the local command`, `› keeps a completed claim and recovered password through restart`.
 
 ### `instance-claim/ticket-fields`
 
@@ -122,7 +122,7 @@ When the private local command requests browser setup, the server MUST answer th
 
 While an instance has a completed owner claim, the server MUST refuse another claim or setup-code issuance with `409 owner_exists`.
 
-**Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› recovers the existing owner and ends the old browser session`.
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`, `› recovers the existing owner and ends the old browser session`.
 
 ## Code attempts
 
@@ -198,7 +198,7 @@ When the server logs setup exchange requests, the server MUST omit submitted set
 
 **Tests:** `compliance/owner.test.ts › limits code guesses per address without an instance-wide cap and accepts handoffs past the limit`.
 
-## Direct ownership and recovery
+## Ownership and recovery
 
 ### `instance-claim/management-is-not-owner`
 
@@ -230,12 +230,6 @@ When the private local command recovers the owner's password, the server MUST pr
 
 **Tests:** `compliance/browser-sessions.test.ts › local recovery revokes browser sessions and keeps apps connected`.
 
-### `instance-claim/password-change-sessions`
-
-When the owner changes their password through their signed-in browser, the server MUST retain that browser's session while ending every other browser session.
-
-**Tests:** `compliance/browser-sessions.test.ts › through a password change that ends the other sessions leaves every app connected`.
-
 ## Durability
 
 ### `instance-claim/attempt-counter-restart`
@@ -254,7 +248,7 @@ When an unclaimed instance restarts, the server MUST refuse its previous setup c
 
 When valid claims compete for an unclaimed instance, the server MUST commit exactly one owner claim and one corresponding `owner.claimed` audit record.
 
-**Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`.
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`.
 
 ### `instance-claim/claimed-restart`
 
@@ -310,9 +304,9 @@ While the instance is unclaimed, the server MUST answer the private local comman
 
 ### `instance-claim/owner-update`
 
-When a direct owner authenticated within the last five minutes or the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, `avatar` set to `null`, or any combination of them, the server MUST return the updated owner.
+When the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, `avatar` set to `null`, or any combination of them, the server MUST return the updated owner.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-picture.test.ts › removes the picture through either PATCH door and leaves the other fields as they were`, `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-picture.test.ts › removes the picture through either PATCH door and leaves the other fields as they were`, `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
 
 ### `instance-claim/owner-avatar`
 
@@ -324,11 +318,11 @@ When `PATCH /owner` receives `avatar` set to `null`, the server MUST remove the 
 
 ### `instance-claim/owner-update-authority`
 
-If `PATCH /owner` lacks private local authority or a live direct owner sign-in authenticated at most five minutes ago, then the server MUST refuse the request.
+If `PATCH /owner` lacks private local authority, then the server MUST refuse the request.
 
 **Reason:** Email determines the owner's password sign-in identity, and the other fields are the owner's visible profile.
 
-**Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
 
 ### `instance-claim/owner-update-identity`
 
@@ -364,7 +358,7 @@ If any submitted profile field lacks current write permission when the transacti
 
 ### `instance-claim/owner-picture-upload`
 
-When a direct owner authenticated within the last five minutes or the private local command sends `PUT /owner/picture` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the updated owner.
+When the private local command sends `PUT /owner/picture` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the updated owner.
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› stores a picture sent through the private local command`.
 
@@ -376,7 +370,7 @@ When a key or app that holds current profile write permission for `avatar` sends
 
 ### `instance-claim/owner-picture-authority`
 
-If `PUT /owner/picture` lacks private local authority or a live direct owner sign-in authenticated at most five minutes ago, then the server MUST refuse the request and keep the previous picture.
+If `PUT /owner/picture` lacks private local authority, then the server MUST refuse the request and keep the previous picture.
 
 **Tests:** `compliance/owner-picture.test.ts › refuses a picture from a caller the door does not admit, and keeps the previous one`.
 
@@ -474,9 +468,9 @@ When a caller admitted by `instance-claim/picture-read-authority` sends `GET /ow
 
 ### `instance-claim/picture-served-headers`
 
-The server MUST send with every answer that carries the picture's bytes `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: attachment; filename="picture"` and `Cache-Control: private, no-cache`.
+The server MUST send with every answer over HTTP that carries the picture's bytes `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: attachment; filename="picture"` and `Cache-Control: private, no-cache`.
 
-**Reason:** The bytes are chosen by the sender and served from the instance's own origin, so they carry the safeguards of `blobs/download-sandbox`. A cache may keep the picture but must ask again before showing it.
+**Reason:** The bytes are chosen by the sender and served from the instance's own origin, so they carry the safeguards of `blobs/download-sandbox`. A cache may keep the picture but must ask again before showing it. The private local socket answers `Cache-Control: no-store`, as it answers everything.
 
 **Tests:** `compliance/owner-picture.test.ts › serves the picture with the headers that keep its bytes from running`.
 
@@ -494,9 +488,9 @@ The server MUST send with the picture, as its `ETag`, the quoted SHA-256 of the 
 
 ### `instance-claim/picture-read-authority`
 
-If an authenticated caller of `GET /owner/picture` is neither the signed-in owner nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
+If an authenticated caller of `GET /owner/picture` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
 
-**Reason:** The profile page tells the owner an app sees the picture only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
+**Reason:** An app sees the owner's picture only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
 
 **Tests:** `compliance/owner-picture.test.ts › serves the picture only to the owner and to a credential that may read the avatar`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -516,7 +510,7 @@ When a credential holds wildcard or stored explicit profile write permission, th
 
 If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, or requests write on `email`, then the server MUST refuse the grant.
 
-**Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
 
 ### `instance-claim/owner-update-password-identity`
 
