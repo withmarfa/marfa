@@ -21,6 +21,7 @@ pub struct Unit<'t, 'c> {
     action: &'static str,
     pub caller: Caller,
     pub at: String,
+    fanout: bool,
     /// The same instant as `at`, in milliseconds.
     pub at_ms: i64,
     origin: Origin,
@@ -43,14 +44,26 @@ impl<'c> Unit<'_, 'c> {
             action,
             caller: self.caller.clone(),
             at: self.at.clone(),
+            fanout: self.fanout,
             at_ms: self.at_ms,
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
         }
     }
 
+    /// An inner write cannot re-enable fan-out disabled by its caller.
+    pub fn fanning<T>(&self, fanout: bool, job: impl FnOnce(&Unit<'_, 'c>) -> T) -> T {
+        if fanout || !self.fanout {
+            return job(self);
+        }
+        job(&Unit {
+            fanout: false,
+            ..self.under(self.action)
+        })
+    }
+
     pub fn announce(&self, event: &Event<'_>) -> Result<()> {
-        events::append(self.tx, &self.at, event)
+        events::append(self.tx, &self.at, self.fanout, event)
     }
 
     pub fn audit(
@@ -127,6 +140,7 @@ impl App {
                     action,
                     caller,
                     at,
+                    fanout: true,
                     at_ms,
                     origin,
                     read_only,

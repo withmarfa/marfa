@@ -2,6 +2,21 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 
 use crate::error::{Result, RuleError};
 
+/// Milliseconds since the epoch of a stored time: what [`normalize_bound`] reads, or a `datetime` value written without seconds.
+pub fn epoch_ms(value: &str) -> Option<i64> {
+    let text = normalize_bound(value, "").ok().or_else(|| {
+        let zoned = value
+            .as_bytes()
+            .get(16)
+            .is_some_and(|b| matches!(b, b'Z' | b'z' | b'+' | b'-'));
+        let minutes = value.get(..16).filter(|_| zoned)?;
+        rfc3339(&format!("{minutes}:00{}", &value[16..]), "").ok()
+    })?;
+    chrono::DateTime::parse_from_rfc3339(&text)
+        .ok()
+        .map(|instant| instant.timestamp_millis())
+}
+
 /// RFC 3339 as written: a date, `T`, a time with seconds, and a zone (`Z` or `±hh:mm`); `t` and `z` may be lowercase. The hour is 00 to 23 and the second 00 to 59, so a leap second is refused. A fraction longer than milliseconds is cut, not rounded. The UTC year must be 0000 to 9999. Answers `YYYY-MM-DDTHH:MM:SS.sssZ`.
 pub fn rfc3339(value: &str, field: &str) -> Result<String> {
     let bytes = value.as_bytes();

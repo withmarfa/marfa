@@ -20,7 +20,7 @@ The server MUST order the occurrences of `GET /occurrences` by `starts_at`, asce
 
 ### `occurrences/answer-keys`
 
-When `GET /occurrences` answers, the server MUST carry `data`, a `next_cursor` of `null`, the `window` it read in UTC, and a `scan` holding `events_read`, `occurrences`, `max_occurrences`, `series_errors`, `max_series_errors`, `unproductive_iterations`, `max_unproductive_iterations` and `series_unexpanded`, and beside them `series_errors`, `series_errors_truncated` and `expansion_incomplete` only where they apply.
+When `GET /occurrences` answers, the server MUST carry `data`, a `next_cursor` of `null`, the `window` it read in UTC, and a `scan` holding `series_errors` and `series_unexpanded`, and beside them `series_errors`, `series_errors_truncated` and `expansion_incomplete` only where they apply.
 
 **Reason:** the operation answers every occurrence of the window in one page, so there is no cursor to follow.
 
@@ -40,15 +40,15 @@ If the `to` of `GET /occurrences` is not after its `from`, then the server MUST 
 
 ### `occurrences/window-instants`
 
-The server MUST read each bound of a window as the instant it names, spelled in UTC, with an offset, as a date-time with no zone, which is read as UTC, or as a date with no time, which is its midnight in UTC, and answer the window in UTC, whatever time zone the server's host is set to.
+The server MUST read each bound of a window as the instant it names, spelled as an RFC 3339 date-time in UTC or with an offset, or as a date with no time, which is its midnight in UTC, and answer the window in UTC, whatever time zone the server's host is set to.
 
-**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any ISO 8601 spelling and answers the window in UTC`, `compliance/occurrences-window-bounds.test.ts › reads a zone-less bound as UTC under a host zone that is not UTC`.
+**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any RFC 3339 spelling and answers the window in UTC`, `compliance/occurrences-window-bounds.test.ts › reads a date bound as midnight in UTC under a host zone that is not UTC`.
 
 ### `occurrences/window-unreadable`
 
-If a bound of the window is not a timestamp, being a string not in ISO 8601 form or a date that does not exist, such as 30 February, then the server MUST answer `400 validation_error` naming the bound in `details.field`.
+If a bound of the window is neither an RFC 3339 date-time with a zone nor a date with no time, such as a date-time with no zone or no seconds, any other string, or a date that does not exist, such as 30 February, then the server MUST answer `400 validation_error` naming the bound in `details.field`.
 
-**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date and a string that is not ISO 8601, naming the bound`.
+**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date, a date-time with no zone or no seconds, and a string that is not RFC 3339, naming the bound`.
 
 ### `occurrences/no-credential`
 
@@ -534,13 +534,15 @@ Where no rule above refuses a task's `recurrence`, the server MUST take the task
 
 ### `occurrences/schedule-zone`
 
-If an event's `timezone` is not a named zone that the zone database resolves, then the server MUST refuse the write and name `timezone`.
+If an event's `timezone` is not the name of an IANA time zone, spelled as the IANA database spells it, then the server MUST refuse the write and name `timezone`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Reason:** a name in another case and a numeric offset name no zone, and a series keeps its local hour only in a named zone. The host's own zone never changes an answer.
+
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `compliance/occurrences.test.ts › refuses a zone name in another case, naming the field`.
 
 ### `occurrences/schedule-end-zone`
 
-If an event's `end_timezone` is not a named zone that the zone database resolves, then the server MUST refuse the write and name `end_timezone`.
+If an event's `end_timezone` is not the name of an IANA time zone, spelled as the IANA database spells it, then the server MUST refuse the write and name `end_timezone`.
 
 **Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
 

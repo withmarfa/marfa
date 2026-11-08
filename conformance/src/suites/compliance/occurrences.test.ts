@@ -30,7 +30,113 @@ async function seedEvent(title: string, startsAt: string, endsAt: string) {
   return r.data.item.id;
 }
 
+async function event(properties: Record<string, unknown>): Promise<string> {
+  const r = await client.createItem({
+    type: "core.event",
+    source: ctx.source,
+    properties: { title: `recurrence ${ctx.runId}`, ...properties },
+  });
+  expect(r.status, JSON.stringify(r.error)).toBe(201);
+  trackItem(ctx, r.data.item.id);
+  return r.data.item.id;
+}
+
+interface Row {
+  starts_at: string;
+  ends_at?: string;
+  series_id?: string;
+  replaces?: string;
+  item: { id: string };
+}
+
+async function window(from: string, to: string): Promise<Row[]> {
+  const r = await client.listOccurrences({ from, to });
+  expect(r.status, JSON.stringify(r.error)).toBe(200);
+  return r.data.data as Row[];
+}
+
+async function startsOf(
+  id: string,
+  from: string,
+  to: string,
+): Promise<string[]> {
+  return (await window(from, to))
+    .filter((o) => o.item.id === id)
+    .map((o) => o.starts_at);
+}
+
 describe("occurrences", () => {
+  it("selects week years across calendar boundaries", async () => {
+    const id = await event({
+      starts_at: "2021-01-04T09:00:00Z",
+      recurrence: ["RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=1;BYDAY=MO"],
+    });
+    expect(
+      await startsOf(id, "2024-12-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+    ).toEqual(["2024-12-30T09:00:00.000Z"]);
+  });
+
+  it("continues past a gap candidate beyond UTC UNTIL", async () => {
+    const id = await event({
+      starts_at: "2027-03-28T00:00:00Z",
+      timezone: "Europe/London",
+      recurrence: ["RRULE:FREQ=MINUTELY;INTERVAL=40;UNTIL=20270328T011000Z"],
+    });
+    expect(
+      await startsOf(id, "2027-03-28T00:45:00Z", "2027-03-28T02:00:00Z"),
+    ).toEqual(["2027-03-28T01:00:00.000Z"]);
+  });
+
+  it("preserves fractional starts and matches a moved fractional slot", async () => {
+    const id = await event({
+      starts_at: "2041-01-01T09:00:00.500Z",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=2"],
+    });
+    expect(await startsOf(id, "2041-01-01", "2041-01-03")).toEqual([
+      "2041-01-01T09:00:00.500Z",
+      "2041-01-02T09:00:00.500Z",
+    ]);
+    const moved = await event({
+      starts_at: "2041-01-02T12:00:00Z",
+      original_starts_at: "2041-01-02T09:00:00.500Z",
+    });
+    const edge = await client.createEdge({
+      source_id: id,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+    const rows = await window("2041-01-01", "2041-01-03");
+    expect(
+      rows.filter((o) => o.item.id === id).map((o) => o.starts_at),
+    ).toEqual(["2041-01-01T09:00:00.500Z"]);
+    expect(rows.find((o) => o.item.id === moved)).toMatchObject({
+      series_id: id,
+      replaces: "2041-01-02T09:00:00.500Z",
+    });
+  });
+
+  it("refuses a zone name in another case, naming the field", async () => {
+    await event({
+      starts_at: "2041-01-15T09:00:00Z",
+      timezone: "Europe/Berlin",
+    });
+    const r = await client.createItem({
+      type: "core.event",
+      source: ctx.source,
+      properties: {
+        title: "case-sensitive zone",
+        starts_at: "2041-01-15T09:00:00Z",
+        timezone: "europe/berlin",
+      },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_properties");
+    expect(r.error?.error.details?.errors).toEqual([
+      expect.objectContaining({ field: "timezone" }),
+    ]);
+  });
+
   it("expands events inside the window and excludes those outside it", async () => {
     const inside = await seedEvent(
       `occ-in-${ctx.runId}`,
@@ -56,7 +162,10 @@ describe("occurrences", () => {
     expect(hit?.starts_at).toBe("2031-03-10T10:00:00.000Z");
     expect(hit?.ends_at).toBe("2031-03-10T11:00:00.000Z");
     expect(r.data.window.from).toBe("2031-03-10T00:00:00.000Z");
-    expect(r.data.scan.events_read).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(r.data.scan).sort()).toEqual([
+      "series_errors",
+      "series_unexpanded",
+    ]);
   });
 
   it("orders the window by starts_at ascending, not by write order", async () => {
@@ -177,7 +286,7 @@ describe("occurrences", () => {
     expect(inverted.error?.error.code).toBe("validation_error");
   });
 
-  it("reads each bound of the window in any ISO 8601 spelling and answers the window in UTC", async () => {
+  it("reads each bound of the window in any RFC 3339 spelling and answers the window in UTC", async () => {
     const id = await seedEvent(
       `occ-spelling-${ctx.runId}`,
       "2031-08-10T10:00:00.000Z",
@@ -189,7 +298,7 @@ describe("occurrences", () => {
       ["2031-08-10T10:00:00.000Z", "2031-08-10T12:00:00.000Z"],
       ["2031-08-10T12:00:00+02:00", "2031-08-10T14:00:00+02:00"],
       ["2031-08-10T05:00:00-05:00", "2031-08-10T07:00:00-05:00"],
-      ["2031-08-10T10:00Z", "2031-08-10T12:00Z"],
+      ["2031-08-10t10:00:00z", "2031-08-10t12:00:00z"],
     ]) {
       const r = await client.listOccurrences({ from, to });
       expect(r.status, `${from} ${to}: ${JSON.stringify(r.error)}`).toBe(200);
