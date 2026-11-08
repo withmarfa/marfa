@@ -6,11 +6,12 @@ use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use crate::catalog::Catalog;
+use crate::catalog::CatalogExt;
 use crate::folder::Settings;
 use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, SliceTier, Sort};
 use crate::store::Unreadable;
 use crate::{Core, CoreError, Result, search, store};
+use marfa_rules::catalog::Catalog;
 
 pub const VIEW_TYPE: &str = "system.view";
 
@@ -323,7 +324,7 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
     {
         return Err(invalid("a view query names active or archived states"));
     }
-    let catalog = Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     settings
         .refuse_unless_answerable(conn, &catalog)
         .map_err(view_error)?;
@@ -514,7 +515,7 @@ fn date_bucket(value: &Value, bucket: &str, zone: Option<chrono_tz::Tz>) -> Valu
     let date = if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
         date
     } else {
-        let Ok(normalized) = crate::time::normalize(text, "view date") else {
+        let Ok(normalized) = marfa_rules::time::normalize(text, "view date") else {
             return Value::Null;
         };
         let Ok(instant) = chrono::DateTime::parse_from_rfc3339(&normalized) else {
@@ -540,7 +541,7 @@ fn date_bucket(value: &Value, bucket: &str, zone: Option<chrono_tz::Tz>) -> Valu
 #[cfg(test)]
 mod tests {
     use crate::store::testing::{wire_item, wire_type};
-    use crate::{Core, catalog, store};
+    use crate::{Core, store};
     use serde_json::{Value, json};
 
     fn copy() -> Core {
@@ -582,7 +583,7 @@ mod tests {
             &conn,
             &row,
             Some(&tags.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-            &catalog::Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
         )
         .unwrap();
     }
@@ -607,7 +608,7 @@ mod tests {
             &conn,
             &row,
             Some(&[]),
-            &catalog::Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
         )
         .unwrap();
     }
@@ -1141,7 +1142,7 @@ mod tests {
                 ],
             )
             .unwrap();
-            let catalog = catalog::Catalog::load(&conn).unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
             for (id, name) in [("a", "Z"), ("b", "A")] {
                 let row = wire_item(
                     id,

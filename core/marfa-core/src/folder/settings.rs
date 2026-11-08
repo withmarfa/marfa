@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Item, ItemState, SliceTier, Tier};
+use marfa_rules::catalog::Catalog;
 
 pub const FOLDER_TYPE: &str = "system.folder";
 
@@ -283,12 +283,13 @@ impl Settings {
         };
         named(
             "defaults.tags",
-            crate::validation::tags(&self.defaults.tags),
+            marfa_rules::validation::tags(&self.defaults.tags).map_err(CoreError::from),
         )?;
         named(
             "defaults.properties",
-            crate::validation::property_names(&self.defaults.properties)
-                .and_then(|()| crate::integers::refuse_in_value(&self.defaults.properties)),
+            marfa_rules::validation::property_names(&self.defaults.properties)
+                .and_then(|()| marfa_rules::integers::refuse_in_value(&self.defaults.properties))
+                .map_err(CoreError::from),
         )?;
         named("first_placement", self.placements())?;
         self.lists()?;
@@ -863,7 +864,7 @@ mod tests {
             "defaults": { "type": "core.note" },
         }))
         .unwrap();
-        let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
+        let catalog = crate::catalog::load(&crate::store::testing::conn()).unwrap();
         assert_eq!(named.new_type(&catalog), "core.note");
         let queried =
             read(json!({ "query": { "types": ["core.bookmark"], "tier": "feed" } })).unwrap();
@@ -883,7 +884,7 @@ mod tests {
 
     #[test]
     fn a_query_naming_the_star_is_read_as_a_query_naming_no_type() {
-        let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
+        let catalog = crate::catalog::load(&crate::store::testing::conn()).unwrap();
         let clauses = |settings: &Settings| {
             let (mut clauses, mut values) = (Vec::new(), Vec::new());
             settings
@@ -925,7 +926,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let settings = read(json!({
             "first_placement": { "core.note": "Notes", "user.recipe": "Recipes" },
         }))

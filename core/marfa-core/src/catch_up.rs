@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::catalog::Catalog;
 use crate::drain::DrainReport;
 use crate::error::CoreError;
 use crate::http::Http;
@@ -21,8 +20,10 @@ use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::telemetry::Carried;
-use crate::wire::{EventPayload, WireCatalog, WireEdge, WireItem};
+use crate::wire::{EventPayload, WireEdge, WireItem};
 use crate::{Core, Result};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::wire::WireCatalog;
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
@@ -346,12 +347,12 @@ fn adopt(
             None => false,
         };
         let before = reads
-            .then(|| Catalog::load(&conn).map(|held| held.status_fields()))
+            .then(|| crate::catalog::load(&conn).map(|held| held.status_fields()))
             .transpose()?;
         if store::replace_catalog(&conn, catalog)?.is_changed() {
             *changed = true;
         }
-        let adopted = Catalog::load(&conn)?;
+        let adopted = crate::catalog::load(&conn)?;
         (before, adopted)
     };
     match statuses {
@@ -1938,7 +1939,7 @@ pub(crate) fn settle_listed(
 ) -> Result<()> {
     let (slice, catalog) = {
         let conn = core.conn()?;
-        (start_build(&conn)?.0, Catalog::load(&conn)?)
+        (start_build(&conn)?.0, crate::catalog::load(&conn)?)
     };
     settle_beneath(core, context, http, &catalog, &slice, stop)?;
     Ok(())
@@ -2366,7 +2367,7 @@ mod tests {
         );
         {
             let conn = core.conn().unwrap();
-            let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
             reach::set_listed(&conn, "a", true).unwrap();
             store::put_server_item(&conn, &row, Some(&[]), &catalog).unwrap();
             store::meta_set(&conn, store::META_READ_ONLY_READ, "0").unwrap();
@@ -3571,7 +3572,7 @@ mod tests {
         let reading = clock.clone();
         thread::spawn(move || {
             let (slice, _) = start(&core).unwrap();
-            let catalog = Catalog::load(&core.conn().unwrap()).unwrap();
+            let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
             let (asked, (told, heard)) = (Mutex::new(Asked::default()), mpsc::channel());
             let still = AtomicBool::new(false);
             let context = Context::capture(&core.conn().unwrap()).unwrap();
@@ -3794,8 +3795,13 @@ mod tests {
                 "2026-01-01T00:00:00Z",
                 serde_json::json!({ "title": "row" }),
             );
-            store::upsert_item(&conn, &row, Some(&[]), &crate::catalog::Indexing::default())
-                .unwrap();
+            store::upsert_item(
+                &conn,
+                &row,
+                Some(&[]),
+                &marfa_rules::catalog::Indexing::default(),
+            )
+            .unwrap();
         }
         let run = follow_on(&core, QUICK, None);
         let change = run.change();
@@ -3876,7 +3882,7 @@ mod tests {
             serde_json::json!({ "cover": { "type": "thumbnail" } }),
         );
         store::replace_types(&conn, &[photo]).unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let slice = Slice {
             types: vec![declared.into()],
             tier: SliceTier::Library,
@@ -3940,7 +3946,7 @@ mod tests {
             &[store::testing::wire_type(NOTE, None, Some("title"))],
         )
         .unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let event = |version: i64, tier: &str| {
             serde_json::from_str::<EventPayload>(
                 &serde_json::json!({
@@ -4473,7 +4479,7 @@ mod tests {
                     &conn,
                     &row,
                     Some(&["genuinetag".into()]),
-                    &Catalog::load(&conn).unwrap(),
+                    &crate::catalog::load(&conn).unwrap(),
                 )
                 .unwrap();
                 conn.execute(

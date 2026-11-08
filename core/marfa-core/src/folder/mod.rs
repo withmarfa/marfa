@@ -64,7 +64,6 @@ use std::time::{Duration, SystemTime};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::catalog::Catalog;
 use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
 use crate::drain::Cut;
@@ -72,17 +71,18 @@ use crate::error::CoreError;
 use crate::http::REQUEST_LIMIT;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
+use marfa_rules::catalog::Catalog;
 use std::io::{Read, Seek};
 
 use crate::body::embed::{FILE_TYPE, bytes_of, carries_frontmatter, is_document};
 use crate::body::resolve::{Names, Resolver};
-use crate::names::{name_of, title_of};
 use edge_types::EdgeTypes;
 use elsewhere::{Look, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{BoundFiles, EdgeWork};
 use lists::{Lists, in_package};
+use marfa_rules::names::{name_of, title_of};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 use pull::{Departing, PullPlan};
@@ -485,7 +485,7 @@ impl Folder {
             let catalog = added.core.http()?.catalog()?;
             let conn = added.core.conn()?;
             crate::store::replace_catalog(&conn, &catalog)?;
-            Settings::of_wire(&row.item)?.check_types(&Catalog::load(&conn)?)?;
+            Settings::of_wire(&row.item)?.check_types(&crate::catalog::load(&conn)?)?;
         }
         // A key that cannot place its files would lay the folder out on this
         // machine alone; a credential that is not a key is not asked.
@@ -793,7 +793,7 @@ impl Folder {
         match self.core.get(&self.folder)? {
             Some(item) => {
                 let settings = Settings::of(&item)?;
-                settings.check_types(&Catalog::load(&*self.core.conn()?)?)?;
+                settings.check_types(&crate::catalog::load(&*self.core.conn()?)?)?;
                 Ok(settings)
             }
             // A copy that has not hydrated may not have the row yet, which
@@ -862,7 +862,7 @@ impl Folder {
         crate::store::replace_catalog(&planning, &fetched)?;
         let edge_types = EdgeTypes::load(&planning)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
-        let catalog = Catalog::load(&planning)?;
+        let catalog = crate::catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
         self.core.hydrate_sliced(
             &settings.slice_types(),
@@ -904,7 +904,7 @@ impl Folder {
         };
         let whole: HashSet<String> = crate::store::whole_edge_types(&conn)?.into_iter().collect();
         let wanted: HashSet<String> =
-            whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
+            whole_edge_types(&settings, &edge_types, &crate::catalog::load(&conn)?)
                 .into_iter()
                 .collect();
         let Ok(query) = settings.copy_query() else {
@@ -1698,6 +1698,7 @@ impl Retitle {
         catalog
             .validate_properties(&self.r#type, &properties, false)
             .err()
+            .map(CoreError::from)
             .filter(local_admission_refusal)
     }
 }
@@ -1927,8 +1928,12 @@ fn moved_line(
     };
     let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
     let (end, from, to) = match (body["source_id"].as_str(), body["target_id"].as_str()) {
-        (None, Some(to)) if source == &bound.item_id => (crate::catalog::End::Source, target, to),
-        (Some(to), None) if target == &bound.item_id => (crate::catalog::End::Target, source, to),
+        (None, Some(to)) if source == &bound.item_id => {
+            (marfa_rules::catalog::End::Source, target, to)
+        }
+        (Some(to), None) if target == &bound.item_id => {
+            (marfa_rules::catalog::End::Target, source, to)
+        }
         _ => return Ok(None),
     };
     let edge_type = match crate::store::edge_ends(conn, edge_id)? {
@@ -1965,9 +1970,9 @@ fn edge_change(
         return Ok(None);
     };
     let (end, other) = if source == item_id {
-        (crate::catalog::End::Source, target)
+        (marfa_rules::catalog::End::Source, target)
     } else {
-        (crate::catalog::End::Target, source)
+        (marfa_rules::catalog::End::Target, source)
     };
     Ok(Some(state::Change::Edge {
         line: state::Line {
@@ -2285,8 +2290,12 @@ impl Folder {
                 let body: Value =
                     serde_json::from_str(&crate::store::payload_of(&*self.core.conn()?, &row.id)?)?;
                 let (source_id, target_id) = match moved.to.end {
-                    crate::catalog::End::Source => (bound.item_id.clone(), moved.to.other.clone()),
-                    crate::catalog::End::Target => (moved.to.other.clone(), bound.item_id.clone()),
+                    marfa_rules::catalog::End::Source => {
+                        (bound.item_id.clone(), moved.to.other.clone())
+                    }
+                    marfa_rules::catalog::End::Target => {
+                        (moved.to.other.clone(), bound.item_id.clone())
+                    }
                 };
                 let made_again = self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,
@@ -3056,10 +3065,10 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         let core = Core::open(state.join("core.sqlite"), None).unwrap();
         if let Some(types) = types {
-            let mut catalog = crate::builtin::catalog().unwrap();
+            let mut catalog = marfa_rules::builtin::catalog().unwrap();
             catalog
                 .types
-                .extend(serde_json::from_value::<Vec<crate::wire::WireType>>(types).unwrap());
+                .extend(serde_json::from_value::<Vec<marfa_rules::wire::WireType>>(types).unwrap());
             crate::store::replace_catalog(&core.conn().unwrap(), &catalog).unwrap();
         }
         crate::store::upsert_item(
@@ -3102,7 +3111,7 @@ mod tests {
         let asked = folder.settings().unwrap();
         let conn = folder.core.conn().unwrap();
         let edge_types = EdgeTypes::load(&conn).unwrap();
-        let whole = whole_edge_types(&asked, &edge_types, &Catalog::load(&conn).unwrap());
+        let whole = whole_edge_types(&asked, &edge_types, &crate::catalog::load(&conn).unwrap());
         for (key, value) in [
             (
                 crate::store::META_SLICE_TYPES,
@@ -3275,7 +3284,7 @@ mod tests {
             assert_eq!(item("moved.md"), note_item);
             let held = folder.core.get(&file_item).unwrap().unwrap();
             let conn = folder.core.conn().unwrap();
-            assert!(bytes_of(&held, &Catalog::load(&conn).unwrap()).is_some());
+            assert!(bytes_of(&held, &crate::catalog::load(&conn).unwrap()).is_some());
             assert!(state::bound_at(&conn, "archive.bin").unwrap().is_none());
             let bound = state::bound_at(&conn, name).unwrap().expect(name);
             assert_eq!(bound.item_id, file_item, "{name} lost its item");
@@ -3591,7 +3600,7 @@ mod tests {
             );
             let held = folder.core.get(&file_item.item_id).unwrap().unwrap();
             let item = folder.core.get(&note_item).unwrap().unwrap();
-            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            let catalog = crate::catalog::load(&folder.core.conn().unwrap()).unwrap();
             assert!(bytes_of(&held, &catalog).is_some());
             assert_eq!(item.r#type, "core.note", "watching {watching}");
             assert_ne!(item.state, ItemState::Trashed, "watching {watching}");
@@ -4468,7 +4477,7 @@ mod tests {
                         serde_json::json!({ "title": id }),
                     ),
                     None,
-                    &crate::catalog::Catalog::empty(),
+                    &marfa_rules::catalog::Catalog::empty(),
                 )
                 .unwrap();
                 let source = state::bound_at(&conn, note).unwrap().unwrap().item_id;
@@ -4800,7 +4809,7 @@ mod tests {
         let mut selection = selective::Selection::default();
         settle_selecting(&folder, &mut selection);
         let settings = folder.settings().unwrap();
-        let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+        let catalog = crate::catalog::load(&folder.core.conn().unwrap()).unwrap();
         let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
         let mut pick = selection.begin(&folder).unwrap();
         selection
@@ -7443,7 +7452,7 @@ mod tests {
                 [crate::model::WriteKind::UploadBlob.as_str()],
             )
             .unwrap();
-        let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+        let catalog = crate::catalog::load(&folder.core.conn().unwrap()).unwrap();
         for id in [&unchanged, &changed] {
             let item = folder.core.get(id).unwrap().unwrap();
             let blob = bytes_of(&item, &catalog).unwrap();
@@ -8462,7 +8471,7 @@ mod tests {
                 &conn,
                 &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
                 None,
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             crate::store::put_server_edge(
@@ -8510,7 +8519,7 @@ mod tests {
             &folder.core.conn().unwrap(),
             &crate::store::testing::note(OTHER, "other", "", "2026-01-01T00:00:00Z"),
             None,
-            &crate::catalog::Catalog::empty(),
+            &marfa_rules::catalog::Catalog::empty(),
         )
         .unwrap();
         // `about` is read before `in-collection`, and a note is no container.
@@ -8555,7 +8564,7 @@ mod tests {
         );
         let shelved = state::Line {
             edge_type: "in-collection".into(),
-            end: crate::catalog::End::Source,
+            end: marfa_rules::catalog::End::Source,
             other: OTHER.into(),
         };
         assert!(bound.lines.contains(&shelved), "{bound:?}");
@@ -8664,7 +8673,7 @@ mod tests {
                 &conn,
                 &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
                 None,
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             crate::store::put_server_edge(
@@ -8770,7 +8779,7 @@ mod tests {
                 &conn,
                 &crate::store::testing::note(NOTE, "n", "", "2026-01-01T00:00:00Z"),
                 None,
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
             for (id, shelf) in [("shelved", SHELF), ("elsewhere", ELSEWHERE)] {
@@ -8848,7 +8857,7 @@ mod tests {
                 &folder.core.conn().unwrap(),
                 &item,
                 None,
-                &crate::catalog::Catalog::empty(),
+                &marfa_rules::catalog::Catalog::empty(),
             )
             .unwrap();
         };
@@ -8910,7 +8919,7 @@ mod tests {
                     == state::Change::Edge {
                         line: state::Line {
                             edge_type: "in-thread".into(),
-                            end: crate::catalog::End::Source,
+                            end: marfa_rules::catalog::End::Source,
                             other: SECOND.into(),
                         },
                         shown: true,
@@ -8955,7 +8964,7 @@ mod tests {
         let body = format!("The images.\n\n{embeds}");
         let at = "2026-01-01T00:00:00Z";
         let conn = folder.core.conn().unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let placed = |id: &str, source: &str, path: &str| {
             let mut edge =
                 crate::store::testing::wire_edge(id, source, &folder_id, placement::PLACEMENT_EDGE);
@@ -9389,7 +9398,7 @@ mod tests {
         });
         {
             let conn = folder.core.conn().unwrap();
-            let catalog = Catalog::load(&conn).unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
             crate::store::put_server_item(
                 &conn,
                 &crate::store::testing::note(
@@ -9565,7 +9574,7 @@ mod tests {
                         embeds: Vec::new(),
                         lines: vec![state::Line {
                             edge_type: ATTACHMENT_EDGE.into(),
-                            end: crate::catalog::End::Target,
+                            end: marfa_rules::catalog::End::Target,
                             other: file.clone(),
                         }],
                         ..bound
@@ -9643,7 +9652,7 @@ mod tests {
     fn an_embed_reads_as_the_attached_file_before_a_referenced_one_of_its_name() {
         let (_dir, folder) = scanned_folder();
         let conn = folder.core.conn().unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let at = "2026-01-01T00:00:00Z";
         let note = "01a00000-0000-7000-8000-000000002601";
         crate::store::put_server_item(
@@ -9739,7 +9748,7 @@ mod tests {
                     embeds: Vec::new(),
                     lines: vec![state::Line {
                         edge_type: ATTACHMENT_EDGE.into(),
-                        end: crate::catalog::End::Target,
+                        end: marfa_rules::catalog::End::Target,
                         other: file.clone(),
                     }],
                     ..bound

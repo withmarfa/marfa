@@ -7,13 +7,14 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
-use crate::catalog::End;
+use crate::catalog::CatalogExt;
 use crate::folder::{FOLDER_TYPE, Settings};
 use crate::http::{Method, Outgoing};
 use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, Sort, Tier};
 use crate::store::Unreadable;
 use crate::wire::{WireItem, WireItemWithMetadata};
-use crate::{Core, CoreError, Result, catalog, query, reach, search, store};
+use crate::{Core, CoreError, Result, query, reach, search, store};
+use marfa_rules::catalog::End;
 
 /// A `system.folder` row and the settings it carries.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -153,7 +154,7 @@ impl Core {
     pub(crate) fn held_by(&self, settings: &Settings) -> Result<Vec<Item>> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
+        let catalog = crate::catalog::load(&conn)?;
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
         settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
         query::list_where(&conn, &clauses, &values, Sort::default(), None, None)
@@ -170,7 +171,7 @@ impl Core {
     pub(crate) fn would_be_held_by(
         &self,
         settings: &Settings,
-        catalog: &catalog::Catalog,
+        catalog: &marfa_rules::catalog::Catalog,
         draft: &crate::model::Draft,
         made: ItemState,
         edges: &[(End, String, String)],
@@ -243,7 +244,7 @@ impl Core {
             return Ok(Default::default());
         }
         let conn = self.conn()?;
-        let catalog = catalog::Catalog::load(&conn)?;
+        let catalog = crate::catalog::load(&conn)?;
         let (mut clauses, mut values) = (Vec::new(), Vec::new());
         settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
         clauses.push(format!("items.id IN ({})", vec!["?"; ids.len()].join(", ")));
@@ -323,8 +324,8 @@ impl Core {
         )
     }
 
-    fn catalog_held(&self) -> Result<catalog::Catalog> {
-        catalog::Catalog::load(&*self.conn()?)
+    fn catalog_held(&self) -> Result<marfa_rules::catalog::Catalog> {
+        crate::catalog::load(&*self.conn()?)
     }
 
     fn send_to_folder_door(
@@ -388,7 +389,7 @@ impl Core {
             if reach::purge_revision(&tx)? != purges {
                 return Ok(());
             }
-            let catalog = catalog::Catalog::load(&tx)?;
+            let catalog = crate::catalog::load(&tx)?;
             // `slice_holds` asks whether the row was listed when last held,
             // and this one may be new.
             let takes = store::pinned(&tx, id)?
@@ -420,7 +421,7 @@ fn folder_scope(
     conn: &rusqlite::Connection,
     id: &str,
     completeness: Completeness,
-) -> Result<(catalog::Catalog, Vec<String>, Vec<Value>)> {
+) -> Result<(marfa_rules::catalog::Catalog, Vec<String>, Vec<Value>)> {
     let Some(row) = store::held_or_refused(store::item_by_id(conn, id)?, completeness)? else {
         return Err(CoreError::NotFound {
             code: "not_held".into(),
@@ -430,7 +431,7 @@ fn folder_scope(
         });
     };
     let settings = Settings::of(&row)?;
-    let catalog = catalog::Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     settings.refuse_unless_answerable(conn, &catalog)?;
     let (mut clauses, mut values) = (Vec::new(), Vec::new());
     settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
@@ -496,14 +497,20 @@ mod tests {
         );
         row.tier = Some(tier.into());
         let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
-        let catalog = catalog::Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         store::put_server_item(&conn, &row, Some(&tags), &catalog).unwrap();
     }
 
     fn folder(core: &Core, state: &str, settings: Value) {
         let conn = core.conn().unwrap();
         let row = wire_item(FOLDER, FOLDER_TYPE, state, "2026-01-01T00:00:00Z", settings);
-        store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty()).unwrap();
+        store::put_server_item(
+            &conn,
+            &row,
+            Some(&[]),
+            &marfa_rules::catalog::Catalog::empty(),
+        )
+        .unwrap();
     }
 
     fn ids(items: Vec<Item>) -> Vec<String> {
@@ -662,7 +669,7 @@ mod tests {
     #[test]
     fn a_folder_named_by_type_is_held_at_either_tier_and_every_type_leaves_it_out() {
         let core = copy(None, &[], "feed", &[]);
-        let catalog = catalog::Catalog::load(&core.conn().unwrap()).unwrap();
+        let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
         let takes = |types: &[&str], tier: Tier, row_type: &str, row_tier: Tier| {
             let types: Vec<String> = types.iter().map(|named| named.to_string()).collect();
             store::slice_takes(&catalog, &types, tier.into(), row_type, Some(row_tier))

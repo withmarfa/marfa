@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::ItemState;
+use marfa_rules::catalog::Catalog;
 
 /// A slice with a query also takes the conflicted copies of the types and
 /// tier it takes, whatever the filter says, so a conflict made by a write
@@ -376,12 +376,12 @@ mod tests {
     fn held(conn: &rusqlite::Connection, id: &str, state: &str, tags: &[&str], props: Value) {
         let item = store::testing::wire_item(id, "core.note", state, "2026-01-01T00:00:00Z", props);
         let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         store::put_server_item(conn, &item, Some(&tags), &catalog).unwrap();
     }
 
     fn takes(conn: &rusqlite::Connection, query: &SliceQuery, id: &str) -> bool {
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         judge_held(conn, &catalog, query, Reading::Holds, Scope::default(), id).unwrap()
     }
 
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn a_staged_row_is_judged_and_rolled_back() {
         let conn = store::open_in_memory().unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let stage = |state: &'static str| {
             move |tx: &rusqlite::Connection| {
                 held(tx, "s", state, &[], json!({}));

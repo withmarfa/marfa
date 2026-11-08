@@ -10,8 +10,8 @@ use std::sync::atomic::AtomicBool;
 use serde_json::{Value, json};
 
 use crate::scripted::{self, Answer, Scripted, Then, certified};
-use crate::wire::WireCatalog;
 use crate::{Core, CoreError, Server, SliceQuery, SliceTier, reach, store};
+use marfa_rules::wire::WireCatalog;
 
 const NOTE: &str = "core.note";
 const WORK: &str = r#"tags contains "work""#;
@@ -58,7 +58,7 @@ fn note_json(status: &[(&str, &str)]) -> Value {
     wire
 }
 
-fn note_type(status: &[(&str, &str)]) -> crate::wire::WireType {
+fn note_type(status: &[(&str, &str)]) -> marfa_rules::wire::WireType {
     serde_json::from_value(note_json(status)).unwrap()
 }
 
@@ -109,7 +109,7 @@ fn following_typed(
 
 fn hold(core: &Core, id: &str, state: &str, tags: &[&str], props: Value) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     let item = store::testing::wire_item(id, NOTE, state, "2026-01-01T00:00:00Z", props);
     let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
     store::put_server_item(&conn, &item, Some(&tags), &catalog).unwrap();

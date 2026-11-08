@@ -18,7 +18,7 @@ fn row(id: &str, item_type: &str, state: &str, properties: Value) -> WireItem {
 
 fn put(core: &Core, row: &WireItem) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     crate::reach::set_listed(&conn, &row.id, true).unwrap();
     store::put_server_item(&conn, row, Some(&[]), &catalog).unwrap();
 }
@@ -323,7 +323,7 @@ fn names_every_shared_part_case_as_the_server_does() {
     assert!(!shared.parts.is_empty());
     let server = Scripted::start();
     let core = copy(&server);
-    let mut listed = crate::builtin::catalog().unwrap();
+    let mut listed = marfa_rules::builtin::catalog().unwrap();
     for registered in &shared.types {
         let mut row = registered.clone();
         row["version"] = Value::from(0);

@@ -2,11 +2,12 @@ use rusqlite::{Connection, params_from_iter};
 use serde_json::Value;
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::filter;
 use crate::model::{SearchFilters, SearchHit};
 use crate::query;
 use crate::store::{self, Unreadable};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_expression, snippet_html};
 
 pub(crate) fn search(
     conn: &Connection,
@@ -100,90 +101,13 @@ pub(crate) fn search_where(
         .collect())
 }
 
-// FTS5 puts these private-use characters around each match in place of the
-// tags, so the excerpt is escaped whole before they become `<mark>` and
-// `</mark>`. A row's own text can hold them as well, so each opens only a
-// closed mark and closes only an open one.
-const MARK_OPEN: char = '\u{E000}';
-const MARK_CLOSE: char = '\u{E001}';
-
-/// The excerpt FTS5 cut, as HTML whose only markup is `<mark>` around
-/// matches, written as the server writes `snippet_html`.
-fn snippet_html(excerpt: &str) -> String {
-    let mut html = String::with_capacity(excerpt.len());
-    let mut open = false;
-    for character in excerpt.chars() {
-        match character {
-            MARK_OPEN => {
-                if !open {
-                    html.push_str("<mark>");
-                }
-                open = true;
-            }
-            MARK_CLOSE => {
-                if open {
-                    html.push_str("</mark>");
-                }
-                open = false;
-            }
-            '&' => html.push_str("&amp;"),
-            '<' => html.push_str("&lt;"),
-            '>' => html.push_str("&gt;"),
-            '"' => html.push_str("&quot;"),
-            '\'' => html.push_str("&#39;"),
-            other => html.push(other),
-        }
-    }
-    if open {
-        html.push_str("</mark>");
-    }
-    html
-}
-
-/// The server's reading of a query, which `search-and-filters.md` states: a
-/// query wholly inside double quotes is one phrase; otherwise each
-/// whitespace-separated word is quoted, so nothing a person types is read as
-/// FTS5 syntax, and the last word also matches as a prefix.
-fn fts_expression(query: &str) -> Option<String> {
-    let query = query.trim_matches(is_query_whitespace);
-    if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
-        let inner = &query[1..query.len() - 1];
-        return Some(format!("\"{}\"", inner.replace('"', "\"\"")));
-    }
-    let words: Vec<&str> = query
-        .split(is_query_whitespace)
-        .filter(|word| !word.is_empty())
-        .collect();
-    let last = words.len().checked_sub(1)?;
-    Some(
-        words
-            .iter()
-            .enumerate()
-            .map(|(at, word)| {
-                let quoted = format!("\"{}\"", word.replace('"', "\"\""));
-                if at == last {
-                    format!("{quoted}*")
-                } else {
-                    quoted
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
-
-// Match JavaScript's trim and \s rules on the server, including pasted BOMs.
-fn is_query_whitespace(character: char) -> bool {
-    (character.is_whitespace() && character != '\u{0085}') || character == '\u{feff}'
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::Indexing;
     use crate::model::{ItemState, Tier};
     use crate::store;
     use crate::store::testing::*;
+    use marfa_rules::catalog::Indexing;
 
     fn search(
         conn: &Connection,
@@ -239,29 +163,48 @@ mod tests {
         store::upsert_item(&conn, &archived, None, &Indexing::default()).unwrap();
 
         let default = SearchFilters::default();
-        let hits = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 10).unwrap();
+        let hits = search(
+            &conn,
+            &crate::catalog::load(&conn).unwrap(),
+            "zeb",
+            &default,
+            10,
+        )
+        .unwrap();
         let ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
         // The title and the tag hold one match in three words each, so they
         // tie and the id breaks it; the body's is one in four.
         assert_eq!(ids, vec!["tag", "title", "body"]);
         assert_eq!(
-            search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 2)
-                .unwrap()
-                .len(),
+            search(
+                &conn,
+                &crate::catalog::load(&conn).unwrap(),
+                "zeb",
+                &default,
+                2
+            )
+            .unwrap()
+            .len(),
             2
         );
         assert_eq!(hits[0].score, hits[1].score);
         assert!(hits[0].score > hits[2].score);
         assert!(hits[2].snippet.contains("<mark>zebra</mark>"));
         assert!(
-            search(&conn, &Catalog::load(&conn).unwrap(), "", &default, 10)
-                .unwrap()
-                .is_empty()
+            search(
+                &conn,
+                &crate::catalog::load(&conn).unwrap(),
+                "",
+                &default,
+                10
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
             search(
                 &conn,
-                &Catalog::load(&conn).unwrap(),
+                &crate::catalog::load(&conn).unwrap(),
                 "nothing crossing",
                 &default,
                 10
@@ -274,11 +217,17 @@ mod tests {
             states: Some(vec![ItemState::Archived]),
             ..Default::default()
         };
-        let ids: Vec<String> = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &filed, 10)
-            .unwrap()
-            .into_iter()
-            .map(|hit| hit.item.id)
-            .collect();
+        let ids: Vec<String> = search(
+            &conn,
+            &crate::catalog::load(&conn).unwrap(),
+            "zeb",
+            &filed,
+            10,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.item.id)
+        .collect();
         assert_eq!(ids, vec!["filed"]);
 
         let everything = SearchFilters {
@@ -287,7 +236,7 @@ mod tests {
         };
         let mut ids: Vec<String> = search(
             &conn,
-            &Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
             "zeb",
             &everything,
             10,
@@ -317,7 +266,7 @@ mod tests {
         .unwrap();
         let hits = search(
             &conn,
-            &Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
             "numbat",
             &SearchFilters::default(),
             10,
@@ -328,50 +277,6 @@ mod tests {
             hits[0].snippet,
             "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;"
         );
-    }
-
-    #[test]
-    fn markers_the_text_holds_itself_make_only_well_formed_marks() {
-        assert_eq!(
-            snippet_html("\u{E001}a \u{E000}\u{E000}b\u{E001}\u{E001} c \u{E000}d"),
-            "a <mark>b</mark> c <mark>d</mark>"
-        );
-    }
-
-    #[test]
-    fn surrounding_whitespace_keeps_a_quoted_query_a_phrase() {
-        for query in [
-            " \"quiet landscape\" ",
-            "\t\"quiet land\"\n",
-            "\u{feff}\"quiet landscape\"\u{feff}",
-        ] {
-            let expected = if query.contains("land\"") {
-                "\"quiet land\""
-            } else {
-                "\"quiet landscape\""
-            };
-            assert_eq!(fts_expression(query), Some(expected.into()));
-        }
-    }
-
-    #[test]
-    fn only_the_last_word_is_a_prefix_and_a_quoted_query_is_a_phrase() {
-        assert_eq!(
-            fts_expression("  hello  wor\"ld OR"),
-            Some("\"hello\" \"wor\"\"ld\" \"OR\"*".into())
-        );
-        assert_eq!(fts_expression("  "), None);
-        assert_eq!(fts_expression(""), None);
-        assert_eq!(
-            fts_expression("\"exact phrase\""),
-            Some("\"exact phrase\"".into())
-        );
-        // Not wholly inside quotes, and a lone pair of quotes: words.
-        assert_eq!(
-            fts_expression("\"exact\" phrase"),
-            Some("\"\"\"exact\"\"\" \"phrase\"*".into())
-        );
-        assert_eq!(fts_expression("\"\""), Some("\"\"\"\"\"\"*".into()));
     }
 
     #[test]
@@ -386,7 +291,7 @@ mod tests {
             item.tier = Some(tier.into());
             store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
         }
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let found = |filters: SearchFilters| -> Vec<String> {
             let mut ids: Vec<String> = search(&conn, &catalog, "zebra", &filters, 10)
                 .unwrap()

@@ -213,7 +213,7 @@ impl Peer {
         };
         let catalog = self
             .catalog
-            .get_or_init(|| Catalog::load(&*folder.core.conn().ok()?).ok());
+            .get_or_init(|| crate::catalog::load(&*folder.core.conn().ok()?).ok());
         catalog
             .as_ref()
             .is_some_and(|catalog| folder.file_item(item_id, catalog).unwrap_or(false))

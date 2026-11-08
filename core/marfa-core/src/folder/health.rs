@@ -1557,7 +1557,7 @@ mod tests {
                     serde_json::json!({"query":{"types":["core.note"]}}),
                 ),
                 None,
-                &crate::catalog::Indexing::default(),
+                &marfa_rules::catalog::Indexing::default(),
             )
             .unwrap();
         }
@@ -1753,10 +1753,16 @@ mod tests {
                 &conn,
                 &note("original"),
                 None,
-                &crate::catalog::Indexing::default(),
+                &marfa_rules::catalog::Indexing::default(),
             )
             .unwrap();
-            store::upsert_item(&conn, &copy, None, &crate::catalog::Indexing::default()).unwrap();
+            store::upsert_item(
+                &conn,
+                &copy,
+                None,
+                &marfa_rules::catalog::Indexing::default(),
+            )
+            .unwrap();
             store::add_tags(&conn, "copy", &[crate::CONFLICTED_COPY_TAG.into()]).unwrap();
             let edge = crate::wire::WireEdge {
                 id: "derivation".into(),
@@ -1842,7 +1848,7 @@ mod tests {
             &folder.core.conn().unwrap(),
             &copy,
             None,
-            &crate::catalog::Indexing::default(),
+            &marfa_rules::catalog::Indexing::default(),
         )
         .unwrap();
         assert!(
@@ -2014,7 +2020,7 @@ mod tests {
                     serde_json::json!({"title":"Note"}),
                 ),
                 None,
-                &crate::catalog::Indexing::default(),
+                &marfa_rules::catalog::Indexing::default(),
             )
             .unwrap();
             state::bind(

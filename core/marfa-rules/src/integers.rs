@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::error::CoreError;
+use crate::error::{Code, FieldError, RuleError, field_code};
 use crate::js;
 
 /// Fewest digits a whole number can have and still be beyond a float's exact
@@ -27,7 +27,7 @@ fn served_as(source: &str) -> Option<String> {
 /// Whether the whole number written as `source` is served back with the
 /// digits it was written with. Every safe integer is but `-0`, which is served
 /// as `0`.
-pub(crate) fn kept(source: &str) -> bool {
+pub fn kept(source: &str) -> bool {
     if source == "-0" {
         return false;
     }
@@ -47,23 +47,21 @@ fn message(source: &str) -> String {
 }
 
 /// What a write is told of the whole number `source` at `path`.
-pub(crate) fn refusal_message(path: &[String], source: &str) -> String {
+pub fn refusal_message(path: &[String], source: &str) -> String {
     format!("{}: {}", path.join("."), message(source))
 }
 
-fn refusal(path: &[String], source: &str) -> CoreError {
-    CoreError::Validation {
-        code: "invalid_properties".into(),
-        message: refusal_message(path, source),
-        details: None,
-    }
+fn refusal(path: &[String], source: &str) -> RuleError {
+    RuleError::new(Code::InvalidProperties, refusal_message(path, source)).with_fields(vec![
+        FieldError::new(path.join("."), field_code::INEXACT_INTEGER, message(source)),
+    ])
 }
 
 /// Refuses the first whole number in the properties that a float would
 /// change, at any depth. A number the parse already rounded (one beyond 64
 /// bits, from text) cannot be told here; the text is read by
 /// [`refuse_inexact_integers`].
-pub(crate) fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), CoreError> {
+pub fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), RuleError> {
     let mut stack: Vec<(Vec<String>, &Value)> = properties
         .iter()
         .rev()
@@ -101,14 +99,68 @@ pub(crate) fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), Cor
 /// that a float would change, read as written: a number beyond 64 bits is
 /// already a float once parsed. Text that is not JSON is left to the caller's
 /// own parse.
-pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
+pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
+    match inexact_integers(text, None, true).into_iter().next() {
+        Some((path, source)) => Err(refusal(&path, &source)),
+        None => Ok(()),
+    }
+}
+
+/// Refuses each whole number that a float would change in the member `bag` of
+/// `text`, a JSON object, or in all of it where `bag` is `None`. A path is
+/// named from inside the bag.
+pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), RuleError> {
+    let found = inexact_integers(text, bag, false);
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(inexact_refusal(&found))
+}
+
+/// The first entry of the array `list` of `text`, a JSON object, whose member
+/// `bag` holds a whole number a float would change, and its refusal. A path is
+/// named from inside the bag.
+pub fn inexact_entry(text: &str, list: &str, bag: &str) -> Option<(usize, RuleError)> {
+    inexact_integers(text, None, false)
+        .into_iter()
+        .find_map(|(path, source)| match path.as_slice() {
+            [named, index, member, inside @ ..]
+                if named == list && member == bag && !inside.is_empty() =>
+            {
+                let index = index.parse().ok()?;
+                Some((index, inexact_refusal(&[(inside.to_vec(), source)])))
+            }
+            _ => None,
+        })
+}
+
+fn inexact_refusal(found: &[(Vec<String>, String)]) -> RuleError {
+    let fields: Vec<FieldError> = found
+        .iter()
+        .map(|(path, source)| {
+            FieldError::new(path.join("."), field_code::INEXACT_INTEGER, message(source))
+        })
+        .collect();
+    let listed: Vec<String> = found
+        .iter()
+        .map(|(path, source)| refusal_message(path, source))
+        .collect();
+    RuleError::new(
+        Code::InvalidProperties,
+        format!("Invalid properties: {}", listed.join("; ")),
+    )
+    .with_fields(fields)
+}
+
+fn inexact_integers(text: &str, bag: Option<&str>, first: bool) -> Vec<(Vec<String>, String)> {
+    let mut found = Vec::new();
     let bytes = text.as_bytes();
     if !bytes
         .windows(MIN_DIGITS)
         .any(|window| window.iter().all(u8::is_ascii_digit))
         && !bytes.windows(2).any(|window| window == b"-0")
     {
-        return Ok(());
+        return found;
     }
     // One frame per open container: an object's current member name, or an
     // array's current index.
@@ -153,11 +205,21 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
                     .iter()
                     .position(|b| !matches!(b, b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9'))
                     .map_or(bytes.len(), |length| at + length);
-                let token = &text[at..end];
+                let token = text.get(at..end).unwrap_or("");
                 let whole = token.strip_prefix('-').unwrap_or(token);
                 if !whole.is_empty() && whole.bytes().all(|b| b.is_ascii_digit()) && !kept(token) {
-                    let path: Vec<String> = frames.iter().map(|(_, name)| name.clone()).collect();
-                    return Err(refusal(&path, token));
+                    let mut path = frames.iter().map(|(_, name)| name.clone());
+                    let inside: Option<Vec<String>> = match bag {
+                        None => Some(path.collect()),
+                        Some(bag) => (frames.len() > 1 && path.next().as_deref() == Some(bag))
+                            .then(|| path.collect()),
+                    };
+                    if let Some(inside) = inside {
+                        found.push((inside, token.to_string()));
+                        if first {
+                            return found;
+                        }
+                    }
                 }
                 at = end - 1;
             }
@@ -165,13 +227,24 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
         }
         at += 1;
     }
-    Ok(())
+    found
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn names_the_entry_and_the_path_inside_its_properties() {
+        let text = r#"{"items":[{"version":1,"properties":{"a":1}},
+            {"tag":9007199254740993,"properties":{"a":{"b":[9007199254740993]}}}]}"#;
+
+        let (index, refusal) = inexact_entry(text, "items", "properties").expect("refused");
+
+        assert_eq!(index, 1);
+        assert_eq!(refusal.fields[0].path, "a.b.0");
+    }
 
     #[test]
     fn a_whole_number_is_kept_when_its_digits_are_the_ones_javascript_prints() {
@@ -216,6 +289,19 @@ mod tests {
     }
 
     #[test]
+    fn a_bag_is_judged_alone_and_each_path_is_named_from_inside_it() {
+        let text = r#"{"version": 9007199254740993, "properties": {"a": [1, 1152921504606846976], "b": -0}, "capture_latitude": -0}"#;
+        let refused = refuse_inexact_integers_in(text, Some("properties")).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["a.1", "b"]);
+        assert!(
+            refuse_inexact_integers_in(r#"{"version": -0, "properties": {}}"#, Some("properties"))
+                .is_ok()
+        );
+        assert!(refuse_inexact_integers_in(r#"{"a": -0}"#, None).is_err());
+    }
+
+    #[test]
     fn a_refusal_names_the_digits_a_float_keeps() {
         for (source, kept_as) in [
             ("1152921504606846976", Some("1152921504606847000")),
@@ -246,12 +332,23 @@ mod tests {
             "ok": 9_007_199_254_740_991_i64,
             "list": [1, { "deep": -9_007_199_254_740_993_i64 }],
         });
-        let Err(CoreError::Validation { code, message, .. }) =
-            refuse_in_value(properties.as_object().unwrap())
+        let Err(RuleError {
+            code,
+            message,
+            fields,
+        }) = refuse_in_value(properties.as_object().unwrap())
         else {
             panic!("expected a refusal");
         };
-        assert_eq!(code, "invalid_properties");
+        assert_eq!(code, Code::InvalidProperties);
+        assert_eq!(
+            fields,
+            [FieldError::new(
+                "list.1.deep",
+                field_code::INEXACT_INTEGER,
+                "Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
+            )]
+        );
         assert_eq!(
             message,
             "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
@@ -270,7 +367,7 @@ mod tests {
     fn text_names_where_the_number_sits() {
         let text =
             r#"{"ok": 1, "list": [1, {"deep": -9007199254740993}], "id64": 1500000000000000001}"#;
-        let Err(CoreError::Validation { message, .. }) = refuse_inexact_integers(text) else {
+        let Err(RuleError { message, .. }) = refuse_inexact_integers(text) else {
             panic!("expected a refusal");
         };
         assert_eq!(
@@ -291,7 +388,7 @@ mod tests {
             (r#"{"a": [1, {"b": -0}]}"#, "a.1.b"),
             (r#"{ "a" : -0 , "b": 0}"#, "a"),
         ] {
-            let Err(CoreError::Validation { message, .. }) = refuse_inexact_integers(text) else {
+            let Err(RuleError { message, .. }) = refuse_inexact_integers(text) else {
                 panic!("expected a refusal of {text}");
             };
             assert_eq!(
@@ -330,7 +427,7 @@ mod tests {
 
     #[test]
     fn text_names_a_member_whose_name_needs_unescaping() {
-        let Err(CoreError::Validation { message, .. }) =
+        let Err(RuleError { message, .. }) =
             refuse_inexact_integers(r#"{"a\"b": 1500000000000000001}"#)
         else {
             panic!("expected a refusal");

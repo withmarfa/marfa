@@ -106,7 +106,7 @@ fn edge_held(core: &Core, id: &str) -> bool {
 
 fn put(core: &Core, rows: &[Value]) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     for row in rows {
         let item: crate::wire::WireItem = serde_json::from_value(row["item"].clone()).unwrap();
         crate::reach::set_listed(&conn, &item.id, true).unwrap();

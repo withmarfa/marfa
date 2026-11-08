@@ -206,7 +206,7 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             if !remote.is_local() {
                 let url = url::Url::parse(remote.url())
                     .map_err(|_| CliError::Invalid("invalid setup URL".into()))?;
-                if url.scheme() != "https" && !crate::cleartext::is_loopback(&url) {
+                if url.scheme() != "https" && !marfa_telemetry::host::is_loopback(&url) {
                     return Err(CliError::Usage(
                         "setup requires HTTPS, except on loopback".into(),
                     ));

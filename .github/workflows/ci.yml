@@ -1052,9 +1052,9 @@ jobs:
       - run: pnpm build
       - name: Regenerate what the core is built from and check for drift
         run: |
-          rm -f core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json
+          rm -f core/marfa-core/src/contract.rs core/marfa-rules/src/builtin_catalog.json
           pnpm run generate:core
-          generated="core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json"
+          generated="core/marfa-core/src/contract.rs core/marfa-rules/src/builtin_catalog.json"
           if [ -n "$(git status --porcelain $generated)" ]; then
             git status --porcelain $generated
             echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."

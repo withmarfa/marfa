@@ -4,10 +4,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::fields::OwnBase;
-use crate::catalog::End;
 use crate::error::CoreError;
 use crate::model::ItemState;
 use crate::store::now_iso;
+use marfa_rules::catalog::End;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bound {

@@ -468,7 +468,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [
-    /^core\/marfa-core\/src\/builtin_catalog\.json$/,
+    /^core\/marfa-rules\/src\/builtin_catalog\.json$/,
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
@@ -532,6 +532,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // against, and only the `core` job runs them, so it stays on a pull
   // request.
   [/^core\/marfa-core\/src\//, [...RUST_LINUX, "core"]],
+  // The core and the command line are built from the rules crate, so it
+  // reaches what they do.
+  [/^core\/marfa-rules\/src\//, [...RUST_LINUX, "core"]],
   // Any other crate can be one the binary is built from, and Linux builds,
   // lints and tests the rest of the core's Rust, but not the live tests.
   [/^core\//, RUST_LINUX],

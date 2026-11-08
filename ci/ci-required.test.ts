@@ -239,7 +239,7 @@ describe("what a change runs", () => {
     ],
     [
       "the catalog the core carries",
-      ["core/marfa-core/src/builtin_catalog.json"],
+      ["core/marfa-rules/src/builtin_catalog.json"],
       [...RUST_LINUX, "core", "clients-freshness", "workspace", "ci-sqlite"],
     ],
     [
@@ -1557,7 +1557,12 @@ describe("what a job reads reaches it", () => {
         }
       }
     }
-    expect([...crates].sort()).toEqual(["marfa-cli", "marfa-core"]);
+    expect([...crates].sort()).toEqual([
+      "marfa-cli",
+      "marfa-core",
+      "marfa-rules",
+      "marfa-telemetry",
+    ]);
 
     const { jobs } = workflow("ci.yml");
     for (const job of [CONFORMANCE_SHARD_JOB, "cli-scenarios"]) {

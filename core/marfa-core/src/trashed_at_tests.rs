@@ -14,7 +14,7 @@ const HELD_AT: &str = "2026-01-01T00:00:00Z";
 
 fn put(core: &Core, row: &crate::wire::WireItem) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     crate::reach::set_listed(&conn, &row.id, true).unwrap();
     store::put_server_item(&conn, row, Some(&[]), &catalog).unwrap();
     store::lay_waiting_writes_over(&conn, &row.id, &|type_id| catalog.indexing(type_id)).unwrap();

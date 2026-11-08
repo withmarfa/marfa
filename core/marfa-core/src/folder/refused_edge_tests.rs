@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use super::tests::{rendered, watched_notes};
 use super::*;
-use crate::catalog::End;
 use crate::model::{QueuedWrite, Verdict, WriteKind};
 use crate::store::{self, Answered};
+use marfa_rules::catalog::End;
 
 const ONE_TO_ONE: &str = "supersedes";
 const CONSTRAINT: &str = "edge_constraint_violation";

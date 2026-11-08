@@ -5,9 +5,9 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::text::Embed;
-use crate::catalog::Catalog;
 use crate::model::Item;
-use crate::names::{folded, name_of, same};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::names::{folded, name_of, same};
 
 pub(crate) const FILE_TYPE: &str = "core.file";
 

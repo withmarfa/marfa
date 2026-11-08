@@ -456,7 +456,7 @@ mod tests {
     fn a_refused_write_to_an_item_a_file_is_bound_to_does_not_keep_its_store_refused() {
         let line = state::Line {
             edge_type: "references".into(),
-            end: crate::catalog::End::Source,
+            end: marfa_rules::catalog::End::Source,
             other: "other".into(),
         };
         let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}";

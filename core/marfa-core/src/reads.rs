@@ -8,7 +8,7 @@ use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
 use crate::body::rule::Bodies;
-use crate::catalog::Catalog;
+use crate::catalog::CatalogExt;
 use crate::error::CoreError;
 use crate::model::{Edge, Item, ItemState, Rows, Shown};
 use crate::store::Changes;
@@ -107,7 +107,7 @@ impl Core {
     ) -> Result<Rows<(Item, Shown)>> {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let items = store::items_by_ids_with(conn, ids, unreadable)?;
-            let catalog = Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             Ok(Rows {
                 rows: items
                     .into_iter()
@@ -177,7 +177,7 @@ impl Core {
         store::read_usable(&mut *self.conn()?, |conn| {
             let mut damaged = store::Unreadable::Keep(HashMap::new());
             let items = store::items_by_ids_with(conn, ids, &mut damaged)?;
-            let catalog = Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             let bodies = Bodies::new(conn, &catalog);
             let mut answer = HashMap::with_capacity(items.len());
             for item in items {

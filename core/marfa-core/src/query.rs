@@ -2,11 +2,13 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::filter;
-use crate::model::{Item, ItemState, ListFilters, Sort, SortField};
+use crate::model::{Item, ItemState, ListFilters, Sort, SortDirection, SortField};
 use crate::store::{self, Unreadable};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::query as rules;
+use marfa_rules::query::escape_like;
 
 pub(crate) fn list(
     conn: &Connection,
@@ -54,14 +56,14 @@ pub(crate) fn list_with(
     // `updated_at` it holds misses no row that shares the instant.
     if let Some(after) = &filters.updated_after {
         clauses.push("updated_at >= ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             after,
             "updated_after",
         )?));
     }
     if let Some(before) = &filters.updated_before {
         clauses.push("updated_at < ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             before,
             "updated_before",
         )?));
@@ -111,14 +113,14 @@ pub(crate) fn narrow_by_own_time(
 ) -> Result<()> {
     if let Some(after) = after {
         clauses.push("items.occurred_at > ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             after,
             "occurred_after",
         )?));
     }
     if let Some(before) = before {
         clauses.push("items.occurred_at < ?".into());
-        values.push(Value::String(crate::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize(
             before,
             "occurred_before",
         )?));
@@ -172,19 +174,19 @@ pub(crate) fn list_where_with(
         // text, a boolean being 0 or 1.
         SortField::Property(name) => format!(
             "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
-            sort.direction.as_sql(),
-            expression = property_sort_expression(name),
+            direction_sql(sort.direction),
+            expression = rules::property_sort_expression("items", &format!("'$.{name}'")),
         ),
         // As on the server (`search-and-filters/bin-order`).
         SortField::TrashedAt => format!(
             "ORDER BY COALESCE(trashed_at, updated_at) {}, id {}",
-            sort.direction.as_sql(),
-            sort.direction.as_sql()
+            direction_sql(sort.direction),
+            direction_sql(sort.direction)
         ),
         field => format!(
             "ORDER BY {field} {}, id {}",
-            sort.direction.as_sql(),
-            sort.direction.as_sql()
+            direction_sql(sort.direction),
+            direction_sql(sort.direction)
         ),
     };
     let limit_sql = match (limit, offset) {
@@ -198,17 +200,12 @@ pub(crate) fn list_where_with(
     store::items_where(conn, &where_sql, &order_sql, &limit_sql, values, unreadable)
 }
 
-/// `name` is a property name `SortField::property` has checked, so it is
-/// safe inside the path.
-fn property_sort_expression(name: &str) -> String {
-    format!(
-        "CASE WHEN json_type(items.properties, '$.{name}') IN ('integer', 'real') THEN CAST(json_extract(items.properties, '$.{name}') AS REAL) WHEN json_type(items.properties, '$.{name}') IN ('text', 'true', 'false') THEN json_extract(items.properties, '$.{name}') ELSE NULL END"
-    )
+fn direction_sql(direction: SortDirection) -> &'static str {
+    match direction {
+        SortDirection::Ascending => "ASC",
+        SortDirection::Descending => "DESC",
+    }
 }
-
-/// The most entries a `type` list may name, as on the server
-/// (`search-and-filters/type-list-max`).
-const MAX_TYPE_ENTRIES: usize = 10;
 
 /// A `type` list, as the server reads one (`search-and-filters/type-list`): a
 /// row matches when any entry selects it. Entries are trimmed, blank ones
@@ -224,37 +221,11 @@ pub(crate) fn narrow_by_types(
     let Some(types) = types else {
         return Ok(());
     };
-    let mut entries: Vec<&str> = Vec::new();
-    for entry in types.iter().map(|entry| entry.trim()) {
-        if !entry.is_empty() && !entries.contains(&entry) {
-            entries.push(entry);
-        }
-    }
-    if entries.is_empty() {
-        return Err(CoreError::Validation {
-            code: "validation_error".into(),
-            message: "The type filter names no type. Name a type, or leave the filter out.".into(),
-            details: None,
-        });
-    }
-    if entries.len() > MAX_TYPE_ENTRIES {
-        return Err(CoreError::Validation {
-            code: "validation_error".into(),
-            message: format!("Too many types in filter (max {MAX_TYPE_ENTRIES})"),
-            details: None,
-        });
-    }
     let mut alternatives = Vec::new();
-    for declared in entries {
-        if declared == crate::store::EVERY_TYPE {
-            return Err(CoreError::Validation {
-                code: "validation_error".into(),
-                message: format!("Invalid type identifier: {declared}"),
-                details: None,
-            });
-        }
+    for declared in rules::type_entries(types)? {
+        rules::list_entry(declared)?;
         narrow_by_type(catalog, Some(declared), &mut alternatives, values)?;
-        refuse_unknown_type(catalog, Some(declared))?;
+        rules::refuse_unknown_type(catalog, Some(declared))?;
     }
     clauses.push(format!("({})", alternatives.join(" OR ")));
     Ok(())
@@ -271,24 +242,10 @@ pub(crate) fn narrow_by_states(
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
+    rules::refuse_states(states.map(<[ItemState]>::len), all_states)?;
     match states {
         None if all_states => {}
         None => clauses.push("items.state = 'active'".into()),
-        Some([]) => {
-            return Err(CoreError::Validation {
-                code: "validation_error".into(),
-                message: "The state filter names no state. Name a state, or leave the filter out."
-                    .into(),
-                details: None,
-            });
-        }
-        Some(_) if all_states => {
-            return Err(CoreError::Validation {
-                code: "validation_error".into(),
-                message: "The state filter names states beside every state. Name the states, or ask for every state, not both.".into(),
-                details: None,
-            });
-        }
         Some(states) => {
             let mut named: Vec<&str> = states.iter().map(|state| state.as_str()).collect();
             named.sort_unstable();
@@ -303,28 +260,6 @@ pub(crate) fn narrow_by_states(
     Ok(())
 }
 
-/// A concrete type the copy's catalog does not hold is refused `unknown_type`,
-/// as the server refuses one nothing registers (`device/type-unknown`). A
-/// wildcard is never refused: what it names may be nothing. A name outside the
-/// grammar is left to `narrow_by_type`, which refuses it first on the server's
-/// code. The server answers `type_not_permitted` for a registered type its key
-/// may not read, so only a type the catalog lacks is refused here: the catalog
-/// is the server's whole registry, whatever the key reads.
-pub(crate) fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> Result<()> {
-    let Some(declared) = declared else {
-        return Ok(());
-    };
-    if declared.ends_with(".*") || !crate::hydrate::type_pattern(declared)? {
-        return Ok(());
-    }
-    if catalog.known(declared) {
-        return Ok(());
-    }
-    Err(CoreError::UnknownType {
-        message: format!("Unknown type: {declared}"),
-    })
-}
-
 /// A declared type and its subtree, by name and by declared parent, the
 /// question `?type=` answers on the server. Shared by the list and the
 /// search, so the two cannot answer it differently. A name outside the
@@ -335,16 +270,9 @@ pub(crate) fn narrow_by_type(
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
-    let Some(declared) = declared.filter(|declared| *declared != "*") else {
+    let Some(declared) = rules::declared_type(declared)? else {
         return Ok(());
     };
-    if !crate::hydrate::type_pattern(declared)? {
-        return Err(crate::error::CoreError::Validation {
-            code: "validation_error".into(),
-            message: format!("Invalid type identifier: {declared}"),
-            details: None,
-        });
-    }
     let root = Catalog::root(declared);
     let mut alternatives = vec![
         "items.type = ?".to_string(),
@@ -373,20 +301,14 @@ pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values:
     }
 }
 
-pub(crate) fn escape_like(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::catalog::Indexing;
     use crate::model::{ItemState, SortDirection, SortField, Tier};
     use crate::store::testing::*;
+    use marfa_rules::catalog::Indexing;
 
     fn seeded() -> Connection {
         let conn = conn();
@@ -453,7 +375,7 @@ mod tests {
     }
 
     fn ids(conn: &Connection, filters: ListFilters, sort: Sort) -> Vec<String> {
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         list(conn, &catalog, &filters, Some(sort))
             .unwrap()
             .into_iter()
@@ -512,7 +434,7 @@ mod tests {
     #[test]
     fn a_concrete_type_the_catalog_does_not_hold_is_refused_and_a_wildcard_is_not() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let named = |name: &str| ListFilters {
             types: Some(vec![name.into()]),
             ..Default::default()
@@ -541,7 +463,7 @@ mod tests {
     #[test]
     fn an_empty_type_is_refused_as_the_server_refuses_it() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let filters = ListFilters {
             types: Some(vec![String::new()]),
             ..Default::default()
@@ -590,7 +512,7 @@ mod tests {
     #[test]
     fn the_global_wildcard_is_refused_alone_or_in_a_list() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         for types in [vec!["*"], vec!["core.file", "*"], vec![" * ", "acme.memo"]] {
             let filters = ListFilters {
                 types: Some(types.iter().map(|entry| entry.to_string()).collect()),
@@ -609,7 +531,7 @@ mod tests {
     #[test]
     fn a_type_list_drops_blank_entries_and_repeats_before_it_is_counted() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let named = |types: Vec<&str>| ListFilters {
             types: Some(types.into_iter().map(String::from).collect()),
             ..Default::default()
@@ -652,7 +574,7 @@ mod tests {
     #[test]
     fn a_list_naming_nothing_or_too_much_is_refused() {
         let conn = seeded();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let eleven: Vec<String> = (0..11).map(|i| format!("acme{i}.*")).collect();
         let ten = ListFilters {
             types: Some(eleven[..10].to_vec()),
@@ -738,7 +660,7 @@ mod tests {
     }
 
     fn listed(conn: &Connection, filters: ListFilters, sort: Option<Sort>) -> Result<Vec<String>> {
-        let catalog = Catalog::load(conn).unwrap();
+        let catalog = crate::catalog::load(conn).unwrap();
         Ok(list(conn, &catalog, &filters, sort)?
             .into_iter()
             .map(|item| item.id)

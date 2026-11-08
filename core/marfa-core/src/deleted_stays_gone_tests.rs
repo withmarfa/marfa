@@ -9,8 +9,8 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use crate::scripted::{self, Answer, Scripted, Then, certified};
-use crate::wire::WireCatalog;
 use crate::{Core, Server, reach, store};
+use marfa_rules::wire::WireCatalog;
 
 const NOTE: &str = "core.note";
 

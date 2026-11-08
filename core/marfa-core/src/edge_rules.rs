@@ -32,10 +32,12 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
-use crate::catalog::{self, EdgeType, End, Lineage};
+use crate::catalog;
 use crate::error::CoreError;
 use crate::model::{Draft, Subject, Verdict, WriteKind};
 use crate::store;
+use marfa_rules::catalog::{EdgeType, End, Lineage};
+use marfa_rules::edges;
 
 type Result<T> = std::result::Result<T, CoreError>;
 
@@ -114,34 +116,16 @@ fn constraint_violation(message: String, details: Value) -> CoreError {
     }
 }
 
+fn refused(refusal: edges::Refused) -> CoreError {
+    constraint_violation(refusal.message, refusal.details)
+}
+
 fn refused_end(edge_type: &EdgeType, end: End, r#type: &str) -> CoreError {
-    let id = &edge_type.id;
-    let (end, allowed) = match end {
-        End::Source => ("source", &edge_type.source_type_constraints),
-        End::Target => ("target", &edge_type.target_type_constraints),
-    };
-    let mut details = serde_json::Map::new();
-    details.insert("edge_type".into(), json!(id));
-    details.insert(format!("{end}_type"), json!(r#type));
-    details.insert("allowed".into(), json!(allowed));
-    constraint_violation(
-        format!("Edge \"{id}\" does not allow {end} type \"{type}\""),
-        Value::Object(details),
-    )
+    refused(edges::refused_end(edge_type, end, r#type))
 }
 
 fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> CoreError {
-    constraint_violation(
-        format!(
-            "Edge \"{edge_type}\" does not take a source its target constraints admit; use \"parent-of\" for hierarchy"
-        ),
-        json!({
-            "edge_type": edge_type,
-            "source_id": source_id,
-            "source_type": source_type,
-            "constraint": "nesting",
-        }),
-    )
+    refused(edges::refused_nesting(edge_type, source_id, source_type))
 }
 
 /// Lineages read once per call, since a retype judges every edge at an item.
@@ -228,21 +212,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
 }
 
 fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> CoreError {
-    let (end, edge) = match end {
-        End::Source => ("source", "outbound"),
-        End::Target => ("target", "inbound"),
-    };
-    let mut details = serde_json::Map::new();
-    details.insert("edge_type".into(), json!(edge_type.id));
-    details.insert(format!("{end}_id"), json!(at));
-    details.insert("constraint".into(), json!("cardinality"));
-    constraint_violation(
-        format!(
-            "Edge \"{}\" is {}; {end} already has an {edge} edge of this type",
-            edge_type.id, edge_type.cardinality
-        ),
-        Value::Object(details),
-    )
+    refused(edges::refused_cardinality(edge_type, end, at))
 }
 
 /// The edges the copy shows only because of a write the server refused,
@@ -485,9 +455,9 @@ pub(crate) fn refuse_retype_breaking_edges(
 mod tests {
     use serde_json::{Value, json};
 
-    use crate::catalog::Catalog;
-    use crate::wire::{WireCatalog, WireType};
     use crate::{Core, CoreError, Draft, EdgeDraft, EdgeEdit, Edit, End, reach, store};
+    use marfa_rules::catalog::Catalog;
+    use marfa_rules::wire::{WireCatalog, WireType};
 
     const NOTE_A: &str = "0190f3a0-0000-7000-8000-00000000000a";
     const NOTE_B: &str = "0190f3a0-0000-7000-8000-00000000000b";

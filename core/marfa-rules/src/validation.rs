@@ -2,18 +2,18 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::error::CoreError;
+use crate::error::{Code, FieldError, RuleError, field_code};
 use crate::js;
-use crate::model::{THUMBNAIL_MAX_BYTES, Thumbnail};
+use crate::thumbnail::{THUMBNAIL_MAX_BYTES, Thumbnail};
 use crate::url_host;
 
 /// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
 /// removed through its own URL path, so one longer could be written and never
 /// removed.
-pub(crate) const MAX_TAG_LENGTH: usize = 128;
+pub const MAX_TAG_LENGTH: usize = 128;
 
 /// Most tags one item may hold: the server's `MAX_TAGS_PER_ITEM`.
-pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
+pub const MAX_TAGS_PER_ITEM: usize = 100;
 
 /// Longest value, in UTF-16 code units, of a string field with no `maxLength`
 /// of its own.
@@ -21,7 +21,101 @@ const STRING_MAX_LENGTH: u64 = 100_000;
 
 /// Longest value, in UTF-16 code units, of the string field a type names as its
 /// body, where it has no `maxLength` of its own (`items/property-length-body`).
-pub(crate) const BODY_MAX_LENGTH: u64 = 1_000_000;
+pub const BODY_MAX_LENGTH: u64 = 1_000_000;
+
+/// What is wrong with one value: where in it, which of the field codes, and
+/// the words, both bare and as the refusal shows them.
+struct Problem {
+    /// The element position, then the member, below the field.
+    at: Vec<String>,
+    code: &'static str,
+    message: String,
+    /// The words with the position written in them, as a person reads them.
+    shown: String,
+    /// The other elements of the same array found wrong.
+    also: Vec<Problem>,
+}
+
+impl Problem {
+    fn new(code: &'static str, message: impl Into<String>) -> Problem {
+        let message = message.into();
+        Problem {
+            at: Vec::new(),
+            code,
+            shown: message.clone(),
+            message,
+            also: Vec::new(),
+        }
+    }
+
+    fn all_of(found: Vec<Problem>) -> Option<Problem> {
+        let mut found = found.into_iter();
+        let mut first = found.next()?;
+        first.also.extend(found);
+        Some(first)
+    }
+
+    /// The problem and each one found beside it, in order.
+    fn flattened(mut self) -> Vec<Problem> {
+        let also = std::mem::take(&mut self.also);
+        std::iter::once(self)
+            .chain(also.into_iter().flat_map(Problem::flattened))
+            .collect()
+    }
+
+    /// The same problem found in the member `member` of entry `index`.
+    fn in_entry(mut self, index: usize, member: Option<&str>) -> Problem {
+        self.also = std::mem::take(&mut self.also)
+            .into_iter()
+            .map(|problem| problem.in_entry(index, member))
+            .collect();
+        self.at.insert(0, index.to_string());
+        let label = match member {
+            Some(member) => {
+                self.at.insert(1, member.to_string());
+                format!("Item {index}: {member}: ")
+            }
+            None => format!("Item {index}: "),
+        };
+        self.shown = format!("{label}{}", self.shown);
+        self
+    }
+
+    /// The same problem found in element `index`.
+    fn in_element(mut self, index: usize) -> Problem {
+        self.also = std::mem::take(&mut self.also)
+            .into_iter()
+            .map(|problem| problem.in_element(index))
+            .collect();
+        self.at.insert(0, index.to_string());
+        self.shown = format!("Item {index}: {}", self.shown);
+        self
+    }
+}
+
+/// A refusal of `code` for the faults found, or none where there are none.
+/// The message joins each fault's words, behind its position, with `; `.
+fn refuse(code: Code, faults: Vec<(String, FieldError)>) -> Result<(), RuleError> {
+    if faults.is_empty() {
+        return Ok(());
+    }
+    let message = faults
+        .iter()
+        .map(|(shown, _)| shown.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let fields = faults.into_iter().map(|(_, field)| field).collect();
+    Err(RuleError::new(code, message).with_fields(fields))
+}
+
+/// A fault of a part of the request, written `path: message`.
+fn fault(path: &str, code: &'static str, message: impl Into<String>) -> (String, FieldError) {
+    let message = message.into();
+    (
+        format!("{path}: {message}"),
+        FieldError::new(path, code, message),
+    )
+}
 
 /// The tags a write may carry, as the server holds them: at most
 /// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
@@ -29,42 +123,60 @@ pub(crate) const BODY_MAX_LENGTH: u64 = 1_000_000;
 /// cannot name as a segment, and at most `MAX_TAG_LENGTH` UTF-16 code units.
 /// A write the server would refuse is refused here, so it is never saved or
 /// queued only to come back refused.
-pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
-    let mut errors: Vec<String> = tags
+pub fn tags(tags: &[String]) -> Result<(), RuleError> {
+    let mut faults: Vec<(String, FieldError)> = tags
         .iter()
         .enumerate()
         .filter_map(|(index, tag)| {
-            let problem = if tag.is_empty() {
-                "A tag must not be empty".to_string()
+            let (code, problem) = if tag.is_empty() {
+                (field_code::EMPTY, "A tag must not be empty".to_string())
             } else if tag.chars().all(js::is_space) {
-                "A tag must not be blank".to_string()
+                (
+                    field_code::INVALID_VALUE,
+                    "A tag must not be blank".to_string(),
+                )
             } else if tag == "." || tag == ".." {
-                format!("A tag must not be {tag:?}, which a URL path cannot name")
+                (
+                    field_code::INVALID_VALUE,
+                    format!("A tag must not be {tag:?}, which a URL path cannot name"),
+                )
             } else if tag.encode_utf16().count() > MAX_TAG_LENGTH {
-                format!("A tag must contain at most {MAX_TAG_LENGTH} UTF-16 code units")
+                (
+                    field_code::TOO_LONG,
+                    format!("A tag must contain at most {MAX_TAG_LENGTH} UTF-16 code units"),
+                )
             } else {
                 return None;
             };
-            Some(format!("tags[{index}]: {problem}"))
+            Some(fault(&format!("tags[{index}]"), code, problem))
         })
         .collect();
     if tags.len() > MAX_TAGS_PER_ITEM {
-        errors.insert(
+        faults.insert(
             0,
-            format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item"),
+            fault(
+                "tags",
+                field_code::TOO_MANY,
+                format!("Maximum {MAX_TAGS_PER_ITEM} tags per item"),
+            ),
         );
     }
-    refuse(errors)
+    refuse(Code::ValidationError, faults)
 }
 
 /// The server refuses a tag write that leaves an item more tags than the
 /// bound only where it holds more than it did, so a row an archive restored
 /// over the bound can still shed them.
-pub(crate) fn tag_count(before: usize, after: usize) -> Result<(), CoreError> {
+pub fn tag_count(before: usize, after: usize) -> Result<(), RuleError> {
     refuse(
+        Code::ValidationError,
         (after > MAX_TAGS_PER_ITEM && after > before)
             .then(|| {
-                format!("tags: Maximum {MAX_TAGS_PER_ITEM} tags per item (including existing tags)")
+                fault(
+                    "tags",
+                    field_code::TOO_MANY,
+                    format!("Maximum {MAX_TAGS_PER_ITEM} tags per item (including existing tags)"),
+                )
             })
             .into_iter()
             .collect(),
@@ -72,12 +184,19 @@ pub(crate) fn tag_count(before: usize, after: usize) -> Result<(), CoreError> {
 }
 
 /// The property names a write may carry, as the server holds them: not empty.
-pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), CoreError> {
+pub fn property_names(properties: &Map<String, Value>) -> Result<(), RuleError> {
     refuse(
+        Code::ValidationError,
         properties
             .keys()
             .any(String::is_empty)
-            .then(|| "properties: A property name must not be empty".to_string())
+            .then(|| {
+                fault(
+                    "properties",
+                    field_code::EMPTY,
+                    "A property name must not be empty",
+                )
+            })
             .into_iter()
             .collect(),
     )
@@ -85,30 +204,35 @@ pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), Core
 
 /// The properties an edit clears, refused as the server refuses them: an
 /// empty name, and one the same edit also sets.
-pub(crate) fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(), CoreError> {
-    let mut errors = Vec::new();
+pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(), RuleError> {
+    let mut faults = Vec::new();
     if cleared.iter().any(String::is_empty) {
-        errors.push("clear_properties: A property name must not be empty".to_string());
-    }
-    let both: Vec<&str> = cleared
-        .iter()
-        .filter(|name| set.contains_key(*name))
-        .map(String::as_str)
-        .collect();
-    if !both.is_empty() {
-        errors.push(format!(
-            "A property can't be both set and cleared: {}",
-            both.join(", ")
+        faults.push(fault(
+            "clear_properties",
+            field_code::EMPTY,
+            "A property name must not be empty",
         ));
     }
-    refuse(errors)
+    faults.extend(
+        cleared
+            .iter()
+            .filter(|name| set.contains_key(*name))
+            .map(|name| {
+                fault(
+                    name,
+                    field_code::SET_AND_CLEARED,
+                    "A property can't be both set and cleared",
+                )
+            }),
+    );
+    refuse(Code::ValidationError, faults)
 }
 
 /// An id a write names, as the server's `isValidId` takes one: a lowercase
 /// UUIDv7. The server refuses any other `400 invalid_id`, and then refuses a
 /// read of it the same way, so a copy that queued one could never read the
 /// row back to put itself right.
-pub(crate) fn id(field: &str, id: &str) -> Result<(), CoreError> {
+pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
     let bytes = id.as_bytes();
     let hex = |b: &u8| b.is_ascii_digit() || (b'a'..=b'f').contains(b);
     let valid = bytes.len() == 36
@@ -121,37 +245,43 @@ pub(crate) fn id(field: &str, id: &str) -> Result<(), CoreError> {
     if valid {
         Ok(())
     } else {
-        Err(CoreError::Validation {
-            code: "invalid_id".into(),
-            message: format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase"),
-            details: None,
-        })
+        let message = format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase");
+        Err(
+            RuleError::new(Code::InvalidId, message.clone()).with_fields(vec![FieldError::new(
+                field,
+                field_code::INVALID_VALUE,
+                message,
+            )]),
+        )
     }
 }
 
-fn refuse(errors: Vec<String>) -> Result<(), CoreError> {
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(CoreError::Validation {
-            code: "validation_error".into(),
-            message: errors.join("; "),
-            details: None,
-        })
-    }
-}
+const NUL_REFUSED: &str = "Must not contain a null byte (U+0000)";
 
-pub(crate) fn properties(
+/// Whether the properties hold what the fields, by name, declare: every value
+/// of the kind its field names, and with `complete`, every required one.
+pub fn properties(
     fields: &BTreeMap<&str, &Value>,
     properties: &Map<String, Value>,
     complete: bool,
-) -> Result<(), CoreError> {
-    let mut errors = Vec::new();
+) -> Result<(), RuleError> {
+    let mut faults: Vec<_> = properties
+        .iter()
+        .filter(|(name, value)| {
+            !fields.contains_key(name.as_str())
+                && value.as_str().is_some_and(|text| text.contains('\0'))
+        })
+        .map(|(name, _)| fault(name, field_code::INVALID_VALUE, NUL_REFUSED))
+        .collect();
     for (name, definition) in fields {
         let required = definition.get("required").and_then(Value::as_bool) == Some(true);
         let Some(value) = properties.get(*name) else {
             if complete && required {
-                errors.push(format!("{name}: Required field is missing"));
+                faults.push(fault(
+                    name,
+                    field_code::REQUIRED,
+                    "Required field is missing",
+                ));
             }
             continue;
         };
@@ -162,25 +292,30 @@ pub(crate) fn properties(
             .get("type")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                CoreError::Decoding(format!("the held field {name} declares no type"))
+                RuleError::decoding(format!("the held field {name} declares no type"))
             })?;
-        if let Some(message) = field(kind, definition, value)? {
-            errors.push(format!("{name}: {message}"));
+        for problem in field(kind, definition, value)?.map_or(Vec::new(), Problem::flattened) {
+            let path = std::iter::once(*name)
+                .chain(problem.at.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(".");
+            faults.push((
+                format!("{name}: {}", problem.shown),
+                FieldError::new(path, problem.code, problem.message),
+            ));
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(CoreError::Validation {
-            code: "invalid_properties".into(),
-            message: errors.join("; "),
-            details: None,
-        })
-    }
+    refuse(Code::InvalidProperties, faults)
 }
 
-fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>, CoreError> {
-    let expected = |kind| Some(format!("Expected {kind}"));
+fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem>, RuleError> {
+    let expected = |kind| {
+        Some(Problem::new(
+            field_code::INVALID_TYPE,
+            format!("Expected {kind}"),
+        ))
+    };
+    let invalid = |message: &str| Some(Problem::new(field_code::INVALID_VALUE, message));
     let limit = |key, default| {
         definition
             .get(key)
@@ -190,9 +325,12 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
     let bounded = |text: &str| {
         let max = limit("maxLength", STRING_MAX_LENGTH);
         if text.encode_utf16().count() as u64 > max {
-            Some(format!("Must contain at most {max} UTF-16 code units"))
+            Some(Problem::new(
+                field_code::TOO_LONG,
+                format!("Must contain at most {max} UTF-16 code units"),
+            ))
         } else if text.contains('\0') {
-            Some("Must not contain a null byte (U+0000)".into())
+            invalid(NUL_REFUSED)
         } else {
             None
         }
@@ -210,7 +348,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
         "enum" => match value.as_str() {
             None => expected("string"),
             Some(text) => match definition.get("enum_values").and_then(Value::as_array).filter(|values| !values.is_empty()) {
-                Some(values) if !values.iter().any(|value| value.as_str() == Some(text)) => Some(format!("Must be one of {}", values.iter().map(Value::to_string).collect::<Vec<_>>().join(", "))),
+                Some(values) if !values.iter().any(|value| value.as_str() == Some(text)) => invalid(&format!("Must be one of {}", values.iter().map(Value::to_string).collect::<Vec<_>>().join(", "))),
                 Some(_) => None,
                 None => bounded(text),
             }
@@ -220,49 +358,62 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
         "boolean" => if value.is_boolean() { None } else { expected("boolean") },
         "array" => match value.as_array() {
             None => expected("array"),
-            Some(values) if values.len() as u64 > limit("maxItems", 10_000) => Some(format!("Must contain at most {} items", limit("maxItems", 10_000))),
+            Some(values) if values.len() as u64 > limit("maxItems", 10_000) => Some(Problem::new(field_code::TOO_MANY, format!("Must contain at most {} items", limit("maxItems", 10_000)))),
             Some(values) => elements(definition, values)?,
         },
         "object" => if value.is_object() { None } else { expected("object") },
-        "url" => if value.as_str().is_some_and(|text| url_value(text).is_some()) { None } else { Some("Must be a valid URL".into()) },
-        "email" => if value.as_str().is_some_and(email) { None } else { Some("Must be a valid email address".into()) },
-        "date" => if value.as_str().is_some_and(date) { None } else { Some("Must be a calendar date (YYYY-MM-DD)".into()) },
-        "datetime" => if value.as_str().is_some_and(|text| date(text) || datetime(text)) { None } else { Some("Must be a calendar date or ISO 8601 datetime with an offset".into()) },
+        "url" => if value.as_str().is_some_and(|text| url_value(text).is_some()) { None } else { invalid("Must be a valid URL") },
+        "email" => if value.as_str().is_some_and(email) { None } else { invalid("Must be a valid email address") },
+        "date" => if value.as_str().is_some_and(date) { None } else { invalid("Must be a calendar date (YYYY-MM-DD)") },
+        "datetime" => if value.as_str().is_some_and(|text| date(text) || datetime(text)) { None } else { invalid("Must be a calendar date or ISO 8601 datetime with an offset") },
         "thumbnail" => match value.as_str() {
             None => expected("thumbnail data URI"),
-            Some(text) if text.len() > 40 + THUMBNAIL_MAX_BYTES.div_ceil(3) * 4 => Some(format!("Must decode to at most {THUMBNAIL_MAX_BYTES} bytes")),
-            Some(text) => Thumbnail::from_data_uri(text).err().map(|_| "Must be a PNG, JPEG or WebP data URI with canonical base64, its image signature, and at most 16384 decoded bytes".into()),
+            Some(text) if text.len() > 40 + THUMBNAIL_MAX_BYTES.div_ceil(3) * 4 => Some(Problem::new(field_code::TOO_LONG, format!("Must decode to at most {THUMBNAIL_MAX_BYTES} bytes"))),
+            Some(text) => Thumbnail::from_data_uri(text).err().and_then(|_| invalid("Must be a PNG, JPEG or WebP data URI with canonical base64, its image signature, and at most 16384 decoded bytes")),
         },
-        _ => return Err(CoreError::Decoding(format!("the held field declares unsupported type {kind}"))),
+        _ => return Err(RuleError::decoding(format!("the held field declares unsupported type {kind}"))),
     })
 }
 
 /// A currency code as the server takes one: three capital letters from A to
 /// Z. Whether ISO 4217 assigns the code is left alone, as that list changes.
-fn currency(text: &str) -> Option<String> {
+fn currency(text: &str) -> Option<Problem> {
     let taken = text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_uppercase());
-    (!taken).then(|| "Must be a currency code of three capital letters".into())
+    (!taken).then(|| {
+        Problem::new(
+            field_code::INVALID_VALUE,
+            "Must be a currency code of three capital letters",
+        )
+    })
 }
 
 /// Where `number` falls outside the `minimum` and `maximum` the field names,
 /// both inclusive.
-fn in_range(definition: &Value, number: f64) -> Option<String> {
+fn in_range(definition: &Value, number: f64) -> Option<Problem> {
     let bound = |key| definition.get(key).filter(|bound| bound.is_number());
     if let Some(minimum) =
         bound("minimum").filter(|minimum| minimum.as_f64().is_some_and(|minimum| number < minimum))
     {
-        return Some(format!("Must be at least {minimum}"));
+        return Some(Problem::new(
+            field_code::OUT_OF_RANGE,
+            format!("Must be at least {minimum}"),
+        ));
     }
     bound("maximum")
         .filter(|maximum| maximum.as_f64().is_some_and(|maximum| number > maximum))
-        .map(|maximum| format!("Must be at most {maximum}"))
+        .map(|maximum| {
+            Problem::new(
+                field_code::OUT_OF_RANGE,
+                format!("Must be at most {maximum}"),
+            )
+        })
 }
 
-/// The first element of an array that is not a value of the field's
+/// Each element of an array that is not a value of the field's
 /// `items_type`, judged as a field of that type judges a value. An
 /// `items_type` that names no field type leaves the elements unchecked, as the
 /// server leaves them.
-fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, CoreError> {
+fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, RuleError> {
     let Some(items) = definition.get("items_type").and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -273,49 +424,74 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
         return entries(members, values);
     }
     let element = serde_json::json!({ "enum_values": definition.get("enum_values") });
+    let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
         match field(items, &element, value) {
             // `field` fails only on a kind it does not know.
-            Err(CoreError::Decoding(_)) => return Ok(None),
+            Err(RuleError {
+                code: Code::Decoding,
+                ..
+            }) => return Ok(None),
             checked => {
-                if let Some(message) = checked? {
-                    return Ok(Some(format!("Item {index}: {message}")));
+                if let Some(problem) = checked? {
+                    found.push(problem.in_element(index));
                 }
             }
         }
     }
-    Ok(None)
+    Ok(Problem::all_of(found))
 }
 
-/// The first entry of a list that is not an object with at least one member,
-/// only members the field declares, every member it requires and a value for
-/// each that a field of the member's definition takes. A member with no value
-/// is left out, and a `null` is no value.
-fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<String>, CoreError> {
+/// Each entry of a list that is not an object with at least one member, only
+/// members the field declares, every member it requires and a value for each
+/// that a field of the member's definition takes. A member with no value is
+/// left out, and a `null` is no value.
+fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<Problem>, RuleError> {
+    let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
-        let refused = |message: String| Ok(Some(format!("Item {index}: {message}")));
-        let Some(entry) = value.as_object() else {
-            return refused("Expected object".into());
-        };
-        if entry.is_empty() {
-            return refused("Must have at least one member".into());
-        }
-        if let Some(name) = entry.keys().find(|name| !members.contains_key(*name)) {
-            return refused(format!("{name}: Is not a member of the entry"));
-        }
-        for (name, member) in members {
-            let Some(held) = entry.get(name) else {
-                if member.get("required").and_then(Value::as_bool) == Some(true) {
-                    return refused(format!("{name}: Required"));
-                }
-                continue;
-            };
-            let kind = member.get("type").and_then(Value::as_str).ok_or_else(|| {
-                CoreError::Decoding(format!("the held member {name} declares no type"))
-            })?;
-            if let Some(message) = field(kind, member, held)? {
-                return refused(format!("{name}: {message}"));
+        found.extend(entry(members, index, value)?);
+    }
+    Ok(Problem::all_of(found))
+}
+
+/// The first thing wrong with one entry of a list.
+fn entry(
+    members: &Map<String, Value>,
+    index: usize,
+    value: &Value,
+) -> Result<Option<Problem>, RuleError> {
+    let refused = |code, message: String, member: Option<&str>| {
+        Ok(Some(Problem::new(code, message).in_entry(index, member)))
+    };
+    let Some(entry) = value.as_object() else {
+        return refused(field_code::INVALID_TYPE, "Expected object".into(), None);
+    };
+    if entry.is_empty() {
+        return refused(
+            field_code::EMPTY,
+            "Must have at least one member".into(),
+            None,
+        );
+    }
+    if let Some(name) = entry.keys().find(|name| !members.contains_key(*name)) {
+        return refused(
+            field_code::UNKNOWN_MEMBER,
+            "Is not a member of the entry".into(),
+            Some(name),
+        );
+    }
+    for (name, member) in members {
+        let Some(held) = entry.get(name) else {
+            if member.get("required").and_then(Value::as_bool) == Some(true) {
+                return refused(field_code::REQUIRED, "Required".into(), Some(name));
             }
+            continue;
+        };
+        let kind = member.get("type").and_then(Value::as_str).ok_or_else(|| {
+            RuleError::decoding(format!("the held member {name} declares no type"))
+        })?;
+        if let Some(problem) = field(kind, member, held)? {
+            return Ok(Some(problem.in_entry(index, Some(name))));
         }
     }
     Ok(None)
@@ -326,7 +502,7 @@ fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<Stri
 /// WHATWG URL standard does, and keeps it without the tabs and line breaks the
 /// standard ignores. The `url` crate parts from the standard on some authorities,
 /// which `url_host` corrects.
-pub(crate) fn url_value(text: &str) -> Option<String> {
+pub fn url_value(text: &str) -> Option<String> {
     let kept: String = text
         .trim_matches(js::is_space)
         .chars()
@@ -342,7 +518,7 @@ pub(crate) fn url_value(text: &str) -> Option<String> {
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
 // HTML's broader email shape. Keep its accepted neighbours here too.
-fn email(text: &str) -> bool {
+pub fn email(text: &str) -> bool {
     let Some((local, domain)) = text.split_once('@') else {
         return false;
     };
@@ -447,6 +623,10 @@ fn datetime(text: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>, RuleError> {
+        super::field(kind, definition, value).map(|problem| problem.map(|problem| problem.shown))
+    }
+
     #[test]
     fn an_id_is_taken_as_the_server_takes_one() {
         assert!(id("id", &uuid::Uuid::now_v7().to_string()).is_ok());
@@ -462,14 +642,10 @@ mod tests {
             "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8g",
         ] {
             assert_eq!(
-                id("id", refused).map_err(|error| error.code().to_string()),
-                Err("validation".into()),
+                id("id", refused).map_err(|error| error.code),
+                Err(Code::InvalidId),
                 "{refused:?}"
             );
-            assert!(matches!(
-                id("id", refused),
-                Err(CoreError::Validation { code, .. }) if code == "invalid_id"
-            ));
         }
     }
 
@@ -614,6 +790,16 @@ mod tests {
         ] {
             assert_eq!(url_value(text), None, "{text:?}");
         }
+    }
+
+    #[test]
+    fn every_wrong_element_of_an_array_is_named() {
+        let definition = serde_json::json!({ "type": "array", "items_type": "string" });
+        let declared = BTreeMap::from([("to", &definition)]);
+        let sent = serde_json::json!({ "to": [42, "fine", { "x": 1 }] });
+        let refused = properties(&declared, sent.as_object().unwrap(), false).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["to.0", "to.2"]);
     }
 
     #[test]

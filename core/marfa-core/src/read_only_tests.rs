@@ -10,8 +10,8 @@ use serde_json::{Map, Value, json};
 use crate::reach::Context;
 use crate::scripted::{self, Answer, Scripted, Then, certified};
 use crate::stop_tests::{copy, copy_in_keyed};
-use crate::wire::WireCatalog;
 use crate::{Core, CoreError, Draft, Edit, Item, Server, read_only, store};
+use marfa_rules::wire::WireCatalog;
 
 const NOTE: &str = "core.note";
 const BOOKMARK: &str = "core.bookmark";
@@ -72,7 +72,7 @@ fn put(core: &Core, id: &str, source: &str, read_only: bool) {
         serde_json::from_value(row(id, 1, Some(read_only))).unwrap();
     row.source = source.into();
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     crate::reach::set_listed(&conn, &row.id, true).unwrap();
     store::put_server_item(&conn, &row, Some(&[]), &catalog).unwrap();
     store::lay_waiting_writes_over(&conn, &row.id, &|type_id| catalog.indexing(type_id)).unwrap();

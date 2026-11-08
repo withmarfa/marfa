@@ -1411,7 +1411,11 @@ fn sort(
     };
     let field = sort
         .field
-        .map(|field| field.parse().map_err(|error| failure(env, error)))
+        .map(|field| {
+            field
+                .parse()
+                .map_err(|error| failure(env, marfa_core::CoreError::from(error)))
+        })
         .transpose()?;
     let direction = sort.direction.map(|direction| match direction {
         SortDirection::Asc => marfa_core::SortDirection::Ascending,

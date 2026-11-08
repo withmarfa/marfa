@@ -146,7 +146,7 @@ fn embedded_by(
         for (_, target) in found {
             if let embeds::Target::At(at) = target {
                 by_path
-                    .entry(crate::names::folded(at))
+                    .entry(marfa_rules::names::folded(at))
                     .or_default()
                     .insert(claim.item_id.clone());
             }
@@ -342,7 +342,7 @@ impl Folder {
         let settings = self.settings()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
-            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
+            (crate::catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let lists = settings.lists()?;
         Ok(ControlFlow::Continue(ScanStart {
@@ -747,7 +747,7 @@ impl Folder {
         {
             let conn = self.core.conn()?;
             crate::store::replace_catalog(&conn, &fresh)?;
-            scan.catalog = Catalog::load(&conn)?;
+            scan.catalog = crate::catalog::load(&conn)?;
             scan.edge_types = EdgeTypes::load(&conn)?;
         }
         Ok(())
@@ -996,7 +996,7 @@ impl Folder {
                             && (shown.contains_key(&file.key)
                                 || bound.lines.iter().any(|line| {
                                     line.edge_type == embeds::ATTACHMENT_EDGE
-                                        && line.end == crate::catalog::End::Target
+                                        && line.end == marfa_rules::catalog::End::Target
                                 }));
                         let unchanged = || {
                             let mut pending = self.edge_work(file, &item_id, Some(&bound));
@@ -1400,7 +1400,7 @@ impl Folder {
                 })
                 .and_then(|id| Some((moved.get(id)?, id)))
                 .filter(|(from, _)| {
-                    crate::names::same(&from.path, &file.key)
+                    marfa_rules::names::same(&from.path, &file.key)
                         && file.line.is_some_and(|line| line <= from.version)
                 })
                 .and_then(|(_, id)| snapshot.iter().find(|row| row.item_id == id))
@@ -1772,7 +1772,7 @@ impl Folder {
                 }
             };
             let candidates = placed
-                .get(&crate::names::folded(&file.key))
+                .get(&marfa_rules::names::folded(&file.key))
                 .map(Vec::as_slice)
                 .unwrap_or_default();
             for edge in candidates {
@@ -1783,7 +1783,7 @@ impl Folder {
                 if !self.holds(&edge.source_id, settings, &members) {
                     let embedders =
                         embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
-                    let Some(hosts) = embedders.get(&crate::names::folded(&file.key)) else {
+                    let Some(hosts) = embedders.get(&marfa_rules::names::folded(&file.key)) else {
                         continue;
                     };
                     let attached = self.core.edges_from(&edge.source_id)?.iter().any(|to| {
@@ -1835,7 +1835,7 @@ impl Folder {
             if claims[at].is_none() && !unread.is_empty() {
                 let embedders = embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
                 for host in embedders
-                    .get(&crate::names::folded(&file.key))
+                    .get(&marfa_rules::names::folded(&file.key))
                     .into_iter()
                     .flatten()
                 {
@@ -2295,7 +2295,7 @@ impl Folder {
         catalog: &Catalog,
         draft: &crate::model::Draft,
         made: ItemState,
-        edges: &[(crate::catalog::End, String, String)],
+        edges: &[(marfa_rules::catalog::End, String, String)],
     ) -> Option<bool> {
         self.core
             .would_be_held_by(
@@ -2526,7 +2526,7 @@ impl Folder {
             if item.state == ItemState::Trashed || !self.holds(item_id, settings, &sweep.members) {
                 continue;
             }
-            let catalog = Catalog::load(&*self.core.conn()?)?;
+            let catalog = crate::catalog::load(&*self.core.conn()?)?;
             // Read first, so a change after it is one the delete finds.
             let Some(seen) = self.core.seen(item_id)? else {
                 continue;
@@ -2564,7 +2564,7 @@ impl Folder {
         let mut leaves = true;
         let missing = if let Some(item) = held.filter(|item| item.state != ItemState::Trashed) {
             let holds = self.holds(item_id, settings, &sweep.members);
-            let catalog = Catalog::load(&*self.core.conn()?)?;
+            let catalog = crate::catalog::load(&*self.core.conn()?)?;
             let look = match &bound {
                 Some(bound) => peers.moved_to(bound, holds, bytes_of(&item, &catalog).is_some()),
                 None => Look::Nowhere,

@@ -6,10 +6,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
-use url::Url;
 
 use super::settings::Settings;
-use crate::cleartext::is_loopback;
+use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
 
 /// A span or an event attribute. The allowlist in `layer` decides which keys
 /// exist; nothing here accepts a key it was not given as a `&'static str`.
@@ -135,10 +134,6 @@ pub fn request(resource: &Resource, spans: &[Finished]) -> Vec<u8> {
     serde_json::to_vec(&body).expect("a JSON value serializes")
 }
 
-/// The longest a connection may take to open, so that an address nobody
-/// answers at costs less than the whole budget.
-const CONNECT_LIMIT: Duration = Duration::from_secs(1);
-
 /// An HTTP client for a post to `target` that must go to the address named
 /// and nowhere else, since it can carry a credential: it follows no
 /// redirect, and no post it makes takes longer than `total`. A proxy in the
@@ -157,7 +152,7 @@ pub fn agent(total: Duration, target: &str) -> ureq::Agent {
         .timeout_global(Some(total))
         .timeout_connect(Some(total.min(CONNECT_LIMIT)))
         .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")));
-    if Url::parse(target).is_ok_and(|url| is_loopback(&url)) {
+    if !may_use_proxy(target) {
         config = config.proxy(None);
     }
     config.build().into()

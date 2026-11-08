@@ -9,11 +9,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::catalog::Indexing;
 use crate::file_cache::{FileBudget, NotHeldReason};
 use crate::scripted::{self, Answer, Scripted};
 use crate::store::testing::{wire_edge, wire_item};
 use crate::{Core, CoreError, blob, store};
+use marfa_rules::catalog::Indexing;
 
 fn file(core: &Core, id: &str, bytes: &[u8]) -> String {
     let hash = blob::name_of(bytes);
