@@ -344,6 +344,30 @@ impl App {
         })
     }
 
+    /// A blob's bytes for the server's own reading: `None` when no attached store holds a copy.
+    pub async fn open_held(&self, hash: &Hash) -> Result<Option<(File, Blob)>> {
+        let (looked, store_id) = (hash.clone(), self.blobs.store.id().to_string());
+        let found = self
+            .db
+            .read(move |tx| {
+                let Some(blob) = rows::find(tx, &looked)? else {
+                    return Ok(None);
+                };
+                Ok(rows::held_in(tx, &looked, &store_id)?.then_some(blob))
+            })
+            .await?;
+        let Some(blob) = found else {
+            return Ok(None);
+        };
+        let (disk, hash) = (self.blobs.store.disk(), blob.hash.clone());
+        let file = joined(tokio::task::spawn_blocking(move || disk.open_blob(&hash)).await)?
+            .map_err(|error| {
+                tracing::error!(%error, "A recorded copy of a blob did not open");
+                unavailable()
+            })?;
+        Ok(Some((file, blob)))
+    }
+
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
         let expires_ms = i64::try_from(ttl)

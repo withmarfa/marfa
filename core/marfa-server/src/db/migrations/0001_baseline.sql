@@ -605,3 +605,54 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- What the enrichment sweep has made of the bytes a file item's `blob_ref` names. A row comes
+-- with each lending reference an item gets, and goes with it. `waiting` rows are offered while
+-- `attempts` is below the most allowed, and an attempt is counted before the bytes are read.
+-- A `skipped` row is offered again when the settings its `reason` depends on differ from
+-- `signature`, which holds them as they were.
+CREATE TABLE IF NOT EXISTS enrichment_files (
+    item_seq INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    signature TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (item_seq, hash),
+    CHECK ((state = 'skipped') = (reason IS NOT NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);
+
+-- A write that gives an item a lending reference to a blob queues it for the sweep and brings
+-- the sweep's next run forward, a few seconds on so that a burst of writes is one run.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_referenced AFTER INSERT ON blob_references
+WHEN NEW.kind = 'item' AND NEW.lends = 1
+BEGIN
+    INSERT OR REPLACE INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_retyped AFTER UPDATE OF item_type ON blob_references
+WHEN NEW.kind = 'item' AND NEW.lends = 1 AND NEW.item_type IS NOT OLD.item_type
+BEGIN
+    INSERT OR IGNORE INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_unreferenced AFTER DELETE ON blob_references
+WHEN OLD.kind = 'item'
+BEGIN
+    DELETE FROM enrichment_files WHERE item_seq = OLD.seq AND hash = OLD.hash;
+END;

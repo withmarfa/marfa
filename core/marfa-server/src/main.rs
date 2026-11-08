@@ -44,6 +44,7 @@ fn start() -> Result<u8, Failure> {
 }
 
 fn main() -> ExitCode {
+    marfa_enrichment::serve_child_if_asked();
     Cli::parse();
     log::init();
     telemetry::install_panic_hook();

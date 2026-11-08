@@ -1,0 +1,642 @@
+//! The `enrichment-sweep` job: reads what the file items name, one file at a time in a
+//! process of its own, and writes the text, size and length onto the items that lack them.
+
+mod queue;
+
+use std::fs::File;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use marfa_enrichment::{
+    DEFAULT_OCR_LANGUAGES, NATIVE, OcrOptions, Options, Reading, Refusal as Unread,
+};
+use serde_json::json;
+
+use super::App;
+use super::access::Caller;
+use super::blobs::{Blob, Hash};
+use super::catalog::{self, Snapshot};
+use super::housekeeping::{Report, Run};
+use super::items::write::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
+use super::refusal::{Refusal, Result};
+use crate::settings::registry::{
+    ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
+    ENRICHMENT_MAX_BLOB_BYTES, ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES,
+    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, ENRICHMENT_TESSDATA_DIR,
+    Snapshot as Settings,
+};
+use queue::{Signatures, Why};
+
+const ACTION: &str = "item.enrich";
+
+/// What one run reads by: the settings as they stand when it starts.
+struct Plan {
+    options: Options,
+    ocr: bool,
+    batch: usize,
+    max_attempts: u64,
+    max_blob_bytes: u64,
+    signatures: Signatures,
+}
+
+impl Plan {
+    fn of(live: &Settings) -> Plan {
+        let ocr = live.get(ENRICHMENT_OCR_ENABLED);
+        let folder = live.get(ENRICHMENT_TESSDATA_DIR);
+        let data_dir = (!folder.is_empty()).then(|| PathBuf::from(&folder));
+        let max_blob_bytes = live.get(ENRICHMENT_MAX_BLOB_BYTES);
+        let max_inflated = live.get(ENRICHMENT_MAX_INFLATED_BYTES);
+        let max_memory = live.get(ENRICHMENT_MAX_MEMORY_BYTES);
+        let options = Options {
+            max_text_chars: usize::try_from(live.get(ENRICHMENT_MAX_TEXT_CHARS))
+                .unwrap_or(usize::MAX),
+            max_inflated_bytes: max_inflated,
+            max_memory_bytes: max_memory,
+            ocr: ocr.then(|| OcrOptions {
+                languages: DEFAULT_OCR_LANGUAGES.to_string(),
+                data_dir: data_dir.clone(),
+            }),
+            time_limit: Duration::from_millis(live.get(ENRICHMENT_ITEM_TIMEOUT_MS)),
+            time_budget: None,
+        };
+        let languages = DEFAULT_OCR_LANGUAGES;
+        Plan {
+            options,
+            ocr,
+            batch: usize::try_from(live.get(ENRICHMENT_BATCH_SIZE)).unwrap_or(usize::MAX - 1),
+            max_attempts: live.get(ENRICHMENT_MAX_ATTEMPTS),
+            max_blob_bytes,
+            signatures: Signatures {
+                native: NATIVE.to_string(),
+                limits: format!("{max_blob_bytes}:{max_inflated}:{max_memory}"),
+                ocr: format!("{ocr}:{NATIVE}:{languages}:{folder}"),
+            },
+        }
+    }
+
+    fn attempts(&self) -> i64 {
+        i64::try_from(self.max_attempts).unwrap_or(i64::MAX)
+    }
+}
+
+/// What becomes of a file once it has been read or refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fate {
+    Read,
+    Skip(Why),
+    /// Tried and failed: offered again until its attempts run out.
+    Retry,
+    /// No reader could start. The file was not tried.
+    Untried,
+}
+
+/// How a run counts a file that wrote nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Count {
+    Extracted,
+    Skipped,
+    Failed,
+    None,
+}
+
+impl Fate {
+    fn count(self) -> Count {
+        match self {
+            Fate::Read | Fate::Untried => Count::None,
+            Fate::Skip(_) => Count::Skipped,
+            Fate::Retry => Count::Failed,
+        }
+    }
+}
+
+fn fate_of_refusal(refusal: &Unread) -> Fate {
+    match refusal {
+        Unread::Unsupported => Fate::Skip(Why::Unsupported),
+        Unread::Encrypted => Fate::Skip(Why::Encrypted),
+        Unread::OverLimit(_) => Fate::Skip(Why::OverLimit),
+        Unread::OcrUnavailable(_) => Fate::Skip(Why::Ocr),
+        Unread::Malformed(_) | Unread::TimedOut | Unread::Crashed(_) => Fate::Retry,
+        Unread::ReaderUnavailable(_) => Fate::Untried,
+    }
+}
+
+/// What a reading gives the item, and the file's fate.
+struct Judged {
+    text: Option<String>,
+    size: Option<(u32, u32)>,
+    duration: Option<f64>,
+    fate: Fate,
+}
+
+fn judge(read: std::result::Result<Reading, Unread>, mime: &str, plan: &Plan) -> Judged {
+    let nothing = |fate| Judged {
+        text: None,
+        size: None,
+        duration: None,
+        fate,
+    };
+    let reading = match read {
+        Ok(reading) => reading,
+        Err(refusal) => return nothing(fate_of_refusal(&refusal)),
+    };
+    let size = reading.dimensions.map(|size| (size.width, size.height));
+    let text = (!reading.text.is_empty()).then_some(reading.text);
+    let fate = if let Some(refusal) = &reading.text_refused {
+        fate_of_refusal(refusal)
+    } else if (marfa_enrichment::is_image(mime) && size.is_none() && text.is_none())
+        || (marfa_enrichment::ocr_applies(mime) && text.is_none() && !(plan.ocr && NATIVE))
+    {
+        Fate::Skip(Why::Ocr)
+    } else {
+        Fate::Read
+    };
+    Judged {
+        text,
+        size,
+        duration: reading.duration,
+        fate,
+    }
+}
+
+#[derive(Default)]
+struct Tally {
+    extracted: u64,
+    skipped: u64,
+    failed: u64,
+}
+
+impl Tally {
+    fn add(&mut self, count: Count) {
+        match count {
+            Count::Extracted => self.extracted += 1,
+            Count::Skipped => self.skipped += 1,
+            Count::Failed => self.failed += 1,
+            Count::None => {}
+        }
+    }
+
+    fn result(&self) -> serde_json::Value {
+        json!({
+            "extracted": self.extracted,
+            "skipped": self.skipped,
+            "failed": self.failed,
+        })
+    }
+}
+
+fn blocked(error: tokio::task::JoinError) -> Refusal {
+    Refusal::internal(&format!("a file reading did not finish: {error}"))
+}
+
+/// The files to read next, once the settings have brought back the skips they reverse.
+async fn pick(app: &Arc<App>, plan: &Plan) -> Result<(Vec<(i64, String)>, bool)> {
+    let (signatures, attempts) = (plan.signatures.clone(), plan.attempts());
+    let due = {
+        let signatures = signatures.clone();
+        app.db
+            .read(move |tx| queue::due(tx, attempts, &signatures))
+            .await?
+    };
+    if !due {
+        return Ok((Vec::new(), false));
+    }
+    let limit = i64::try_from(plan.batch.saturating_add(1)).unwrap_or(i64::MAX);
+    let mut files = app
+        .write(&Caller::Server, ACTION, move |unit| {
+            queue::requeue(unit.tx(), &signatures)?;
+            queue::next(unit.tx(), attempts, limit)
+        })
+        .await?;
+    let more = files.len() > plan.batch;
+    files.truncate(plan.batch);
+    Ok((files, more))
+}
+
+/// What the write before a reading found.
+enum Begun {
+    /// Nothing to read, and nothing to count.
+    Nothing,
+    Reading(Offered),
+}
+
+/// Records the attempt before the file is read, in the write that checks the item still
+/// names the bytes.
+async fn begin(app: &Arc<App>, seq: i64, hash: &Hash) -> Result<Begun> {
+    let (cache, hash) = (app.catalog_handle(), hash.clone());
+    app.write(&Caller::Server, ACTION, move |unit| {
+        let tx = unit.tx();
+        let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+        Ok(match offer(tx, &catalog, seq, &hash)? {
+            Offer::Dropped => {
+                queue::drop_row(tx, seq, hash.as_str())?;
+                Begun::Nothing
+            }
+            Offer::Binned => Begun::Nothing,
+            Offer::Complete => {
+                queue::read(tx, seq, hash.as_str(), &unit.at)?;
+                Begun::Nothing
+            }
+            Offer::Reading(offered) => {
+                queue::attempt(tx, seq, hash.as_str(), &unit.at)?;
+                Begun::Reading(offered)
+            }
+        })
+    })
+    .await
+}
+
+/// Writes what was read and settles the file in one transaction, so that a file purged or
+/// changed during the reading is left as it is.
+async fn store(
+    app: &Arc<App>,
+    plan: &Plan,
+    seq: i64,
+    hash: &Hash,
+    id: String,
+    judged: Judged,
+) -> Result<Count> {
+    let cache = app.catalog_handle();
+    let (hash, signatures) = (hash.clone(), plan.signatures.clone());
+    let Judged {
+        text,
+        size,
+        duration,
+        fate,
+    } = judged;
+    app.write(&Caller::Server, ACTION, move |unit| {
+        let tx = unit.tx();
+        let enriched = Enriched {
+            id,
+            hash: hash.clone(),
+            text,
+            size,
+            duration,
+        };
+        let written = apply_enrichment(unit, &cache, enriched)?;
+        if written == Written::Changed {
+            return Ok(Count::None);
+        }
+        match fate {
+            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
+            Fate::Skip(why) => {
+                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
+            }
+            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
+            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
+        }
+        Ok(if written == Written::Landed {
+            Count::Extracted
+        } else {
+            fate.count()
+        })
+    })
+    .await
+}
+
+/// A reading that did not happen is settled the way a refusal of the same kind is.
+async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) -> Result<Count> {
+    let (hash, signatures) = (hash.clone(), plan.signatures.clone());
+    app.write(&Caller::Server, ACTION, move |unit| {
+        let tx = unit.tx();
+        match fate {
+            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
+            Fate::Skip(why) => {
+                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
+            }
+            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
+            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
+        }
+        Ok(fate.count())
+    })
+    .await
+}
+
+/// The reading itself, on a thread of its own: the file is read in a process of its own too.
+async fn read_blocking(
+    file: File,
+    mime: String,
+    options: Options,
+) -> Result<std::result::Result<Reading, Unread>> {
+    tokio::task::spawn_blocking(move || marfa_enrichment::read(&file, &mime, &options))
+        .await
+        .map_err(blocked)
+}
+
+/// One file. An `Err` is a fault of the server's own, and ends the run.
+async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Count> {
+    let Ok(hash) = Hash::parse(stored) else {
+        let hash = stored.to_string();
+        app.write(&Caller::Server, ACTION, move |unit| {
+            queue::drop_row(unit.tx(), seq, &hash).map(|()| Count::None)
+        })
+        .await?;
+        return Ok(Count::None);
+    };
+    let Begun::Reading(offered) = begin(app, seq, &hash).await? else {
+        return Ok(Count::None);
+    };
+    let held = app.open_held(&hash).await;
+    let (file, blob): (File, Blob) = match held {
+        Ok(Some(found)) => found,
+        Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await,
+        Err(_) => return settle(app, plan, seq, &hash, Fate::Retry).await,
+    };
+    let mime = offered
+        .mime_type
+        .clone()
+        .unwrap_or_else(|| blob.mime_type.clone());
+    if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
+        return settle(app, plan, seq, &hash, Fate::Skip(Why::OverLimit)).await;
+    }
+    let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
+    if let Err(Unread::ReaderUnavailable(reason)) = &read {
+        settle(app, plan, seq, &hash, Fate::Untried).await?;
+        return Err(Refusal::internal(&format!(
+            "no file reader could start: {reason}"
+        )));
+    }
+    let judged = judge(read, &mime, plan);
+    store(app, plan, seq, &hash, offered.id, judged).await
+}
+
+pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
+    let mut tally = Tally::default();
+    let live = app.settings.live();
+    if !live.get(ENRICHMENT_ENABLED) {
+        return Ok(Report::done(tally.result()));
+    }
+    let plan = Plan::of(&live);
+    let (files, more) = pick(&app, &plan).await?;
+    let mut again = more;
+    for (seq, hash) in files {
+        if !run.go_on().await || !app.settings.live().get(ENRICHMENT_ENABLED) {
+            again = true;
+            break;
+        }
+        tally.add(one(&app, &plan, seq, &hash).await?);
+    }
+    Ok(Report {
+        result: tally.result(),
+        again,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Map, Value, json};
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::app::items::write::{Change, Put, Update};
+    use crate::app::items::{self, Detail};
+    use crate::settings::{Environment, Settings};
+
+    async fn started() -> (TempDir, Arc<App>) {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("SQLITE_PATH", database.to_str().unwrap()),
+            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_ENRICHMENT_ENABLED", "true"),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    async fn upload(app: &App, bytes: &[u8]) -> String {
+        let caller = Caller::local();
+        let mut intake = app
+            .begin_upload(Some(bytes.len() as u64), "text/plain".into())
+            .await
+            .unwrap();
+        intake.push(bytes.to_vec()).await.unwrap();
+        let blob = app.finish_upload(&caller, intake).await.unwrap();
+        blob.hash.as_str().to_string()
+    }
+
+    fn map(value: Value) -> Map<String, Value> {
+        match value {
+            Value::Object(map) => map,
+            _ => unreachable!(),
+        }
+    }
+
+    async fn file(app: &App, bytes: &[u8]) -> (String, Hash) {
+        let hash = upload(app, bytes).await;
+        let put = Put {
+            type_id: "core.file".into(),
+            properties: Some(map(json!({ "blob_ref": hash, "mime_type": "text/plain" }))),
+            ..Put::default()
+        };
+        let done = items::write::run(app, &Caller::local(), None, Change::Put(Box::new(put)))
+            .await
+            .unwrap();
+        let made: Value = serde_json::from_str(&done.body).unwrap();
+        let id = made["item"]["id"].as_str().unwrap().to_string();
+        (id, Hash::parse(&hash).unwrap())
+    }
+
+    async fn properties(app: &App, id: &str) -> Value {
+        let found = items::detail(app, &Caller::local(), id.to_string(), Detail::default())
+            .await
+            .unwrap();
+        serde_json::from_str::<Value>(&found).unwrap()["item"]["properties"].clone()
+    }
+
+    fn read_text(text: &str) -> Judged {
+        Judged {
+            text: Some(text.to_string()),
+            size: None,
+            duration: None,
+            fate: Fate::Read,
+        }
+    }
+
+    #[tokio::test]
+    async fn bytes_that_changed_while_they_were_read_write_nothing() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (id, hash) = file(&app, b"first bytes").await;
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        let (seq, _) = files[0].clone();
+        let Begun::Reading(offered) = begin(&app, seq, &hash).await.unwrap() else {
+            panic!("the file was not offered");
+        };
+        let other = upload(&app, b"other bytes").await;
+        let update = Update {
+            id: id.clone(),
+            properties: Some(map(json!({ "blob_ref": other }))),
+            version: 1,
+            ..Update::default()
+        };
+        items::write::run(
+            &app,
+            &Caller::local(),
+            None,
+            Change::Update(Box::new(update)),
+        )
+        .await
+        .unwrap();
+        let counted = store(
+            &app,
+            &plan,
+            seq,
+            &hash,
+            offered.id,
+            read_text("first bytes"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(counted, Count::None);
+        assert!(properties(&app, &id).await.get("extracted_text").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_file_in_the_bin_is_not_written_and_waits() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (id, hash) = file(&app, b"binned bytes").await;
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        let (seq, _) = files[0].clone();
+        let Begun::Reading(offered) = begin(&app, seq, &hash).await.unwrap() else {
+            panic!("the file was not offered");
+        };
+        items::write::run(
+            &app,
+            &Caller::local(),
+            None,
+            Change::Delete {
+                id: id.clone(),
+                version: None,
+            },
+        )
+        .await
+        .unwrap();
+        let counted = store(
+            &app,
+            &plan,
+            seq,
+            &hash,
+            offered.id,
+            read_text("binned bytes"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(counted, Count::None);
+        assert!(pick(&app, &plan).await.unwrap().0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_attempt_is_counted_before_the_file_is_read() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (_, hash) = file(&app, b"a file that stops the server").await;
+        for _ in 0..plan.max_attempts {
+            let (files, _) = pick(&app, &plan).await.unwrap();
+            assert_eq!(files.len(), 1);
+            begin(&app, files[0].0, &hash).await.unwrap();
+        }
+        assert!(pick(&app, &plan).await.unwrap().0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_skip_comes_back_when_the_settings_it_depends_on_change() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (_, hash) = file(&app, b"a file past a limit").await;
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        let seq = files[0].0;
+        settle(&app, &plan, seq, &hash, Fate::Skip(Why::OverLimit))
+            .await
+            .unwrap();
+        assert!(pick(&app, &plan).await.unwrap().0.is_empty());
+        let mut other = Plan::of(&app.settings.live());
+        other.signatures.ocr.push('+');
+        other.signatures.native.push('+');
+        assert!(pick(&app, &other).await.unwrap().0.is_empty());
+        let mut raised = Plan::of(&app.settings.live());
+        raised.signatures.limits.push('+');
+        assert_eq!(pick(&app, &raised).await.unwrap().0.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_encrypted_file_is_left_whatever_the_settings() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (_, hash) = file(&app, b"locked").await;
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        settle(&app, &plan, files[0].0, &hash, Fate::Skip(Why::Encrypted))
+            .await
+            .unwrap();
+        let mut changed = Plan::of(&app.settings.live());
+        changed.signatures.native.push('+');
+        changed.signatures.limits.push('+');
+        changed.signatures.ocr.push('+');
+        assert!(pick(&app, &changed).await.unwrap().0.is_empty());
+    }
+
+    fn reading(text: &str) -> Reading {
+        Reading {
+            text: text.to_string(),
+            truncated: false,
+            cut_short: false,
+            dimensions: None,
+            duration: None,
+            text_refused: None,
+            sandbox: marfa_enrichment::Sandbox::Full,
+        }
+    }
+
+    fn plan_with(ocr: bool) -> Plan {
+        let mut plan = Plan::of(&crate::settings::registry::Snapshot::resolve(
+            &Default::default(),
+            &[],
+            0,
+        ));
+        plan.ocr = ocr;
+        plan
+    }
+
+    #[test]
+    fn a_refusal_is_treated_by_its_kind() {
+        let plan = plan_with(true);
+        let fate = |refusal| judge(Err(refusal), "application/pdf", &plan).fate;
+        assert_eq!(fate(Unread::Unsupported), Fate::Skip(Why::Unsupported));
+        assert_eq!(fate(Unread::Encrypted), Fate::Skip(Why::Encrypted));
+        assert_eq!(
+            fate(Unread::OverLimit("x".into())),
+            Fate::Skip(Why::OverLimit)
+        );
+        assert_eq!(
+            fate(Unread::OcrUnavailable("x".into())),
+            Fate::Skip(Why::Ocr)
+        );
+        assert_eq!(fate(Unread::Malformed("x".into())), Fate::Retry);
+        assert_eq!(fate(Unread::TimedOut), Fate::Retry);
+        assert_eq!(fate(Unread::Crashed("x".into())), Fate::Retry);
+        assert_eq!(fate(Unread::ReaderUnavailable("x".into())), Fate::Untried);
+    }
+
+    #[test]
+    fn an_image_read_without_ocr_is_left_until_ocr_is_on() {
+        let mut sized = reading("");
+        sized.dimensions = Some(marfa_enrichment::Dimensions {
+            width: 3,
+            height: 2,
+        });
+        let off = judge(Ok(sized), "image/png", &plan_with(false));
+        assert_eq!(off.size, Some((3, 2)));
+        if NATIVE {
+            assert_eq!(off.fate, Fate::Skip(Why::Ocr));
+        }
+        let none = judge(Ok(reading("")), "image/gif", &plan_with(false));
+        assert_eq!(none.fate, Fate::Skip(Why::Ocr));
+        let plain = judge(Ok(reading("words")), "text/plain", &plan_with(false));
+        assert_eq!(plain.fate, Fate::Read);
+    }
+}
