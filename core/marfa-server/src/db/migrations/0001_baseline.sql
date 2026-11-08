@@ -549,14 +549,10 @@ CREATE TABLE IF NOT EXISTS blob_proofs (
     PRIMARY KEY (hash, holder)
 ) STRICT, WITHOUT ROWID;
 
--- Which row names which digest. `kind` is the row's table: an item or an edge
--- (`seq` is its `seq`), an extension namespace on an item (`seq` and
--- `namespace`) or an item version (`seq` and `version`). A reference that
--- `lends` gives its readers the blob; one that does not only keeps it.
--- Cached lender types let reads skip duplicate references; versions have neither.
+-- Non-lending references retain bytes without granting access.
 CREATE TABLE IF NOT EXISTS blob_references (
     hash TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version')),
+    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version', 'owner')),
     seq INTEGER NOT NULL,
     namespace TEXT NOT NULL DEFAULT '',
     version INTEGER NOT NULL DEFAULT 0,
@@ -601,3 +597,11 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     last_error TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
+
+-- The digest omits the `sha256:` prefix used by `blobs.hash`.
+CREATE TABLE IF NOT EXISTS owner_picture (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+    updated_at TEXT NOT NULL
+) STRICT;

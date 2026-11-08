@@ -15,7 +15,10 @@ use crate::http::body::JsonBody;
 pub async fn read(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     caller.require_direct()?;
     let found = owner::find(&app).await?.ok_or_else(owner::not_found)?;
-    Ok(json_answer(StatusCode::OK, &found.to_json()))
+    Ok(json_answer(
+        StatusCode::OK,
+        &found.to_json(app.addresses().sign_in().origin()),
+    ))
 }
 
 pub async fn claim(
@@ -27,7 +30,10 @@ pub async fn claim(
     admit_claim(&app, &headers, &visit).await?;
     let fields = body.open_object().await?;
     let (found, session) = make_claim(&app, &headers, visit, fields).await?;
-    let mut answer = json_answer(StatusCode::CREATED, &found.to_json());
+    let mut answer = json_answer(
+        StatusCode::CREATED,
+        &found.to_json(app.addresses().sign_in().origin()),
+    );
     if cookies::holds_setup(&headers) {
         answer = with_cookie(answer, cookies::setup_ended(&app.addresses().sign_in())?);
     }
@@ -47,5 +53,8 @@ pub async fn update(
     let body = body.object(&UPDATE_FIELDS).await?;
     let change = Update::from_body(&body)?;
     let found = owner::update(&app, &caller, change, visit).await?;
-    Ok(json_answer(StatusCode::OK, &found.to_json()))
+    Ok(json_answer(
+        StatusCode::OK,
+        &found.to_json(app.addresses().sign_in().origin()),
+    ))
 }

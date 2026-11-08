@@ -84,6 +84,10 @@ impl Blobs {
         })
     }
 
+    pub fn store_id(&self) -> String {
+        self.store.id().to_string()
+    }
+
     /// The store is attached the first time its marker is seen. A later start keeps its
     /// `attached_at`, takes the folder it is now at, and attaches it again if it was detached.
     pub async fn register(&self, db: &Db, at: String) -> std::result::Result<(), Failure> {
@@ -149,6 +153,24 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
             .with_detail("available_bytes", available));
     }
     Ok(())
+}
+
+/// Bytes in a store that no record names yet.
+pub struct Placed {
+    blob: Blob,
+    store_id: String,
+}
+
+impl Placed {
+    /// Records the blob and its copy, and the uploader's proof where there is one.
+    pub fn record(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        holder: Option<&str>,
+        at: &str,
+    ) -> Result<Blob> {
+        rows::record_upload(tx, &self.blob, &self.store_id, holder, at)
+    }
 }
 
 /// An upload that is arriving. Its file goes when this does, unless `finish_upload` placed it.
@@ -230,9 +252,8 @@ impl App {
         std::time::Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
     }
 
-    /// Places the bytes in the store, and only then records them: a file with no record is
-    /// never served, and a recorded one is never removed.
-    pub async fn finish_upload(&self, caller: &Caller, mut intake: Intake) -> Result<Blob> {
+    /// Places the bytes in the store. Nothing serves them until a record names them.
+    pub async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(mut staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
@@ -257,24 +278,33 @@ impl App {
             Refusal::validation("The body is empty; send the bytes to keep.")
                 .with_detail("field", "body")
         })?;
-        let blob = Blob {
-            hash,
-            mime_type: intake.mime_type.clone(),
-            size_bytes: size,
-        };
-        let store_id = self.blobs.store.id().to_string();
+        Ok(Placed {
+            blob: Blob {
+                hash,
+                mime_type: intake.mime_type.clone(),
+                size_bytes: size,
+            },
+            store_id: self.blobs.store.id().to_string(),
+        })
+    }
+
+    /// Places the bytes in the store, and only then records them: a file with no record is
+    /// never served, and a recorded one is never removed.
+    pub async fn finish_upload(&self, caller: &Caller, intake: Intake) -> Result<Blob> {
+        let placed = self.place_upload(intake).await?;
         let cache = self.catalog_handle();
         self.write(caller, "blob.upload", move |unit| {
             let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             unit.caller
                 .require_upload(catalog.provenance.keys().map(String::as_str))?;
             let holder = unit.caller.credential_handle();
-            rows::record_upload(unit.tx(), &blob, &store_id, Some(&holder), &unit.at)
+            placed.record(unit.tx(), Some(&holder), &unit.at)
         })
         .await
     }
 
-    fn found_in(
+    /// A blob held in the store, by a caller's right to read it where one is given.
+    pub(crate) fn found_in(
         tx: &rusqlite::Transaction<'_>,
         caller: Option<&Caller>,
         hash: &Hash,

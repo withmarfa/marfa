@@ -4,6 +4,7 @@ pub mod names;
 pub mod owner;
 pub mod passkeys;
 pub mod password;
+pub mod picture;
 pub mod return_to;
 pub mod session;
 pub mod sign_in;
@@ -88,6 +89,12 @@ pub fn form_origins(app: &App) -> Vec<String> {
 pub fn seconds_of(at: &str) -> Result<i64> {
     DateTime::parse_from_rfc3339(at)
         .map(|at| at.timestamp())
+        .map_err(|_| Refusal::internal("an instant did not read"))
+}
+
+pub fn millis_of(at: &str) -> Result<i64> {
+    DateTime::parse_from_rfc3339(at)
+        .map(|at| at.timestamp_millis())
         .map_err(|_| Refusal::internal("an instant did not read"))
 }
 

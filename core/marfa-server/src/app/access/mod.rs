@@ -6,13 +6,14 @@ mod edges;
 mod items;
 mod levers;
 mod maps;
+mod profile;
 mod schema;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
-use super::auth::seconds_of;
 use super::auth::session::{self, Session};
+use super::auth::{millis_of, seconds_of};
 use super::config;
 use super::keys::{self, Key};
 use super::oauth;
@@ -247,7 +248,7 @@ impl Caller {
 
     pub fn require_recent(&self, at: &str) -> Result<()> {
         match self.session() {
-            Some(session) if !session.is_recent(seconds_of(at)?) => {
+            Some(session) if !session.is_recent(millis_of(at)?) => {
                 Err(Refusal::new(Code::Forbidden, SIGN_IN_AGAIN))
             }
             _ => Ok(()),

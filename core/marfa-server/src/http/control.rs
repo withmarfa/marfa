@@ -63,7 +63,10 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
     }
     let details = Details::new(email, text("name"), password.to_string())?;
     let owner = claim::claim(&app, details, Proof::Local, Visit::default()).await?;
-    Ok(json_answer(StatusCode::CREATED, &owner.to_json()))
+    Ok(json_answer(
+        StatusCode::CREATED,
+        &owner.to_json(app.addresses().sign_in().origin()),
+    ))
 }
 
 pub async fn recover_owner(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
