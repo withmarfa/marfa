@@ -98,6 +98,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/null-filter.test.ts",
   "src/suites/compliance/numeric-property-filters.test.ts",
   "src/suites/compliance/optional-body.test.ts",
+  "src/suites/compliance/overview.test.ts",
   "src/suites/compliance/owner.test.ts",
   "src/suites/compliance/platform-types.test.ts",
   "src/suites/compliance/publisher-types.test.ts",
