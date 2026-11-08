@@ -182,8 +182,7 @@ impl Instance {
     }
 }
 
-/// Each stored time of a connector, the door that reads it, and a witness that the door
-/// answers while the time reads.
+/// Each stored time has a working request as its witness.
 fn doors(c: &Connector) -> Vec<(&'static str, &'static str, Method, String, Option<Value>)> {
     let state = json!({ "process": PROCESS, "state": { "cursor": 2 } });
     let lookup = json!({ "item_ids": [c.item] });

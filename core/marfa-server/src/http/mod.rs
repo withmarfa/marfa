@@ -222,8 +222,7 @@ fn config_doors() -> Routes {
         .route("/config/settings", get(config::settings))
 }
 
-/// A connector door answers the credential a request presents, or the private socket. An
-/// owner's browser session reaches it no more than any other cookie.
+/// Browser sessions confer no connector authority.
 async fn presented_only(request: Request, next: Next) -> Response {
     let local = request
         .extensions()
