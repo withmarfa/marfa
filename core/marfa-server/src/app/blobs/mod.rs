@@ -137,7 +137,7 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
     }
     let Some(available) = faults
         .free(Volume::Blobs)
-        .or_else(|| volume::free_bytes(root))
+        .unwrap_or_else(|| volume::free_bytes(root))
     else {
         return Ok(());
     };

@@ -5,6 +5,7 @@ import {
   faultsArmed,
   forgetReach,
   recordFired,
+  refusing,
 } from "../../control/faults.js";
 import type { TransactionControl } from "./transaction-control.js";
 import type { AuditLogEntry, Storage } from "../interface.js";
@@ -86,6 +87,34 @@ export function withStatementFault<T>(
       if (!state.spent) forgetReach(point);
     }
   });
+}
+
+const READING = /^\s*(select|with|pragma|explain)\b/i;
+
+/** Whether the statement changes the database. */
+export function writesDatabase(sql: string): boolean {
+  return !READING.test(sql);
+}
+
+/**
+ * The failure a `refuse:read` or `refuse:write` fault gives a call that runs
+ * `statements`, if one is armed for what they do. A call with any statement
+ * that writes is a write.
+ */
+export function refusedStatements(
+  statements: readonly string[],
+): LibsqlError | undefined {
+  if (!faultsArmed()) return undefined;
+  const point = statements.some(writesDatabase) ? "write" : "read";
+  return refusing(point) ? injectedDatabaseError("SQLITE_IOERR") : undefined;
+}
+
+/** The failure a `refuse:read` or `refuse:write` fault gives a transaction that is about to begin. */
+export function refusedTransaction(
+  mode: "write" | "read" | "deferred",
+): LibsqlError | undefined {
+  if (!faultsArmed() || mode === "deferred") return undefined;
+  return refusing(mode) ? injectedDatabaseError("SQLITE_IOERR") : undefined;
 }
 
 /** The failure the statement about to run must raise, if its caller is inside {@link withStatementFault} and the fault has not acted yet. */

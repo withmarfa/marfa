@@ -8,17 +8,22 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use super::housekeeping;
+use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
 const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
+const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
+/// What a `free` fault holds for a volume whose free space cannot be read.
+const FREE_UNKNOWN: u64 = u64::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Hold,
     Fail,
+    Refuse,
 }
 
 impl Kind {
@@ -26,6 +31,7 @@ impl Kind {
         match self {
             Kind::Hold => "hold",
             Kind::Fail => "fail",
+            Kind::Refuse => "refuse",
         }
     }
 }
@@ -60,12 +66,18 @@ points! {
     HOLD_READ_HYDRATION = Hold "read-hydration" None;
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
+    HOLD_BULK_PAGE = Hold "bulk-page" Nth;
     FAIL_LOCK = Fail "lock" Nth;
     FAIL_AUDIT = Fail "audit" Write;
     FAIL_COMMIT = Fail "commit" Write;
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
     FAIL_BLOB_WRITE = Fail "blob-write" Nth;
+    FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+    REFUSE_READ = Refuse "read" None;
+    REFUSE_WRITE = Refuse "write" None;
+    REFUSE_WRITE_LOCK = Refuse "write-lock" None;
+    REFUSE_BLOB_STORE = Refuse "blob-store" None;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,11 +235,11 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         return judge_job(kind, job, arg);
     }
     match kind {
-        "hold" | "fail" => {
-            let kind = if kind == "hold" {
-                Kind::Hold
-            } else {
-                Kind::Fail
+        "hold" | "fail" | "refuse" => {
+            let kind = match kind {
+                "hold" => Kind::Hold,
+                "fail" => Kind::Fail,
+                _ => Kind::Refuse,
             };
             let found = point(kind, rest)
                 .ok_or_else(|| format!("no {} point is named {rest}", kind.prefix()))?;
@@ -244,17 +256,20 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             if rest != "database" && rest != "blobs" {
                 return Err(format!("{rest} is not a volume: database or blobs"));
             }
+            if arg == Some("unknown") {
+                return Ok((None, Some(FREE_UNKNOWN)));
+            }
             let bytes = arg
                 .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
                 .and_then(|text| text.parse::<u64>().ok())
                 .filter(|bytes| *bytes <= MAX_FREE_BYTES)
-                .ok_or("a free fault takes a whole number of bytes")?;
+                .ok_or("a free fault takes a whole number of bytes, or unknown")?;
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
         _ => Err(
-            "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job> \
-             or free:<volume>"
+            "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
+             deadline:<job> or free:<volume>"
                 .to_string(),
         ),
     }
@@ -363,6 +378,16 @@ impl Faults {
         }
     }
 
+    /// Holds a write that has an open transaction, beating so queued writes keep waiting.
+    pub fn hold_beating(&self, point: &Point, pulse: &Pulse) {
+        if let Some((gate, _waiting)) = self.selected(point.name, None) {
+            while !*gate.borrow() {
+                pulse.tick();
+                std::thread::sleep(BEAT);
+            }
+        }
+    }
+
     pub fn hold_blocking(&self, point: &Point) {
         if let Some((mut gate, _waiting)) = self.selected(point.name, None) {
             let _ = tokio::runtime::Handle::current()
@@ -412,11 +437,30 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
-    pub fn free(&self, volume: Volume) -> Option<u64> {
+    /// What a `free` fault sets for the volume: its bytes, or `None` for free space that cannot be read.
+    pub fn free(&self, volume: Volume) -> Option<Option<u64>> {
         self.armed()
             .iter()
             .find(|fault| fault.name == volume.name())
             .and_then(|fault| fault.number)
+            .map(|bytes| (bytes != FREE_UNKNOWN).then_some(bytes))
+    }
+
+    /// Whether `refuse:<point>` is armed, without counting a refusal.
+    pub fn is_refusing(&self, point: &Point) -> bool {
+        let name = format!("refuse:{}", point.name);
+        self.armed().iter().any(|fault| fault.name == name)
+    }
+
+    /// Whether `refuse:<point>` is armed. Each call that finds it counts one refusal.
+    pub fn refusing(&self, point: &Point) -> bool {
+        let name = format!("refuse:{}", point.name);
+        let mut armed = self.armed();
+        let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) else {
+            return false;
+        };
+        fault.fired += 1;
+        true
     }
 
     pub fn health_admitted(&self) -> Option<Released> {
@@ -482,6 +526,9 @@ mod tests {
         assert!(refused("free:database", Some("9007199254740992")));
         assert!(refused("free:database", None));
         assert!(refused("something", None));
+        assert!(refused("refuse:nowhere", None));
+        assert!(refused("refuse:read", Some("1")));
+        assert!(refused("free:database", Some("lots")));
         assert!(refused("hold:read-snapshot", Some("1")));
         assert!(refused("fail:lock", Some("item.create")));
         assert!(refused("fail:lock", Some("0")));
@@ -505,6 +552,44 @@ mod tests {
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
         assert!(!refused("deadline:trash-purge", Some("300")));
+    }
+
+    #[test]
+    fn a_refusal_stays_until_cleared_and_counts_each_refusal() {
+        let faults = Faults::default();
+        faults.set("refuse:read", None).unwrap();
+        assert!(faults.refusing(REFUSE_READ));
+        assert!(faults.refusing(REFUSE_READ));
+        assert!(!faults.refusing(REFUSE_WRITE));
+        assert_eq!(faults.list()[0].fired, 2);
+        faults.clear(None);
+        assert!(!faults.refusing(REFUSE_READ));
+    }
+
+    #[test]
+    fn free_space_is_set_in_bytes_or_unknown() {
+        let faults = Faults::default();
+        assert_eq!(faults.free(Volume::Blobs), None);
+        faults.set("free:blobs", Some("2048")).unwrap();
+        assert_eq!(faults.free(Volume::Blobs), Some(Some(2048)));
+        faults.set("free:blobs", Some("unknown")).unwrap();
+        assert_eq!(faults.free(Volume::Blobs), Some(None));
+    }
+
+    #[test]
+    fn takes_the_points_the_fixtures_arm() {
+        for (name, arg) in [
+            ("hold:bulk-page", Some("2")),
+            ("fail:health-write", None),
+            ("refuse:read", None),
+            ("refuse:write", None),
+            ("refuse:write-lock", None),
+            ("refuse:blob-store", None),
+            ("free:database", Some("unknown")),
+        ] {
+            assert!(!refused(name, arg), "{name}");
+        }
+        assert!(refused("hold:bulk-page", Some("two")));
     }
 
     #[test]

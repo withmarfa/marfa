@@ -509,7 +509,7 @@ fn line_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 
 /// One word of a unit file, quoted so that systemd reads it back as written:
 /// `%` starts a specifier anywhere, and `$` a variable on a command line.
-fn quoted(word: &str, command: bool) -> String {
+pub(crate) fn quoted(word: &str, command: bool) -> String {
     let mut out = String::from("\"");
     for character in word.chars() {
         match character {

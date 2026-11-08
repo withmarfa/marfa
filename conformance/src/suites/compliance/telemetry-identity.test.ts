@@ -6,7 +6,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What the server's telemetry says about where it came from: the instance's
@@ -127,8 +126,8 @@ function resourcesOf(
 }
 
 /**
- * One unhandled fault under `requestId`: a table the write reaches is renamed
- * in the stored file and put back, as `fault-reports.test.ts` does.
+ * One unhandled fault under `requestId`: the audit entry of one write fails,
+ * as `fault-reports.test.ts` makes it.
  */
 async function faulted(target: FreshServer, requestId: string): Promise<void> {
   const post = (request: string) =>
@@ -144,18 +143,10 @@ async function faulted(target: FreshServer, requestId: string): Promise<void> {
         properties: { body: "telemetry identity" },
       }),
     });
-  // The witness: with the table there the write lands.
+  // The witness: with no fault the write lands.
   expect((await post(`${requestId}-landed`)).status).toBe(201);
-  withInstanceDatabase(target.sqlitePath, (db) => {
-    db.exec("ALTER TABLE event_log RENAME TO event_log_gone");
-  });
-  try {
-    expect((await post(requestId)).status).toBe(500);
-  } finally {
-    withInstanceDatabase(target.sqlitePath, (db) => {
-      db.exec("ALTER TABLE event_log_gone RENAME TO event_log");
-    });
-  }
+  await target.setFault("fail:audit=item.create");
+  expect((await post(requestId)).status).toBe(500);
 }
 
 async function instanceId(): Promise<string> {

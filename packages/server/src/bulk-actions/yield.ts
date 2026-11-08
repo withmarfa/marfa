@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { holdArmed, holdAt } from "../control/faults.js";
 import { markWriteProgress } from "../storage/sqlite/connection.js";
 import { noteBulkWork } from "./memory-release.js";
 
@@ -16,4 +17,16 @@ export async function yieldBulkWork(
   if (options.writing) markWriteProgress();
   noteBulkWork();
   await setImmediate();
+}
+
+// Holds a bulk page before an entry under `hold:bulk-page`, telling writes
+// queued behind its transaction that it is still working.
+export async function holdBulkEntry(): Promise<void> {
+  if (!holdArmed("bulk-page")) return;
+  const beat = setInterval(markWriteProgress, 25);
+  try {
+    await holdAt("bulk-page");
+  } finally {
+    clearInterval(beat);
+  }
 }

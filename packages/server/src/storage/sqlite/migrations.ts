@@ -573,8 +573,8 @@ export async function readSchemaVersion(db: Reader): Promise<number> {
   return Number(result.rows[0]?.user_version ?? 0);
 }
 
-/** A failure a conformance harness asks a migration for (`MARFA_TEST_MIGRATION_FAULT`). */
-export type MigrationFault = "hold" | "lose-row" | "change-shape";
+/** A failure a test asks an update for, made before it commits. */
+export type MigrationFault = "lose-row" | "change-shape";
 
 export interface MigrationHooks {
   fault?: MigrationFault;
@@ -667,7 +667,7 @@ async function takeBackup(
   return { backupPath, counts };
 }
 
-/** The faults a harness asks for, made inside the migration's transaction. */
+/** The faults a test asks for, made inside the migration's transaction. */
 async function injectFault(
   db: Writer,
   fault: MigrationFault | undefined,
@@ -683,14 +683,6 @@ async function injectFault(
       );
       if (done.rowsAffected > 0) return;
     }
-  } else if (fault === "hold") {
-    log(
-      "warn",
-      "Holding the database update open before it commits, as MARFA_TEST_MIGRATION_FAULT asks",
-    );
-    await new Promise<never>(() => {
-      setInterval(() => undefined, 60_000);
-    });
   }
 }
 

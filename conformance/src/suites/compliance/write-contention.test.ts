@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -8,8 +6,6 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { HeldLock } from "../../utils/held-lock.js";
-import { witnessWriteAdmission } from "../../utils/write-admission.js";
 import { codeOf, idOf, send } from "../../utils/inbound-sender.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
@@ -17,17 +13,11 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 /**
  * What a write answers when it meets the write lock and never gets it.
  *
- * **The lock is held from outside the process, deliberately.** Firing
- * concurrent writes at the server does not reach it: the client
- * serializes its own calls, so two of this process's transactions do not
- * overlap. What does reach it in ordinary running is the housekeeping
- * scheduler's transaction interleaving with the request path, and that
- * is a race a fixture would have to win rather than arrange. A second
- * connection sitting in `BEGIN IMMEDIATE` on the same file holds exactly
- * the lock the server's next write asks for, every time, which makes the
- * refusal something to assert instead of something to hope for. It is
- * also a real case: `connection.ts` names a sidecar's checkpoint as the
- * other holder.
+ * **The lock is a fault.** Firing concurrent writes at the server does not
+ * reach contention: the client serializes its own calls, so two of this
+ * process's transactions do not overlap. `refuse:write-lock` makes a write
+ * wait as it would for a lock held elsewhere, until the busy budget is spent,
+ * and then refuse it; clearing the fault lets the waiting write through.
  *
  * Two servers, because the claim is about a setting. One booted with the
  * busy budget at zero, where the first `SQLITE_BUSY` is the answer; one
@@ -62,25 +52,12 @@ beforeAll(async () => {
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-const runSqlite = promisify(execFile);
-
-// Exiting an admitted probe rolls it back. A later ROLLBACK statement can
-// overwrite the failed BEGIN diagnostic in the SQLite shell.
-function probeWriteAdmission(sqlitePath: string) {
-  return runSqlite(
-    "sqlite3",
-    ["-bail", "-cmd", ".timeout 0", sqlitePath, "BEGIN IMMEDIATE;"],
-    { timeout: 10_000 },
-  );
-}
-
-async function expectWriteLocked(sqlitePath: string): Promise<void> {
-  const refused = probeWriteAdmission(sqlitePath);
-  await expect(refused).rejects.toMatchObject({
-    code: expect.any(Number),
-    stderr: expect.stringContaining("database is locked"),
-  });
-  await expect(refused).rejects.not.toMatchObject({ code: 0 });
+/** Makes every write wait on the lock, as for a holder elsewhere, until released. */
+async function takeLock(server: FreshServer): Promise<{
+  release: () => Promise<void>;
+}> {
+  await server.setFault("refuse:write-lock");
+  return { release: () => server.clearFault("refuse:write-lock") };
 }
 
 function clientFor(server: FreshServer): MarfaClient {
@@ -98,35 +75,9 @@ function aNote(title: string) {
 }
 
 describe("contention on the write lock", () => {
-  it("does not report admission when a competing writer keeps the lock", async () => {
-    const lock = await HeldLock.take(impatient!.sqlitePath);
-    let unexpected: HeldLock | undefined;
-    try {
-      await expectWriteLocked(impatient!.sqlitePath);
-      await expect(
-        HeldLock.take(impatient!.sqlitePath, 0).then((taken) => {
-          unexpected = taken;
-          return taken;
-        }),
-      ).rejects.toThrow(/database is locked/);
-    } finally {
-      await unexpected?.release();
-      await lock.release();
-    }
-
-    await witnessWriteAdmission(impatient!.sqlitePath);
-    const admitted = await HeldLock.take(impatient!.sqlitePath);
-    try {
-      await expectWriteLocked(impatient!.sqlitePath);
-    } finally {
-      await admitted.release();
-    }
-    await witnessWriteAdmission(impatient!.sqlitePath);
-  }, 120_000);
-
   it("answers 503 write_contention, never 500", async () => {
     const client = clientFor(impatient!);
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const refused = await client.createItem(aNote("refused"));
 
@@ -162,7 +113,7 @@ describe("contention on the write lock", () => {
     // attempt would land. Folded into a `200` it tells a device that
     // retries a `5xx` without counting it there is nothing to retry.
     const client = clientFor(impatient!);
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const page = await client.bulkItems({
         items: [aNote("bulk one"), aNote("bulk two")],
@@ -197,7 +148,7 @@ describe("contention on the write lock", () => {
     // would answer the same `503` five seconds later, and a fixture
     // asserting the status alone would pass either way.
     const client = clientFor(impatient!);
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const refused = await client.createItem(aNote("budget"));
       expect(refused.status).toBe(503);
@@ -235,7 +186,7 @@ describe("contention on the write lock", () => {
       "the scheduler ran trash-purge on a server booted with it switched off",
     ).toMatchObject({ running_since: null, last_started_at: null });
 
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const run = await operator.rawRequest("/housekeeping/trash-purge/run", {
         method: "POST",
@@ -286,13 +237,11 @@ describe("contention on the write lock", () => {
           .last_used_at;
       };
       expect(await readStamp()).toBeNull();
-      const lock = await HeldLock.take(server.sqlitePath);
+      const lock = await takeLock(server);
       try {
-        await expectWriteLocked(server.sqlitePath);
         expect(await read()).toBe(200);
         expect(await read()).toBe(200);
         expect(await readStamp()).toBeNull();
-        await expectWriteLocked(server.sqlitePath);
       } finally {
         await lock.release();
       }
@@ -307,11 +256,10 @@ describe("contention on the write lock", () => {
         )
         .toEqual(expect.any(String));
       const stamp = await readStamp();
-      const heldAgain = await HeldLock.take(server.sqlitePath);
+      const heldAgain = await takeLock(server);
       try {
         expect(await read()).toBe(200);
         expect(await readStamp()).toBe(stamp);
-        await expectWriteLocked(server.sqlitePath);
       } finally {
         await heldAgain.release();
       }
@@ -333,7 +281,7 @@ describe("contention on the write lock", () => {
           token_endpoint_auth_method: "none",
         }),
       });
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const refused = await register();
       expect(
@@ -367,7 +315,7 @@ describe("contention on the write lock", () => {
     const made = await own.createInboundEndpoint(registered.data.id);
     expect(made.status).toBe(201);
 
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const refused = await send(impatient!.apiUrl, made.data.path, "pending");
       expect(
@@ -395,7 +343,7 @@ describe("contention on the write lock", () => {
     // all, because the holder lets go inside the budget and the retry
     // gets through.
     const client = clientFor(patient!);
-    const lock = await HeldLock.take(patient!.sqlitePath);
+    const lock = await takeLock(patient!);
     try {
       // Well inside the five-second default, so the write waits and then
       // lands rather than racing the budget: the margin is the budget
@@ -448,7 +396,7 @@ describe("contention on the write lock", () => {
           (e) => titleOf(e) === "contention-landed",
         );
 
-        const lock = await HeldLock.take(impatient!.sqlitePath);
+        const lock = await takeLock(impatient!);
         try {
           const refused = await client.createItem(aNote("contention-refused"));
           expect(refused.status).toBe(503);
@@ -509,7 +457,7 @@ describe("contention on the write lock", () => {
       });
 
     const before = await exportRuns();
-    const lock = await HeldLock.take(impatient!.sqlitePath);
+    const lock = await takeLock(impatient!);
     try {
       const refused = await ask();
       expect(refused.status).toBe(503);
@@ -551,12 +499,11 @@ it("serves a session read without waiting for renewal and keeps its durable idle
   };
   const before = await current(await read());
   await server.advanceClock(61_000);
-  const lock = await HeldLock.take(server.sqlitePath);
+  const lock = await takeLock(server);
   try {
     const response = await read();
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(await current(response)).toEqual(before);
-    await expectWriteLocked(server.sqlitePath);
   } finally {
     await lock.release();
   }

@@ -82,8 +82,6 @@ impl App {
             busy_budget: start.busy_budget,
             readers: READERS,
             migrations: MIGRATIONS,
-            migration_fault: start.migration_fault,
-            free_disk_bytes: start.free_disk_bytes,
         };
         let opening = faults.clone();
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
