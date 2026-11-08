@@ -595,3 +595,40 @@ pub fn orphans(tx: &Transaction<'_>) -> Result<Vec<OrphanRecord>> {
     }
     Ok(found)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HEX: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn names() -> HashSet<&'static [u8]> {
+        HashSet::from([HEX.as_bytes()])
+    }
+
+    #[test]
+    fn a_row_may_name_a_candidate_inside_a_longer_hex_run_or_behind_an_escape() {
+        for raw in [
+            format!("see sha256:{HEX}."),
+            format!("sha256%3a{HEX}"),
+            format!("ab{HEX}cd"),
+            "an escape \\u0030 hides a digest".to_string(),
+        ] {
+            assert!(may_name(raw.as_bytes(), &names()), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_row_without_a_candidate_is_passed_over() {
+        let other = "f".repeat(64);
+        for raw in [
+            String::new(),
+            other,
+            HEX[..63].to_string(),
+            HEX.to_uppercase(),
+            format!("{} {}", &HEX[..32], &HEX[32..]),
+        ] {
+            assert!(!may_name(raw.as_bytes(), &names()), "{raw}");
+        }
+    }
+}

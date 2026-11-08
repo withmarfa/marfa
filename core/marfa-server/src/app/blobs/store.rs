@@ -260,3 +260,55 @@ pub async fn place_on_disk(
     .await
     .map_err(io::Error::other)?
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn work_that_outlasts_its_deadline_leaves_its_blob_unfinished_until_it_ends() {
+        let gate = Arc::new(Gate::default());
+        let hash = Hash::from_digest(&Sha256::digest(b"slow"));
+        let (finish, finished) = oneshot::channel::<()>();
+        let (ended, end) = oneshot::channel::<()>();
+        let work = async move {
+            let _ = finished.await;
+            let _ = ended.send(());
+            Ok(())
+        };
+
+        let late = gate.outlast(&hash, Duration::from_millis(20), work).await;
+        assert!(matches!(late, Err(Failed::Late)));
+        assert!(gate.unfinished(&hash));
+
+        finish.send(()).unwrap();
+        end.await.unwrap();
+        tokio::task::yield_now().await;
+        let began = std::time::Instant::now();
+        while gate.unfinished(&hash) && began.elapsed() < Duration::from_secs(2) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(!gate.unfinished(&hash));
+    }
+
+    #[tokio::test]
+    async fn work_within_its_deadline_answers_and_marks_nothing() {
+        let gate = Arc::new(Gate::default());
+        let hash = Hash::from_digest(&Sha256::digest(b"quick"));
+        let answer = gate
+            .outlast(&hash, Duration::from_secs(5), async { Ok(7) })
+            .await;
+        assert!(matches!(answer, Ok(7)));
+        assert!(!gate.unfinished(&hash));
+
+        let failed = gate
+            .outlast(&hash, Duration::from_secs(5), async {
+                Err::<(), _>(io::Error::other("refused"))
+            })
+            .await;
+        assert!(matches!(failed, Err(Failed::Io(_))));
+        assert!(!gate.unfinished(&hash));
+    }
+}
