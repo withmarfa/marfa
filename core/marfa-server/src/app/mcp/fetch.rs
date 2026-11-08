@@ -15,6 +15,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::{Blob, DEFAULT_TYPE};
 use crate::app::oauth::metadata_document::{Lookup, Pinned, SystemLookup, is_public};
+use crate::app::provenance;
 use crate::app::refusal::Refusal;
 use crate::settings::registry::{
     MCP_FETCH_ENABLED, MCP_FETCH_MAX_BYTES, MCP_FETCH_TIMEOUT_MS, RATE_LIMIT_ENABLED,
@@ -289,20 +290,27 @@ fn stream(
     Ok(Fetched { blob, file_name })
 }
 
-/// Records every fetch attempt, including refusals.
+/// Records every fetch attempt, including refusals. The attempt and its record run as
+/// their own task, so a caller that goes away mid-fetch still leaves the record.
 pub async fn file(
     app: &Arc<App>,
     caller: &Caller,
     raw: &str,
     mime_hint: Option<String>,
 ) -> Result<Fetched, Failed> {
-    let parsed = checked(raw);
-    let outcome = match &parsed {
-        Ok(url) => attempt(app, caller, url, mime_hint).await,
-        Err(reason) => Err(Failed::Not(reason.clone())),
-    };
-    record(app, caller, raw, parsed.ok().as_ref(), &outcome).await;
-    outcome
+    let (app, caller, raw) = (app.clone(), caller.clone(), raw.to_string());
+    let origin = provenance::current();
+    tokio::spawn(provenance::within(origin, async move {
+        let parsed = checked(&raw);
+        let outcome = match &parsed {
+            Ok(url) => attempt(&app, &caller, url, mime_hint).await,
+            Err(reason) => Err(Failed::Not(reason.clone())),
+        };
+        record(&app, &caller, &raw, parsed.ok().as_ref(), &outcome).await;
+        outcome
+    }))
+    .await
+    .unwrap_or_else(|_| Err(Refusal::internal("a file fetch did not finish").into()))
 }
 
 async fn attempt(

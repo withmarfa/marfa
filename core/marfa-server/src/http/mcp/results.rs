@@ -176,13 +176,7 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
             "array" => value.is_array(),
             "string" => value.is_string(),
             "boolean" => value.is_boolean(),
-            "integer" => {
-                value.is_i64()
-                    || value.is_u64()
-                    || value
-                        .as_f64()
-                        .is_some_and(|number| number.fract() == 0.0 && number.abs() < 9e15)
-            }
+            "integer" => value.is_i64() || value.is_u64(),
             _ => true,
         };
         if !fits {

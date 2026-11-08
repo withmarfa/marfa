@@ -461,8 +461,9 @@ pub async fn captions(
             if super::is_system(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
                 continue;
             }
-            let shown = super::shown_of(read.tx, &read.catalog, &row, &|type_id| {
-                read.caller.may_read_type(type_id)
+            let shown = super::shown_of(read.tx, &read.catalog, &row, &|edge_type, host_type| {
+                read.caller.may_read_edge(edge_type, &row.type_id)
+                    && read.caller.may_read_type(host_type)
             })?;
             found.insert(
                 id,
