@@ -304,7 +304,7 @@ impl Rig {
     fn isolate(&self) {
         let copy = self.root.join("bin/marfa");
         if !copy.exists() {
-            fs::copy(env!("CARGO_BIN_EXE_marfa"), &copy).unwrap();
+            fs::copy(quiet::marfa().get_program(), &copy).unwrap();
         }
         self.isolated.set(true);
     }
