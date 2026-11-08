@@ -76,6 +76,55 @@ impl Map {
         }
     }
 
+    fn reads(&self, axis: Axis, name: &str) -> bool {
+        axis.level(self, name) >= Level::Read
+    }
+
+    /// Redundant grants must not change a credential's reach.
+    fn read_patterns(&self, axis: Axis) -> Value {
+        let wild = |name: &str| name == "*" || name.ends_with(".*");
+        let mut entries: Vec<(&String, bool)> = self
+            .0
+            .iter()
+            .map(|(name, level)| (name, Level::stored(level) >= Level::Read))
+            .collect();
+        entries.sort_by(|(a, _), (b, _)| {
+            wild(b).cmp(&wild(a)).then_with(|| match wild(a) {
+                true => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
+                false => a.cmp(b),
+            })
+        });
+        let mut kept = Map::default();
+        let mut read = Vec::new();
+        for (name, readable) in entries {
+            let probe = if name == "*" {
+                "reach_probe"
+            } else {
+                name.strip_suffix(".*").unwrap_or(name)
+            };
+            if kept.reads(axis, probe) != readable {
+                let level = if readable { Level::Read } else { Level::None };
+                kept.0.insert(name.clone(), level.word().into());
+                read.push((name.clone(), readable));
+            }
+        }
+        read.sort();
+        json!(read)
+    }
+
+    /// The default, then each named entry that reads differently from it.
+    fn read_exceptions(&self, axis: Axis) -> Value {
+        let default = self.reads(axis, "*");
+        let mut named: Vec<&String> = self.0.keys().filter(|name| *name != "*").collect();
+        named.sort();
+        let apart: Vec<(&String, bool)> = named
+            .into_iter()
+            .map(|name| (name, self.reads(axis, name)))
+            .filter(|(_, readable)| *readable != default)
+            .collect();
+        json!([default, apart])
+    }
+
     fn widest(&self, name: &str) -> Level {
         self.exact(name)
             .unwrap_or(Level::None)
@@ -122,6 +171,15 @@ impl Axis {
             Axis::Profile if name == "email" => map.widest(name).min(Level::Read),
             Axis::Profile if PROFILE_ROWS.contains(&name) => map.widest(name),
             Axis::Profile => Level::None,
+        }
+    }
+
+    /// Equal read authority must yield equal forms regardless of write levels.
+    pub fn read_form(self, map: &Map) -> Value {
+        match self {
+            Axis::Type | Axis::Edge => map.read_patterns(self),
+            Axis::Extension | Axis::Metadata => map.read_exceptions(self),
+            Axis::Profile => Value::Null,
         }
     }
 

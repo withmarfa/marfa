@@ -813,7 +813,7 @@ If the server's read of the log fails when a stream opens or while it replays, o
 
 **Reason:** a stream that cannot read the log or its credential can no longer say what it has not sent, so it ends and the client reconnects from its `cursor`.
 
-**Tests:** `compliance/stream-opening-faults.test.ts › ends with read_failed when the read of the head fails as it opens`, `› ends with read_failed and a null cursor when the first replay page fails`, `› ends with read_failed when the read of its credential before a page of the replay fails`, `› ends with read_failed when the read of its credential before a batch fails`, `› ends with read_failed when the read of its credential at a heartbeat fails`.
+**Tests:** `compliance/stream-opening-faults.test.ts › ends with read_failed when the read of the head fails as it opens`, `› ends with read_failed and a null cursor when the first replay page fails`, `› ends with read_failed when the read of its credential before a page of the replay fails`, `› ends with read_failed when the read of its credential before a batch fails`, `› ends with read_failed when the read of its credential at a heartbeat fails`, `compliance/stream-copy-opening-faults.test.ts › ends a copy stream with stream_incomplete, and sends neither stream_cursor nor stream_live, when the read of the head fails`, `› ends a copy stream's replay with read_failed when a read of the log fails`, `› ends a copy stream's replay with read_failed when its credential cannot be read`, `› ends a copy stream with read_failed when the read of its credential before a batch fails`.
 
 ## Registering a subscription
 

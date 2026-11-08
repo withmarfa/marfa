@@ -18,6 +18,7 @@ use crate::app::blobs::references::{self, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::events::Event;
 use crate::app::idempotency::{self, Claim, Need};
+use crate::app::instance;
 use crate::app::items::write::{Done, ruled};
 use crate::app::items::{self, Item};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -623,6 +624,9 @@ impl<'c> Writing<'_, '_, 'c> {
             },
         )?;
         decided.apply(self.tx(), Referencing::Edge(written.seq))?;
+        if new_source.is_some() {
+            instance::raise_reach(self.tx())?;
+        }
         announce(self.unit, "edge.updated", &written, &stands, None)?;
         let details = if moved {
             json!({

@@ -10,6 +10,7 @@ use super::super::access::Caller;
 use super::super::catalog::{self, Snapshot};
 use super::super::edges::write::purge_edge;
 use super::super::housekeeping::{DAY_MS, Report, Run, cutoff};
+use super::super::instance;
 use super::super::refusal::{Refusal, Result};
 use super::super::unit::Unit;
 use super::plan::{Act, Asked, Gate, plan};
@@ -174,6 +175,7 @@ fn purge_batch(unit: &Unit<'_, '_>, app: &App, after: &Position) -> Result<Batch
         }
     }
     if batch.deleted > 0 {
+        instance::raise_reach(tx)?;
         unit.audit_set(
             "item",
             Some(json!({ "deleted": batch.deleted, "before": before })),
