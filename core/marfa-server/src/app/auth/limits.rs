@@ -296,7 +296,7 @@ mod tests {
 
     fn database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../db/migrations/0003_sign_in.sql"))
+        conn.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
             .unwrap();
         conn
     }
