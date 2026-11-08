@@ -155,7 +155,9 @@ fn sign_in_is_an_address(judged: &Judged) -> Vec<Breach> {
     let Some(sign_in) = &judged.sign_in else {
         return Vec::new();
     };
-    if judged.after.get(ADDRESSES).contains(sign_in) {
+    let listed = judged.after.get(ADDRESSES);
+    // No list stored means the sign-in address stands alone, which is whole.
+    if listed.is_empty() || listed.contains(sign_in) {
         return Vec::new();
     }
     if judged.names("sign_in_address") {

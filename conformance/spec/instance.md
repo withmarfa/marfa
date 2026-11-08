@@ -1580,7 +1580,7 @@ Each bound is wide enough that no owner meets it and narrow enough that a slip o
 | `enrichment_batch_size`               | `8`                | Whole number, 1 to 1000000                                | The most items one enrichment sweep extracts.                                                                                                                                                                                                                                                                                                                                                              |
 | `enrichment_item_timeout_ms`          | `60000` ms         | Whole number of milliseconds, 1 to 86400000               | How long the extraction of one item may take.                                                                                                                                                                                                                                                                                                                                                              |
 | `enrichment_max_blob_bytes`           | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                      |
-| `enrichment_max_text_chars`           | `100000`           | Whole number, 1 to 100000000                              | The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.                                                                                                                                                                                                                                                                                        |
+| `enrichment_max_text_chars`           | `100000`           | Whole number, 1 to 100000000                              | The most Unicode characters of extracted text the server keeps, counted as characters, not UTF-16 code units. Longer text is cut short.                                                                                                                                                                                                                                                                    |
 | `enrichment_max_inflated_bytes`       | `67108864` bytes   | Whole number of bytes, 1 to 1099511627776                 | The most a document may inflate to when the server extracts its text, all of its parts together. A document that inflates past it is skipped.                                                                                                                                                                                                                                                              |
 | `enrichment_max_memory_bytes`         | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most memory reading one file may use. A file that needs more is skipped.                                                                                                                                                                                                                                                                                                                               |
 | `enrichment_max_attempts`             | `3`                | Whole number, 1 to 100                                    | How many times the server tries to extract text from a failing item before it stops.                                                                                                                                                                                                                                                                                                                       |
@@ -1694,11 +1694,11 @@ When a write names the same origin in more than one spelling, the server MUST st
 
 ### `instance/addresses-hold-sign-in`
 
-If a write sets `addresses` to a list that leaves out the sign-in address in force, then the server MUST answer `400 validation_error` naming `addresses` and the sign-in address, and store none of the write.
+If a write sets `addresses` to a list that leaves out the sign-in address in force, then the server MUST answer `400 validation_error` naming `addresses` and the sign-in address, and store none of the write. The sign-in address in force is the stored one or, while none is stored, the instance's own address.
 
-**Reason:** the sign-in address is always one of the instance's addresses.
+**Reason:** the sign-in address is always one of the instance's addresses, stored or not.
 
-**Tests:** `compliance/instance-addresses.test.ts › are refused together when the list leaves out the sign-in address`.
+**Tests:** `compliance/instance-addresses.test.ts › are refused together when the list leaves out the sign-in address`, `compliance/instance-addresses.test.ts › are refused together when the list leaves out the instance's own address, though no sign-in address is stored`.
 
 ### `instance/sign-in-address-joins`
 
@@ -1708,9 +1708,9 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 ### `instance/sign-in-address-authority`
 
-If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` with `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
+If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write. A write that names either setting at the value it already has changes nothing, and the server MUST NOT refuse it for that.
 
-**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them.
+**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them. A client that sends the whole configuration back changes neither.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 

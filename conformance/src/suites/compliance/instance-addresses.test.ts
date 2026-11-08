@@ -84,9 +84,13 @@ describe("an address", () => {
   });
 
   it("is stored in its plainest spelling, with a lowercase host, no default port and no trailing slash", async () => {
+    // No sign-in address is stored, so the one in force is the instance's own
+    // address, which the list has to name beside the others.
+    const own = new URL(server.apiUrl).origin;
     // The witness: the same origin spelled plainly is stored as written.
     const answer = await call("key", "PATCH", "/config", {
       addresses: [
+        own,
         "HTTPS://A.Example:443/",
         "https://a.example",
         "http://b.example:8080",
@@ -94,9 +98,35 @@ describe("an address", () => {
     });
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
     expect((await config()).addresses).toEqual([
+      own,
       "https://a.example",
       "http://b.example:8080",
     ]);
+    expect(
+      (await call("key", "PATCH", "/config", { addresses: null })).status,
+    ).toBe(200);
+  });
+});
+
+describe("the addresses and the sign-in address in force", () => {
+  it("are refused together when the list leaves out the instance's own address, though no sign-in address is stored", async () => {
+    // Nothing is stored for the sign-in address, so the one in force is the
+    // address the server listens on.
+    expect(await config()).not.toHaveProperty("sign_in_address");
+    const own = new URL(server.apiUrl).origin;
+    const answer = await call("key", "PATCH", "/config", {
+      addresses: ["https://elsewhere.example"],
+    });
+    expect(answer.status, JSON.stringify(answer.body)).toBe(400);
+    expect(answer.body.error.code).toBe("validation_error");
+    expect(JSON.stringify(answer.body.error.details)).toContain("addresses");
+    expect(JSON.stringify(answer.body.error.details)).toContain(own);
+    expect(await config()).not.toHaveProperty("addresses");
+    // The witness: the same list with the address in force is stored.
+    const kept = await call("key", "PATCH", "/config", {
+      addresses: [own, "https://elsewhere.example"],
+    });
+    expect(kept.status, JSON.stringify(kept.body)).toBe(200);
     expect(
       (await call("key", "PATCH", "/config", { addresses: null })).status,
     ).toBe(200);
@@ -134,6 +164,20 @@ describe("the sign-in address", () => {
       cors_origins: ["https://app.example"],
     });
     expect(socket.status, JSON.stringify(socket.body)).toBe(200);
+    // Both settings sent as they already are change nothing, so the key is
+    // let through, while the same write with one value moved is the 403 above.
+    const unchanged = await call("key", "PATCH", "/config", {
+      sign_in_address: SIGN_IN,
+      cors_origins: ["https://app.example"],
+    });
+    expect(unchanged.status, JSON.stringify(unchanged.body)).toBe(200);
+    const moved = await call("key", "PATCH", "/config", {
+      sign_in_address: SIGN_IN,
+      cors_origins: ["https://app.example", "https://more.example"],
+    });
+    expect(moved.status).toBe(403);
+    expect(moved.body.error.code).toBe("forbidden");
+    expect((await config()).cors_origins).toEqual(["https://app.example"]);
     expect(
       (await call("socket", "PATCH", "/config", { cors_origins: null })).status,
     ).toBe(200);

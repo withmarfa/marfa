@@ -269,7 +269,7 @@ registry! {
     ENRICHMENT_BATCH_SIZE: u64 = "enrichment_batch_size", COUNT, "8", "The most files one run of the enrichment sweep reads.";
     ENRICHMENT_ITEM_TIMEOUT_MS: u64 = "enrichment_item_timeout_ms", UP_TO_A_DAY, "60000", "How long reading one file may take, in milliseconds.";
     ENRICHMENT_MAX_BLOB_BYTES: u64 = "enrichment_max_blob_bytes", BYTES, "20971520", "The largest file the server reads whole to extract its text, in bytes. A larger one is skipped unread. A sound or a video is read from its headers whatever its size.";
-    ENRICHMENT_MAX_TEXT_CHARS: u64 = "enrichment_max_text_chars", Rule::Whole { min: 1, max: 100_000_000 }, "100000", "The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.";
+    ENRICHMENT_MAX_TEXT_CHARS: u64 = "enrichment_max_text_chars", Rule::Whole { min: 1, max: 100_000_000 }, "100000", "The most Unicode characters of extracted text the server keeps, counted as characters, not UTF-16 code units. Longer text is cut short.";
     ENRICHMENT_MAX_INFLATED_BYTES: u64 = "enrichment_max_inflated_bytes", BYTES, "67108864", "The most a document may inflate to when the server extracts its text, all of its parts together, in bytes. A document that inflates past it is skipped.";
     ENRICHMENT_MAX_MEMORY_BYTES: u64 = "enrichment_max_memory_bytes", BYTES, "1073741824", "The most memory the process that reads one file may take, in bytes. A file that needs more is skipped.";
     ENRICHMENT_MAX_ATTEMPTS: u64 = "enrichment_max_attempts", Rule::Whole { min: 1, max: 100 }, "3", "How many times the server tries to read a file that fails, or that stops the server, before it stops.";
