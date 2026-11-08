@@ -7,7 +7,7 @@
  * Or, for a run split over shards, after the logs each kept have been
  * gathered, with no server:
  *
- *   tsx scripts/check-statuses.ts --shards <dir> [--complete]
+ *   tsx scripts/check-statuses.ts --shards <dir> [--complete [--drawn <dir>]]
  *
  * The document is fetched from the server that wrote the log, so the two
  * describe one process; a shard keeps the one its server served. The observed
@@ -16,6 +16,8 @@
  * list, and every served route the document leaves out without a reason.
  * `--complete` is for the run that reaches every door: it also holds the
  * declared statuses no request drew to the list of the ones nothing can draw.
+ * `--drawn` names the logs of the Rust server's shards, which run the files it
+ * judges: a status they drew counts as drawn, and is not otherwise checked.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -34,6 +36,7 @@ interface Args {
   state: string;
   url?: string;
   shards?: string;
+  drawn?: string;
   complete: boolean;
 }
 
@@ -45,6 +48,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--url") args.url = argv[++i];
     else if (arg === "--shards") args.shards = resolve(argv[++i] ?? "");
     else if (arg === "--complete") args.complete = true;
+    else if (arg === "--drawn") args.drawn = resolve(argv[++i] ?? "");
     else throw new Error(`unexpected argument: ${arg ?? ""}`);
   }
   return args;
@@ -179,8 +183,37 @@ if (report.unexplained.length > 0) {
   process.exitCode = 1;
 }
 
+function logsUnder(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(dir, entry.name);
+    if (entry.isDirectory()) return logsUnder(path);
+    return entry.name.endsWith(".log") ? [path] : [];
+  });
+}
+
 if (args.complete) {
-  const { unlisted, stale } = unreachedDebt(report);
+  const drawnElsewhere =
+    args.drawn === undefined
+      ? undefined
+      : new Set(
+          reportStatuses(
+            logsUnder(args.drawn).flatMap(
+              (path) => readRequestLog(readFileSync(path, "utf8")).lines,
+            ),
+            document,
+          ).unanswered,
+        );
+  const { unlisted, stale } = unreachedDebt(
+    drawnElsewhere === undefined
+      ? report
+      : {
+          ...report,
+          unanswered: report.unanswered.filter((key) =>
+            drawnElsewhere.has(key),
+          ),
+        },
+  );
   console.log(
     `\n${String(report.unanswered.length)} declared statuses no request drew.`,
   );

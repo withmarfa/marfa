@@ -617,7 +617,7 @@ jobs:
   # which statuses the others would have drawn, and the push to `main`
   # after it runs them all.
   conformance-statuses:
-    needs: [changes, conformance-shards]
+    needs: [changes, conformance-shards, rust-contract-shards]
     if: ${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}
     name: Conformance statuses
     timeout-minutes: 8
@@ -636,9 +636,24 @@ jobs:
         with:
           pattern: marfa-server-log-*
           path: ${{ runner.temp }}/shard-logs
+      # The files the Rust server judges run only in its shards, so the
+      # statuses they draw are read from its logs, and every declared status
+      # is held to a request only when those shards ran.
+      - uses: actions/download-artifact@v8
+        if: ${{ needs.rust-contract-shards.result == 'success' }}
+        with:
+          pattern: rust-contract-server-log-*
+          path: ${{ runner.temp }}/rust-shard-logs
       - name: Hold every declared status to a request
         working-directory: conformance
-        run: pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete
+        env:
+          RUST_SHARDS: ${{ needs.rust-contract-shards.result }}
+        run: |
+          if [ "$RUST_SHARDS" = success ]; then
+            pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete --drawn "$RUNNER_TEMP/rust-shard-logs"
+          else
+            pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs"
+          fi
 
   # The MCP project's own conformance tool, against `/mcp` on a server booted
   # from this checkout. `conformance/scripts/mcp-conformance.ts` names the
@@ -1126,10 +1141,12 @@ jobs:
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
       - name: Keep the server log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server-log-${{ matrix.slug }}
+          overwrite: true
+          retention-days: 3
           path: |
             ${{ runner.temp }}/marfa/server.log
             ${{ runner.temp }}/marfa/server.stderr

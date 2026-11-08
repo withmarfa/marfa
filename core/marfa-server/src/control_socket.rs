@@ -28,7 +28,7 @@ const OTHERS_WRITE: u32 = 0o022;
 pub struct Claim {
     path: PathBuf,
     lock: File,
-    published: Option<(u64, u64)>,
+    published: Option<Identity>,
 }
 
 fn in_use(path: &Path) -> Failure {
@@ -268,13 +268,11 @@ fn clear_stale(path: &Path) -> Result<(), Failure> {
         Err(error) => return Err(unreadable(error)),
     }
     match std::fs::symlink_metadata(path) {
-        Ok(now) if (now.dev(), now.ino()) == (found.dev(), found.ino()) => {
-            match std::fs::remove_file(path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(unreadable(error)),
-            }
-        }
+        Ok(now) if identity(&now) == identity(&found) => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(unreadable(error)),
+        },
         Ok(_) => Err(exists()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(unreadable(error)),
@@ -329,16 +327,24 @@ impl Claim {
             .map_err(refused)
             .and_then(|()| publish(&bound, &self.path));
         let _ = std::fs::remove_file(&bound);
-        self.published = Some(published?);
+        let (dev, ino, _, _) = published?;
+        let now = std::fs::symlink_metadata(&self.path).map_err(refused)?;
+        if (now.dev(), now.ino()) != (dev, ino) {
+            return Err(Failure::start(format!(
+                "The control socket {} changed while it was published",
+                self.path.display()
+            )));
+        }
+        self.published = Some(identity(&now));
         Ok(listener)
     }
 
     /// Removes the socket while it is still this server's, and keeps the lock
     /// until the process exits.
     pub fn release(self) {
-        if let Some(identity) = self.published {
+        if let Some(published) = self.published {
             match std::fs::symlink_metadata(&self.path) {
-                Ok(now) if (now.dev(), now.ino()) == identity => {
+                Ok(now) if identity(&now) == published => {
                     if let Err(error) = std::fs::remove_file(&self.path) {
                         tracing::warn!(error = %error, "The control socket was not removed");
                     }
@@ -350,9 +356,17 @@ impl Claim {
     }
 }
 
+/// Which file a path names. An inode number alone is reused at once on some
+/// file systems, so the change time is part of it.
+type Identity = (u64, u64, i64, i64);
+
+fn identity(found: &Metadata) -> Identity {
+    (found.dev(), found.ino(), found.ctime(), found.ctime_nsec())
+}
+
 /// Makes the socket at `bound` private and links it at `path`, answering
-/// the socket's identity.
-fn publish(bound: &Path, path: &Path) -> Result<(u64, u64), Failure> {
+/// the socket's identity before the link.
+fn publish(bound: &Path, path: &Path) -> Result<Identity, Failure> {
     let refused = |error: std::io::Error| {
         Failure::start(format!(
             "The control socket {} could not be published: {error}",
@@ -376,7 +390,7 @@ fn publish(bound: &Path, path: &Path) -> Result<(u64, u64), Failure> {
             refused(error)
         }
     })?;
-    Ok((found.dev(), found.ino()))
+    Ok(identity(&found))
 }
 
 fn refuse_acl(path: &Path, what: &str) -> Result<(), Failure> {
