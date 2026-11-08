@@ -67,6 +67,7 @@ points! {
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+    HOLD_BLOB_READ = Hold "blob-read" Nth;
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -178,7 +179,8 @@ fn is_action(text: &str) -> bool {
 fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     let name = point.name;
     let Some(arg) = arg else {
-        return Ok((point.argument != Argument::None).then_some(Aim {
+        let counted = point.kind != Kind::Hold && point.argument != Argument::None;
+        return Ok(counted.then_some(Aim {
             action: None,
             nth: 1,
         }));
@@ -717,6 +719,8 @@ mod tests {
     fn takes_the_points_the_fixtures_arm() {
         for (name, arg) in [
             ("hold:bulk-page", Some("2")),
+            ("hold:blob-read", None),
+            ("hold:blob-read", Some("2")),
             ("fail:health-write", None),
             ("refuse:read", None),
             ("refuse:write", None),
@@ -745,6 +749,38 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    async fn waiting_after(faults: &Arc<Faults>, reaches: usize, point: &'static Point) -> u64 {
+        let tasks: Vec<_> = (0..reaches)
+            .map(|_| {
+                let faults = faults.clone();
+                tokio::spawn(async move { faults.hold(point, None).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiting = faults.list()[0].waiting;
+        faults.clear(None);
+        for task in tasks {
+            task.await.unwrap();
+        }
+        waiting
+    }
+
+    #[tokio::test]
+    async fn an_unnumbered_hold_holds_every_reach() {
+        for point in [HOLD_BLOB_READ, HOLD_BULK_PAGE, HOLD_WRITE] {
+            let faults = Arc::new(Faults::default());
+            faults.set(&format!("hold:{}", point.name), None).unwrap();
+            assert_eq!(waiting_after(&faults, 3, point).await, 3, "{}", point.name);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_numbered_hold_holds_only_that_reach() {
+        let faults = Arc::new(Faults::default());
+        faults.set("hold:blob-read", Some("2")).unwrap();
+        assert_eq!(waiting_after(&faults, 3, HOLD_BLOB_READ).await, 1);
     }
 
     #[tokio::test]

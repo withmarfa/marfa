@@ -41,7 +41,7 @@ fn assert_clean(result: Result<Reading, Refusal>, what: &str) {
                 "{what} panicked"
             );
         }
-        Err(Refusal::OverLimit(_)) => {}
+        Err(Refusal::OverLimit(..)) => {}
         Err(other) => panic!("{what}: {other:?}"),
     }
 }
