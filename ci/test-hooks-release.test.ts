@@ -39,7 +39,7 @@ describe("the test hooks and what is released", () => {
     // The environment the image sets, which is what an owner's server starts with.
     const set = [...dockerfile.matchAll(/^ENV\s+((?:.*\\\n)*.*)$/gm)]
       .flatMap((match) => match[1]?.replace(/\\\n/g, " ").split(/\s+/) ?? [])
-      .map((pair) => pair.split("=")[0])
+      .map((pair) => pair.split("=")[0] ?? "")
       .filter((name) => name !== "");
     // The witness: it reads the names the Dockerfile does set.
     expect(set).toContain("SQLITE_PATH");
