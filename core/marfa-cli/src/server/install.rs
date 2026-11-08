@@ -101,6 +101,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         (Runtime::Native, None) => Some(Manager::here()?),
     };
     let root_install = manager == Some(Manager::SystemdSystem);
+    if root_install {
+        account::check_group()?;
+    }
     files::admit_folder(
         &folder.dir,
         root_install,

@@ -60,6 +60,9 @@ fn upgrade_native(
     let target = env!("CARGO_PKG_VERSION").to_string();
     refuse_older(&state.release, &target)?;
     let service = service_of(state, folder, !out.json)?;
+    if state.manager == Some(Manager::SystemdSystem) {
+        super::account::check_group()?;
+    }
     if !service.exists() {
         return Err(CliError::Usage(format!(
             "{} does not exist: `marfa server install` makes it",
@@ -482,28 +485,17 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
 
 // ---- uninstall ----------------------------------------------------------
 
-/// Whether the data folder is the one this install made: the folder holds the
-/// `.env` of this command that names the install, and `data` is a folder of
-/// its own and not a link to somewhere else. Removing it takes nothing else.
-fn own_data(
-    folder: &Folder,
-    state: &State,
-    dotenv: &super::envfile::EnvFile,
-) -> Result<(), CliError> {
+/// Whether the data folder is the one this install made: the install folder
+/// still passes the check an install makes before it writes anything there
+/// (its owner, its mode and what it holds), and `data` is a folder of its own,
+/// not a link to somewhere else. Removing it takes nothing else.
+fn own_data(folder: &Folder, state: &State) -> Result<(), CliError> {
     let data = native::Layout::new(&folder.dir).data();
     files::admit_folder(
         &folder.dir,
         state.manager == Some(Manager::SystemdSystem),
         super::account::lookup(super::account::NAME).map(|identity| identity.gid),
     )?;
-    if dotenv.get("MARFA_NAME").as_deref() != Some(state.name.as_str())
-        || dotenv.get("MARFA_RUNTIME").as_deref() != Some(Runtime::Native.name())
-    {
-        return Err(CliError::Usage(format!(
-            "{} does not name this install, so its data is not deleted",
-            folder.path(files::DOTENV).display()
-        )));
-    }
     match std::fs::symlink_metadata(&data) {
         Ok(found) if found.is_dir() => Ok(()),
         Ok(_) => Err(CliError::Usage(format!(
@@ -518,7 +510,7 @@ fn own_data(
 pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args.dir)?;
-    let (state, dotenv) = folder.require_state()?;
+    let (state, _) = folder.require_state()?;
     let docker = Docker::new(!out.json);
     let service = match state.runtime {
         Runtime::Native => Some(service_of(&state, &folder, !out.json)?),
@@ -529,7 +521,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     };
     // What is deleted is found to be this install's before anything is stopped.
     if args.delete_data && state.runtime == Runtime::Native {
-        own_data(&folder, &state, &dotenv)?;
+        own_data(&folder, &state)?;
     }
     let volume = format!("{}-data", state.name);
     let net = format!("{}-net", state.name);
@@ -605,9 +597,6 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                     launchd::remove_logs(&state.name);
                 }
                 let data = native::Layout::new(&folder.dir).data();
-                // Checked again, because the account the server ran as could
-                // write to it while the service was stopping.
-                own_data(&folder, &state, &dotenv)?;
                 match std::fs::remove_dir_all(&data) {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

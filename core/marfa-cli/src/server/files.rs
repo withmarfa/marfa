@@ -4,7 +4,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use super::account::{self, Identity};
 use super::service::Manager;
@@ -256,16 +256,34 @@ fn is_ours(name: &str) -> bool {
 /// command made (it holds `.env`); a folder that also holds the settings file
 /// or the data of a restore is one too. Anything else is someone's, and this
 /// command writes nothing into it. When the server runs as the account, root
-/// must own the folder and nobody else can write to it, and every file the
-/// command keeps in it is root's.
+/// must own the folder and every folder above it, and nobody else can write to
+/// any of them. Otherwise the user running the command must own the folder
+/// and what a restore put in it, and nobody else can write to it. Every file
+/// the command keeps in it belongs to that owner.
 pub fn admit_folder(
     dir: &Path,
     root_install: bool,
     account_gid: Option<u32>,
 ) -> Result<(), CliError> {
+    // SAFETY: `geteuid` cannot fail.
+    admit(dir, root_install, account_gid, unsafe { libc::geteuid() })
+}
+
+fn admit(
+    dir: &Path,
+    root_install: bool,
+    account_gid: Option<u32>,
+    user: u32,
+) -> Result<(), CliError> {
     let found = match fs::symlink_metadata(dir) {
         Ok(found) => found,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return if root_install {
+                check_parents(dir, 0)
+            } else {
+                Ok(())
+            };
+        }
         Err(error) => return Err(error.into()),
     };
     if !found.is_dir() {
@@ -290,6 +308,21 @@ pub fn admit_folder(
                 dir.display()
             )));
         }
+        check_parents(dir, 0)?;
+    } else {
+        if found.uid() != user {
+            return Err(CliError::Usage(format!(
+                "{} belongs to another account (user {}), so this command will not install into it: choose another --dir",
+                dir.display(),
+                found.uid()
+            )));
+        }
+        if found.mode() & 0o022 != 0 {
+            return Err(CliError::Usage(format!(
+                "{} can be written by more than its owner, who could plant files in it: run `chmod go-w` on it, or choose another --dir",
+                dir.display()
+            )));
+        }
     }
     let mut names = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -303,29 +336,86 @@ pub fn admit_folder(
             dir.display()
         )));
     }
-    if root_install {
-        for name in [DOTENV, SETTINGS, UNCONFIRMED] {
-            let path = dir.join(name);
-            match fs::symlink_metadata(&path) {
-                Ok(found) if found.file_type().is_symlink() => return Err(refused_link(&path)),
-                Ok(found) if found.uid() != 0 => {
-                    return Err(CliError::Usage(format!(
-                        "{} belongs to another account, so this command will not use it: remove it, or choose another --dir",
-                        path.display()
-                    )));
-                }
-                _ => {}
+    // The account owns `data` in a root install; in any other, the user does.
+    let kept: &[&str] = if root_install {
+        &[DOTENV, SETTINGS, UNCONFIRMED]
+    } else {
+        &[DOTENV, SETTINGS, UNCONFIRMED, "data"]
+    };
+    let owner = if root_install { 0 } else { user };
+    for name in kept {
+        let path = dir.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(found) if found.file_type().is_symlink() => return Err(refused_link(&path)),
+            Ok(found) if found.uid() != owner => {
+                return Err(CliError::Usage(format!(
+                    "{} belongs to another account (user {}), so this command will not use it: remove it, or choose another --dir",
+                    path.display(),
+                    found.uid()
+                )));
             }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Checks that nobody but `trusted` and root can swap `dir` for a link: every
+/// folder from `/` down to it that exists belongs to one of them and is not
+/// writable by group or others, apart from root's sticky folders such as
+/// `/tmp`. Every later write goes by path, and `O_NOFOLLOW` guards only its
+/// last part. The path is expected to be real already; a link in it is refused.
+fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
+    let absolute = std::path::absolute(dir)?;
+    let mut current = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::RootDir | Component::Normal(_) => current.push(component),
+            Component::CurDir => continue,
+            _ => {
+                return Err(CliError::Usage(format!(
+                    "{} is not a normalized path: choose another --dir",
+                    dir.display()
+                )));
+            }
+        }
+        let found = match fs::symlink_metadata(&current) {
+            Ok(found) => found,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if found.file_type().is_symlink() {
+            return Err(CliError::Usage(format!(
+                "{} is a link, and the install folder lies below it: choose a --dir that does not pass through one",
+                current.display()
+            )));
+        }
+        if crate::local::foreign_owner(&found, trusted) {
+            return Err(CliError::Usage(format!(
+                "{} is not owned by root (it belongs to user {}), and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir, or give {} to root",
+                current.display(),
+                found.uid(),
+                current.display()
+            )));
+        }
+        if crate::local::open_to_others(&found) {
+            return Err(CliError::Usage(format!(
+                "{} can be written by group or others, and the install folder lies below it: they could swap the install folder for a link after it was checked. Run `chmod go-w {}`, or choose another --dir",
+                current.display(),
+                current.display()
+            )));
         }
     }
     Ok(())
 }
 
 /// Makes the folder a root install keeps (root's, group `marfa`, no access for
-/// anyone else) and its `data` folder, which is the account's alone. Root
-/// changes only what it made or checked itself, through descriptors: nothing
-/// inside `data` is touched, because the account controls it.
+/// anyone else), below folders only root can change, and its `data` folder,
+/// which is the account's alone. Root changes only what it made or checked
+/// itself, through descriptors: nothing inside `data` is touched, because the
+/// account controls it.
 pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError> {
+    check_parents(dir, 0)?;
     if let Some(parent) = dir.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -334,6 +424,7 @@ pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
+    check_parents(dir, 0)?;
     let folder = open_folder(dir)?;
     let found = folder.metadata()?;
     if found.uid() != 0 {
@@ -388,7 +479,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("marfa-files-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        dir
+        // The install folder's path is real by the time it is checked.
+        fs::canonicalize(dir).unwrap()
     }
 
     fn mode(path: &Path) -> u32 {
@@ -504,6 +596,137 @@ mod tests {
         if mine != 0 {
             let error = admit_folder(&dir, true, Some(988)).unwrap_err().to_string();
             assert!(error.contains("not owned by root"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_folder_above_the_install_folder_that_others_can_write_is_refused() {
+        let me = unsafe { libc::geteuid() };
+        let top = scratch("parents");
+        let parent = top.join("parent");
+        let dir = parent.join("marfa");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        // The witness: with the parent closed, the same path is accepted.
+        check_parents(&dir, me).unwrap();
+        for open in [0o775, 0o757, 0o777] {
+            fs::set_permissions(&parent, fs::Permissions::from_mode(open)).unwrap();
+            let error = check_parents(&dir, me).unwrap_err().to_string();
+            assert!(error.contains(&parent.display().to_string()), "{error}");
+            assert!(error.contains("written by group or others"), "{error}");
+        }
+        // The same when the install folder is there already.
+        fs::create_dir(&dir).unwrap();
+        assert!(check_parents(&dir, me).is_err());
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        check_parents(&dir, me).unwrap();
+    }
+
+    #[test]
+    fn a_folder_above_the_install_folder_that_another_account_owns_is_refused() {
+        let me = unsafe { libc::geteuid() };
+        let top = scratch("owner");
+        let dir = top.join("marfa");
+        fs::create_dir(&dir).unwrap();
+        // Nobody who is not trusted owns the folders above: from another
+        // account's point of view, this account is the stranger.
+        let error = check_parents(&dir, me.wrapping_add(1))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not owned by root"), "{error}");
+        check_parents(&dir, me).unwrap();
+    }
+
+    #[test]
+    fn a_link_above_the_install_folder_is_refused() {
+        let me = unsafe { libc::geteuid() };
+        let top = scratch("parent-link");
+        let real = top.join("real");
+        fs::create_dir(&real).unwrap();
+        let link = top.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let error = check_parents(&link.join("marfa"), me)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("is a link"), "{error}");
+        check_parents(&real.join("marfa"), me).unwrap();
+    }
+
+    #[test]
+    fn a_root_install_is_refused_below_a_folder_others_can_write() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let top = scratch("root-parents");
+        let error = admit_folder(&top.join("marfa"), true, Some(988))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not owned by root"), "{error}");
+    }
+
+    #[test]
+    fn a_folder_another_account_owns_is_not_installed_into() {
+        let me = unsafe { libc::geteuid() };
+        let dir = scratch("user-owner");
+        admit(&dir, false, None, me).unwrap();
+        let error = admit(&dir, false, None, me.wrapping_add(1))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("belongs to another account"), "{error}");
+    }
+
+    #[test]
+    fn a_folder_others_can_write_is_not_installed_into() {
+        let me = unsafe { libc::geteuid() };
+        let dir = scratch("user-open");
+        for open in [0o770, 0o707, 0o777] {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(open)).unwrap();
+            let error = admit(&dir, false, None, me).unwrap_err().to_string();
+            assert!(error.contains("written by more than its owner"), "{error}");
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        admit(&dir, false, None, me).unwrap();
+    }
+
+    #[test]
+    fn a_restore_that_another_account_owns_is_not_used() {
+        let me = unsafe { libc::geteuid() };
+        let dir = scratch("user-restore");
+        fs::write(dir.join("marfa.env"), "").unwrap();
+        fs::create_dir(dir.join("data")).unwrap();
+        admit(&dir, false, None, me).unwrap();
+        // Seen from another account, the folder and what is in it are strangers'.
+        let error = admit(&dir, false, None, me.wrapping_add(1))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("belongs to another account"), "{error}");
+        // A link where `data` should be is refused, not followed.
+        let linked = scratch("user-restore-link");
+        std::os::unix::fs::symlink(&dir, linked.join("data")).unwrap();
+        let error = admit(&linked, false, None, me).unwrap_err().to_string();
+        assert!(error.contains("symbolic link"), "{error}");
+    }
+
+    /// Needs root to chown, so it runs in the container that tests the root
+    /// install, and passes without doing anything elsewhere.
+    #[test]
+    fn a_file_or_data_of_a_restore_that_another_account_owns_is_not_used() {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        for name in ["marfa.env", "data"] {
+            let dir = scratch("user-restore-chown");
+            let path = dir.join(name);
+            if name == "data" {
+                fs::create_dir(&path).unwrap();
+            } else {
+                fs::write(&path, "").unwrap();
+            }
+            admit(&dir, false, None, 0).unwrap();
+            std::os::unix::fs::chown(&path, Some(41_003), None).unwrap();
+            let error = admit(&dir, false, None, 0).unwrap_err().to_string();
+            assert!(error.contains(&path.display().to_string()), "{error}");
+            assert!(error.contains("belongs to another account"), "{error}");
         }
     }
 
