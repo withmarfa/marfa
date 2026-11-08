@@ -1176,7 +1176,7 @@ Where a slice has a query, when an event shows that a row the copy holds, that i
 
 Where a slice's query has a filter, when an item event that carries no metadata names a row of a type and a tier the slice takes that the copy does not hold, and the event can bring the row into the copy, a device MUST read the row by id before it decides whether the query takes it.
 
-**Reason:** `item.deleted` and `item.purged` frames carry no metadata, so the event alone cannot say whether a row put in the bin is one the folder shows: every filter reads tags, its own terms or the conflicted copies it lets in (`device/slice-query-conflicted`). An event can bring the row in unless `device/catch-up-unknown-tags-unread` says it cannot.
+**Reason:** an event without metadata cannot say whether a row put in the bin is one the folder shows: every filter reads tags, its own terms or the conflicted copies it lets in (`device/slice-query-conflicted`). An event can bring the row in unless `device/catch-up-unknown-tags-unread` says it cannot.
 
 **Tests:** `device/folders-copy-shrink.test.ts › reads by id a row an event without its tags names, and holds it with the tags it read`.
 

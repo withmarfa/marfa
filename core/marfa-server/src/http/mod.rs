@@ -11,6 +11,7 @@ mod caller_address;
 mod compression;
 mod conditional;
 mod config;
+mod connectors;
 mod control;
 #[cfg(test)]
 mod document;
@@ -25,8 +26,10 @@ mod keys;
 pub mod listening;
 mod listing;
 mod lookup;
+mod mcp;
 mod oauth;
 pub mod observe;
+mod overview;
 pub mod pages;
 mod profile;
 mod query;
@@ -50,7 +53,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::Declaration;
+use crate::listener::{Declaration, Transport};
 use answer::{panicked, refusal_answer};
 use caller::identify;
 pub use listening::serve;
@@ -123,6 +126,12 @@ async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) ->
         return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await
+}
+
+fn overview_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/overview", get(overview::read))
+        .route_layer(from_fn_with_state(app, within_a_map))
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
@@ -219,6 +228,54 @@ fn config_doors() -> Routes {
         .route("/config/settings", get(config::settings))
 }
 
+/// Browser sessions confer no connector authority.
+async fn presented_only(request: Request, next: Next) -> Response {
+    let local = request
+        .extensions()
+        .get::<observe::RequestContext>()
+        .is_some_and(|context| context.transport == Transport::LocalSocket);
+    if !local && !caller::bears_token(request.headers()) {
+        return refusal_answer(&unauthorized());
+    }
+    next.run(request).await
+}
+
+fn connector_doors() -> Routes {
+    Doors::new()
+        .route(
+            "/connectors",
+            post(connectors::register).get(connectors::list),
+        )
+        .route(
+            "/connectors/{id}",
+            get(connectors::read).delete(connectors::remove),
+        )
+        .route("/connectors/{id}/heartbeat", post(connectors::heartbeat))
+        .route(
+            "/connectors/{id}/runs",
+            post(connectors::report_run).get(connectors::runs),
+        )
+        .route(
+            "/connectors/{id}/hold",
+            post(connectors::take_hold).delete(connectors::release_hold),
+        )
+        .route(
+            "/connectors/{id}/state",
+            get(connectors::state)
+                .put(connectors::replace_state)
+                .delete(connectors::clear_state),
+        )
+        .route(
+            "/connectors/{id}/agreements",
+            post(connectors::write_agreements).get(connectors::list_agreements),
+        )
+        .route(
+            "/connectors/{id}/agreements/lookup",
+            post(connectors::lookup_agreements),
+        )
+        .route_layer(from_fn(presented_only))
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/", get(root::describe))
@@ -233,6 +290,8 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
         .merge(blob_doors())
+        .merge(connector_doors())
+        .merge(overview_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
@@ -265,7 +324,10 @@ pub fn public(app: Arc<App>) -> Router {
 }
 
 fn public_doors(app: Arc<App>) -> Routes {
-    shared(app).merge(auth::doors()).merge(oauth::doors())
+    shared(app)
+        .merge(auth::doors())
+        .merge(oauth::doors())
+        .merge(mcp::doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {

@@ -29,6 +29,7 @@ use crate::app::access::{Caller, Level};
 use crate::app::blobs::Hash;
 use crate::app::blobs::references::{self, Decided, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
+use crate::app::connectors::ReadOnly;
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::faults::HOLD_BULK_PAGE;
@@ -252,6 +253,7 @@ pub fn apply(
     let job = Job {
         unit,
         catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+        read_only: unit.read_only()?,
         claim,
         server_own: false,
     };
@@ -270,6 +272,7 @@ pub(crate) fn apply_server_own(
     let job = Job {
         unit,
         catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+        read_only: unit.read_only()?,
         claim: None,
         server_own: true,
     };
@@ -481,13 +484,33 @@ struct Settled {
 }
 
 pub(super) fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
+    announce_held(
+        unit,
+        event_type,
+        item,
+        &metadata_text(unit.tx(), item, |_| true)?,
+    )
+}
+
+fn announce_held(
+    unit: &Unit<'_, '_>,
+    event_type: &'static str,
+    item: &Item,
+    metadata: &str,
+) -> Result<()> {
     unit.announce(&Event {
         event_type,
         item_id: &item.id,
         type_id: &item.type_id,
         source: &item.source,
-        payload: format!("{{\"item\":{}}}", item.logged()?),
+        payload: format!("{{\"item\":{},\"metadata\":{metadata}}}", item.logged()?),
     })
+}
+
+pub(super) fn purge(unit: &Unit<'_, '_>, item: &Item) -> Result<()> {
+    let metadata = metadata_text(unit.tx(), item, |_| true)?;
+    rows::purge(unit.tx(), item, &unit.at)?;
+    announce_held(unit, "item.purged", item, &metadata)
 }
 
 pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec<Item>> {
@@ -538,6 +561,7 @@ pub(crate) fn settle_late_part(
 struct Job<'a, 't, 'c> {
     unit: &'a Unit<'t, 'c>,
     catalog: Arc<Catalog>,
+    read_only: ReadOnly,
     claim: Option<&'a Claim>,
     server_own: bool,
 }
@@ -714,14 +738,19 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn answer(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
         self.answer_with(
             status,
-            item.answered(self.unit.tx(), self.caller())?,
+            item.answered(&self.read_only, self.caller())?,
             item,
             also,
         )
     }
 
     fn answer_edges(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
-        let shown = item.hydrated(self.unit.tx(), self.caller(), &self.catalog)?;
+        let shown = item.hydrated(
+            self.unit.tx(),
+            &self.read_only,
+            self.caller(),
+            &self.catalog,
+        )?;
         self.answer_with(status, shown, item, also)
     }
 
@@ -744,18 +773,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn announce_metadata(&self, item: &Item) -> Result<()> {
-        let tx = self.unit.tx();
-        self.unit.announce(&Event {
-            event_type: "metadata.changed",
-            item_id: &item.id,
-            type_id: &item.type_id,
-            source: &item.source,
-            payload: format!(
-                "{{\"item\":{},\"metadata\":{}}}",
-                item.logged()?,
-                metadata_text(tx, item, |_| true)?
-            ),
-        })
+        announce(self.unit, "metadata.changed", item)
     }
 
     /// Item doors fence `system.*` off from every key, so view doors ask write on `system.view`.
@@ -813,9 +831,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                     for (edge, source) in &purging.edges {
                         edges::purge_edge(self.unit, edge, source, &item.id)?;
                     }
-                    rows::purge(self.unit.tx(), item, &self.unit.at)?;
+                    purge(self.unit, item)?;
                     self.unit.audit("item", &item.id, None)?;
-                    self.announce("item.purged", item)?;
                 }
                 Ok(done_ok())
             }
@@ -1830,9 +1847,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 type_id: &item.type_id,
                 source: &item.source,
                 payload: format!(
-                    "{{\"item\":{},\"restored_with\":{},\
+                    "{{\"item\":{},\"metadata\":{},\"restored_with\":{},\
                      \"restored_with_type\":{}}}",
                     item.logged()?,
+                    metadata_text(self.unit.tx(), &item, |_| true)?,
                     Value::from(back.with),
                     Value::from(back.with_type)
                 ),
@@ -1948,9 +1966,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             for (edge, source) in &purging.edges {
                 edges::purge_edge(self.unit, edge, source, &item.id)?;
             }
-            rows::purge(self.unit.tx(), item, &self.unit.at)?;
+            purge(self.unit, item)?;
             self.unit.audit("item", &item.id, None)?;
-            self.announce("item.purged", item)?;
         }
         Ok(done_ok())
     }
