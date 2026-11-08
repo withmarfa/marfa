@@ -54,6 +54,12 @@ impl Map {
             .any(|level| Level::stored(level) > Level::None)
     }
 
+    pub fn grants_write(&self) -> bool {
+        self.0
+            .values()
+            .any(|level| Level::stored(level) == Level::Write)
+    }
+
     fn exact(&self, name: &str) -> Option<Level> {
         self.0.get(name).map(Level::stored)
     }

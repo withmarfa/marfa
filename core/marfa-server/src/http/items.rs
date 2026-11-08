@@ -347,12 +347,22 @@ pub(super) fn declared_type(body: &Map<String, Value>) -> Result<Option<String>>
 }
 
 fn put_of(body: &ReadBody) -> Result<Put> {
-    let object = body.object(Bag::Properties)?;
+    put_from(body.object(Bag::Properties)?, || {
+        body.refuse_inexact_numbers(Bag::Properties)
+    })
+}
+
+/// An item to put, from the fields a caller sent. `exact` refuses a number the body held too
+/// large to keep, where the caller sent text that could hold one.
+pub(super) fn put_from(
+    object: Map<String, Value>,
+    exact: impl FnOnce() -> Result<()>,
+) -> Result<Put> {
     let Some(type_id) = declared_type(&object)? else {
         return Err(missing_field("type"));
     };
     let mut sent = only_declared(object, &CREATE_FIELDS)?;
-    body.refuse_inexact_numbers(Bag::Properties)?;
+    exact()?;
     let properties = properties_of(&mut sent)?;
     let id = text_of(&sent, "id")?;
     if let Some(id) = &id {
@@ -422,14 +432,25 @@ fn cleared_refusal(error: RuleError) -> Refusal {
 }
 
 fn update_of(id: String, settle: Settle, body: &ReadBody) -> Result<Update> {
-    let sent = body.object(Bag::Properties)?;
+    update_from(id, settle, body.object(Bag::Properties)?, || {
+        body.refuse_inexact_numbers(Bag::Properties)
+    })
+}
+
+/// A change to an item, from the fields a caller sent; `exact` is as for `put_from`.
+pub(super) fn update_from(
+    id: String,
+    settle: Settle,
+    sent: Map<String, Value>,
+    exact: impl FnOnce() -> Result<()>,
+) -> Result<Update> {
     if !sent.contains_key("version") {
         return Err(missing_field("version"));
     }
     let version = version_of(&sent)?.unwrap_or_default();
     let mut sent = only_declared(sent, &UPDATE_FIELDS)?;
     check_item_id(&id)?;
-    body.refuse_inexact_numbers(Bag::Properties)?;
+    exact()?;
     let properties = properties_of(&mut sent)?;
     let clear = sent
         .get("clear_properties")

@@ -1,5 +1,6 @@
 //! Faults a test harness sets on a running server, each named for where it acts.
 
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -275,12 +276,60 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        "resolve" => {
+            if rest.is_empty()
+                || !rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+            {
+                return Err("a resolve fault is named for a host name".to_string());
+            }
+            answers(arg.ok_or("a resolve fault takes the addresses the host resolves to")?)?;
+            Ok((None, None))
+        }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job> or free:<volume>"
+             deadline:<job>, free:<volume> or resolve:<host>"
                 .to_string(),
         ),
     }
+}
+
+/// What one lookup of a host answers: the addresses a check judges, and the ones a connection
+/// reaches. The two differ only where a fault writes an address as `judged>reached`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub judged: Vec<IpAddr>,
+    pub reached: Vec<IpAddr>,
+}
+
+/// One answer for each lookup, separated by `;`, each a list of addresses separated by `,`.
+fn answers(arg: &str) -> Result<Vec<Resolved>, String> {
+    let refused = || {
+        format!(
+            "{arg} is not what a host resolves to: write the addresses of each lookup \
+             separated by ',', the lookups separated by ';', and an address as <judged>><reached> \
+             to judge one and reach another"
+        )
+    };
+    arg.split(';')
+        .map(|lookup| {
+            let mut resolved = Resolved {
+                judged: Vec::new(),
+                reached: Vec::new(),
+            };
+            for entry in lookup.split(',') {
+                let (judged, reached) = entry.split_once('>').unwrap_or((entry, entry));
+                resolved
+                    .judged
+                    .push(judged.trim().parse().map_err(|_| refused())?);
+                resolved
+                    .reached
+                    .push(reached.trim().parse().map_err(|_| refused())?);
+            }
+            Ok(resolved)
+        })
+        .collect()
 }
 
 struct Waiting(Arc<AtomicU64>);
@@ -434,6 +483,19 @@ impl Faults {
         }
         fault.fired += 1;
         true
+    }
+
+    /// The answer a `resolve:<host>` fault gives this lookup. The last answer repeats, and each
+    /// lookup counts as one firing.
+    pub fn resolve(&self, host: &str) -> Option<Resolved> {
+        let name = format!("resolve:{host}");
+        let mut armed = self.armed();
+        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        let lookups = answers(fault.arg.as_deref()?).ok()?;
+        let at = (fault.seen as usize).min(lookups.len().saturating_sub(1));
+        fault.seen = fault.seen.saturating_add(1);
+        fault.fired += 1;
+        lookups.into_iter().nth(at)
     }
 
     pub fn deadline(&self, job: &str) -> Option<Duration> {

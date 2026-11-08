@@ -19,7 +19,9 @@ pub mod idempotency;
 pub mod instance;
 pub mod items;
 pub mod keys;
+pub mod mcp;
 pub mod oauth;
+pub mod provenance;
 pub mod query;
 pub mod refusal;
 mod reindex;
@@ -64,6 +66,7 @@ pub struct App {
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
     pub blobs: Blobs,
+    pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
@@ -95,6 +98,8 @@ impl App {
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
+        let mcp = mcp::Mcp::new(&start.auth_secret)
+            .map_err(|refused| Failure::start(refused.to_string()))?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
         blobs.register(&db, at.clone()).await?;
@@ -126,6 +131,7 @@ impl App {
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
             blobs,
+            mcp,
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),

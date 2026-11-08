@@ -5,6 +5,7 @@ use super::App;
 use super::access::Caller;
 use super::audit::{self, Entry};
 use super::events::{self, Event};
+use super::provenance::{self, Origin};
 use super::refusal::Result;
 use crate::db::Write;
 
@@ -14,6 +15,7 @@ pub struct Unit<'t, 'c> {
     action: &'static str,
     pub caller: Caller,
     pub at: String,
+    origin: Origin,
 }
 
 impl<'c> Unit<'_, 'c> {
@@ -27,6 +29,7 @@ impl<'c> Unit<'_, 'c> {
             action,
             caller: self.caller.clone(),
             at: self.at.clone(),
+            origin: self.origin.clone(),
         }
     }
 
@@ -50,29 +53,31 @@ impl<'c> Unit<'_, 'c> {
         resource_id: &str,
         details: Option<Value>,
     ) -> Result<()> {
-        audit::record(
+        audit::record_from(
             self.tx,
             &self.at,
-            &self.caller,
+            Some(&self.caller),
+            self.origin.client_ip.as_deref(),
             Entry {
                 action,
                 resource_type,
                 resource_id: Some(resource_id),
-                details,
+                details: self.origin.mark(details),
             },
         )
     }
 
     pub fn audit_set(&self, resource_type: &str, details: Option<Value>) -> Result<()> {
-        audit::record(
+        audit::record_from(
             self.tx,
             &self.at,
-            &self.caller,
+            Some(&self.caller),
+            self.origin.client_ip.as_deref(),
             Entry {
                 action: self.action,
                 resource_type,
                 resource_id: None,
-                details,
+                details: self.origin.mark(details),
             },
         )
     }
@@ -88,6 +93,7 @@ impl App {
     {
         let caller = caller.clone();
         let clock = self.clock.clone();
+        let origin = provenance::current();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -102,6 +108,7 @@ impl App {
                     action,
                     caller,
                     at,
+                    origin,
                 })
             })
             .await

@@ -61,6 +61,22 @@ impl Caller {
         }
     }
 
+    /// Whether the type map grants `read` or `write` on at least one type.
+    pub fn reaches_a_type(&self) -> bool {
+        match self {
+            Caller::Key(key) | Caller::App { key, .. } => key.grants.map(Axis::Type).grants_any(),
+            _ => true,
+        }
+    }
+
+    /// Whether the type map grants `write` on at least one type.
+    pub fn writes_a_type(&self) -> bool {
+        match self {
+            Caller::Key(key) | Caller::App { key, .. } => key.grants.map(Axis::Type).grants_write(),
+            _ => true,
+        }
+    }
+
     /// Refused so that a read says nothing about what exists.
     pub fn require_reach(&self) -> Result<()> {
         match self {

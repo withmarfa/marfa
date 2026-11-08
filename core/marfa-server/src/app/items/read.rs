@@ -370,6 +370,45 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
     .await
 }
 
+/// An item's name and a short preview, as the caller may see them.
+#[derive(Clone, Debug)]
+pub struct Caption {
+    pub name: String,
+    pub preview: Option<String>,
+}
+
+/// A part is named after a host whose type the caller may read; an item the caller cannot
+/// read has no caption.
+pub async fn captions(
+    app: &App,
+    caller: &Caller,
+    ids: Vec<String>,
+) -> Result<HashMap<String, Caption>> {
+    reading(app, caller, move |read| {
+        let mut found = HashMap::new();
+        for id in ids {
+            let Some(row) = rows::by_id(read.tx, &id)? else {
+                continue;
+            };
+            if super::is_system(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
+                continue;
+            }
+            let shown = super::shown_of(read.tx, &read.catalog, &row, &|type_id| {
+                read.caller.may_read_type(type_id)
+            })?;
+            found.insert(
+                id,
+                Caption {
+                    name: shown.name.unwrap_or_else(|| super::UNTITLED.to_string()),
+                    preview: shown.preview,
+                },
+            );
+        }
+        Ok(found)
+    })
+    .await
+}
+
 pub async fn tag_counts(app: &App, caller: &Caller) -> Result<String> {
     reading(app, caller, move |read| {
         read.caller.require_reach()?;
