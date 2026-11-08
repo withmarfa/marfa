@@ -538,7 +538,7 @@ If an event's `timezone` is not the name of an IANA time zone, spelled as the IA
 
 **Reason:** a name in another case and a numeric offset name no zone, and a series keeps its local hour only in a named zone. The host's own zone never changes an answer.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `compliance/occurrences.test.ts › refuses a zone name in another case, naming the field`.
 
 ### `occurrences/schedule-end-zone`
 
