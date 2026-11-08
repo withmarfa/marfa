@@ -116,7 +116,7 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
     };
     let atomic = flag_of(&sent, "atomic")?.unwrap_or(true);
     let retype = flag_of(&sent, "retype")?.unwrap_or(false);
-    flag_of(&sent, "enable_fanout")?;
+    let fanout = flag_of(&sent, "enable_fanout")?.unwrap_or(false);
     let items = match sent.remove("items") {
         None => return Err(missing_field("items")),
         Some(Value::Array(items)) => items,
@@ -150,6 +150,7 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
         mode,
         atomic,
         retype,
+        fanout,
     })
 }
 

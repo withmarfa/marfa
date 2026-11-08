@@ -272,6 +272,25 @@ describe("a write that names an instance", () => {
     }
   });
 
+  it("refuses another instance on a conditional read before it judges the read's reach", async () => {
+    const read = { ids: [uuidv7()] };
+    for (const reach of ["not-a-reach", "0".repeat(64)]) {
+      const res = await send("/items/bulk-get", {
+        body: read,
+        headers: { [HEADER]: OTHER, "X-Marfa-Reach": reach },
+      });
+      expect(res.status, reach).toBe(409);
+      expect(await codeOf(res), reach).toBe("instance_changed");
+    }
+    // The witness: naming this instance, the malformed reach is the refusal.
+    const own400 = await send("/items/bulk-get", {
+      body: read,
+      headers: { [HEADER]: own, "X-Marfa-Reach": "not-a-reach" },
+    });
+    expect(own400.status).toBe(400);
+    expect(await codeOf(own400)).toBe("validation_error");
+  });
+
   it("refuses another instance on every write operation the document publishes outside /auth", async () => {
     const writes = (await publishedOperations()).filter(
       (op) => op.method !== "GET" && !/^\/auth(\/|$)/.test(op.path),

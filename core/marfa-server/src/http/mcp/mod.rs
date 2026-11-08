@@ -323,7 +323,9 @@ async fn only_post() -> Response {
 
 pub fn doors() -> super::Routes {
     use super::doors::{Doors, post as post_to};
-    Doors::new().route(PATH, post_to(post).get(only_post).delete(only_post))
+    Doors::new()
+        .route(PATH, post_to(post).get(only_post).delete(only_post))
+        .refusing(axum::http::Method::DELETE, PATH)
 }
 
 #[cfg(test)]
