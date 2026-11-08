@@ -20,7 +20,8 @@ use super::query::{Position, bad_cursor};
 use super::refusal::{Code, Refusal, Result};
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
-use store::Registration;
+pub(crate) use request::{Fields, Stray, invalid, missing, required, text};
+pub(crate) use store::Registration;
 
 const RUNS_KEPT: usize = 100;
 
@@ -39,7 +40,7 @@ fn held(expires_at: Option<&str>) -> Refusal {
     }
 }
 
-fn find(tx: &Transaction<'_>, id: &str) -> Result<Registration> {
+pub(crate) fn find(tx: &Transaction<'_>, id: &str) -> Result<Registration> {
     store::by_id(tx, id)?.ok_or_else(not_found)
 }
 
@@ -87,7 +88,7 @@ fn registration_json(tx: &Transaction<'_>, registration: &Registration, at: &str
     }))
 }
 
-async fn reading<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
+pub(crate) async fn reading<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&Transaction<'_>, &Caller, &str) -> Result<T> + Send + 'static,
@@ -148,6 +149,7 @@ pub async fn register(app: &App, caller: &Caller, request: Register) -> Result<(
             Some(json!({ "name": request.name, "created": created })),
         )?;
         let registration = find(tx, &id)?;
+        super::inbound::bind(tx, &registration.source, &registration.id)?;
         Ok((created, registration_json(tx, &registration, &unit.at)?))
     })
     .await
@@ -225,8 +227,8 @@ pub async fn report_run(app: &App, caller: &Caller, id: String, run: Run) -> Res
 /// Where a listing of runs or agreements continues from, read before anything is looked up.
 pub struct Window {
     scope: String,
-    limit: i64,
-    after: Option<(String, String)>,
+    pub(crate) limit: i64,
+    pub(crate) after: Option<(String, String)>,
 }
 
 impl Window {
@@ -248,7 +250,12 @@ impl Window {
         })
     }
 
-    fn next(&self, secret: &super::query::Secret, key: &str, id: &str) -> Result<String> {
+    pub(crate) fn next(
+        &self,
+        secret: &super::query::Secret,
+        key: &str,
+        id: &str,
+    ) -> Result<String> {
         let position = Position {
             keys: vec![Stored::Text(key.to_string())],
             id: id.to_string(),

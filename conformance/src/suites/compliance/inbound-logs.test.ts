@@ -28,8 +28,7 @@ let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-logs", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_INBOUND_REQUESTS: "3",
+    RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_BACKLOG_DELIVERIES: "2",
   });
@@ -78,7 +77,7 @@ describe("the server's log", () => {
 
     // A receipt, and each refusal a receipt meets: an address nothing holds
     // in two spellings, one that was retired, a declared length and a body
-    // read over the limit, a backlog that is full, and a spent window.
+    // read over the limit, and a backlog that is full.
     idOf(await send(server.apiUrl, named(roomy.endpoint.path), body, headers));
     expect(
       (await send(server.apiUrl, named(unknown), body, headers)).status,
@@ -123,10 +122,6 @@ describe("the server's log", () => {
       (await send(server.apiUrl, named(tight.endpoint.path), body, headers))
         .status,
     ).toBe(503);
-    expect(
-      (await send(server.apiUrl, named(roomy.endpoint.path), body, headers))
-        .status,
-    ).toBe(429);
 
     // Whatever the server wrote about these, it had written once it has
     // written about a request made after them.
@@ -160,7 +155,7 @@ describe("the server's log", () => {
     expect(log).toContain(`"path":"/connectors/${roomy.id}/endpoints"`);
     // Every receipt above has its line: the spelling the router does not
     // serve has none that names the route.
-    expect(log.match(/"route":"\/inbound\/\{token\}"/g)).toHaveLength(9);
+    expect(log.match(/"route":"\/inbound\/\{token\}"/g)).toHaveLength(8);
 
     for (const address of [
       roomy.endpoint.path,

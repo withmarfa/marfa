@@ -27,14 +27,14 @@ const STATE_FIELDS: [&str; 3] = ["process", "state", "problems"];
 const AGREEMENT_FIELDS: [&str; 3] = ["process", "set", "clear"];
 const LOOKUP_FIELDS: [&str; 1] = ["item_ids"];
 
-type Fields = Map<String, Value>;
+pub(crate) type Fields = Map<String, Value>;
 
-fn missing(field: &str) -> Refusal {
+pub(crate) fn missing(field: &str) -> Refusal {
     Refusal::new(Code::MissingRequiredField, format!("{field} is required."))
         .with_detail("field", field)
 }
 
-fn invalid(field: &str, message: impl Into<String>) -> Refusal {
+pub(crate) fn invalid(field: &str, message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into()).with_detail("field", field)
 }
 
@@ -49,11 +49,11 @@ fn characters(text: &str) -> usize {
     text.chars().count()
 }
 
-fn required<'a>(fields: &'a Fields, name: &str, path: &str) -> Result<&'a Value> {
+pub(crate) fn required<'a>(fields: &'a Fields, name: &str, path: &str) -> Result<&'a Value> {
     fields.get(name).ok_or_else(|| missing(path))
 }
 
-fn text(value: &Value, path: &str, most: usize, least: usize) -> Result<String> {
+pub(crate) fn text(value: &Value, path: &str, most: usize, least: usize) -> Result<String> {
     let held = value
         .as_str()
         .ok_or_else(|| invalid(path, format!("{path} must be text.")))?;
@@ -83,7 +83,7 @@ fn process(fields: &Fields, path: &str) -> Result<String> {
 pub struct Stray(Vec<String>);
 
 impl Stray {
-    fn of(fields: &Fields, declared: &[&str]) -> Stray {
+    pub(crate) fn of(fields: &Fields, declared: &[&str]) -> Stray {
         let mut stray: Vec<String> = fields
             .keys()
             .filter(|name| !declared.contains(&name.as_str()))
@@ -179,10 +179,17 @@ impl Take {
     }
 }
 
+/// A run time read from a body.
+enum Stamp {
+    Stored(String),
+    /// The name of a time whose UTC year is outside 0000 to 9999.
+    OutOfRange(String),
+}
+
 pub struct Run {
     pub succeeded: bool,
-    pub started_at: String,
-    pub finished_at: String,
+    started_at: Stamp,
+    finished_at: Stamp,
     pub summary: Option<String>,
     pub error: Option<String>,
     stray: Stray,
@@ -197,11 +204,19 @@ impl Run {
                 return Err(invalid("outcome", "outcome is succeeded or failed."));
             }
         };
-        let moment = |name: &str| -> Result<String> {
-            required(fields, name, name)?
+        // A time of the wrong shape is refused with the body's shape; one whose UTC year is out of
+        // range is judged with the other checks that follow the key.
+        let moment = |name: &str| -> Result<Stamp> {
+            let held = required(fields, name, name)?
                 .as_str()
-                .and_then(|held| time::rfc3339(held, name).ok())
-                .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))
+                .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))?;
+            match time::rfc3339(held, name) {
+                Ok(stored) => Ok(Stamp::Stored(stored)),
+                Err(_) if chrono::DateTime::parse_from_rfc3339(held).is_ok() => {
+                    Ok(Stamp::OutOfRange(name.to_string()))
+                }
+                Err(_) => Err(invalid(name, format!("{name} must be a timestamp."))),
+            }
         };
         let started_at = moment("started_at")?;
         let finished_at = moment("finished_at")?;
@@ -224,7 +239,14 @@ impl Run {
     /// The two times as stored, and the check that the run did not finish before it started.
     pub fn checked(&self) -> Result<(String, String)> {
         self.stray.refuse()?;
-        let (started, finished) = (self.started_at.clone(), self.finished_at.clone());
+        let stored = |stamp: &Stamp| match stamp {
+            Stamp::Stored(held) => Ok(held.clone()),
+            Stamp::OutOfRange(name) => Err(invalid(
+                name,
+                format!("{name}: the UTC year must be between 0000 and 9999."),
+            )),
+        };
+        let (started, finished) = (stored(&self.started_at)?, stored(&self.finished_at)?);
         if finished < started {
             return Err(invalid(
                 "finished_at",

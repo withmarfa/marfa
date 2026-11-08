@@ -80,6 +80,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let started = Instant::now();
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
+    let logged = crate::app::inbound::loggable(&path);
     let wants_html = asks_for_html(
         request
             .headers()
@@ -155,7 +156,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         .get::<Unhandled>()
         .map(|held| held.0.clone());
     if let Some(fault) = &fault {
-        log::unhandled(&request_id, &method, &path, route, &fault.message);
+        log::unhandled(&request_id, &method, &logged, route, &fault.message);
     }
     let status = response.status().as_u16();
     log::request(&log::Request {
@@ -163,7 +164,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         request_id: &request_id,
         method: &method,
         transport: transport.name(),
-        path: &path,
+        path: &logged,
         route,
         status,
         duration_ms: (started.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0,
@@ -176,7 +177,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         &Finished {
             request_id: &request_id,
             method: &method,
-            path: &path,
+            path: &logged,
             route,
             transport: observed.listener.transport.name(),
             status,

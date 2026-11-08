@@ -285,24 +285,15 @@ describe("the retained bytes of a registration, to the byte", () => {
     await server.stop();
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  /** The charge of a receipt: its body, the canonical text of what is stored
-   *  beside it, and thirty-two bytes. */
-  function charge(row: InboundDeliveryRow, source: string, body: Buffer) {
-    const metadata = {
-      id: row.id,
-      endpoint_id: row.endpoint_id,
-      source,
-      received_at: row.received_at,
-      method: row.method,
-      query: row.query,
-      headers: row.headers,
-      size: row.size,
-      sha256: row.sha256,
-      dedupe_key: null,
-      handled_at: null,
-      outcome: null,
-    };
-    return body.length + Buffer.byteLength(JSON.stringify(metadata)) + 32;
+  /** The charge of a receipt: its body, its query and each stored header's
+   *  name and value, in bytes. */
+  function charge(row: InboundDeliveryRow, body: Buffer) {
+    const headers = row.headers.reduce(
+      (sum, [name, value]) =>
+        sum + Buffer.byteLength(name) + Buffer.byteLength(value),
+      0,
+    );
+    return body.length + Buffer.byteLength(row.query) + headers;
   }
 
   it("takes a second receipt at exactly twice the charge of the first and refuses it one byte under", async () => {
@@ -317,7 +308,7 @@ describe("the retained bytes of a registration, to the byte", () => {
     idOf(await receipt(server.apiUrl));
     const [first] = await stored(owner);
     if (first === undefined) throw new Error("the first receipt was not kept");
-    const each = charge(first, owner.source, body);
+    const each = charge(first, body);
 
     // Two charges fit exactly, and one byte less does not take the second.
     await server.restart({
@@ -337,7 +328,7 @@ describe("the retained bytes of a registration, to the byte", () => {
     expect(kept).toHaveLength(2);
     const [, second] = kept;
     if (second === undefined) throw new Error("the second was not kept");
-    expect(charge(second, owner.source, body)).toBe(each);
+    expect(charge(second, body)).toBe(each);
 
     // Full: a third needs another charge.
     const third = await receipt(server.apiUrl);

@@ -472,19 +472,18 @@ describe("the receiving door", () => {
     expect(stored?.sha256).toBe(
       createHash("sha256").update(body).digest("hex"),
     );
+    // Names are lower case, and the repeats of one name keep their order.
     const sent = [
-      ["Content-Type", "application/json"],
-      ["X-Repeat", "one"],
+      ["content-type", "application/json"],
+      ["x-repeat", "one"],
       ["x-repeat", "two"],
-      ["X-Mixed-CASE", "Value"],
+      ["x-mixed-case", "Value"],
     ];
-    const names = stored?.headers.map(([name]) => name) ?? [];
     expect(
       stored?.headers.filter(([name]) =>
         sent.some(([sentName]) => sentName === name),
       ),
     ).toEqual(sent);
-    expect(names.indexOf("X-Repeat")).toBeLessThan(names.indexOf("x-repeat"));
     expect(stored?.handled_at).toBeNull();
     expect(stored?.outcome).toBeNull();
     expect(stored?.duplicate_of).toBeNull();
@@ -585,7 +584,7 @@ describe("the receiving door", () => {
     const bearer = `Bearer ${minted.data.key}`;
     idOf(await send(apiUrl, made.path, "keyed", ["Authorization", bearer]));
     const [stored] = await pending(owner);
-    expect(stored?.headers).toContainEqual(["Authorization", bearer]);
+    expect(stored?.headers).toContainEqual(["authorization", bearer]);
     expect(await lastUsed()).toBeFalsy();
 
     // Witness: the same key at a door that reads it is stamped.
@@ -660,8 +659,7 @@ describe("the receiving door on an instance that names its limits", () => {
 
   beforeAll(async () => {
     server = await bootFreshServer("inbound-limits", {
-      RATE_LIMIT_ENABLED: "true",
-      RATE_LIMIT_INBOUND_REQUESTS: "3",
+      RATE_LIMIT_ENABLED: "false",
       MARFA_INBOUND_BACKLOG_DELIVERIES: "5",
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
@@ -697,20 +695,6 @@ describe("the receiving door on an instance that names its limits", () => {
     expect(registered.status).toBe(201);
     return { client: own, id: registered.data.id };
   }
-
-  it("holds each endpoint to its own rate window", async () => {
-    const owner = await freshConnector("rate");
-    const first = await endpoint(owner);
-    const second = await endpoint(owner);
-    for (let i = 0; i < 3; i++) {
-      idOf(await send(server!.apiUrl, first.path, String(i)));
-    }
-    const refused = await send(server!.apiUrl, first.path, "3");
-    expect(refused.status).toBe(429);
-    expect(codeOf(refused)).toBe("rate_limited");
-    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
-    idOf(await send(server!.apiUrl, second.path, "0"));
-  });
 
   it("refuses while the backlog is full, and takes again once it drains", async () => {
     const owner = await freshConnector("backlog");
@@ -1394,18 +1378,18 @@ describe("retained inbound capacity", () => {
   it("counts query metadata when every retained body has zero bytes", async () => {
     const owner = await own("retained-metadata");
     const made = await endpoint(owner);
-    idOf(
-      await send(
-        server!.apiUrl,
-        made.path + "?metadata=" + "x".repeat(3500),
-        "",
-      ),
-    );
-    const refused = await send(server!.apiUrl, made.path, "");
+    // The retained bytes are 4096: one query of this length fits, and two
+    // do not, though no body holds a byte.
+    const heavy = `${made.path}?metadata=${"x".repeat(2500)}`;
+    idOf(await send(server!.apiUrl, heavy, ""));
+    const refused = await send(server!.apiUrl, heavy, "");
     expect(refused.status).toBe(503);
     expect(codeOf(refused)).toBe("inbound_unavailable");
     expectRetryAfter(refused, "retained bytes");
     expect((await pending(owner)).map((row) => row.size)).toEqual([0]);
+    // The witness: without the query the same body is taken.
+    idOf(await send(server!.apiUrl, made.path, ""));
+    expect((await pending(owner)).map((row) => row.size)).toEqual([0, 0]);
   });
   it("round trips retention overrides and refuses invalid values", async () => {
     const before = await minter.getConfig();

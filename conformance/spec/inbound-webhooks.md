@@ -10,7 +10,7 @@ An endpoint belongs to one source. The source's current registration exposes its
 
 ### `inbound-webhooks/endpoint-created`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints`, the server MUST answer `201` with the endpoint's `id`, `connector_id`, `label`, `duplicate_header`, `path`, `created_at` and `retired_at`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`.
 
@@ -58,6 +58,14 @@ If a key or app token that is not the connector's own and lacks `connectors.mana
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses another key, an unknown registration and a header that is no header name`.
 
+### `inbound-webhooks/owner-session-ignored`
+
+If a request to an operation under `/connectors/{id}/endpoints` or `/connectors/{id}/deliveries` presents an owner's browser session cookie and no other credential, then the server MUST answer `401 unauthorized` and leave the registration's endpoints and deliveries as they were.
+
+**Reason:** the owner acts on connectors through the private control socket, so a cookie, which a web page can send without the owner's knowing which door it reaches, is ignored on every inbound door this chapter states, as `connectors/owner-session-ignored` says of the connector doors.
+
+**Tests:** `compliance/connectors.test.ts › answers an owner session cookie 401 on every connector door, where the private socket keeps the owner's reach`.
+
 ### `inbound-webhooks/endpoint-unknown-registration`
 
 If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an id no registration carries, then the server MUST answer `404 connector_not_found`.
@@ -66,7 +74,7 @@ If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELET
 
 ### `inbound-webhooks/endpoint-list`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/endpoints`, the server MUST list every endpoint of the registration, the retired ones included.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › makes an endpoint for the connector's own key and the manager, answering its address once`, `› retires an endpoint, after which its address is not served`.
 
@@ -78,7 +86,7 @@ When the server lists endpoints, the server MUST list the newest endpoint first.
 
 ### `inbound-webhooks/endpoint-list-whole`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
 
 **Reason:** the operation takes no `limit` and no `cursor`.
 
@@ -92,7 +100,7 @@ If a registration holds ten live endpoints and the server would otherwise take a
 
 ### `inbound-webhooks/order-body-before-endpoint-limit`
 
-If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
+If the connector's own key or a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints` with a body the operation refuses `400` to a registration that holds ten live endpoints, then the server MUST answer the `400` and not `409 conflict`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a body the door refuses 400 before the limit of ten live endpoints' 409`.
 
@@ -110,7 +118,7 @@ When twenty requests to `POST /connectors/{id}/endpoints` arrive at once for a r
 
 ### `inbound-webhooks/endpoint-key-dead`
 
-If the key of a registration is revoked or past its `expires_at` when a caller authorized by `connectors.manage` or direct owner or local authority sends `POST /connectors/{id}/endpoints`, then the server MUST answer `409 conflict` with `details.key_id` naming the key, and make no endpoint.
+If the key of a registration is revoked or past its `expires_at` when a caller authorized by `connectors.manage` or local authority sends `POST /connectors/{id}/endpoints`, then the server MUST answer `409 conflict` with `details.key_id` naming the key, and make no endpoint.
 
 **Reason:** an address on such a registration answers `404` for as long as its key stays dead (`inbound-webhooks/address-key-revoked`), so a `201` would hand out an address that never works.
 
@@ -118,7 +126,7 @@ If the key of a registration is revoked or past its `expires_at` when a caller a
 
 ### `inbound-webhooks/endpoint-retire`
 
-When the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
+When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` for an endpoint the registration holds, the server MUST answer `200` with the endpoint and its `retired_at` set.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`.
 
@@ -136,7 +144,7 @@ When `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an endpoint that is
 
 ### `inbound-webhooks/endpoint-retire-unknown`
 
-If the connector's own key or a caller authorized by `connectors.manage` or direct owner or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
+If the connector's own key or a caller authorized by `connectors.manage` or local authority sends `DELETE /connectors/{id}/endpoints/{endpoint_id}` naming an endpoint the registration does not hold, another registration's endpoint included, then the server MUST answer `404 endpoint_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › retires an endpoint, after which its address is not served`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
@@ -212,7 +220,9 @@ When the server stores a delivery, the server MUST store the query string as the
 
 ### `inbound-webhooks/receipt-headers`
 
-When the server stores a delivery, the server MUST store every header the request carried, except one `inbound-webhooks/receipt-no-tailscale` names, in the order and the case it arrived with, repeats kept.
+When the server stores a delivery, the server MUST store every header the request carried, except one `inbound-webhooks/receipt-no-tailscale` names, as a `[name, value]` pair with its name in lower case, repeats kept, the repeats of one name in the order they arrived.
+
+**Reason:** header names are case-insensitive, and only the order of one name's repeats changes what a header says. A connector reads a header by its name without regard to case.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › stores the body byte for byte, the headers as they arrived and the query as sent`, `› leaves out the identity headers a Tailscale proxy adds, and stores every other header`.
 
@@ -352,7 +362,7 @@ Each endpoint has a window of its own, so a busy sender of one endpoint does not
 
 While the limiter is on, if an endpoint's address receives more requests in one window than `RATE_LIMIT_INBOUND_REQUESTS`, 600 unless named, then the server MUST answer the request past the count `429 rate_limited`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-counts-every-request`
 
@@ -376,13 +386,13 @@ While the limiter is on, the server MUST end an endpoint's window after `RATE_LI
 
 When the server answers `429 rate_limited` to a request to an inbound address, the server MUST carry a `Retry-After` of the seconds left in the endpoint's window.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ### `inbound-webhooks/rate-own-window`
 
 While the limiter is on, the server MUST hold each endpoint to a window of its own, another endpoint of the same registration included.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ## What a registration may hold
 
@@ -504,9 +514,9 @@ If a receipt's charge would take the bytes a registration retains past `MARFA_IN
 
 ### `inbound-webhooks/retained-charge`
 
-When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `source`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, `dedupe_key` as the value the delivery carries in its endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
+When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of its query string, plus the UTF-8 lengths of the name and the value of each header it stores.
 
-**Reason:** the 32 bytes are kept for the marks a handled delivery gains, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
+**Reason:** the charge is what the delivery stores, so a registration's retained bytes bound what it holds. A mark made later changes no stored length, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
 
 **Tests:** `compliance/inbound-bounds.test.ts › takes a second receipt at exactly twice the charge of the first and refuses it one byte under`, `compliance/inbound-webhooks.test.ts › counts query metadata when every retained body has zero bytes`.
 
@@ -908,13 +918,13 @@ An address is a credential, so a log that anyone can read must not hold one.
 
 When the server logs a request to an inbound address, the server MUST write its path as `/inbound/****` and the last four characters of the address.
 
-**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-rate-limit.test.ts › writes the address of a request the window refuses as it writes any other, redacted`.
 
 ### `inbound-webhooks/log-address-hidden`
 
 When the server logs a request to an inbound address, the server MUST NOT write any character of the address but its last four, whatever the case of `/inbound/` in the request, whether a delivery was stored or refused.
 
-**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-rate-limit.test.ts › writes the address of a request the window refuses as it writes any other, redacted`.
 
 ### `inbound-webhooks/log-no-content`
 
@@ -948,13 +958,13 @@ If a request posts to an address no live endpoint holds, then the server MUST an
 
 **Reason:** an address that is not live is told nothing about the instance's state.
 
-**Tests:** `compliance/inbound-check-order.test.ts › answers an address no live endpoint holds 404 before the rate window and the declared length`.
+**Tests:** `compliance/inbound-check-order.test.ts › answers an address no live endpoint holds 404 before the backlog and the declared length`, `compliance/inbound-rate-limit.test.ts › answers an address no live endpoint holds 404 before the rate window`.
 
 ### `inbound-webhooks/order-window-before-backlog`
 
 While the limiter is on, if a request is past an endpoint's window and its registration's backlog of deliveries is full, then the server MUST answer `429 rate_limited`.
 
-**Tests:** `compliance/inbound-check-order.test.ts › answers the rate window's 429 before the backlog's 503`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › answers the rate window's 429 before the backlog's 503`.
 
 ### `inbound-webhooks/order-backlog-before-length`
 
@@ -1026,16 +1036,16 @@ When the current registration for a source is removed, the server MUST remove th
 
 If the registration binding changes while an inbound body arrives, then the server MUST answer `404 not_found`.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses an already arriving body after a takeover`.
 
 ### `inbound-webhooks/source-binding-no-receipt`
 
 If the registration binding changes while an inbound body arrives, then the server MUST NOT store a delivery for that request.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses an already arriving body after a takeover`.
 
 ### `inbound-webhooks/source-limits-preserved`
 
 When a source's registration changes, the server MUST keep its endpoint rate windows, source capacity accounting, stored receipt charges and retention ages unchanged.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`, `› keeps source endpoint and retained capacity across registration replacement`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › keeps the endpoint's window when a successor key takes its source over`, `compliance/inbound-source-continuity.test.ts › keeps source endpoint and retained capacity across registration replacement`.

@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use super::super::{enrichment, items, oauth};
+use super::super::{enrichment, inbound, items, oauth};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
     AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
     ENRICHMENT_INTERVAL_MS, EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS,
-    HEARTBEAT_INTERVAL_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS, REVOKED_KEY_REAP_INTERVAL_MS,
-    TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
+    HEARTBEAT_INTERVAL_MS, INBOUND_CLEANUP_INTERVAL_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    REVOKED_KEY_REAP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
 };
 
 const HOUR: Duration = Duration::from_secs(3_600);
@@ -66,6 +66,13 @@ pub(super) const JOBS: &[Job] = &[
         10_000,
         HOUR,
         |app, run| Box::pin(cleanups::event_log(app, run)),
+    ),
+    Job::new(
+        "inbound-delivery-cleanup",
+        INBOUND_CLEANUP_INTERVAL_MS,
+        15_000,
+        HOUR,
+        |app, run| Box::pin(inbound::delivery_cleanup(app, run)),
     ),
     Job::new(
         "rate-limit-cleanup",

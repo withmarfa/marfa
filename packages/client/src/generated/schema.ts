@@ -5084,7 +5084,7 @@ export interface components {
             method: string;
             /** @description The query string as the sender sent it, without the `?`; empty if there was none. */
             query: string;
-            /** @description `[name, value]` pairs in the order and case they arrived, without any header whose name begins with `Tailscale-`. */
+            /** @description `[name, value]` pairs with each name in lower case and the repeats of one name in the order they arrived, without any header whose name begins with `tailscale-`. */
             headers: [
                 string,
                 string

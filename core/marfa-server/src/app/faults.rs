@@ -88,6 +88,8 @@ points! {
     FAIL_SESSION_USE = Fail "session-use" Nth;
     FAIL_BLOB_WRITE = Fail "blob-write" Nth;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+    FAIL_INBOUND_RECEIPT = Fail "inbound-receipt" Nth;
+    FAIL_INBOUND_CLEANUP = Fail "inbound-cleanup" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
     REFUSE_WRITE_LOCK = Refuse "write-lock" None;

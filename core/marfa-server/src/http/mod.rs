@@ -21,6 +21,7 @@ mod edges;
 mod events;
 mod health;
 mod housekeeping;
+mod inbound;
 mod items;
 mod keys;
 pub mod listening;
@@ -272,6 +273,23 @@ fn connector_doors() -> Routes {
             "/connectors/{id}/agreements/lookup",
             post(connectors::lookup_agreements),
         )
+        .route(
+            "/connectors/{id}/endpoints",
+            post(inbound::create_endpoint).get(inbound::list_endpoints),
+        )
+        .route(
+            "/connectors/{id}/endpoints/{endpoint_id}",
+            delete(inbound::retire_endpoint),
+        )
+        .route("/connectors/{id}/deliveries", get(inbound::list_deliveries))
+        .route(
+            "/connectors/{id}/deliveries/handled",
+            post(inbound::mark_handled),
+        )
+        .route(
+            "/connectors/{id}/deliveries/{delivery_id}/body",
+            get(inbound::delivery_body),
+        )
         .route_layer(from_fn(presented_only))
 }
 
@@ -322,8 +340,17 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// A sender posts here with no credential: the address is the credential. It sits in a group of
+/// its own so nothing a credentialed door is held to reaches it.
+fn sender_doors() -> Routes {
+    Doors::new().route("/inbound/{token}", post(inbound::receive))
+}
+
 fn public_doors(app: Arc<App>) -> Routes {
-    shared(app).merge(auth::doors()).merge(oauth::doors())
+    shared(app)
+        .merge(auth::doors())
+        .merge(oauth::doors())
+        .merge(sender_doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {

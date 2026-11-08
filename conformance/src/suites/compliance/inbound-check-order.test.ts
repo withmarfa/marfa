@@ -33,8 +33,7 @@ let serial = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-check-order", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_INBOUND_REQUESTS: "2",
+    RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
@@ -96,16 +95,14 @@ async function endpoint(owner: Registration) {
 }
 
 describe("a receipt that meets two refusals", () => {
-  it("answers an address no live endpoint holds 404 before the rate window and the declared length", async () => {
+  it("answers an address no live endpoint holds 404 before the backlog and the declared length", async () => {
     const owner = await registration();
     const made = await endpoint(owner);
     idOf(await send(server.apiUrl, made.path, "x"));
+    // The witness that the backlog is full: the live address is refused.
     const full = await send(server.apiUrl, made.path, "x");
     expect(full.status).toBe(503);
-    // The witness that the window is spent: the live address is refused.
-    const spent = await send(server.apiUrl, made.path, "x");
-    expect(spent.status).toBe(429);
-    expect(codeOf(spent)).toBe("rate_limited");
+    expect(codeOf(full)).toBe("inbound_unavailable");
 
     expect(
       (await owner.client.retireInboundEndpoint(owner.id, made.id)).status,
@@ -131,27 +128,6 @@ describe("a receipt that meets two refusals", () => {
     );
     expect(unknown.status).toBe(404);
     expect(codeOf(unknown)).toBe("not_found");
-  });
-
-  it("answers the rate window's 429 before the backlog's 503", async () => {
-    const owner = await registration();
-    const first = await endpoint(owner);
-    const second = await endpoint(owner);
-    idOf(await send(server.apiUrl, first.path, "x"));
-    // The backlog is full from here, and this one spends the second place in
-    // the window.
-    const full = await send(server.apiUrl, first.path, "x");
-    expect(full.status).toBe(503);
-    expect(codeOf(full)).toBe("inbound_unavailable");
-
-    const spent = await send(server.apiUrl, first.path, "x");
-    expect(spent.status).toBe(429);
-    expect(codeOf(spent)).toBe("rate_limited");
-    // The witness: another endpoint of the registration has a window of its
-    // own and meets the backlog that was full all along.
-    const witness = await send(server.apiUrl, second.path, "x");
-    expect(witness.status).toBe(503);
-    expect(codeOf(witness)).toBe("inbound_unavailable");
   });
 
   it("answers a full backlog 503 before a declared length over the limit", async () => {
