@@ -358,5 +358,6 @@ fn a_request_nothing_serves_is_answered_in_the_envelope() {
     assert!(head.ends_with("\r\n\r\n"), "{head}");
 
     let options = server.public(&request("OPTIONS", "/health", b""));
-    assert_eq!(status(&options), 204);
+    assert_eq!(status(&options), 404);
+    assert!(has_code(&options, "not_found"), "{options}");
 }
