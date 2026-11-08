@@ -1888,6 +1888,27 @@ marfa config update [OPTIONS]
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
 
+### marfa config settings
+
+Every stored setting with its value, default and rule, and the settings only the environment sets. Needs `config.manage` or `instance.read`.
+
+```text
+marfa config settings [OPTIONS]
+```
+
+### marfa config check-address
+
+What changing the addresses would do and whether a write needs confirming; nothing is written. Needs `config.manage`.
+
+```text
+marfa config check-address [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
 ## export
 
 Export the instance's data.
