@@ -62,6 +62,11 @@ pub enum SetupCommand {
         /// Print the handoff link without opening a browser.
         #[arg(long)]
         no_browser: bool,
+        /// The address devices sign in at, such as `https://marfa.example.com`.
+        /// The server holds it, and the link is at it, so it is set first
+        /// unless the server holds it already.
+        #[arg(long, value_name = "URL")]
+        address: Option<String>,
     },
     /// Claim the instance. Password and remote setup code use hidden prompts or structured stdin.
     Claim(ClaimArgs),
@@ -78,6 +83,11 @@ pub struct ClaimArgs {
     /// Read JSON containing email, password, optional name, and code for a remote claim.
     #[arg(long, conflicts_with_all=["email","name"])]
     pub stdin: bool,
+    /// The address devices sign in at, such as `https://marfa.example.com`.
+    /// Private socket only. It is set on the server first, unless the server
+    /// holds it already.
+    #[arg(long, value_name = "URL")]
+    pub address: Option<String>,
 }
 
 fn input(stdin: bool) -> Result<Value, CliError> {
@@ -106,6 +116,20 @@ fn require_local(remote: &Remote) -> Result<(), CliError> {
             "this operation requires --socket PATH".into(),
         ))
     }
+}
+
+/// Sets the sign-in address before the link or the claim that depends on it.
+/// Giving the address is the confirmation of the move.
+fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<(), CliError> {
+    let Some(address) = address else {
+        return Ok(());
+    };
+    if let Some(set) = crate::server::address::ensure(remote, address)?
+        && !out.json
+    {
+        eprintln!("Set the sign-in address to {set}.");
+    }
+    Ok(())
 }
 
 pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -182,8 +206,12 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             require_local(remote)?;
             out.value(&remote.json(&Request::post(&["_control", "setup", "code"]))?)
         }
-        SetupCommand::Open { no_browser } => {
+        SetupCommand::Open {
+            no_browser,
+            address,
+        } => {
             require_local(remote)?;
+            set_address(remote, address.as_deref(), out)?;
             let result = remote.json(&Request::post(&["_control", "setup", "ticket"]))?;
             let link = result
                 .get("url")
@@ -203,6 +231,10 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             out.value(&result)
         }
         SetupCommand::Claim(args) => {
+            if args.address.is_some() {
+                require_local(remote)?;
+            }
+            set_address(remote, args.address.as_deref(), out)?;
             if !remote.is_local() {
                 let url = url::Url::parse(remote.url())
                     .map_err(|_| CliError::Invalid("invalid setup URL".into()))?;

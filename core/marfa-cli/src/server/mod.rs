@@ -1,79 +1,118 @@
-//! `marfa server`: a Marfa server on this machine, in Docker.
+//! `marfa server`: a Marfa server on this machine, run natively or in Docker.
 //!
-//! The install is a folder holding a Compose file that is the same for every
-//! install, `.env` for Compose (name, release, port, how the server is
-//! reached) and `marfa.env` for the server (its secrets and address). Every
-//! command works from those files, so running one again changes only what is
-//! not already as asked, and the folder works with `docker compose` alone.
+//! The install is a folder holding `.env` (name, release, port, runtime, how
+//! the server is reached) and `marfa.env` (what the server reads: its secrets
+//! and how it trusts a proxy). A Docker install also holds a Compose file that
+//! is the same for every install. Every command works from those files, so
+//! running one again changes only what is not already as asked.
 
-mod boot;
+mod account;
+pub(crate) mod address;
 mod docker;
 mod envfile;
 mod files;
+mod install;
+mod launchd;
+mod lifecycle;
+mod logs;
+mod names;
+mod native;
 mod prompt;
+mod run;
+mod service;
+mod systemd;
 mod tailscale;
 
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
-use serde_json::json;
 
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::style::{self, Stream};
-use docker::Docker;
 use envfile::EnvFile;
-use prompt::Prompter;
+use service::Manager;
 
 const DEFAULT_PORT: u16 = 8600;
 const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 const CLOUDFLARE_HEADER: &str = "CF-Connecting-IP";
+const ROOT_DIR: &str = "/var/lib/marfa-server";
 const AGENT_HINT: &str =
     "To give an AI agent access to this server, run `marfa docs build/ai-agents`.";
-const OPTIONS_HINT: &str = "Options, all optional: --dir <folder> to install somewhere else, --port <port> for the port on this machine, --name <name> to run more than one, --external-settings when a secrets manager writes marfa.env. `marfa server install --help` lists them all.";
+const OPTIONS_HINT: &str = "Options, all optional: --dir <folder> to install somewhere else, --port <port> for the port on this machine, --name <name> to run more than one, --docker to run the server in Docker, --external-settings when a secrets manager writes marfa.env. `marfa server install --help` lists them all.";
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
     /// Set up a server on this machine and print the link that claims it.
     ///
-    /// Needs Docker with Compose. It writes a Compose file and two settings
-    /// files into `--dir`, makes the server's two secrets once and keeps them
-    /// in `marfa.env`, which only you can read, starts the pinned release with
-    /// a restart policy, and prints the one-time setup link. It never prints a
-    /// secret. Running it again changes only what is not already as asked, and
-    /// never a secret.
+    /// The server runs as a service of this machine, without Docker: a
+    /// launchd agent on a Mac, and a systemd service on Linux (in your own
+    /// account, or as the `marfa` account when root runs this). Use
+    /// `--docker` to run the release's image in Docker instead.
+    ///
+    /// It writes two settings files into `--dir`, makes the server's two
+    /// secrets once and keeps them in `marfa.env`, which only you can read,
+    /// starts the service, and prints the one-time setup link. It never prints
+    /// a secret. Running it again changes only what is not already as asked,
+    /// and never a secret or the runtime.
     ///
     /// It asks how the server is reached, because that decides which caller
-    /// address the server believes. Every question has a flag, and `--yes` or
-    /// a non-terminal answers none: the flag or the default is used.
+    /// address the server believes and the address people sign in at. Every
+    /// question has a flag, and `--yes` or a non-terminal answers none: the
+    /// flag or the default is used.
     Install(InstallArgs),
-    /// Move the server to a release, which updates its database in place.
+    /// Move the server to the release now installed, and update its database.
     ///
-    /// Moves to the release you name, or to this binary's own. A release
-    /// whose database schema is newer copies the database beside it first,
-    /// then updates it, and this command says where the copy is. It refuses
-    /// an older release than the one installed, because an older release
-    /// does not know what a newer one changed in the database.
+    /// A native server runs the `marfa-server` installed beside this `marfa`,
+    /// so install the release you want first (Homebrew, or the install
+    /// script), then run this. A Docker install moves to the release you name
+    /// with `--release`, or to this binary's own. A release whose database
+    /// schema is newer copies the database beside it first, then updates it.
+    /// It refuses an older release than the one installed, because an older
+    /// release does not know what a newer one changed in the database.
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
-    Status(DirArgs),
-    /// Bring the server up: start Docker's engine if it is down (on a Mac),
-    /// then the container. What the login agent runs.
-    Start(StartArgs),
-    /// Stop the server and remove its container, keeping its data.
     ///
-    /// The data volume, the settings and the secrets stay, so `install`
-    /// brings the same server back. `--delete-data` removes the volume too.
+    /// When the server is not running, it shows the end of its log.
+    Status(DirArgs),
+    /// Start the server, if it is not running.
+    ///
+    /// On a Mac with a Docker install, this starts Docker's engine first if it
+    /// is down: it is what the login agent runs.
+    Start(StartArgs),
+    /// Stop the server, keeping the service, its data and its settings.
+    Stop(DirArgs),
+    /// Run the server in the foreground. This is what the service runs.
+    ///
+    /// It starts the `marfa-server` of the same release as this `marfa`, with
+    /// the settings in `--dir` (the data below it, and the port from `.env`);
+    /// without `--dir` it uses the settings in its own environment, as the
+    /// container does. It passes a stop on to the server and ends with its
+    /// status. On a Mac it keeps the server's output in
+    /// `~/Library/Logs/Marfa`. A server that refuses its database is not
+    /// started again: this command says so and waits until it is stopped.
+    Run(RunArgs),
+    /// Remove the service, keeping its data and settings.
+    ///
+    /// The data, the settings and the secrets stay, so `install` brings the
+    /// same server back. `--delete-data` removes the data folder (or the
+    /// Docker volume) and `marfa.env` too.
     Uninstall(UninstallArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct DirArgs {
     /// The folder the install lives in. The default is `marfa-server` in your
-    /// home directory.
+    /// home directory, and `/var/lib/marfa-server` for root on Linux.
     #[arg(long, value_name = "PATH")]
     dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RunArgs {
+    #[command(flatten)]
+    dir: DirArgs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -96,16 +135,46 @@ impl Access {
     }
 }
 
+/// Where the server runs, which an install keeps for as long as it exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Runtime {
+    Native,
+    Docker,
+}
+
+impl Runtime {
+    fn name(self) -> &'static str {
+        match self {
+            Runtime::Native => "native",
+            Runtime::Docker => "docker",
+        }
+    }
+
+    fn parse(name: &str) -> Option<Runtime> {
+        [Runtime::Native, Runtime::Docker]
+            .into_iter()
+            .find(|runtime| runtime.name() == name)
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct InstallArgs {
     #[command(flatten)]
     dir: DirArgs,
-    /// What this install is called: the container, the data volume and the
-    /// Compose project are named from it. The default is `marfa`.
+    /// What this install is called: the service, the container and the data
+    /// volume are named from it. The default is `marfa`.
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
-    /// The release to run, such as `0.0.22`. The default is this binary's own
-    /// version, and for a server already installed, the release it runs.
+    /// Run the server in Docker, from the release's image, in place of as a
+    /// service of this machine. Needs Docker with Compose. An install keeps
+    /// its runtime: to change it, export the data and restore it into a new
+    /// install.
+    #[arg(long)]
+    docker: bool,
+    /// The release of the image to run, such as `0.0.22`, for `--docker`. The
+    /// default is this binary's own version, and for a server already
+    /// installed, the release it runs. A native server runs the release
+    /// installed beside this `marfa`.
     #[arg(long, value_name = "VERSION")]
     release: Option<String>,
     /// How the server is reached. Asked when not given. `local`: only this
@@ -116,8 +185,10 @@ pub struct InstallArgs {
     /// address.
     #[arg(long, value_enum)]
     access: Option<Access>,
-    /// The address devices use, such as `https://marfa.example.com`. Needed
-    /// for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale.
+    /// The address devices sign in at, such as `https://marfa.example.com`.
+    /// Needed for `cloudflare` and `proxy`; `tailscale` reads it from
+    /// Tailscale. The server holds it, and a link to set up the server is at
+    /// it.
     #[arg(long, value_name = "URL")]
     address: Option<String>,
     /// The port on this machine's loopback address. The default is 8600, or
@@ -127,36 +198,20 @@ pub struct InstallArgs {
     /// The port Tailscale serves on, for `--access tailscale`. The default is 443.
     #[arg(long, value_name = "PORT")]
     https_port: Option<u16>,
-    /// Keep a copy of the data in an S3-compatible bucket: its name. Setting
-    /// any `--s3-` option turns the copy on. The secret key is read from
-    /// `S3_SECRET_ACCESS_KEY` or asked for, never taken as an option.
-    #[arg(long, value_name = "BUCKET")]
-    s3_bucket: Option<String>,
-    /// The bucket's region.
-    #[arg(long, value_name = "REGION")]
-    s3_region: Option<String>,
-    /// The bucket's address, for a store other than Amazon S3.
-    #[arg(long, value_name = "URL")]
-    s3_endpoint: Option<String>,
-    /// The bucket's access key ID.
-    #[arg(long, value_name = "ID")]
-    s3_access_key_id: Option<String>,
-    /// Where in the bucket this install keeps its copy. It must be this
-    /// install's own. The default is the install's name.
-    #[arg(long, value_name = "PREFIX")]
-    s3_prefix: Option<String>,
     /// The server's settings file, `marfa.env` in `--dir`, is written by
     /// something else, such as a secrets manager. This command then never
-    /// makes or changes it: it checks that it holds the secrets, the address
-    /// and the proxy setting this install needs, and says what is missing.
-    /// It reads a quoted value the way Docker Compose reads it.
+    /// makes or changes it: it checks that it holds the secrets and the proxy
+    /// setting this install needs, and says what is missing. It reads a
+    /// quoted value the way Docker Compose reads it.
     #[arg(long)]
     external_settings: bool,
-    /// Start the server when you log in, even if Docker is not running yet:
-    /// a launchd agent that runs `server start`. The default on a Mac.
+    /// Start the server when you log in (on a Mac) or when the machine starts
+    /// (on Linux). The default; a Docker install on Linux relies on Docker
+    /// starting at boot.
     #[arg(long)]
     autostart: bool,
-    /// Do not start the server at login.
+    /// Do not start the server at login or at boot. `marfa server start`
+    /// starts it.
     #[arg(long, conflicts_with = "autostart")]
     no_autostart: bool,
     /// How long to wait for the server to answer, in seconds.
@@ -171,7 +226,8 @@ pub struct InstallArgs {
 pub struct UpgradeArgs {
     #[command(flatten)]
     dir: DirArgs,
-    /// The release to move to. The default is this binary's own version.
+    /// The release to move to, for a Docker install. The default is this
+    /// binary's own version. A native server moves to the release installed.
     #[arg(long, value_name = "VERSION")]
     release: Option<String>,
     /// How long to wait for the server to answer, in seconds.
@@ -192,7 +248,7 @@ pub struct StartArgs {
 pub struct UninstallArgs {
     #[command(flatten)]
     dir: DirArgs,
-    /// Also delete the data volume and the settings. This cannot be undone.
+    /// Also delete the data and the settings. This cannot be undone.
     #[arg(long)]
     delete_data: bool,
     /// Do not ask before `--delete-data`.
@@ -202,11 +258,13 @@ pub struct UninstallArgs {
 
 pub fn run(command: ServerCommand, out: &Printer) -> Result<(), CliError> {
     match command {
-        ServerCommand::Install(args) => install(args, out),
-        ServerCommand::Upgrade(args) => upgrade(args, out),
-        ServerCommand::Start(args) => start_server(args, out),
-        ServerCommand::Status(args) => status(args, out),
-        ServerCommand::Uninstall(args) => uninstall(args, out),
+        ServerCommand::Install(args) => install::install(args, out),
+        ServerCommand::Upgrade(args) => lifecycle::upgrade(args, out),
+        ServerCommand::Start(args) => lifecycle::start(args, out),
+        ServerCommand::Stop(args) => lifecycle::stop(args, out),
+        ServerCommand::Status(args) => lifecycle::status(args, out),
+        ServerCommand::Uninstall(args) => lifecycle::uninstall(args, out),
+        ServerCommand::Run(args) => run::run(&args.dir),
     }
 }
 
@@ -220,9 +278,15 @@ struct State {
     port: u16,
     access: Access,
     https_port: Option<u16>,
+    runtime: Runtime,
+    /// What keeps a native server running.
+    manager: Option<Manager>,
+    /// The sign-in address this install set on the server, for an install
+    /// that is not `local`.
+    address: Option<String>,
     /// `marfa.env` is written by something else.
     external: bool,
-    /// A login agent starts the server.
+    /// The server starts at login or at boot.
     autostart: bool,
 }
 
@@ -230,10 +294,30 @@ struct Folder {
     dir: PathBuf,
 }
 
+/// The path with the part that exists made real, so that a link in it is
+/// followed: the server's socket is refused beyond a link.
+fn resolved(path: PathBuf) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut current = path.as_path();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(current) {
+            return rest.iter().rev().fold(real, |path, part| path.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path,
+        }
+    }
+}
+
 impl Folder {
     fn new(args: &DirArgs) -> Result<Self, CliError> {
         let dir = match &args.dir {
             Some(dir) => dir.clone(),
+            None if cfg!(target_os = "linux") && account::is_root() => PathBuf::from(ROOT_DIR),
             None => std::env::var_os("HOME")
                 .filter(|home| !home.is_empty())
                 .map(|home| PathBuf::from(home).join("marfa-server"))
@@ -242,7 +326,7 @@ impl Folder {
         // Compose reads the project directory from inside it, so a relative
         // path would mean another folder there.
         Ok(Self {
-            dir: std::path::absolute(dir)?,
+            dir: resolved(std::path::absolute(dir)?),
         })
     }
 
@@ -254,6 +338,13 @@ impl Folder {
         match std::fs::read_to_string(self.path(name)) {
             Ok(text) => Ok(Some(EnvFile::parse(&text))),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Err(CliError::Usage(format!(
+                    "this account cannot read {}: an install made by root belongs to the {} account, so run the command with sudo",
+                    self.path(name).display(),
+                    account::NAME
+                )))
+            }
             Err(error) => Err(error.into()),
         }
     }
@@ -285,6 +376,18 @@ impl Folder {
         let access_name = field("MARFA_ACCESS")?;
         let access = Access::parse(&access_name)
             .ok_or_else(|| CliError::Usage(format!("MARFA_ACCESS in .env is {access_name}")))?;
+        let runtime_name = field("MARFA_RUNTIME")?;
+        let runtime = Runtime::parse(&runtime_name)
+            .ok_or_else(|| CliError::Usage(format!("MARFA_RUNTIME in .env is {runtime_name}")))?;
+        let manager = match runtime {
+            Runtime::Docker => None,
+            Runtime::Native => {
+                let name = field("MARFA_SERVICE")?;
+                Some(Manager::parse(&name).ok_or_else(|| {
+                    CliError::Usage(format!("MARFA_SERVICE in .env is {name}"))
+                })?)
+            }
+        };
         let https_port = dotenv
             .get("MARFA_HTTPS_PORT")
             .map(|value| {
@@ -299,6 +402,9 @@ impl Folder {
             port,
             access,
             https_port,
+            runtime,
+            manager,
+            address: dotenv.get("MARFA_ADDRESS"),
             external: dotenv.get("MARFA_SETTINGS").as_deref() == Some("external"),
             autostart: dotenv.get("MARFA_AUTOSTART").as_deref() == Some("on"),
         };
@@ -368,41 +474,38 @@ fn checked_release(release: &str) -> Result<String, CliError> {
     })
 }
 
-/// The address devices use, written the way the server reads it: no path,
-/// no query, no trailing slash.
+
+/// The address devices sign in at, written the way the server reads it. A
+/// device signs in over https only, so this takes no `http` address, which the
+/// server also takes for its own machine.
 fn public_address(raw: &str) -> Result<String, CliError> {
-    let bad =
-        |why: &str| CliError::Usage(format!("{raw} is not an address the server can use: {why}"));
-    let url = url::Url::parse(raw).map_err(|_| bad("write it like https://marfa.example.com"))?;
-    if url.scheme() != "https" {
-        return Err(bad("devices sign in only over https"));
+    if url::Url::parse(raw).is_ok_and(|url| url.scheme() != "https") {
+        return Err(CliError::Usage(format!(
+            "{raw} is not an address the server can use: devices sign in only over https"
+        )));
     }
-    if url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
-        return Err(bad(
-            "it takes a host, and a port if needed, and nothing else",
-        ));
-    }
-    let host = url.host_str().unwrap_or_default();
-    Ok(match url.port() {
-        Some(port) => format!("https://{host}:{port}"),
-        None => format!("https://{host}"),
-    })
+    address::normalise(raw)
 }
 
 /// Which caller address the server believes, for how it is reached. A proxy
-/// on this machine reaches the container from its network's gateway, so that
-/// network's range is the proxy. Cloudflare's edge overwrites a header with
-/// the caller's address, which is exact where the range is not.
-fn proxy_trust(access: Access, subnet: &str) -> (Option<String>, Option<&'static str>) {
+/// on this machine reaches a native server from the loopback, and a container
+/// from its network's gateway, so that is the range it is. Cloudflare's edge
+/// overwrites a header with the caller's address, which is exact where the
+/// range is not.
+fn proxy_trust(
+    runtime: Runtime,
+    access: Access,
+    subnet: &str,
+) -> (Option<String>, Option<&'static str>) {
     match access {
         Access::Local => (None, None),
-        Access::Tailscale | Access::Proxy => (Some(subnet.to_string()), None),
+        Access::Tailscale | Access::Proxy => (
+            Some(match runtime {
+                Runtime::Native => native::LOOPBACK_PROXIES.to_string(),
+                Runtime::Docker => subnet.to_string(),
+            }),
+            None,
+        ),
         Access::Cloudflare => (None, Some(CLOUDFLARE_HEADER)),
     }
 }
@@ -428,57 +531,45 @@ fn cidr_contains(range: &str, network: &str) -> bool {
     range_bits <= network_bits && (range_address & mask) == (network_address & mask)
 }
 
+
 /// What a settings file that something else owns lacks for this install. It
-/// names settings, never their values, which can be secrets.
-fn external_problems(settings: &EnvFile, access: Access, subnet: &str, net: &str) -> Vec<String> {
+/// names settings, never their values, which can be secrets. `network` is
+/// what the trusted proxy range must contain, and `of` says what it is the
+/// range of.
+fn external_problems(
+    settings: &EnvFile,
+    access: Access,
+    network: &str,
+    of: &str,
+) -> Vec<String> {
     let mut problems = Vec::new();
-    for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
+    for secret in names::SECRETS {
         if settings.get(secret).is_none_or(|value| value.is_empty()) {
             problems.push(format!("{secret} is not set"));
         }
     }
-    match settings
-        .get("MARFA_AUTH_BASE_URL")
-        .filter(|v| !v.is_empty())
-    {
-        None => problems.push("MARFA_AUTH_BASE_URL is not set".into()),
-        Some(address) => {
-            let sound = url::Url::parse(&address).is_ok_and(|url| {
-                url.scheme() == "https"
-                    || (url.scheme() == "http"
-                        && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
-            });
-            if !sound {
-                problems.push(
-                    "MARFA_AUTH_BASE_URL must be an https address, or http on localhost".into(),
-                );
-            }
-        }
-    }
-    let header = settings
-        .get("TRUSTED_PROXY_HEADER")
-        .filter(|v| !v.is_empty());
-    let cidrs = settings
-        .get("TRUSTED_PROXY_CIDRS")
-        .filter(|v| !v.is_empty());
+    let header = settings.get(names::PROXY_HEADER).filter(|v| !v.is_empty());
+    let cidrs = settings.get(names::PROXY_CIDRS).filter(|v| !v.is_empty());
     match access {
         Access::Local => {}
         Access::Cloudflare => {
             if !header.is_some_and(|header| header.eq_ignore_ascii_case(CLOUDFLARE_HEADER)) {
                 problems.push(format!(
-                    "TRUSTED_PROXY_HEADER must be {CLOUDFLARE_HEADER} for a Cloudflare Tunnel, or every caller shares one address and ten wrong passwords lock the owner out"
+                    "{} must be {CLOUDFLARE_HEADER} for a Cloudflare Tunnel, or every caller shares one address and ten wrong passwords lock the owner out",
+                    names::PROXY_HEADER
                 ));
             }
         }
         Access::Tailscale | Access::Proxy => {
             if header.is_some() {
-                problems.push("TRUSTED_PROXY_HEADER is set, and it takes precedence over the proxy range, which this way of reaching the server needs".into());
+                problems.push(format!("{} is set, and it takes precedence over the proxy range, which this way of reaching the server needs", names::PROXY_HEADER));
             }
             if !cidrs
-                .is_some_and(|cidrs| cidrs.split(',').any(|range| cidr_contains(range, subnet)))
+                .is_some_and(|cidrs| cidrs.split(',').any(|range| cidr_contains(range, network)))
             {
                 problems.push(format!(
-                    "TRUSTED_PROXY_CIDRS must include {subnet}, the range of the Docker network {net}, or every caller shares one address and ten wrong passwords lock the owner out"
+                    "{} must include {network}, {of}, or every caller shares one address and ten wrong passwords lock the owner out",
+                    names::PROXY_CIDRS
                 ));
             }
         }
@@ -504,6 +595,15 @@ fn free_port(from: u16) -> Option<u16> {
     (from..from.saturating_add(100)).find(|port| port_is_free(*port).is_ok())
 }
 
+
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(3)))
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 // ---- progress -----------------------------------------------------------
 
 struct Steps {
@@ -516,1053 +616,6 @@ impl Steps {
             eprintln!("{}", style::bold(Stream::Err, text));
         }
     }
-}
-
-// ---- install ------------------------------------------------------------
-
-struct Backup {
-    bucket: String,
-    region: Option<String>,
-    endpoint: Option<String>,
-    access_key_id: String,
-    secret: String,
-    prefix: String,
-}
-
-fn backup_from(
-    args: &InstallArgs,
-    name: &str,
-    prompter: &Prompter,
-    existing: bool,
-) -> Result<Option<Backup>, CliError> {
-    let asked_by_flag = args.s3_bucket.is_some()
-        || args.s3_region.is_some()
-        || args.s3_endpoint.is_some()
-        || args.s3_access_key_id.is_some()
-        || args.s3_prefix.is_some();
-    if !asked_by_flag {
-        if existing || !prompter.asking() {
-            return Ok(None);
-        }
-        eprintln!();
-        eprintln!(
-            "A copy of your data in an S3-compatible bucket (Amazon S3, Cloudflare R2, Backblaze B2, Railway) lets you rebuild the instance if this machine is lost. Without one, no copy leaves this machine, and you back up the volume yourself."
-        );
-        if !prompter.yes_no("Keep a copy in a bucket?", false)? {
-            return Ok(None);
-        }
-    }
-    let bucket = match &args.s3_bucket {
-        Some(bucket) => bucket.clone(),
-        None => prompter.text("Bucket name", None, "--s3-bucket")?,
-    };
-    let access_key_id = match &args.s3_access_key_id {
-        Some(id) => id.clone(),
-        None => prompter.text("Access key ID", None, "--s3-access-key-id")?,
-    };
-    let secret = match std::env::var("S3_SECRET_ACCESS_KEY") {
-        Ok(secret) if !secret.is_empty() => secret,
-        _ => prompter.secret(
-            "Secret access key",
-            "S3_SECRET_ACCESS_KEY in the environment",
-        )?,
-    };
-    let region = match &args.s3_region {
-        Some(region) => Some(region.clone()),
-        None if prompter.asking() => {
-            Some(prompter.text("Region", Some("us-east-1"), "--s3-region")?)
-        }
-        None => None,
-    };
-    let endpoint = match &args.s3_endpoint {
-        Some(endpoint) => Some(endpoint.clone()),
-        None if prompter.asking() => {
-            let answer = prompter.text(
-                "Address, if the store is not Amazon S3 (press Return to skip)",
-                Some(""),
-                "--s3-endpoint",
-            )?;
-            (!answer.is_empty()).then_some(answer)
-        }
-        None => None,
-    };
-    let prefix = match &args.s3_prefix {
-        Some(prefix) => prefix.clone(),
-        None => name.to_string(),
-    };
-    Ok(Some(Backup {
-        bucket,
-        region,
-        endpoint,
-        access_key_id,
-        secret,
-        prefix,
-    }))
-}
-
-fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
-    let steps = Steps { quiet: out.json };
-    let folder = Folder::new(&args.dir)?;
-    let docker = Docker::new(!out.json);
-    let prompter = Prompter::new(args.yes);
-    let existing = folder.state()?;
-    if prompter.asking()
-        && existing.is_none()
-        && args.dir.dir.is_none()
-        && args.name.is_none()
-        && args.port.is_none()
-        && !args.external_settings
-    {
-        eprintln!("{OPTIONS_HINT}\n");
-    }
-    let external = args.external_settings || existing.as_ref().is_some_and(|(s, _)| s.external);
-
-    let name = match (&args.name, &existing) {
-        (Some(name), Some((state, _))) if *name != state.name => {
-            return Err(CliError::Usage(format!(
-                "{} already holds the install {}: use its name, or another --dir",
-                folder.dir.display(),
-                state.name
-            )));
-        }
-        (Some(name), _) => name.clone(),
-        (None, Some((state, _))) => state.name.clone(),
-        (None, None) => "marfa".to_string(),
-    };
-    if !valid_name(&name) {
-        return Err(CliError::Usage(format!(
-            "{name} cannot name an install: use lowercase letters, digits, - and _, starting with a letter or digit"
-        )));
-    }
-    let release = match (&args.release, &existing) {
-        (Some(release), Some((state, _))) => {
-            let release = checked_release(release)?;
-            refuse_older(&state.release, &release)?;
-            release
-        }
-        (Some(release), None) => checked_release(release)?,
-        (None, Some((state, _))) => state.release.clone(),
-        (None, None) => own_release().ok_or_else(|| {
-            CliError::Usage("this build is not a release, so it names no image: pass --release, such as --release 0.0.22".into())
-        })?,
-    };
-
-    steps.say("Checking Docker...");
-    docker.check()?;
-
-    let net = format!("{name}-net");
-    let volume = format!("{name}-data");
-    let settings_path = folder.path(files::SETTINGS);
-    let have_secrets = folder.read(files::SETTINGS)?;
-    if external && have_secrets.is_none() {
-        return Err(CliError::Usage(format!(
-            "{} does not exist, and this install takes its settings from there: write it first",
-            settings_path.display()
-        )));
-    }
-    if existing.is_none() {
-        // A server this command did not make, on the name it would use.
-        if docker.container(&name)?.is_some() {
-            return Err(CliError::Usage(format!(
-                "a container named {name} already exists, and no install in {} made it: choose another --name, or remove it with `docker rm -f {name}`",
-                folder.dir.display()
-            )));
-        }
-        if have_secrets.is_none() && docker.volume_exists(&volume)? {
-            return Err(CliError::Usage(format!(
-                "the Docker volume {volume} already holds data, and its secrets are not in {}: this command would start the data on new secrets and every key would stop working. Restore marfa.env from your copy into the folder, or choose another --name",
-                folder.dir.display()
-            )));
-        }
-    } else if have_secrets.is_none() && docker.volume_exists(&volume)? {
-        return Err(CliError::Usage(format!(
-            "{} is missing, and the data volume {volume} exists: restore marfa.env from your copy. A new one would make every key stop working",
-            settings_path.display()
-        )));
-    }
-
-    // A settings file that lacks a secret is never completed over data that
-    // exists, because a new secret would make every key stop working.
-    if !external && let Some(file) = &have_secrets {
-        for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
-            if file.get(secret).is_none_or(|value| value.is_empty())
-                && (existing.is_some() || docker.volume_exists(&volume)?)
-            {
-                return Err(CliError::Usage(format!(
-                    "{secret} is missing or empty in {}, and this install has data: restore the setting from your copy. A new one would make every key stop working",
-                    settings_path.display()
-                )));
-            }
-        }
-    }
-
-    // The port.
-    let port = match (&existing, args.port) {
-        (Some((state, _)), None) => state.port,
-        (Some((state, _)), Some(port)) if port == state.port => port,
-        (_, Some(port)) => {
-            if let Err(error) = port_is_free(port) {
-                return Err(CliError::Usage(format!(
-                    "port {port} on this machine cannot be used ({error}): choose another with --port"
-                )));
-            }
-            port
-        }
-        (None, None) => free_port(DEFAULT_PORT).ok_or_else(|| {
-            CliError::Usage("no free port from 8600: choose one with --port".into())
-        })?,
-    };
-
-    // How it is reached.
-    let access = match (args.access, &existing) {
-        (Some(access), _) => access,
-        (None, Some((state, _))) => state.access,
-        (None, None) => {
-            let options = [
-                ("local", "only this machine, at http://localhost"),
-                (
-                    "tailscale",
-                    "your devices, over Tailscale, at an https address of your tailnet",
-                ),
-                (
-                    "cloudflare",
-                    "anywhere, through a Cloudflare Tunnel on this machine, at your own address",
-                ),
-                (
-                    "proxy",
-                    "anywhere, through another proxy on this machine (Caddy, nginx...), at your own address",
-                ),
-            ];
-            let chosen = prompter.choose(
-                "How will your devices reach this server?",
-                &options,
-                Some(0),
-                "--access",
-            )?;
-            Access::value_variants()[chosen]
-        }
-    };
-    let https_port = match access {
-        Access::Tailscale => Some(
-            args.https_port
-                .or(existing.as_ref().and_then(|(state, _)| state.https_port))
-                .unwrap_or(443),
-        ),
-        _ => {
-            if args.https_port.is_some() {
-                return Err(CliError::Usage(
-                    "--https-port is for --access tailscale".into(),
-                ));
-            }
-            None
-        }
-    };
-    let address = match access {
-        _ if external => {
-            let written = have_secrets
-                .as_ref()
-                .and_then(|file| file.get("MARFA_AUTH_BASE_URL"));
-            match (&args.address, written) {
-                (Some(asked), Some(written)) if public_address(asked)? != written => {
-                    return Err(CliError::Usage(format!(
-                        "--address is {asked}, and {} says MARFA_AUTH_BASE_URL is {written}: change one",
-                        settings_path.display()
-                    )));
-                }
-                (_, Some(written)) => written,
-                (_, None) => String::new(),
-            }
-        }
-        Access::Local => {
-            if args.address.is_some() {
-                return Err(CliError::Usage(
-                    "--address is for tailscale, cloudflare and proxy: a local server is at http://localhost".into(),
-                ));
-            }
-            local_address(port)
-        }
-        Access::Tailscale => match &args.address {
-            Some(address) => public_address(address)?,
-            None => {
-                let dns = tailscale::dns_name()?;
-                match https_port {
-                    Some(443) | None => format!("https://{dns}"),
-                    Some(other) => format!("https://{dns}:{other}"),
-                }
-            }
-        },
-        Access::Cloudflare | Access::Proxy => {
-            if prompter.asking() && args.address.is_none() {
-                eprintln!(
-                    "Point your {} at {} on this machine.",
-                    if access == Access::Cloudflare {
-                        "Cloudflare Tunnel"
-                    } else {
-                        "proxy"
-                    },
-                    local_address(port)
-                );
-            }
-            let raw = match (&args.address, &existing) {
-                (Some(address), _) => address.clone(),
-                (None, Some((_, _))) => have_secrets
-                    .as_ref()
-                    .and_then(|file| file.get("MARFA_AUTH_BASE_URL"))
-                    .map_or_else(
-                        || prompter.text("Address devices will use", None, "--address"),
-                        Ok,
-                    )?,
-                (None, None) => prompter.text(
-                    "Address devices will use, such as https://marfa.example.com",
-                    None,
-                    "--address",
-                )?,
-            };
-            public_address(&raw)?
-        }
-    };
-
-    // What this install served on the tailnet before, which is its own to
-    // replace or to take away.
-    let served_before = existing.as_ref().and_then(|(state, _)| {
-        (state.access == Access::Tailscale).then(|| {
-            (
-                state.https_port.unwrap_or(443),
-                format!("http://127.0.0.1:{}", state.port),
-            )
-        })
-    });
-    if access == Access::Tailscale {
-        // Before anything is changed: the port may serve something else.
-        tailscale::check_free(
-            https_port.unwrap_or(443),
-            &format!("http://127.0.0.1:{port}"),
-            served_before.as_ref().map(|(_, target)| target.as_str()),
-        )?;
-    }
-
-    if external && args.s3_bucket.is_some() {
-        return Err(CliError::Usage(
-            "--s3 options change the settings file, and this install takes it as it is: put the S3_ settings in it".into(),
-        ));
-    }
-
-    // A release that does not exist is found before it is written down.
-    if !docker.image_present(&format!("{IMAGE}:{release}"))? {
-        docker.release_exists(IMAGE, &release)?;
-    }
-
-    // The backup.
-    let backup = backup_from(&args, &name, &prompter, existing.is_some())?;
-
-    // Last of the questions, so nothing is changed before they are all asked.
-    let autostart = match (args.autostart, args.no_autostart, &existing) {
-        (true, _, _) if !boot::supported() => {
-            return Err(CliError::Usage(
-                "--autostart is for a Mac, where launchd starts it at login; on Linux, `sudo systemctl enable docker` brings the server back at boot".into(),
-            ));
-        }
-        (true, _, _) => true,
-        (_, true, _) => false,
-        (_, _, Some((state, _))) => state.autostart,
-        (_, _, None) => {
-            boot::supported()
-                && prompter.yes_no(
-                    "Start Marfa when you log in, even if Docker is not running yet?",
-                    true,
-                )?
-        }
-    };
-
-    // The network gives the proxy a range that survives a restart.
-    let subnet = match docker.network_subnet(&net)? {
-        Some(subnet) => subnet,
-        None => {
-            steps.say(&format!("Making the Docker network {net}..."));
-            docker.create_network(&net)?;
-            docker.network_subnet(&net)?.ok_or_else(|| {
-                CliError::Install(format!("Docker made the network {net} with no IPv4 range"))
-            })?
-        }
-    };
-
-    // The settings the server reads. The secrets are made once, and not at
-    // all when something else owns the file.
-    let mut settings = have_secrets
-        .clone()
-        .unwrap_or_else(|| EnvFile::parse(files::SETTINGS_HEADER));
-    if external {
-        let problems = external_problems(&settings, access, &subnet, &net);
-        if !problems.is_empty() {
-            return Err(CliError::Usage(format!(
-                "{} cannot run this install yet:\n  - {}",
-                settings_path.display(),
-                problems.join("\n  - ")
-            )));
-        }
-        if backup.is_some() {
-            return Err(CliError::Usage(
-                "the S3_ settings change the settings file, and this install takes it as it is: put them in it".into(),
-            ));
-        }
-    }
-    let lacks = |name: &str| settings.get(name).is_none_or(|value| value.is_empty());
-    let made_secrets = !external && (lacks("API_KEY_SALT") || lacks("MARFA_AUTH_SECRET"));
-    // The warning is owed until one install has succeeded after the secrets
-    // were made, which a run that fails part-way does not do.
-    let marker = folder.path(files::UNCONFIRMED);
-    let warn_to_keep = made_secrets || (!external && marker.is_file());
-    if made_secrets {
-        // Written before the secrets, and best effort: a marker that cannot
-        // be kept costs only the warning on a later run, never the install.
-        let _ = std::fs::create_dir_all(&folder.dir)
-            .map_err(CliError::from)
-            .and_then(|()| files::write_if_changed(&marker, files::UNCONFIRMED_NOTE, false));
-    }
-    if !external {
-        for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
-            if settings.get(secret).is_none_or(|value| value.is_empty()) {
-                settings.set(secret, &envfile::secret()?)?;
-            }
-        }
-        settings.set("MARFA_AUTH_BASE_URL", &address)?;
-        let (cidrs, header) = proxy_trust(access, &subnet);
-        match cidrs {
-            Some(cidrs) => settings.set("TRUSTED_PROXY_CIDRS", &cidrs)?,
-            None => settings.remove("TRUSTED_PROXY_CIDRS"),
-        }
-        match header {
-            Some(header) => settings.set("TRUSTED_PROXY_HEADER", header)?,
-            None => settings.remove("TRUSTED_PROXY_HEADER"),
-        }
-    }
-    if let (false, Some(backup)) = (external, &backup) {
-        settings.set("S3_BUCKET", &backup.bucket)?;
-        settings.set("S3_ACCESS_KEY_ID", &backup.access_key_id)?;
-        settings.set("S3_SECRET_ACCESS_KEY", &backup.secret)?;
-        settings.set("S3_PREFIX", &backup.prefix)?;
-        match &backup.region {
-            Some(region) => settings.set("S3_REGION", region)?,
-            None => settings.remove("S3_REGION"),
-        }
-        match &backup.endpoint {
-            Some(endpoint) => settings.set("S3_ENDPOINT", endpoint)?,
-            None => settings.remove("S3_ENDPOINT"),
-        }
-    }
-
-    // What Compose reads.
-    let mut dotenv = existing
-        .as_ref()
-        .map(|(_, dotenv)| dotenv.clone())
-        .unwrap_or_else(|| EnvFile::parse(files::DOTENV_HEADER));
-    dotenv.set("MARFA_NAME", &name)?;
-    dotenv.set("MARFA_RELEASE", &release)?;
-    dotenv.set("MARFA_PORT", &port.to_string())?;
-    dotenv.set("MARFA_ACCESS", &access.name())?;
-    match https_port {
-        Some(port) => dotenv.set("MARFA_HTTPS_PORT", &port.to_string())?,
-        None => dotenv.remove("MARFA_HTTPS_PORT"),
-    }
-    if external {
-        dotenv.set("MARFA_SETTINGS", "external")?;
-    }
-    dotenv.set("MARFA_AUTOSTART", if autostart { "on" } else { "off" })?;
-
-    std::fs::create_dir_all(&folder.dir)?;
-    let wrote_settings = if external {
-        false
-    } else {
-        let wrote = files::write_if_changed(&settings_path, &settings.render(), true)?;
-        files::keep_private(&settings_path)?;
-        wrote
-    };
-    let wrote_dotenv =
-        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
-    let wrote_compose = write_compose(&folder, &steps)?;
-    let changed = wrote_settings || wrote_dotenv || wrote_compose;
-
-    if access == Access::Tailscale {
-        steps.say("Serving the address on your tailnet...");
-        tailscale::serve(
-            https_port.unwrap_or(443),
-            &format!("http://127.0.0.1:{port}"),
-            served_before.as_ref().map(|(_, target)| target.as_str()),
-            !out.json,
-        )?;
-    }
-
-    start(&docker, &folder.dir, &name, &release, &steps)?;
-    wait_until_healthy(&docker, &name, port, args.wait)?;
-
-    // The login agent comes after the server is up, because loading it runs it.
-    let mut autostart = autostart;
-    let mut autostart_failed = None;
-    if autostart {
-        steps.say("Setting the server to start when you log in...");
-        let loaded = boot::Agent::for_this_binary(&name, &folder.dir)
-            .and_then(|agent| boot::on(&agent, !out.json));
-        if let Err(error) = loaded {
-            // The server is up, so the link below still matters most. The
-            // choice is recorded as off, so a run again tries again only when
-            // asked.
-            autostart = false;
-            autostart_failed = Some(error.to_string());
-            // The plist is written before launchd is asked to load it, and a
-            // file left behind would load at the next login.
-            let _ = boot::off(&name, false);
-            dotenv.set("MARFA_AUTOSTART", "off")?;
-            files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
-        }
-    } else if boot::installed(&name) {
-        boot::off(&name, !out.json)?;
-    }
-    if let Some((https, target)) = &served_before
-        && (access != Access::Tailscale || *https != https_port.unwrap_or(443))
-    {
-        steps.say("Taking the old address off your tailnet...");
-        if let Err(error) = tailscale::unserve(*https, target, !out.json) {
-            eprintln!(
-                "The old address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
-            );
-        }
-    }
-
-    // Claim.
-    let claim = claim_state(&docker, &name)?;
-    let notes = boot_notes(autostart);
-    let backup_on = settings.get("S3_BUCKET").is_some();
-    let host = crate::auth::machine_name();
-    let report = json!({
-        "installed": true,
-        "changed": changed,
-        "dir": folder.dir,
-        "name": name,
-        "release": release,
-        "address": address,
-        "host": host,
-        "port": port,
-        "local_address": local_address(port),
-        "access": access.name(),
-        "backup": backup_on,
-        // True when this run tells the person to keep the settings file safe:
-        // it made the secrets, or an earlier run did and none has succeeded since.
-        "keep_settings_file": warn_to_keep,
-        "settings": if external { "external" } else { "managed" },
-        "autostart": autostart,
-        "autostart_error": autostart_failed,
-        "claimed": claim.claimed,
-        "setup_url": claim.url,
-        "setup_expires_at": claim.expires_at,
-    });
-    out.report(&report, || {
-        let mut text = String::new();
-        text.push_str(&format!(
-            "\n{}\n\n",
-            style::good(Stream::Out, &format!("Marfa {release} is running."))
-        ));
-        text.push_str(&format!("  Address   {address}\n"));
-        if matches!(access, Access::Cloudflare | Access::Proxy) {
-            text.push_str(&format!(
-                "  Point at  {} (point your {} here, or the address answers 502)\n",
-                local_address(port),
-                if access == Access::Cloudflare { "tunnel" } else { "proxy" }
-            ));
-        }
-        text.push_str(&format!(
-            "  Folder    {} on {}\n",
-            folder.dir.display(),
-            host.as_deref().unwrap_or("this machine")
-        ));
-        text.push_str(&format!(
-            "  Backup    {}\n",
-            if backup_on {
-                "to your bucket, continuously"
-            } else {
-                "none: no copy leaves this machine"
-            }
-        ));
-        if external {
-            text.push_str(&format!(
-                "  Settings  {} (managed outside this command; run it again after they change)\n",
-                settings_path.display()
-            ));
-        }
-        if warn_to_keep {
-            text.push_str(&format!(
-                "\nKeep a copy of {} somewhere safe, outside this folder. It holds the two secrets the data needs, and they are not stored anywhere else.\n",
-                settings_path.display()
-            ));
-        }
-        match &claim.url {
-            Some(url) => text.push_str(&format!(
-                "\nOpen this link to choose the owner's email and password. It works once, for five minutes; run this command again for a new one.\n\n  {url}\n"
-            )),
-            None => text.push_str(&format!(
-                "\nThis instance has an owner already. Sign in at {address}.\n"
-            )),
-        }
-        if let Some(why) = &autostart_failed {
-            text.push_str(&format!(
-                "\nThe instance is running, but it was not set to start at login: {why}\nRun this command again with --autostart to try again, or with --no-autostart to leave it.\n"
-            ));
-        }
-        for note in &notes {
-            text.push_str(&format!("\n{note}\n"));
-        }
-        text.push_str(&format!("\n{AGENT_HINT}\n"));
-        style::labelled(Stream::Out, &text)
-    })?;
-    // The install succeeded, so the warning is no longer owed. A marker that
-    // cannot be removed only repeats it.
-    let _ = std::fs::remove_file(&marker);
-    Ok(())
-}
-
-/// Writes the Compose file, after keeping a copy of one that differs, because
-/// a person may have added a service to it.
-fn write_compose(folder: &Folder, steps: &Steps) -> Result<bool, CliError> {
-    let path = folder.path(files::COMPOSE);
-    if let Ok(existing) = std::fs::read_to_string(&path)
-        && existing != files::COMPOSE_FILE
-    {
-        let backup = (0..)
-            .map(|n| match n {
-                0 => folder.path("compose.yaml.bak"),
-                n => folder.path(&format!("compose.yaml.bak.{n}")),
-            })
-            .find(|candidate| !candidate.exists())
-            .expect("a free name");
-        std::fs::copy(&path, &backup)?;
-        steps.say(&format!(
-            "compose.yaml differed from the one this command writes; the old one is kept as {}.",
-            backup.display()
-        ));
-    }
-    files::write_if_changed(&path, files::COMPOSE_FILE, false)
-}
-
-fn start(
-    docker: &Docker,
-    dir: &Path,
-    name: &str,
-    release: &str,
-    steps: &Steps,
-) -> Result<(), CliError> {
-    if !docker.image_present(&format!("{IMAGE}:{release}"))? {
-        steps.say(&format!("Pulling {IMAGE}:{release}..."));
-        docker.compose(dir, &["pull", "--quiet"], !steps.quiet)?;
-    }
-    steps.say(&format!("Starting {name}..."));
-    docker.compose(dir, &["up", "-d"], false)
-}
-
-fn http_agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(3)))
-        .http_status_as_error(false)
-        .build()
-        .into()
-}
-
-/// What the image's entrypoint logs when the server refuses its database and
-/// the container stays up, unhealthy, rather than restart into the refusal.
-const REFUSED_DATABASE: &str = "will not start on the database";
-
-fn wait_until_healthy(
-    docker: &Docker,
-    name: &str,
-    port: u16,
-    seconds: u64,
-) -> Result<(), CliError> {
-    let agent = http_agent();
-    let url = format!("http://127.0.0.1:{port}/health");
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    let mut last = String::from("no answer yet");
-    loop {
-        match agent.get(&url).call() {
-            Ok(response) if response.status().as_u16() == 200 => return Ok(()),
-            Ok(response) => last = format!("it answered {}", response.status().as_u16()),
-            Err(_) => {}
-        }
-        if let Some(state) = docker.container(name)?
-            && matches!(state.status.as_str(), "exited" | "dead")
-        {
-            return Err(CliError::Install(format!(
-                "the server stopped: {}\n{}",
-                state.status,
-                docker.logs_tail(name)
-            )));
-        }
-        let tail = docker.logs_tail(name);
-        if tail.contains(REFUSED_DATABASE) {
-            return Err(CliError::Install(format!(
-                "the server will not start on its database. Its log ends:\n{tail}"
-            )));
-        }
-        if Instant::now() >= deadline {
-            return Err(CliError::Install(format!(
-                "the server did not become healthy in {seconds} seconds ({last}). Its log ends:\n{}",
-                docker.logs_tail(name)
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-}
-
-struct Claim {
-    claimed: bool,
-    url: Option<String>,
-    expires_at: Option<String>,
-}
-
-fn claim_state(docker: &Docker, name: &str) -> Result<Claim, CliError> {
-    let status = docker.marfa_json(name, &["setup", "status"])?;
-    if status["claimed"].as_bool().unwrap_or(false) {
-        return Ok(Claim {
-            claimed: true,
-            url: None,
-            expires_at: None,
-        });
-    }
-    let ticket = docker.marfa_json(name, &["setup", "open", "--no-browser"])?;
-    let url = ticket["url"]
-        .as_str()
-        .ok_or_else(|| CliError::Install("the server returned no setup link".into()))?;
-    Ok(Claim {
-        claimed: false,
-        url: Some(url.to_string()),
-        expires_at: ticket["expires_at"].as_str().map(str::to_string),
-    })
-}
-
-/// What decides whether the server comes back after a restart of the machine:
-/// Docker's restart policy brings the container back whenever the engine
-/// starts, so the engine's own start is the part worth saying.
-fn boot_notes(autostart: bool) -> Vec<String> {
-    if autostart {
-        return vec!["It starts when you log in, starting Docker first if it is not running, and again after a failure. `marfa server status` shows it.".into()];
-    }
-    if cfg!(target_os = "linux") {
-        let enabled = std::process::Command::new("systemctl")
-            .args(["is-enabled", "docker"])
-            .output()
-            .ok();
-        return match enabled {
-            Some(output) if output.status.success() => {
-                vec!["It starts again whenever the machine does: Docker starts at boot and the container restarts with it.".into()]
-            }
-            Some(_) => vec!["Docker does not start at boot on this machine, so the server would not either. Run `sudo systemctl enable docker` once.".into()],
-            None => Vec::new(),
-        };
-    }
-    vec!["It restarts whenever Docker does. On a Mac, Docker starts only after you sign in, unless you turn on \"Start at login\" in OrbStack or Docker Desktop's settings.".into()]
-}
-
-// ---- upgrade ------------------------------------------------------------
-
-fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
-    let steps = Steps { quiet: out.json };
-    let folder = Folder::new(&args.dir)?;
-    let (state, mut dotenv) = folder.require_state()?;
-    let target = match &args.release {
-        Some(release) => checked_release(release)?,
-        None => own_release().ok_or_else(|| {
-            CliError::Usage(
-                "this build is not a release, so it names no image: pass --release".into(),
-            )
-        })?,
-    };
-    refuse_older(&state.release, &target)?;
-    let docker = Docker::new(!out.json);
-    docker.check()?;
-    let unchanged = target == state.release;
-    // A release that does not exist is found before it is written down, or no
-    // later upgrade could name a real one below it.
-    if !unchanged && !docker.image_present(&format!("{IMAGE}:{target}"))? {
-        docker.release_exists(IMAGE, &target)?;
-    }
-    if !unchanged {
-        steps.say(&format!(
-            "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
-        ));
-        dotenv.set("MARFA_RELEASE", &target)?;
-        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
-    }
-    write_compose(&folder, &steps)?;
-    start(&docker, &folder.dir, &state.name, &target, &steps)?;
-    if let Err(error) = wait_until_healthy(&docker, &state.name, state.port, args.wait) {
-        if unchanged || !docker.logs_tail(&state.name).contains(REFUSED_DATABASE) {
-            return Err(error);
-        }
-        return Err(CliError::Install(format!(
-            "{error}\n\n{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it: to go back, set MARFA_RELEASE={from} in {env} and run `marfa server start`.",
-            from = state.release,
-            env = folder.path(files::DOTENV).display(),
-        )));
-    }
-    // A retry finds the env file already on the target, though the update
-    // happened after the first run's wait ended, so the log is read either way.
-    let update = database_update(&docker.logs(&state.name));
-    let report = json!({
-        "name": state.name,
-        "from": state.release,
-        "release": target,
-        "changed": !unchanged,
-        "database_update": update.as_ref().map(|update| json!({
-            "schema_from": update.schema_from,
-            "schema_to": update.schema_to,
-            "copy": update.copy,
-        })),
-    });
-    out.report(&report, || {
-        let moved = if unchanged {
-            format!("Already on {target}.")
-        } else {
-            format!("Upgraded from {} to {target}.", state.release)
-        };
-        match &update {
-            Some(update) => format!(
-                "{moved} The server's log records that it updated the database from schema version {} to {}. A copy of the database as it was is at {copy} in the volume {name}-data, and stays until you remove it; `docker cp {name}:{copy} .` copies it out.",
-                update.schema_from,
-                update.schema_to,
-                copy = update.copy,
-                name = state.name,
-            ),
-            None => moved,
-        }
-    })
-}
-
-/// What the server logged of the update it made to the database on start.
-struct DatabaseUpdate {
-    schema_from: u64,
-    schema_to: u64,
-    copy: String,
-}
-
-/// The update the server's log reports, read from its JSON lines: the last
-/// one, since the log of a container holds every start it made.
-fn database_update(log: &str) -> Option<DatabaseUpdate> {
-    log.lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
-        .filter(|entry| {
-            entry["message"]
-                .as_str()
-                .is_some_and(|message| message.starts_with("Updated the database"))
-        })
-        .filter_map(|entry| {
-            Some(DatabaseUpdate {
-                schema_from: entry["schema_from"].as_u64()?,
-                schema_to: entry["schema_to"].as_u64()?,
-                copy: entry["backup_path"].as_str()?.to_string(),
-            })
-        })
-        .next_back()
-}
-
-// ---- start --------------------------------------------------------------
-
-fn start_server(args: StartArgs, out: &Printer) -> Result<(), CliError> {
-    let steps = Steps { quiet: out.json };
-    let folder = Folder::new(&args.dir)?;
-    let (state, _) = folder.require_state()?;
-    let docker = Docker::new(!out.json);
-    steps.say("Checking Docker...");
-    boot::ensure_engine(&docker, args.wait, !out.json)?;
-    docker.check()?;
-    start(&docker, &folder.dir, &state.name, &state.release, &steps)?;
-    wait_until_healthy(&docker, &state.name, state.port, args.wait)?;
-    out.report(
-        &json!({ "name": state.name, "release": state.release, "running": true }),
-        || format!("{} {} is running.", state.name, state.release),
-    )
-}
-
-// ---- status -------------------------------------------------------------
-
-fn autostart_word(state: &State) -> &'static str {
-    match (state.autostart, boot::installed(&state.name)) {
-        (true, true) if boot::loaded(&state.name) => "on",
-        (true, true) => "installed, not loaded",
-        (true, false) => "missing: `marfa server install` restores it",
-        (false, _) => "off",
-    }
-}
-
-fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
-    let folder = Folder::new(&args)?;
-    let (state, _) = folder.require_state()?;
-    let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
-    let docker = Docker::new(false);
-    docker.check()?;
-    let container = docker.container(&state.name)?;
-    let running = container.as_ref().is_some_and(|c| c.status == "running");
-    let healthy = running && {
-        http_agent()
-            .get(&format!("http://127.0.0.1:{}/health", state.port))
-            .call()
-            .is_ok_and(|response| response.status().as_u16() == 200)
-    };
-    let claimed = if healthy {
-        docker
-            .marfa_json(&state.name, &["setup", "status"])
-            .ok()
-            .and_then(|status| status["claimed"].as_bool())
-    } else {
-        None
-    };
-    let address = settings.get("MARFA_AUTH_BASE_URL");
-    let login = if boot::supported() {
-        format!("\n  Login     {}", autostart_word(&state))
-    } else {
-        String::new()
-    };
-    let autostart = autostart_word(&state);
-    let report = json!({
-        "dir": folder.dir,
-        "name": state.name,
-        "release": state.release,
-        "container": container.as_ref().map(|c| c.status.clone()),
-        "healthy": healthy,
-        "claimed": claimed,
-        "address": address,
-        "port": state.port,
-        "access": state.access.name(),
-        "backup": settings.get("S3_BUCKET").is_some(),
-        "settings": if state.external { "external" } else { "managed" },
-        "autostart": autostart,
-    });
-    out.report(&report, || {
-        let word = match (&container, healthy) {
-            (None, _) => "not created".to_string(),
-            (Some(_), true) => style::good(Stream::Out, "running and healthy"),
-            (Some(c), false) => style::bad(Stream::Out, &format!("{}, not answering", c.status)),
-        };
-        let text = format!(
-            "{} {}: {word}\n  Address   {}\n  Folder    {}\n  Owner     {}\n  Backup    {}{login}",
-            state.name,
-            state.release,
-            address.as_deref().unwrap_or("unknown"),
-            folder.dir.display(),
-            match claimed {
-                Some(true) => "set up",
-                Some(false) => "not set up yet: `marfa server install` prints the link",
-                None => "unknown",
-            },
-            if settings.get("S3_BUCKET").is_some() {
-                "to a bucket"
-            } else {
-                "none"
-            },
-        );
-        style::labelled(Stream::Out, &text)
-    })
-}
-
-// ---- uninstall ----------------------------------------------------------
-
-fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
-    let steps = Steps { quiet: out.json };
-    let folder = Folder::new(&args.dir)?;
-    let (state, _) = folder.require_state()?;
-    let docker = Docker::new(!out.json);
-    docker.check()?;
-    let volume = format!("{}-data", state.name);
-    let net = format!("{}-net", state.name);
-    if args.delete_data && !args.yes {
-        let prompter = Prompter::new(false);
-        if !prompter.asking() {
-            return Err(CliError::Usage(
-                "--delete-data needs --yes when nothing can ask you".into(),
-            ));
-        }
-        if state.external {
-            eprintln!(
-                "This deletes every item and file in {volume}. {} is managed elsewhere and stays.",
-                folder.path(files::SETTINGS).display()
-            );
-        } else {
-            eprintln!(
-                "This deletes every item and file in {volume}, and the secrets in {}.",
-                folder.path(files::SETTINGS).display()
-            );
-        }
-        let typed = prompter.text(&format!("Type {} to confirm", state.name), None, "--yes")?;
-        if typed != state.name {
-            return Err(CliError::Usage("not confirmed; nothing was deleted".into()));
-        }
-    }
-    steps.say(&format!("Stopping {}...", state.name));
-    // The Compose file is written first if it is gone, so that `down` has a
-    // project to take down; a container that is still there after it is
-    // removed by name, and one that cannot be removed fails the command.
-    write_compose(&folder, &steps)?;
-    docker.compose(&folder.dir, &["down"], false)?;
-    docker.remove_container(&state.name)?;
-    if boot::installed(&state.name) {
-        boot::off(&state.name, !out.json)?;
-    }
-    let mut unserved = false;
-    if state.access == Access::Tailscale {
-        unserved = tailscale::unserve(
-            state.https_port.unwrap_or(443),
-            &format!("http://127.0.0.1:{}", state.port),
-            !out.json,
-        )
-        .unwrap_or(false);
-    }
-    if args.delete_data {
-        docker.remove_volume(&volume)?;
-        // A proxy of the person's may have joined the network. The data is
-        // gone either way, so that is said and not made a failure.
-        if let Err(error) = docker.remove_network(&net) {
-            eprintln!("The Docker network {net} stays: {error}");
-        }
-        let kept_settings = state.external;
-        for name in [
-            files::SETTINGS,
-            files::UNCONFIRMED,
-            files::DOTENV,
-            files::COMPOSE,
-        ] {
-            if kept_settings && name == files::SETTINGS {
-                continue;
-            }
-            match std::fs::remove_file(folder.path(name)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        // Only an empty folder goes; anything else in it is the person's.
-        let _ = std::fs::remove_dir(&folder.dir);
-    }
-    let report = json!({
-        "name": state.name,
-        "stopped": true,
-        "data_deleted": args.delete_data,
-        "tailscale_unserved": unserved,
-    });
-    out.report(&report, || {
-        if args.delete_data {
-            if state.external {
-                format!(
-                    "Stopped {} and deleted its data. {} is managed elsewhere and stays.",
-                    state.name,
-                    folder.path(files::SETTINGS).display()
-                )
-            } else {
-                format!("Stopped {} and deleted its data and settings.", state.name)
-            }
-        } else {
-            format!(
-                "Stopped {}. Its data stays in the Docker volume {volume}, and its settings in {}; `marfa server install` starts it again.",
-                state.name,
-                folder.dir.display()
-            )
-        }
-    })
 }
 
 #[cfg(test)]
@@ -1613,18 +666,40 @@ mod tests {
     #[test]
     fn each_way_of_reaching_the_server_trusts_what_it_should() {
         let subnet = "192.168.117.0/24";
-        assert_eq!(proxy_trust(Access::Local, subnet), (None, None));
-        assert_eq!(
-            proxy_trust(Access::Tailscale, subnet),
-            (Some(subnet.into()), None)
+        for runtime in [Runtime::Native, Runtime::Docker] {
+            assert_eq!(proxy_trust(runtime, Access::Local, subnet), (None, None));
+            assert_eq!(
+                proxy_trust(runtime, Access::Cloudflare, subnet),
+                (None, Some("CF-Connecting-IP"))
+            );
+        }
+        for access in [Access::Tailscale, Access::Proxy] {
+            assert_eq!(
+                proxy_trust(Runtime::Docker, access, subnet),
+                (Some(subnet.into()), None)
+            );
+            assert_eq!(
+                proxy_trust(Runtime::Native, access, subnet),
+                (Some("127.0.0.1/32,::1/128".into()), None)
+            );
+        }
+    }
+
+    #[test]
+    fn a_native_proxy_range_covers_the_loopback_the_proxy_calls_from() {
+        let mut settings = EnvFile::parse("");
+        settings.set(names::API_KEY_SALT, "a").unwrap();
+        settings.set(names::AUTH_SECRET, "b").unwrap();
+        settings.set(names::PROXY_CIDRS, native::LOOPBACK_PROXIES).unwrap();
+        assert!(
+            external_problems(&settings, Access::Proxy, native::LOOPBACK_NETWORK, "the loopback")
+                .is_empty()
         );
+        settings.set(names::PROXY_CIDRS, "10.0.0.0/8").unwrap();
         assert_eq!(
-            proxy_trust(Access::Proxy, subnet),
-            (Some(subnet.into()), None)
-        );
-        assert_eq!(
-            proxy_trust(Access::Cloudflare, subnet),
-            (None, Some("CF-Connecting-IP"))
+            external_problems(&settings, Access::Proxy, native::LOOPBACK_NETWORK, "the loopback")
+                .len(),
+            1
         );
     }
 
@@ -1659,5 +734,13 @@ mod tests {
         }
         assert!(files::COMPOSE_FILE.contains("127.0.0.1:"));
         assert!(files::COMPOSE_FILE.contains("restart: unless-stopped"));
+    }
+
+    #[test]
+    fn a_runtime_is_known_by_its_recorded_name() {
+        for runtime in [Runtime::Native, Runtime::Docker] {
+            assert_eq!(Runtime::parse(runtime.name()), Some(runtime));
+        }
+        assert_eq!(Runtime::parse("podman"), None);
     }
 }
