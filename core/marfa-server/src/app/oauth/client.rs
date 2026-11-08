@@ -1,6 +1,5 @@
-//! Client metadata (RFC 7591): a registration body into a typed registration
-//! or a typed error. A client ID metadata document goes through the same
-//! reading, by [`Source::Document`].
+//! Client metadata (RFC 7591) read into a typed registration or error. A client ID metadata
+//! document is read the same way, by [`Source::Document`].
 
 use serde_json::{Map, Value, json};
 use url::Url;
@@ -12,8 +11,6 @@ pub const MAX_REDIRECT_URIS: usize = 10;
 
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
-/// How a client proves itself at the token endpoint. Marfa's clients are all
-/// public today; a confidential one is a new variant here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthMethod {
     None,
@@ -71,7 +68,6 @@ impl ResponseType {
     }
 }
 
-/// A client's metadata as the server holds it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Registration {
     pub application_type: AppKind,
@@ -91,7 +87,6 @@ pub struct Registration {
 }
 
 impl Registration {
-    /// Whether the client may ever hold a refresh token, and so `offline_access`.
     pub fn can_refresh(&self) -> bool {
         can_refresh(&self.grant_types)
     }
@@ -103,8 +98,6 @@ impl Registration {
         }
     }
 
-    /// The registered metadata as `POST /auth/oauth2/register` answers it. The
-    /// door adds `client_id` and when it was issued.
     pub fn to_json(&self) -> Map<String, Value> {
         let words = |list: Vec<&'static str>| json!(list);
         let mut out = Map::new();
@@ -165,7 +158,7 @@ impl ErrorCode {
     }
 }
 
-/// RFC 7591 section 3.2.2's error object.
+/// RFC 7591 section 3.2.2.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("{}: {description}", .error.word())]
 pub struct RegistrationError {
@@ -188,8 +181,7 @@ impl RegistrationError {
         }
     }
 
-    /// A bearer sent to registration, which reads it as an initial access
-    /// token. This server issues none.
+    /// Registration reads a bearer as an initial access token; this server issues none.
     pub(super) fn bearer() -> RegistrationError {
         RegistrationError {
             error: ErrorCode::InvalidToken,
@@ -204,9 +196,8 @@ impl RegistrationError {
 
 type Reading<T> = Result<T, RegistrationError>;
 
-/// Where metadata came from. A registration is the client speaking to this
-/// server. A document is published for every server, so it may name grants
-/// this one lacks, and it does not state its kind as a registration must.
+/// A document is published for every server, so it may name grants this one lacks, and it does
+/// not state its kind as a registration must.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Source {
     Registration,
@@ -217,7 +208,7 @@ fn can_refresh(grants: &[GrantType]) -> bool {
     grants.contains(&GrantType::RefreshToken) || grants.contains(&GrantType::AuthorizationCode)
 }
 
-/// A field left out and a field sent as `null` are the same.
+/// A field left out and one sent as `null` are the same.
 fn field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
     object.get(name).filter(|value| !value.is_null())
 }
@@ -364,16 +355,15 @@ fn redirect_uris(object: &Map<String, Value>) -> Reading<Vec<&str>> {
         .collect()
 }
 
-/// `scope-token` of RFC 6749 section 3.3.
+/// RFC 6749 section 3.3.
 fn is_scope_token(token: &str) -> bool {
     token
         .bytes()
         .all(|byte| matches!(byte, 0x21 | 0x23..=0x5b | 0x5d..=0x7e))
 }
 
-/// A named scope the instance does not offer still registers: `grant-narrow-*`
-/// narrows it away at authorization, and a type registered later may make it
-/// grantable.
+/// An unoffered scope still registers: it is narrowed away at authorization, and a type
+/// registered later may make it grantable.
 fn scope(
     object: &Map<String, Value>,
     grants: &[GrantType],
@@ -427,9 +417,8 @@ fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
     Ok(Some(uri.to_string()))
 }
 
-/// Backchannel logout fields are never read, so they are neither stored nor
-/// answered (`no-backchannel-registered`), and neither is anything else not
-/// named here.
+/// Backchannel logout fields are never read, so they are neither stored nor answered; nor is
+/// anything else not named here.
 pub(super) fn read(
     object: &Map<String, Value>,
     source: Source,
@@ -471,10 +460,8 @@ pub(super) fn read(
     })
 }
 
-/// Read a body sent to `POST /auth/oauth2/register`. `allowed` is
-/// [`Registries::allowed`](super::scope::Registries::allowed), the default
-/// scope of a client that names none. The door caps the body's size
-/// (`register-body-cap`) before this.
+/// `allowed` is the default scope of a client that names none. The door caps the body's size
+/// before this.
 pub fn parse_registration(body: &[u8], allowed: &ScopeSet) -> Reading<Registration> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| RegistrationError::metadata("The body is not valid JSON."))?;

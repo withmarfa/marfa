@@ -1,9 +1,4 @@
-//! An item's name and preview, read from its properties and its type's
-//! effective display hints: the `types/item-name-*` statements but
-//! `types/item-name-empty`, `device/item-name-none` and the
-//! `device/item-preview-*` statements. `itemName` in `packages/shared` is the
-//! server's copy of the name; `conformance/fixtures/item-display.json` holds
-//! both to the same cases.
+//! An item's name and preview, read from its properties and its type's effective display hints.
 
 use serde_json::{Map, Value};
 
@@ -13,13 +8,11 @@ const NAME_POINTS: usize = 120;
 const PREVIEW_POINTS: usize = 240;
 const BODY_PROPERTY: &str = "body";
 
-/// What an app shows for an item in a list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemDisplay {
     /// None where no name field holds text, so each app chooses its own word.
     pub name: Option<String>,
-    /// The body's text with its Markdown removed. None where it holds no
-    /// text, or none beyond the line the item is named by.
+    /// The body's text with Markdown removed; None where nothing is left beyond the line the item is named by.
     pub preview: Option<String>,
 }
 
@@ -47,8 +40,7 @@ pub fn display(
     }
 }
 
-/// The name an item takes from its effective `display_hints.title_field`,
-/// `title` or `name` alone, or none where none of them holds text.
+/// From the effective `display_hints.title_field`, then `title`, then `name`; none where none holds text.
 pub fn title_name(properties: &Map<String, Value>, title_field: Option<&str>) -> Option<String> {
     let mut tried: Vec<&str> = Vec::with_capacity(3);
     [title_field, Some("title"), Some("name")]
@@ -63,9 +55,7 @@ pub fn title_name(properties: &Map<String, Value>, title_field: Option<&str>) ->
         })
 }
 
-/// A part named after its host by `types/item-name-part`: the edge type's
-/// label, a space and the host's name, bounded as every name is. Its name
-/// comes from no line of its body, so the preview keeps every line.
+/// A part named after its host: the edge type's label, a space and the host's name. Its name comes from no line of its body, so the preview keeps every line.
 pub fn part_display(
     properties: &Map<String, Value>,
     body_field: Option<&str>,
@@ -85,17 +75,13 @@ pub fn part_display(
     }
 }
 
-/// A name, the property it was taken from, and the index of the line in
-/// that property's value it was taken from.
 struct Named<'a> {
     field: &'a str,
     line: usize,
     text: String,
 }
 
-/// The name, by `types/item-name-fields`, `types/item-name-markdown` and
-/// `types/item-name-text`, the body properties left out where the type's
-/// `name_from_body` is false.
+/// The body properties are left out where the type's `name_from_body` is false.
 fn name<'a>(
     properties: &Map<String, Value>,
     title_field: Option<&'a str>,
@@ -131,7 +117,6 @@ fn name<'a>(
     })
 }
 
-/// The first line holding more than whitespace, read as plain text.
 fn plain_name(value: &str) -> Option<(usize, String)> {
     let (at, line) = lines(value)
         .enumerate()
@@ -141,8 +126,6 @@ fn plain_name(value: &str) -> Option<(usize, String)> {
     plain.finish().map(|text| (at, text))
 }
 
-/// The first line holding more than whitespace once its Markdown is
-/// removed.
 fn markdown_name(value: &str) -> Option<(usize, String)> {
     for (at, line) in Markdown::new(value) {
         let mut plain = Plain::new(NAME_POINTS);
@@ -156,7 +139,6 @@ fn markdown_name(value: &str) -> Option<(usize, String)> {
 
 const LINE_BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
 
-/// A text's lines, each ended by CR LF or one of `LINE_BREAKS`.
 struct Lines<'a> {
     rest: Option<&'a str>,
 }
@@ -184,16 +166,12 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
-/// Text with each control character read as a space, each run of
-/// whitespace collapsed to one space and the ends trimmed, cut at `limit`
-/// code points. It stops taking text once it holds more than `limit`, so a
-/// long body is not read to its end.
+/// Control characters read as spaces, whitespace runs collapsed, ends trimmed, cut at `limit` code points. It stops taking text past `limit`, so a long body is not read to its end.
 struct Plain {
     text: String,
     points: usize,
     space: bool,
-    /// Whether it was given anything but whitespace, a control character
-    /// included.
+    /// Whether it was given anything but whitespace, a control character included.
     seen: bool,
     limit: usize,
 }
@@ -257,10 +235,7 @@ impl Plain {
     }
 }
 
-/// The body's text with its Markdown removed, by the `device/item-preview-*`
-/// statements from `device/item-preview-after-name` to
-/// `device/item-preview-text`, leaving out the lines up to and including
-/// the index `skipped`.
+/// Lines up to and including the index `skipped` are left out.
 fn preview(text: &str, skipped: Option<usize>) -> Option<String> {
     let mut plain = Plain::new(PREVIEW_POINTS);
     for (at, line) in Markdown::new(text) {
@@ -276,11 +251,8 @@ fn preview(text: &str, skipped: Option<usize>) -> Option<String> {
     plain.finish()
 }
 
-/// A line that Markdown removal keeps.
 enum Line<'a> {
-    /// Inside a fence, as written.
     Code(&'a str),
-    /// Outside a fence, with its block markers removed.
     Text(&'a str),
 }
 
@@ -293,9 +265,6 @@ impl Line<'_> {
     }
 }
 
-/// The lines of a text that Markdown removal keeps, each with its index
-/// among all the text's lines: `device/item-preview-fence`,
-/// `device/item-preview-lines` and `device/item-preview-prefixes`.
 struct Markdown<'a> {
     lines: std::iter::Enumerate<Lines<'a>>,
     fence: Option<(char, usize)>,
@@ -352,7 +321,6 @@ fn closes_fence(content: &str, mark: char, length: usize) -> bool {
     content.chars().count() >= length && content.chars().all(|c| c == mark)
 }
 
-/// A thematic break, or a heading's `=` underline.
 fn is_break(content: &str) -> bool {
     let marks: Vec<char> = content.chars().filter(|&c| !is_space(c)).collect();
     let Some(&first) = marks.first() else {
@@ -363,7 +331,6 @@ fn is_break(content: &str) -> bool {
         || matches!(first, '-' | '*' | '_') && marks.len() >= 3)
 }
 
-/// `[label]: destination`.
 fn is_reference(content: &str) -> bool {
     let Some(rest) = content.strip_prefix('[') else {
         return false;
@@ -374,7 +341,6 @@ fn is_reference(content: &str) -> bool {
     close > 0 && !rest[..close].contains(']') && rest[close + 2..].chars().any(|c| !is_space(c))
 }
 
-/// Followed by whitespace or the end of the line.
 fn marker<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(prefix)?;
     (rest.is_empty() || rest.starts_with(is_space)).then_some(rest)
@@ -392,8 +358,6 @@ fn list_marker(line: &str) -> Option<&str> {
     marker(rest, ".").or_else(|| marker(rest, ")"))
 }
 
-/// Removes quote, heading, list and task markers from the start of a line,
-/// and a heading's closing `#` run.
 fn strip_blocks(mut line: &str) -> &str {
     loop {
         line = line.trim_start_matches(is_space);
@@ -429,8 +393,6 @@ fn find(chars: &[char], from: usize, needle: &[char]) -> Option<usize> {
     (from..chars.len().saturating_sub(needle.len() - 1)).find(|&at| chars[at..].starts_with(needle))
 }
 
-/// The end of a link or image whose `[` is at `open`: its text, and the
-/// index after its `(destination)` or `[label]`.
 fn link_end(chars: &[char], open: usize) -> Option<(usize, usize, usize)> {
     let close = find(chars, open + 1, &[']'])?;
     let closer = match chars.get(close + 1)? {
@@ -469,7 +431,6 @@ fn run_at(chars: &[char], at: usize, mark: char) -> usize {
     chars[at..].iter().take_while(|&&c| c == mark).count()
 }
 
-/// The start of the next run of exactly `length` backticks from `from`.
 fn closing_run(chars: &[char], from: usize, length: usize) -> Option<usize> {
     let mut at = from;
     while at < chars.len() {
@@ -600,8 +561,6 @@ mod tests {
     use crate::catalog::Catalog;
     use crate::wire::WireType;
 
-    /// The cases the server's summaries are held to as well, so the two
-    /// implementations of the name cannot drift apart.
     const SHARED: &str = include_str!("../../../conformance/fixtures/item-display.json");
 
     #[derive(Deserialize)]

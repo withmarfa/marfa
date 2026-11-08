@@ -1,6 +1,5 @@
-//! What the server is told. [`Start`] is fixed when the process begins; the
-//! registry holds what can change while it runs. Reading settings gives
-//! [`Accepted`], which touches nothing on disk; opening its secrets gives
+//! [`Start`] is fixed when the process begins; the registry holds what can change while it
+//! runs. Reading gives [`Accepted`], which touches no disk; opening its secrets gives
 //! [`Settings`], the only way to reach a [`Start`].
 
 mod environment;
@@ -26,7 +25,6 @@ pub use environment::Environment;
 pub use registry::{Entry, Snapshot};
 pub use start::{DatabasePath, Start};
 
-/// Every setting a start cannot accept, one line each.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Refused {
     pub lines: Vec<String>,
@@ -42,7 +40,6 @@ impl fmt::Display for Refused {
     }
 }
 
-/// Settings every rule has accepted, with their secrets still to open.
 pub struct Accepted {
     fixed: Fixed,
     given: Given,
@@ -55,8 +52,7 @@ impl Accepted {
         &self.fixed
     }
 
-    /// Fills in the secrets, making their file on a first start. A server
-    /// holds the control socket's claim before it comes here.
+    /// Makes the secrets file on a first start; the server holds the control socket's claim before this.
     pub fn open_secrets(self) -> Result<Settings, Failure> {
         let filled = secrets::open(self.given, &self.fixed.database, self.fixed.test_hooks)?;
         let live = Snapshot::resolve(&self.seeds, &[], 0);
@@ -89,7 +85,6 @@ fn warn_of_ignored(environment: &Environment) {
     }
 }
 
-/// The settings a running server reads.
 pub struct Settings {
     pub start: Arc<Start>,
     seeds: Seeds,
@@ -99,9 +94,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Reads every setting from the environment and refuses what is outside
-    /// its rule. Nothing here touches the disk. Only test hooks read a stored
-    /// setting from the environment, and then only in place of its default.
+    /// Touches no disk. Only test hooks read a stored setting from the environment, and then
+    /// only in place of its default.
     pub fn read(environment: Environment) -> Result<Accepted, Refused> {
         let mut problems = Vec::new();
         let read = Fixed::read(&environment, &mut problems);
@@ -131,9 +125,8 @@ impl Settings {
         })
     }
 
-    /// Takes in the rows the database holds. A row that no longer reads stays
-    /// in the table and its setting falls back, since a stop here could not be
-    /// mended through the API.
+    /// A row that no longer reads stays in the table and its setting falls back, since a stop
+    /// here could not be mended through the API.
     pub fn apply_stored(&self, stored: &[(String, String)]) {
         let snapshot = Snapshot::resolve(&self.seeds, stored, 0);
         for key in snapshot.unreadable() {
@@ -151,7 +144,6 @@ impl Settings {
         self.generation.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Makes committed rows live, unless a later commit is already.
     pub(crate) fn publish(&self, generation: u64, stored: &[(String, String)]) {
         let snapshot = Arc::new(Snapshot::resolve(&self.seeds, stored, generation));
         self.live.rcu(|current| {
@@ -163,13 +155,10 @@ impl Settings {
         });
     }
 
-    /// What these rows would make the settings, with nothing changed: how a
-    /// write judges a change before it commits.
     pub fn candidate(&self, stored: &[(String, String)]) -> Snapshot {
         Snapshot::resolve(&self.seeds, stored, 0)
     }
 
-    /// The settings only the environment sets, and whether each is set.
     pub fn start_only(&self) -> &[start_only::Listed] {
         &self.start_only
     }

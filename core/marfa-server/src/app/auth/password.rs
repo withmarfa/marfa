@@ -13,14 +13,11 @@ use crate::app::refusal::{Refusal, Result};
 
 const AT_ONCE: usize = 2;
 const DECOYS_AT_ONCE: usize = 1;
-/// Every decoy running or waiting, so a run of unknown emails queues no further.
 const DECOY_PLACES: usize = 8;
 const DECOY_WAIT_MS: i64 = 1_000;
 const MIN_UNITS: usize = 8;
 const MAX_UNITS: usize = 128;
 
-/// Refuses a password the owner may not choose. Length is in UTF-16 units,
-/// which is what the contract counts.
 pub fn check_new(password: &str) -> Result<()> {
     let units = password.encode_utf16().count();
     let message = if units < MIN_UNITS {
@@ -36,7 +33,6 @@ pub fn check_new(password: &str) -> Result<()> {
     ))
 }
 
-/// The settings a hash was made with: everything before its salt.
 fn shape(hash: &str) -> &str {
     hash.rsplitn(3, '$').last().unwrap_or(hash)
 }
@@ -54,12 +50,10 @@ fn verified(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-/// What checking a password found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Checked {
     Wrong,
     Right,
-    /// Right, and held under settings other than today's.
     RightButDated,
 }
 
@@ -105,8 +99,6 @@ impl Passwords {
             .await
     }
 
-    /// A hash nothing matches, in today's settings, for an account that does
-    /// not exist to cost what one that does costs.
     async fn decoy(&self) -> Result<&str> {
         let decoy = self
             .decoy
@@ -120,9 +112,8 @@ impl Passwords {
         Ok(decoy)
     }
 
-    /// Checks `password` against `stored`, and does the same work when there
-    /// is nothing stored. That work runs in a lane of its own, which refuses
-    /// once it is full, so no email but the owner's can hold up the owner.
+    /// Does the same work when there is nothing stored. That work runs in a lane of its own,
+    /// which refuses once full, so no email but the owner's can hold up the owner.
     pub async fn check(&self, stored: Option<&str>, password: String) -> Result<Checked> {
         let today = self.decoy().await?.to_string();
         let Some(stored) = stored else {

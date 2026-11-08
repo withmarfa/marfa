@@ -1,6 +1,4 @@
-//! A page of `POST /edges/bulk`, cut into writes as `items::bulk` cuts its
-//! pages: one transaction for an atomic page, and one for each entry of a
-//! best-effort page. Every edge it writes goes through [`write::write`].
+//! Pages are cut like `items::bulk`'s; every edge goes through [`write::write`].
 
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -18,7 +16,6 @@ use crate::db::Pulse;
 
 const ACTION: &str = "edges.bulk";
 
-/// One entry of a page.
 #[derive(Debug)]
 pub struct Entry {
     pub id: Option<String>,
@@ -29,8 +26,6 @@ pub struct Entry {
     pub version: Option<i64>,
 }
 
-/// What `POST /edges/bulk` asks for. An entry the door could not read is held
-/// as its refusal, so that `atomic` decides what becomes of the rest.
 #[derive(Debug)]
 pub struct Asked {
     pub entries: Vec<Result<Entry>>,
@@ -43,9 +38,8 @@ fn mode_word(create_only: bool) -> &'static str {
 }
 
 impl Writing<'_, '_, '_> {
-    /// What an atomic page answers across all its entries before any is held
-    /// against the edges stored: an id that cannot be one, and a grant the
-    /// caller lacks. A source it cannot reach is the entry's own answer.
+    /// Answers across all entries before any is held against the stored edges: an id that cannot
+    /// be one, and a grant the caller lacks.
     fn entry_gates(&self, entry: &Entry) -> Result<()> {
         edges::check_entry_ids(entry)?;
         if let Some(source) = items::row(self.unit.tx(), &entry.source_id)?
@@ -174,7 +168,6 @@ fn atomic_page(writing: &Writing<'_, '_, '_>, page: Atomic) -> Result<String> {
     Ok(json!({ "counts": counts, "results": results }).to_string())
 }
 
-/// Writes a page and answers its body.
 pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     let Asked {
         entries,

@@ -1,8 +1,6 @@
-//! Stdout carries only JSON objects, one per line. A log record has `level`
-//! and `message`; a request record has neither.
-//!
-//! The same events also leave for an OTLP collector, once telemetry has one:
-//! see [`crate::telemetry`].
+//! Stdout carries only JSON objects, one per line. A log record has `level` and `message`;
+//! a request record has neither. The same events also leave for an OTLP collector (see
+//! [`crate::telemetry`]).
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -18,7 +16,6 @@ use crate::telemetry::{Logs, REQUEST_TARGET};
 
 static LOGS: OnceLock<Logs> = OnceLock::new();
 
-/// The layer that sends log records to a collector, once there is one.
 pub fn logs() -> &'static Logs {
     LOGS.get_or_init(Logs::default)
 }
@@ -35,8 +32,6 @@ pub fn init() {
         .try_init();
 }
 
-/// A log record as one JSON object: `timestamp`, a lowercase `level`,
-/// `message`, and the event's own fields beside them.
 struct Lines;
 
 struct Collect(serde_json::Map<String, serde_json::Value>);
@@ -94,7 +89,6 @@ fn now_micros() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
-/// One request's record, written once its answer is ready.
 #[derive(Serialize)]
 pub struct Request<'a> {
     pub timestamp: &'a str,

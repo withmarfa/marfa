@@ -1,7 +1,5 @@
-//! The `version-thinning` job: an item's older snapshots go by its type's
-//! `version_policy`. Which snapshots go is decided twice: once to find the
-//! items with work to do, and again inside the write that removes them, so each
-//! item is thinned by the policy as it stands then.
+//! Which snapshots go is decided twice: to find items with work, and again inside the write
+//! that removes them, so each item is thinned by the policy as it stands then.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,11 +21,8 @@ use crate::settings::registry::{
     VERSION_WEEKLY_SNAPSHOT_DAYS,
 };
 
-/// Items looked at in one read.
 const PAGE: i64 = 100;
-/// Snapshots one write removes.
 const CHUNK: usize = 200;
-/// A history this short is never thinned.
 const MINIMUM: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,12 +46,9 @@ fn parsed(text: &str) -> Option<DateTime<Utc>> {
         .map(|instant| instant.with_timezone(&Utc))
 }
 
-/// The versions a policy gives up, of an item's whole history. Every snapshot
-/// inside `recent_days` stays; then the latest of each day to `daily_days`, and
-/// of each ISO week to `weekly_days`; and none beyond, unless `weekly_days` is
-/// zero, which as with any retention gives no limit on age. The most recent
-/// version always stays, and a snapshot whose age cannot be read stays. A
-/// history that still holds more than `max_versions` loses its oldest.
+/// Snapshots inside `recent_days` stay, then the latest of each day to `daily_days` and of each
+/// ISO week to `weekly_days`; zero `weekly_days` means no age limit. The newest version and any
+/// snapshot whose age cannot be read always stay; beyond `max_versions` the oldest go.
 fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
     if history.len() <= MINIMUM {
         return Vec::new();
@@ -133,9 +125,7 @@ fn instance_policy(app: &App) -> Policy {
     }
 }
 
-/// The policy of an item's type, field by field over the instance's. A type
-/// no longer registered has only the instance's. A type on record that cannot
-/// be read has no policy, and its items are left whole.
+/// A type no longer registered has only the instance's policy; one that cannot be read has none, and its items are left whole.
 fn policy_of(app: &App, catalog: &Catalog, type_id: &str) -> Option<Policy> {
     let defaults = instance_policy(app);
     if catalog.is_unreadable(type_id) {
@@ -183,7 +173,6 @@ fn history(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// What the policy gives up of one item, as `tx` sees it.
 fn doomed(app: &App, catalog: &Catalog, tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
     let type_id: Option<String> = tx
         .query_row("SELECT type FROM items WHERE seq = ?1", [seq], |row| {
@@ -202,8 +191,6 @@ struct Page {
     chosen: Vec<i64>,
 }
 
-/// The next items after `after` whose history is long enough to thin, and
-/// which of them have snapshots to give up.
 fn page(app: &App, tx: &Transaction<'_>, after: i64) -> Result<Page> {
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
     let mut statement = tx.prepare_cached(
@@ -225,7 +212,6 @@ fn page(app: &App, tx: &Transaction<'_>, after: i64) -> Result<Page> {
     })
 }
 
-/// One write of an item's snapshots, by the policy as it stands in it.
 fn remove(unit: &Unit<'_, '_>, app: &App, seq: i64) -> Result<usize> {
     let tx = unit.tx();
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;

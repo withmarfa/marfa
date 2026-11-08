@@ -1,5 +1,4 @@
-//! An edge type registration: what the request holds, and the form the
-//! registry stores.
+//! An edge type registration: the request and the form the registry stores.
 
 use serde_json::{Map, Value, json};
 
@@ -12,7 +11,6 @@ const CARDINALITIES: [&str; 4] = ["one-to-one", "one-to-many", "many-to-one", "m
 const CASCADES: [&str; 4] = ["cascade", "orphan", "block", "with-hosts"];
 const WRITTEN_AT: [&str; 3] = ["source", "target", "none"];
 
-/// Why a request for an edge type is refused.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EdgeIssues {
     /// `missing_required_field`.
@@ -39,8 +37,6 @@ fn invalid(message: impl Into<String>, field: Option<&str>) -> EdgeIssues {
     }
 }
 
-/// Whether the edge-type grammar takes `name`: a single kebab-case word, or
-/// anything the type grammar takes.
 pub fn edge_id(name: &str) -> bool {
     if name.contains('.') {
         return crate::grammar::type_id(name).unwrap_or(false);
@@ -56,7 +52,6 @@ pub fn edge_id(name: &str) -> bool {
         && characters.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-/// The shape a request body must have, before anything is read from it.
 /// `evolve_constraints` is allowed and belongs to the caller.
 pub fn request_shape(body: &Obj) -> Result<(), EdgeIssues> {
     for field in ["id", "cardinality"] {
@@ -198,8 +193,7 @@ fn shipped_holder(name: &str, except: &str) -> Option<String> {
         })
 }
 
-/// Refuses an id or reverse name another edge type already holds. `taken`
-/// answers who holds a name among the registered edge types.
+/// `taken` answers who holds a name among the registered edge types.
 fn names_free(
     id: &str,
     reverse: Option<&str>,
@@ -222,7 +216,6 @@ fn names_free(
     Ok(())
 }
 
-/// The edge type a request asks for, in the form the registry stores it.
 pub fn edge_type_from_request(
     body: &Obj,
     taken: &dyn Fn(&str) -> Option<String>,
@@ -355,8 +348,6 @@ fn unrestricted(values: Option<&Value>) -> bool {
     list.is_empty() || list.contains(&"*")
 }
 
-/// The members of an edge type an evolution changes beyond widening its
-/// endpoint constraints and renaming its labels.
 pub fn constraint_evolution_changes(stored: &Obj, next: &Obj) -> Vec<&'static str> {
     let mut changes: Vec<&'static str> = [
         "id",

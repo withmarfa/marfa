@@ -1,5 +1,4 @@
-//! The real program, for what only a process can show: its exit, its files,
-//! its sockets and its signals.
+//! The real program: its exit, files, sockets and signals.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

@@ -1,5 +1,5 @@
-//! The jobs that remove what has aged out of a log, one bounded write at a time,
-//! so that a request is never held behind a whole run.
+//! Jobs that remove what has aged out of a log, one bounded write at a time, so a request
+//! is never held behind a whole run.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -18,12 +18,8 @@ use crate::settings::registry::{
     AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, RATE_LIMIT_WINDOW_MS, Setting,
 };
 
-/// Rows one write removes.
 const BATCH: i64 = 1_000;
 
-/// Repeats `step`, which answers how many rows it took of a batch of `batch`,
-/// until one takes less. Answers the rows taken, and whether it got to the end
-/// rather than being told to stop between two batches.
 pub async fn drain<F, W>(run: &Run, batch: i64, mut step: F) -> Result<(i64, bool)>
 where
     F: FnMut() -> W,
@@ -42,9 +38,7 @@ where
     }
 }
 
-/// One batch of a log the server keeps for itself, by the retention as it
-/// stands when the write runs. Nothing is audited of this, so it is the
-/// server's own write.
+/// Nothing is audited of this, so it is the server's own write.
 async fn expire(
     app: &Arc<App>,
     retention: Setting<u64>,
@@ -102,8 +96,6 @@ async fn ended_windows(app: &Arc<App>) -> Result<i64> {
         .await
 }
 
-/// Both limiters: the one in memory that `/keys` shares, and the sign-in
-/// doors' table.
 pub async fn rate_limit(app: Arc<App>, run: Run) -> Result<Report> {
     let window_ms = app.settings.live().get(RATE_LIMIT_WINDOW_MS);
     let swept = app.key_limit.sweep(app.clock.now_ms(), window_ms);

@@ -1,5 +1,4 @@
-//! What changing a registered type touches, split into what any writer of
-//! the type may change and what only a schema writer may.
+//! What changing a registered type touches: what any writer may change and what only a schema writer may.
 
 use std::collections::HashSet;
 
@@ -17,7 +16,6 @@ const FREE_MEMBERS: [&str; 7] = [
     "fields",
 ];
 
-/// A field without what it says about itself: its description and labels.
 fn shape_of(field: &Value) -> Value {
     let Some(field) = field.as_object() else {
         return field.clone();
@@ -35,8 +33,7 @@ fn shape_of(field: &Value) -> Value {
     Value::Object(shape)
 }
 
-/// The changes `next` makes to `stored`. `needs_schema_write` lists what
-/// only a schema writer may change; `additions` the optional fields added.
+/// Returns (what only a schema writer may change, optional fields added).
 pub fn evolution_of(stored: &Obj, next: &Obj) -> (Vec<String>, Vec<String>) {
     let mut needs = Vec::new();
     let mut additions = Vec::new();

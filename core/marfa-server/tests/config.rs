@@ -1,6 +1,5 @@
-//! `/config` as a person or an app meets it: rules across settings, the
-//! confirmation a changed sign-in address asks for, and what the settings list
-//! leaves out. The contract's fixtures hold the rest.
+//! `/config` as a person or an app meets it: rules across settings, the confirmation a
+//! changed sign-in address asks for, and what the settings list leaves out.
 
 use std::sync::Arc;
 
@@ -56,9 +55,6 @@ impl Instance {
             .unwrap();
     }
 
-    /// Claims the instance with an owner row that has `sessions` live browser
-    /// sessions and `apps` standing consents, and one of each that no longer
-    /// reaches anyone.
     async fn claim_with(&self, sessions: u32, apps: u32) {
         let now = self.app.clock.now_ms() / 1000;
         self.app
@@ -134,7 +130,6 @@ impl Instance {
         self.send(&self.control, builder, body).await
     }
 
-    /// A key holding `config.manage`, which is less than the owner.
     async fn manager(&self) -> String {
         let body = json!({ "label": "m", "source": "m", "permissions": ["config.manage"] });
         let minted = self.call(Method::POST, "/keys", Some(body)).await;
@@ -185,7 +180,6 @@ impl Instance {
         self.call(Method::GET, "/config", None).await.body
     }
 
-    /// Leaves a row in the table that its setting no longer reads.
     async fn spoil(&self, key: &'static str, text: &'static str) {
         self.app
             .db
@@ -225,7 +219,6 @@ async fn a_clear_that_exposes_a_default_breaking_a_rule_is_refused_and_changes_n
     assert_eq!(order.code(), "validation_error");
     assert_eq!(order.error_paths(), ["version_daily_snapshot_days"]);
 
-    // The default 90 that clearing the daily window exposes is past the weekly 30.
     let exposed = instance
         .patch(json!({ "version_daily_snapshot_days": null }))
         .await;
@@ -801,8 +794,6 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
 #[tokio::test]
 async fn a_commit_that_failed_reads_the_live_settings_again_from_the_database() {
     let instance = Instance::start(&[]).await;
-    // A row the database holds and the live settings do not, as a commit that
-    // landed without being acknowledged would leave.
     instance
         .app
         .db

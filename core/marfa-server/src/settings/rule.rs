@@ -1,9 +1,5 @@
-//! What a value may be, and the line a refusal gives when it is not.
-
 const BOOLEAN_RULE: &str = "must be true or false (also 1/0, yes/no, on/off)";
 
-/// The largest whole number a JSON number carries without losing a digit. Marfa
-/// serves its numbers as floats, so no setting accepts more.
 pub const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 pub fn line(name: &str, rule: &str, value: &str) -> String {

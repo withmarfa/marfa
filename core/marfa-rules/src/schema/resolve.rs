@@ -1,5 +1,4 @@
-//! A type read down its parent chain, and the forms a definition takes on the
-//! way in and out.
+//! A type read down its parent chain, and the forms a definition takes on the way in and out.
 
 use std::collections::HashSet;
 
@@ -9,20 +8,17 @@ use super::{Obj, Registry, as_obj, text};
 use crate::catalog::merge_field_definition;
 use crate::wire::{label_from_id, label_from_name, plural_from_label};
 
-/// The parent chain a type may have before it cannot be resolved.
 pub const MAX_RESOLUTION_DEPTH: usize = 100;
 
 const HINT_KEYS: [&str; 4] = ["title_field", "body_field", "name_from_body", "icon"];
 
-/// A parent chain that loops or runs past [`MAX_RESOLUTION_DEPTH`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainFault {
     pub type_id: String,
     pub at: String,
 }
 
-/// The chain of `id`, the root first, as each type reads. Empty where the
-/// registry does not hold `id`; a parent it does not hold ends the chain.
+/// Root first. Empty where the registry does not hold `id`; a parent it does not hold ends the chain.
 pub fn chain(registry: &Registry, id: &str) -> Result<Vec<Obj>, ChainFault> {
     let mut found: Vec<Obj> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -42,28 +38,25 @@ pub fn chain(registry: &Registry, id: &str) -> Result<Vec<Obj>, ChainFault> {
     Ok(found)
 }
 
-/// The label a definition names, where it names one.
 pub fn named(label: Option<&Value>) -> Option<&str> {
     label
         .and_then(Value::as_str)
         .filter(|label| !label.is_empty())
 }
 
-/// The label a type answers with: its own, else the one its id makes.
 pub fn label_or_default(schema: &Obj) -> String {
     named(schema.get("label"))
         .map(str::to_string)
         .unwrap_or_else(|| label_from_id(text(schema, "id").unwrap_or_default()))
 }
 
-/// The plural a type answers with: its own, else its label's. Never inherited.
+/// Its own, else its label's. Never inherited.
 pub fn plural_of(schema: &Obj) -> String {
     named(schema.get("plural"))
         .map(str::to_string)
         .unwrap_or_else(|| plural_from_label(&label_or_default(schema)))
 }
 
-/// A definition that names no label takes the one its id makes.
 pub fn labelled(mut schema: Obj) -> Obj {
     let label = label_or_default(&schema);
     schema.insert("label".into(), Value::String(label));
@@ -76,8 +69,6 @@ fn label_member(definition: &mut Obj, name: &str) {
     }
 }
 
-/// Each field and each member of an entries field that names no label takes
-/// the one its name makes.
 pub fn with_field_labels(fields: &Obj) -> Obj {
     let mut out = Map::new();
     for (name, field) in fields {
@@ -97,8 +88,7 @@ pub fn with_field_labels(fields: &Obj) -> Obj {
     out
 }
 
-/// A definition with the defaults its fields leave out written down, so two
-/// equal definitions compare equal.
+/// Defaults its fields leave out are written down, so two equal definitions compare equal.
 pub fn canonical(schema: Obj) -> Obj {
     let mut schema = labelled(schema);
     if let Some(Value::Object(fields)) = schema.get_mut("fields") {
@@ -112,8 +102,6 @@ pub fn canonical(schema: Obj) -> Obj {
     schema
 }
 
-/// The roles a type carries, its own and every ancestor's, sorted; none where
-/// the chain declares none.
 pub fn roles_of(registry: &Registry, id: &str) -> Result<Option<Vec<String>>, ChainFault> {
     let mut roles: Vec<String> = chain(registry, id)?
         .iter()
@@ -131,10 +119,7 @@ pub fn roles_of(registry: &Registry, id: &str) -> Result<Option<Vec<String>>, Ch
     Ok((!roles.is_empty()).then_some(roles))
 }
 
-/// What a type answers with once its chain is read: fields merged root to
-/// leaf, each display hint from the nearest type that sets it, the policies
-/// merged key by key, and the roles of the whole chain. `declared_only` makes
-/// no label or plural a definition does not name.
+/// Fields merged root to leaf, each display hint from the nearest type that sets it, policies merged key by key, roles of the whole chain. `declared_only` makes no label or plural a definition does not name.
 pub fn resolve(
     registry: &Registry,
     id: &str,
@@ -242,12 +227,7 @@ pub fn resolve(
     Ok(Some(out))
 }
 
-/// A definition written back as read carries more than its author wrote: the
-/// owner's icon, every hint the type takes from an ancestor, and the labels
-/// and plural Marfa made. What the stored definition does not set and the
-/// submission gives as read is dropped, so the type goes on following where
-/// it came from. `read` is the stored type as it resolves, where its chain
-/// can be walked.
+/// A definition written back as read carries more than its author wrote (the owner's icon, inherited hints, made labels and plural). What the stored definition does not set and the submission gives as read is dropped, so the type goes on following where it came from. `read` is the stored type as it resolves, where its chain can be walked.
 pub fn read_back_free(
     submitted: Obj,
     stored: &Obj,

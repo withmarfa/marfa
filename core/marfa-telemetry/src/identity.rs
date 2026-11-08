@@ -1,14 +1,8 @@
-//! What every report of a process shares, whichever of them is asked for: the
-//! service's name, the attributes an operator added, and how long a send may
-//! take.
-
 use std::time::Duration;
 
 use crate::environment::text;
 use crate::otlp::Signal;
 
-/// How long a send may take, and each one before it, unless the standard
-/// timeout variable says otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,14 +13,8 @@ pub struct Identity {
     pub resource: Vec<(String, String)>,
 }
 
-/// The timeout, service name and resource attributes, which no endpoint is
-/// needed for. `default_service` is the name of the program, and `signal`
-/// the one whose timeout variable is read first.
-///
-/// `resource` is empty where `OTEL_RESOURCE_ATTRIBUTES` cannot be read: the
-/// specification asks that a list with any pair that cannot be read be
-/// discarded whole. [`attributes`] says whether it could, for a program that
-/// refuses such a list.
+/// `resource` is empty where `OTEL_RESOURCE_ATTRIBUTES` cannot be read: OpenTelemetry
+/// discards a list with any unreadable pair whole. [`attributes`] says whether it could.
 pub fn identity(
     get: &impl Fn(&str) -> Option<String>,
     default_service: &str,
@@ -37,8 +25,7 @@ pub fn identity(
         .as_deref()
         .and_then(attributes)
         .unwrap_or_default();
-    // The service name variable wins over the same name among the
-    // attributes, as the specification asks.
+    // The service name variable wins over the same name among the attributes.
     let named = resource
         .iter()
         .find(|(key, _)| key == "service.name")
@@ -64,9 +51,8 @@ pub fn timeout(get: &impl Fn(&str) -> Option<String>, signal: Signal) -> Duratio
         .map_or(DEFAULT_TIMEOUT, Duration::from_millis)
 }
 
-/// `key=value,key=value`, a value percent-encoded and possibly empty, as the
-/// W3C Baggage format has it. `None` if any pair cannot be read. A repeated
-/// key keeps its last value.
+/// `key=value,key=value` as W3C Baggage has it: a value percent-encoded, possibly empty.
+/// `None` if any pair cannot be read; a repeated key keeps its last value.
 pub fn attributes(text: &str) -> Option<Vec<(String, String)>> {
     let mut out: Vec<(String, String)> = Vec::new();
     for pair in text.split(',').filter(|pair| !pair.trim().is_empty()) {
@@ -82,11 +68,9 @@ pub fn attributes(text: &str) -> Option<Vec<(String, String)>> {
     Some(out)
 }
 
-/// `key=value,key=value`, a value percent-encoded. The headers that can be
-/// sent, and whether every pair could be read: a pair that is not a valid
-/// header is left out, as the specification asks, and a program that would
-/// rather refuse the list says so from the second answer. One the exporter
-/// sets itself is left out without being a fault.
+/// `key=value,key=value`, a value percent-encoded. Returns the headers that can be sent
+/// and whether every pair was readable; an invalid header is left out, as is one the
+/// exporter sets itself (not a fault).
 pub fn headers(text: &str) -> (Vec<(String, String)>, bool) {
     let mut readable = true;
     let mut out = Vec::new();
@@ -171,7 +155,6 @@ mod tests {
             .timeout,
             Duration::from_millis(100)
         );
-        // The logs' variable is not the traces' one.
         let logs = |pairs| timeout(&getter(pairs), Signal::Logs);
         assert_eq!(
             logs(&[("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "100")]),
@@ -203,8 +186,6 @@ mod tests {
             ]
         );
         assert!(!readable);
-        // The witness: a list that is whole says so, and a header the
-        // exporter sets itself is dropped without being a fault.
         assert_eq!(
             headers("a=b, Content-Type=text/plain"),
             (vec![("a".to_string(), "b".to_string())], true)
@@ -234,8 +215,6 @@ mod tests {
                 "{bad}"
             );
         }
-        // The witness: the same list without the bad pair is read, and an
-        // empty value is a value.
         assert_eq!(attributes("a=b").map(|list| list.len()), Some(1));
         assert_eq!(
             attributes("a="),
@@ -248,7 +227,6 @@ mod tests {
         let attributes = ("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-list,a=b");
         let from_list = who(&[attributes]);
         assert_eq!(from_list.service, "from-list");
-        // `service.name` is the service, not a second copy of it.
         assert_eq!(from_list.resource, vec![("a".to_string(), "b".to_string())]);
         assert_eq!(
             who(&[attributes, ("OTEL_SERVICE_NAME", "from-variable")]).service,

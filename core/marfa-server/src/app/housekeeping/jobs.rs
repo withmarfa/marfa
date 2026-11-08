@@ -1,6 +1,3 @@
-//! Every housekeeping job. A later area adds a job with one entry here, and an
-//! interval in `settings/registry.rs` unless the contract fixes its pace.
-
 use std::time::Duration;
 
 use super::super::{items, oauth};

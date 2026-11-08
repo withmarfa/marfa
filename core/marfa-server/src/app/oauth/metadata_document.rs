@@ -1,10 +1,9 @@
-//! Client ID metadata documents (draft-ietf-oauth-client-id-metadata-document):
-//! a `client_id` that is a URL, and the fetch of what it names. The URL comes
-//! from whoever opens an authorization, so nothing about it is trusted, and
-//! the fetch must never let them read this server's own network.
+//! Client ID metadata documents (draft-ietf-oauth-client-id-metadata-document): a `client_id`
+//! that is a URL, and the fetch of what it names. The URL comes from whoever opens an
+//! authorization, so nothing about it is trusted and the fetch must never reach this server's
+//! own network.
 //!
-//! This blocks. The door runs it off the async threads, and holds the rate
-//! limits, the cache and the state of a client whose document has gone.
+//! Blocking: the door runs it off the async threads.
 
 use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
@@ -38,34 +37,26 @@ const SYMMETRIC_METHODS: [&str; 3] = [
     "client_secret_jwt",
 ];
 
-/// Why a document could not be had. The draft treats the two differently: a
-/// client already stored keeps working through `Unavailable`, and neither is
-/// ever cached.
+/// A client already stored keeps working through `Unavailable`, and neither is ever cached.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Failure {
-    /// The URL or what it answered will not do until someone changes it.
     #[error("{0}")]
     Refused(&'static str),
-    /// No usable answer this time.
     #[error("{0}")]
     Unavailable(&'static str),
 }
 
-/// Whether `client_id` should be read as a document's URL. This only routes
-/// a request: [`check_url`] is what accepts one.
+/// Only routes a request: [`check_url`] is what accepts one.
 pub fn is_url(client_id: &str) -> bool {
     client_id
         .get(..6)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https:"))
 }
 
-/// Judge a `client_id` that [`is_url`] routed here.
-///
-/// The draft compares client IDs as strings, so the text must already be the
-/// URL's one spelling: what is checked is what is fetched, and one document
-/// is never two clients. That one comparison also refuses dot segments,
-/// encoded ones included, an uppercase host, a default port and an encoded
-/// host, each of which the parser rewrites.
+/// The draft compares client IDs as strings, so the text must already be the URL's one
+/// spelling: what is checked is what is fetched, and one document is never two clients. That
+/// also refuses dot segments (encoded too), an uppercase host, a default port and an encoded
+/// host, which the parser rewrites.
 pub fn check_url(client_id: &str) -> Result<Url, Failure> {
     let refused = |why| Err(Failure::Refused(why));
     if !redirect::is_plain(client_id) {
@@ -95,9 +86,7 @@ pub fn check_url(client_id: &str) -> Result<Url, Failure> {
     Ok(url)
 }
 
-/// A first look at the name, before any lookup. The address check on what the
-/// name resolves to is the guard; this answers early and in the same way for
-/// names no public document lives at.
+/// An early look at the name; the address check on what it resolves to is the guard.
 fn host_may_be_public(url: &Url) -> bool {
     match url.host() {
         Some(Host::Ipv4(v4)) => is_public(IpAddr::V4(v4)),
@@ -115,8 +104,7 @@ fn host_may_be_public(url: &Url) -> bool {
     }
 }
 
-/// Whether an address is on the public internet. IPv4 refuses each range of
-/// RFC 6890 and its successors that is not global.
+/// IPv4 refuses each range of RFC 6890 and its successors that is not global.
 fn is_public_v4(address: Ipv4Addr) -> bool {
     let [a, b, c, _] = address.octets();
     !matches!(
@@ -135,11 +123,10 @@ fn is_public_v4(address: Ipv4Addr) -> bool {
     )
 }
 
-/// Global unicast is the one IPv6 block with public hosts, so this lists what
-/// is allowed and not what is refused: anything IANA assigns later stays out,
-/// as do IPv4-compatible, NAT64, link-local, unique-local and multicast
-/// addresses. Teredo, ORCHID and the like, the 6to4 relay and both
-/// documentation blocks sit inside it.
+/// Global unicast is the one IPv6 block with public hosts, so this lists what is allowed:
+/// anything IANA assigns later stays out, as do IPv4-compatible, NAT64, link-local, unique-local
+/// and multicast addresses. Teredo, ORCHID, the 6to4 relay and both documentation blocks sit
+/// inside it.
 fn is_public_v6(address: Ipv6Addr) -> bool {
     let [first, second, ..] = address.segments();
     let global_unicast = first & 0xe000 == 0x2000;
@@ -160,15 +147,13 @@ pub fn is_public(address: IpAddr) -> bool {
     }
 }
 
-/// A name lookup, kept apart so that the one answer the checks saw is the one
-/// the connection uses.
+/// Kept apart so the one answer the checks saw is the one the connection uses.
 pub trait Lookup: Send + Sync {
     fn lookup(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>>;
 }
 
-/// The system's resolver. It has no time limit of its own, so it runs on a
-/// thread of its own, which a hung lookup leaves behind until the system
-/// gives up.
+/// The system's resolver has no time limit, so it runs on a thread of its own, which a hung
+/// lookup leaves behind until the system gives up.
 struct SystemLookup {
     limit: Duration,
 }
@@ -189,8 +174,7 @@ impl Lookup for SystemLookup {
     }
 }
 
-/// Answers every name with the checked addresses, so that nothing between the
-/// check and the connection can look the name up again.
+/// So nothing between the check and the connection can look the name up again.
 #[derive(Debug)]
 struct Pinned(Vec<SocketAddr>);
 
@@ -228,7 +212,6 @@ impl Default for Fetcher {
 }
 
 impl Fetcher {
-    /// Fetch the document a `client_id` names.
     pub fn fetch(&self, client_id: &str) -> Result<Vec<u8>, Failure> {
         let url = check_url(client_id)?;
         let addresses = self.checked_addresses(&url)?;
@@ -273,8 +256,8 @@ impl Fetcher {
                 "The client's metadata document is not JSON.",
             ));
         }
-        // ureq's own limit counts bytes before it decompresses them, and hides
-        // that it has, so the limit goes on what comes out.
+        // ureq's limit counts bytes before decompression and hides that it has, so the limit goes on
+        // the output.
         let mut document = Vec::new();
         response
             .body_mut()
@@ -324,8 +307,7 @@ fn failed_transport(error: ureq::Error) -> Failure {
     }
 }
 
-/// `application/json`, or the `+json` of any `application/` type, with any
-/// parameters.
+/// `application/json` or the `+json` of any `application/` type, parameters allowed.
 fn is_json_media_type(value: &str) -> bool {
     let essence = value
         .split(';')
@@ -356,9 +338,7 @@ fn named_methods<'a>(
     }
 }
 
-/// Read a fetched document as the client `client_id`. Every error here is
-/// `invalid_client` to whoever asked, so the door uses the description only
-/// for its log.
+/// Every error here is `invalid_client` to whoever asked; the description is only for the log.
 pub fn parse_document(
     client_id: &str,
     body: &[u8],
@@ -444,7 +424,6 @@ mod tests {
     const ID: &str = "https://metadata.example.com/client.json";
     const NAME: &str = "metadata.example.com";
 
-    /// One TLS listener on the loopback that writes one fixed response.
     struct Listener {
         address: SocketAddr,
         accepted: Arc<AtomicUsize>,
@@ -514,7 +493,6 @@ mod tests {
         out
     }
 
-    /// Answers each lookup with the next list, and the last one from then on.
     struct Script {
         answers: Mutex<VecDeque<Vec<SocketAddr>>>,
         calls: Arc<AtomicUsize>,
@@ -545,8 +523,7 @@ mod tests {
         }
     }
 
-    /// The real checks, and only the listeners' loopback let through by name
-    /// of the test: the guard itself has its own tests below.
+    /// Only the listeners' loopback is let through by name of the test; the guard has its own tests.
     fn fetcher(lookup: impl Lookup + 'static, trusted: &[u8]) -> Fetcher {
         Fetcher {
             lookup: Box::new(lookup),
@@ -598,7 +575,6 @@ mod tests {
         assert_eq!(public.accepted.load(Ordering::SeqCst), 1);
         assert_eq!(internal.accepted.load(Ordering::SeqCst), 0);
 
-        // The witness: the name really does rebind, on the next lookup.
         assert!(fetcher.fetch(ID).is_err());
         assert_eq!(lookups.load(Ordering::SeqCst), 2);
         assert_eq!(internal.accepted.load(Ordering::SeqCst), 1);

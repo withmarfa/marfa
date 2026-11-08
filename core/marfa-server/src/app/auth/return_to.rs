@@ -1,5 +1,4 @@
-//! Where a sign-in may send a browser. This reads `return_to` as a browser
-//! would, because what matters is where the browser ends up.
+//! Where a sign-in may send a browser, read as a browser would read `return_to`.
 
 fn is_dot(segment: &str) -> bool {
     segment == "." || segment.eq_ignore_ascii_case("%2e")
@@ -31,8 +30,6 @@ fn without_dots(path: &str) -> String {
     format!("/{}", kept.join("/"))
 }
 
-/// What is left of `text` once `origin` is taken off its front, if it names
-/// that origin.
 fn after_origin<'t>(text: &'t str, origin: &str) -> Option<&'t str> {
     let head = text.get(..origin.len())?;
     let rest = &text[origin.len()..];
@@ -70,8 +67,6 @@ fn escaped(text: &str) -> String {
     out
 }
 
-/// The path, query and fragment `value` resolves to on `origin`, or `/` if a
-/// browser would leave it.
 pub fn kept(value: &str, origin: &str) -> String {
     const HOME: &str = "/";
     let trimmed = value.trim_matches(|c: char| c <= ' ');

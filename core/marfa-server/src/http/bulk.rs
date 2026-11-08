@@ -1,5 +1,4 @@
-//! `POST /items/bulk`. The door reads a page; what becomes of it is
-//! `app::items::bulk`'s.
+//! `POST /items/bulk`. The door reads a page; `app::items::bulk` decides what becomes of it.
 
 use std::sync::Arc;
 

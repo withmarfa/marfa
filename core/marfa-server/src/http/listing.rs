@@ -1,6 +1,3 @@
-//! `GET /items`, `GET /items/stats` and `GET /search`: a query string read into
-//! what the compiler takes.
-
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -97,14 +94,11 @@ fn is_blank(value: &str) -> bool {
     value.split(',').all(|entry| entry.trim().is_empty())
 }
 
-/// A query string its operation has declared.
 pub struct Params {
     pairs: Vec<(String, String)>,
 }
 
 impl Params {
-    /// Refuses a key the operation does not take, then one of the keys that
-    /// narrow left with nothing in it.
     pub fn read(uri: &Uri, allowed: &[&str], shorthand: bool) -> Result<Params> {
         query::only_where(uri, |key| {
             allowed.contains(&key) || (shorthand && is_shorthand(key))
@@ -130,8 +124,7 @@ impl Params {
         Ok(Params { pairs })
     }
 
-    /// The one value of `name`. A list is a single value with commas in it, so
-    /// a key sent twice says two things.
+    /// A list is a single value with commas in it, so a key sent twice says two things.
     pub fn one(&self, name: &str) -> Result<Option<&str>> {
         let mut named = self
             .pairs
@@ -153,7 +146,6 @@ impl Params {
             .transpose()
     }
 
-    /// Each `edge[...]` or `backref[...]` key, as the filter term it stands for.
     fn shorthand(&self) -> Result<Vec<String>> {
         let mut terms = Vec::new();
         for (key, value) in self.pairs.iter().filter(|(key, _)| is_shorthand(key)) {
@@ -171,7 +163,6 @@ impl Params {
     }
 }
 
-/// A `limit` the door refuses outside `1..=most`.
 pub fn whole_limit(params: &Params, default: i64, most: i64) -> Result<i64> {
     let Some(value) = params.one("limit")? else {
         return Ok(default);
@@ -183,7 +174,6 @@ pub fn whole_limit(params: &Params, default: i64, most: i64) -> Result<i64> {
         .ok_or_else(|| invalid_field("limit", format!("limit is a whole number, 1 to {most}.")))
 }
 
-/// A `limit` the door caps at `most`, however many digits it holds.
 fn capped_limit(params: &Params, default: i64, most: i64) -> Result<i64> {
     let Some(value) = params.one("limit")? else {
         return Ok(default);
@@ -275,8 +265,6 @@ fn beneath_of(params: &Params) -> Result<Option<String>> {
     Ok(Some(id.to_string()))
 }
 
-/// What narrows a read, for each door that takes it. `default` is the states
-/// the door selects when the query names none.
 fn ask_of(params: &Params, default: States) -> Result<Ask> {
     let tags = params
         .one("tags")?

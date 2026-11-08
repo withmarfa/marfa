@@ -1,6 +1,4 @@
-//! The rules for the types and edge types a registry holds: what a
-//! registration is held to, how a type resolves down its chain, and what an
-//! evolution changes. A refusal is a list of [`Issue`]s.
+//! Rules for registered types and edge types: registration, resolution down a chain, and evolution. A refusal is a list of [`Issue`]s.
 
 mod chain;
 mod compat;
@@ -36,7 +34,6 @@ pub use unread::{unread_edge_keys, unread_keys};
 
 pub type Obj = Map<String, Value>;
 
-/// The types an edge type's role constraint may name.
 pub const TYPE_ROLES: [&str; 1] = ["container"];
 pub const ROLE_PREFIX: &str = "role:";
 pub const MAX_LABEL_LENGTH: usize = 100;
@@ -96,7 +93,6 @@ impl Issue {
     }
 }
 
-/// How a value reads in an issue's `actual`.
 pub(crate) fn describe(value: Option<&Value>) -> String {
     match value {
         None => "nothing".into(),
@@ -120,17 +116,14 @@ pub(crate) fn text<'a>(row: &'a Obj, key: &str) -> Option<&'a str> {
     row.get(key).and_then(Value::as_str)
 }
 
-/// A JSON number as JavaScript reads it.
 pub(crate) fn number(value: Option<&Value>) -> Option<f64> {
     value.and_then(Value::as_f64)
 }
 
-/// `Number.isInteger`.
 pub(crate) fn whole(value: f64) -> bool {
     value.is_finite() && value.fract() == 0.0
 }
 
-/// A positive whole number, as a cap or a window is.
 pub(crate) fn positive_integer(value: Option<&Value>) -> bool {
     number(value).is_some_and(|n| whole(n) && n >= 1.0)
 }

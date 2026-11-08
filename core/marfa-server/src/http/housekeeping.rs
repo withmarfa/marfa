@@ -1,5 +1,3 @@
-//! `GET /housekeeping` and `POST /housekeeping/{name}/run`.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

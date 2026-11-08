@@ -1,5 +1,4 @@
-//! The clock and fault routes a conformance harness drives. They are routed
-//! only on the control socket, and only when `MARFA_TEST_HOOKS` is on.
+//! Routed only on the control socket, and only when `MARFA_TEST_HOOKS` is on.
 
 use std::sync::Arc;
 

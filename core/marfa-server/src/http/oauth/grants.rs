@@ -1,5 +1,3 @@
-//! `/auth/grants`: the apps a person approved.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

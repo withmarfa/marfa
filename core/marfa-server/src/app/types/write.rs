@@ -1,5 +1,3 @@
-//! The writes that change the types of an instance.
-
 use marfa_rules::grammar;
 use marfa_rules::schema::{
     Obj, broken_compatible_dependents, descendant_depth, evolution_of, icon_issue, labelled,
@@ -22,7 +20,6 @@ fn not_found(id: &str) -> Refusal {
     Refusal::new(Code::TypeNotFound, format!("Type \"{id}\" not found"))
 }
 
-/// Refuses an identifier Marfa's own build holds.
 fn platform_locked(catalog: &Catalog, id: &str, what: &str) -> Result<()> {
     let platform = catalog
         .provenance
@@ -57,7 +54,6 @@ fn store(tx: &Transaction<'_>, id: &str, schema: &Obj, at: &str) -> Result<()> {
 /// The grant that reaches an identifier nothing has registered yet.
 const NAMESPACE_WILDCARD: &str = "user.*:write";
 
-/// Registers a type. The answer is the type as it was stored.
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     if !body.contains_key("fields") {
         return Err(missing_field("fields"));
@@ -142,9 +138,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     Ok(created)
 }
 
-/// Replaces a type with a new definition. A key holding `schema.write` may
-/// make any replacement; one admitted by the metadata map alone may make
-/// only the changes that leave stored data valid.
+/// Without `schema.write`, only changes that leave stored data valid.
 pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Result<Value> {
     let cache = app.catalog_handle();
     let replaced = app
@@ -202,8 +196,7 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
     Ok(replaced)
 }
 
-/// Holds a replacement to what the caller's permissions allow. A stored
-/// definition that does not read can be replaced only by a schema writer.
+/// A stored definition that does not read can be replaced only by a schema writer.
 fn require_evolution(
     tx: &Transaction<'_>,
     caller: &Caller,
@@ -235,8 +228,7 @@ fn require_evolution(
     .with_detail("changes", changes))
 }
 
-/// Deletes a type. `force` is the owner console's refusal and a key's leave
-/// to delete a type that items hold.
+/// `force` is the owner console's leave to delete a type that items hold.
 pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, "type.delete", move |unit| {
@@ -299,14 +291,12 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
     Ok(())
 }
 
-/// The types that name `id` as their parent, readable or not.
 pub(super) fn subtypes_of(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare("SELECT id FROM types WHERE parent = ?1 ORDER BY id")?;
     let found = statement.query_map([id], |row| row.get(0))?;
     Ok(found.collect::<std::result::Result<_, _>>()?)
 }
 
-/// `id` and every type under it.
 fn with_subtypes(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
     let mut family = vec![id.to_string()];
     let mut at = 0;
@@ -321,8 +311,6 @@ fn with_subtypes(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
     Ok(family)
 }
 
-/// Sets the icon the owner chose for a type, which stands in place of the one
-/// its author set.
 pub async fn set_icon(app: &App, caller: &Caller, id: String, body: Obj) -> Result<Value> {
     let icon = body
         .get("icon")
@@ -345,7 +333,6 @@ pub async fn set_icon(app: &App, caller: &Caller, id: String, body: Obj) -> Resu
     .await
 }
 
-/// Takes back the icon the owner chose.
 pub async fn clear_icon(app: &App, caller: &Caller, id: String) -> Result<Value> {
     change_icon(app, caller, id, "type.icon.clear", None).await
 }

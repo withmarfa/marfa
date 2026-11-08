@@ -1,6 +1,3 @@
-//! The enforcement levers as a caller meets them: set through `/config` or on a
-//! key, and holding from the next request. The contract's fixtures hold the rest.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -32,7 +29,6 @@ impl Reply {
         self.body["error"]["code"].as_str().unwrap_or("")
     }
 
-    /// The sources of the rows a listing answers, in its order.
     fn sources(&self) -> Vec<String> {
         self.body["data"]
             .as_array()
@@ -105,7 +101,6 @@ impl Instance {
         Reply { status, body, text }
     }
 
-    /// What the private local command is answered.
     async fn local(&self, method: Method, path: &str, body: Option<Value>) -> Reply {
         let builder = Request::builder().method(method).uri(path);
         self.send(&self.control, builder, body).await

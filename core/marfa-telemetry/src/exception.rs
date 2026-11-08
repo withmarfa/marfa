@@ -1,15 +1,10 @@
-//! A fault as one PostHog `$exception` event, the shape both programs send.
-//!
-//! PostHog's error tracking groups `$exception` events, and a trace does not
-//! produce them, so this is a post of its own. The event carries no person:
-//! `$process_person_profile` false and `$geoip_disable` true. A program may add
-//! a stack to the exception (the server does) or leave it out (the command
-//! line does); what it says is the program's to decide, never this file's.
+//! A fault as one PostHog `$exception` event, with no person attached
+//! (`$process_person_profile` false, `$geoip_disable` true). A trace does not
+//! produce these, so this is a post of its own.
 
 use serde_json::{Map, Value, json};
 
-/// One stack frame as PostHog's symbolication reads a frame it need not
-/// resolve: `platform` is `custom`, and `resolved` says the names are final.
+/// `platform` is `custom` and `resolved` says the names are final.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub function: String,
@@ -17,7 +12,6 @@ pub struct Frame {
     pub filename: Option<String>,
     pub line: Option<u32>,
     pub column: Option<u32>,
-    /// Whether the code is Marfa's own, which PostHog shows first.
     pub in_app: bool,
 }
 
@@ -45,39 +39,28 @@ impl Frame {
     }
 }
 
-/// What went wrong, as PostHog groups it by.
 pub struct Exception<'a> {
     pub kind: &'a str,
     pub value: &'a str,
-    /// Innermost call first, as Rust prints a backtrace. PostHog wants the
-    /// outermost first, so they are reversed on the way out. `None` leaves
-    /// the stack out.
+    /// Innermost first; PostHog wants outermost first, so they are reversed on the way out.
     pub frames: Option<&'a [Frame]>,
-    /// Whether the fault was caught and answered, rather than left to end
-    /// the process.
     pub handled: bool,
 }
 
 pub struct Event<'a> {
     pub distinct_id: &'a str,
-    /// `$lib` and `$lib_version`: which program sent it.
     pub lib: &'a str,
     pub lib_version: &'a str,
     pub exception: Exception<'a>,
-    /// When it happened, as RFC 3339, for a report that is sent later than
-    /// the fault. `None` lets PostHog stamp its arrival.
+    /// RFC 3339, for a report sent later than the fault; `None` lets PostHog stamp its arrival.
     pub timestamp: Option<&'a str>,
-    /// The program's own properties. These stand over an attribute of the
-    /// same name.
+    /// Win over an attribute of the same name.
     pub properties: Vec<(&'a str, Value)>,
-    /// What the program names itself by, `service.name` among it. Added
-    /// unless a property above has the key.
+    /// Added unless a property has the same key.
     pub attributes: &'a [(String, String)],
 }
 
 impl Event<'_> {
-    /// The event as `/batch/` takes it, and as `/i/v0/e/` does once
-    /// `with_token` has added the token.
     pub fn json(&self) -> Value {
         let mut exception = json!({
             "type": self.exception.kind,
@@ -118,7 +101,6 @@ impl Event<'_> {
     }
 }
 
-/// The body of a post to `/i/v0/e/`: one event with the project token.
 pub fn single(token: &str, event: &Event) -> Value {
     let mut body = Map::new();
     body.insert("api_key".into(), token.into());
@@ -128,7 +110,6 @@ pub fn single(token: &str, event: &Event) -> Value {
     Value::Object(body)
 }
 
-/// The body of a post to `/batch/`: events under one project token.
 pub fn batch(token: &str, events: Vec<Value>) -> Value {
     json!({ "api_key": token, "batch": events })
 }

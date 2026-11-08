@@ -1,5 +1,3 @@
-//! The doors under `/edge-types`.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

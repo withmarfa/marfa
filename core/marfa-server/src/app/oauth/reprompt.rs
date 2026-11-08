@@ -8,8 +8,6 @@ use crate::app::refusal::Result;
 
 const LOGIN: &str = "login";
 const PROMPT: &str = "prompt";
-/// When a request was sent to sign in, in seconds, and the session it held.
-/// A request comes back signed with both, and only a later session passes.
 const LOGIN_AFTER: &str = "login_after";
 const LOGIN_FROM: &str = "login_from";
 
@@ -22,9 +20,8 @@ pub(super) fn without_login(prompt: Option<&str>) -> Option<String> {
     (!rest.is_empty()).then(|| rest.join(" "))
 }
 
-/// Whether `query` is a request this server sent to sign in, and `session`
-/// began after it did. The ID covers a sign-in within the same second as the
-/// request; the time covers a link opened in a browser that signed in earlier.
+/// The ID covers a sign-in within the same second as the request; the time covers
+/// a link opened in a browser that signed in earlier.
 pub(super) fn signed_in_since(app: &App, query: &str, session: Option<&Session>) -> bool {
     let now = app.clock.now_ms() / MS_PER_SECOND;
     let Ok(link) = signed_link::verify(query, now, &app.settings.start.auth_secret) else {
@@ -39,7 +36,6 @@ pub(super) fn signed_in_since(app: &App, query: &str, session: Option<&Session>)
     }
 }
 
-/// `params` and `prompt` as the query a sign-in comes back to.
 pub(super) fn signed_request(
     app: &App,
     mut params: Vec<(String, String)>,

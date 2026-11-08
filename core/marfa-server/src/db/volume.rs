@@ -2,7 +2,6 @@ use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-/// The bytes free on the volume that holds `path`, when it can be read.
 pub fn free_bytes(path: &Path) -> Option<u64> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: `statvfs` writes only into the struct it is given, and `path`

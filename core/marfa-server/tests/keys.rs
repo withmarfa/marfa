@@ -1,6 +1,3 @@
-//! Who may do what to a key, door by door, and what happens when a credential
-//! changes under a request. The contract's fixtures hold the rest.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -94,7 +91,6 @@ impl Instance {
         send(&self.public, request(method, path, Some(token), body)).await
     }
 
-    /// A key minted by the local command, as `(id, secret)`.
     async fn key(&self, body: Value) -> (String, String) {
         let minted = self.local(Method::POST, "/keys", Some(body)).await;
         assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);

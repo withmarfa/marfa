@@ -1,5 +1,4 @@
-//! A key a definition carries that Marfa reads nothing from is refused, with
-//! the key it most likely meant.
+//! A key a definition carries that Marfa reads nothing from is refused, with the key it most likely meant.
 
 use serde_json::Value;
 
@@ -118,7 +117,6 @@ fn unread_of(
         .collect()
 }
 
-/// The unread keys of a type definition, wherever they sit in it.
 pub fn unread_keys(input: &Obj) -> Vec<Issue> {
     let mut issues = unread_of(input, "", &TYPE_KEYS, "a type schema", &REFUSED_TYPE_KEYS);
     for (name, definition) in as_obj(input.get("fields")).into_iter().flatten() {
@@ -158,7 +156,6 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
     issues
 }
 
-/// The unread keys of an edge type definition and its properties.
 pub fn unread_edge_keys(input: &Obj) -> Vec<Issue> {
     let mut issues = unread_of(input, "", &EDGE_KEYS, "an edge type schema", &[]);
     for (name, definition) in as_obj(input.get("property_schema")).into_iter().flatten() {

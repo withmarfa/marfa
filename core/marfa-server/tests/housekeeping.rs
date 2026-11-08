@@ -1,7 +1,3 @@
-//! What each job keeps and takes at the edge of its window, on a paused clock,
-//! and what the scheduler does with a live setting. The contract's fixtures
-//! hold the rest.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -106,8 +102,6 @@ impl Instance {
         answer
     }
 
-    /// Runs a job as `POST /housekeeping/{name}/run` does, and answers what it
-    /// reported, having finished well.
     async fn run(&self, job: &str) -> Value {
         let path = format!("/housekeeping/{job}/run");
         let run = self.ok(Method::POST, &path, json!({})).await;

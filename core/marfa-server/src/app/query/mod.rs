@@ -1,11 +1,6 @@
-//! What a listing, a count or a search reads, compiled to SQL over the item
-//! tables.
-//!
-//! A [`Reach`] is what a caller may list, and only [`Reach::of`] makes one, in
-//! the read transaction that also answers. Every door here compiles through
-//! [`compile::selection`], which takes a reach, so no query of the item tables
-//! leaves this module without the caller's type map, the `system.*` default
-//! and the source filter in its `WHERE`.
+//! Every door compiles through [`compile::selection`], which takes a [`Reach`], so no query of the
+//! item tables leaves this module without the caller's type map, the `system.*` default and the
+//! source filter in its `WHERE`.
 
 mod compile;
 mod cursor;

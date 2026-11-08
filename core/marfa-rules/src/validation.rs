@@ -7,32 +7,22 @@ use crate::js;
 use crate::thumbnail::{THUMBNAIL_MAX_BYTES, Thumbnail};
 use crate::url_host;
 
-/// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
-/// removed through its own URL path, so one longer could be written and never
-/// removed.
+/// Longest tag. A tag is removed through its own URL path, so one longer could be written and never removed.
 pub const MAX_TAG_LENGTH: usize = 128;
 
-/// Most tags one item may hold: the server's `MAX_TAGS_PER_ITEM`.
 pub const MAX_TAGS_PER_ITEM: usize = 100;
 
-/// Longest value, in UTF-16 code units, of a string field with no `maxLength`
-/// of its own.
+/// Longest string field value with no `maxLength` of its own.
 const STRING_MAX_LENGTH: u64 = 100_000;
 
-/// Longest value, in UTF-16 code units, of the string field a type names as its
-/// body, where it has no `maxLength` of its own (`items/property-length-body`).
+/// Longest value of a type's body field with no `maxLength` of its own.
 pub const BODY_MAX_LENGTH: u64 = 1_000_000;
 
-/// What is wrong with one value: where in it, which of the field codes, and
-/// the words, both bare and as the refusal shows them.
 struct Problem {
-    /// The element position, then the member, below the field.
     at: Vec<String>,
     code: &'static str,
     message: String,
-    /// The words with the position written in them, as a person reads them.
     shown: String,
-    /// The other elements of the same array found wrong.
     also: Vec<Problem>,
 }
 
@@ -55,7 +45,6 @@ impl Problem {
         Some(first)
     }
 
-    /// The problem and each one found beside it, in order.
     fn flattened(mut self) -> Vec<Problem> {
         let also = std::mem::take(&mut self.also);
         std::iter::once(self)
@@ -63,7 +52,6 @@ impl Problem {
             .collect()
     }
 
-    /// The same problem found in the member `member` of entry `index`.
     fn in_entry(mut self, index: usize, member: Option<&str>) -> Problem {
         self.also = std::mem::take(&mut self.also)
             .into_iter()
@@ -81,7 +69,6 @@ impl Problem {
         self
     }
 
-    /// The same problem found in element `index`.
     fn in_element(mut self, index: usize) -> Problem {
         self.also = std::mem::take(&mut self.also)
             .into_iter()
@@ -93,8 +80,6 @@ impl Problem {
     }
 }
 
-/// A refusal of `code` for the faults found, or none where there are none.
-/// The message joins each fault's words, behind its position, with `; `.
 fn refuse(code: Code, faults: Vec<(String, FieldError)>) -> Result<(), RuleError> {
     if faults.is_empty() {
         return Ok(());
@@ -108,7 +93,6 @@ fn refuse(code: Code, faults: Vec<(String, FieldError)>) -> Result<(), RuleError
     Err(RuleError::new(code, message).with_fields(fields))
 }
 
-/// A fault of a part of the request, written `path: message`.
 fn fault(path: &str, code: &'static str, message: impl Into<String>) -> (String, FieldError) {
     let message = message.into();
     (
@@ -117,12 +101,7 @@ fn fault(path: &str, code: &'static str, message: impl Into<String>) -> (String,
     )
 }
 
-/// The tags a write may carry, as the server holds them: at most
-/// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
-/// as JavaScript's `trim` reads blank, not `.` or `..`, which a URL path
-/// cannot name as a segment, and at most `MAX_TAG_LENGTH` UTF-16 code units.
-/// A write the server would refuse is refused here, so it is never saved or
-/// queued only to come back refused.
+/// At most `MAX_TAGS_PER_ITEM`, duplicates counted; each not empty, not blank, not `.` or `..` (a URL path cannot name them), and at most `MAX_TAG_LENGTH` long. Refused here so a doomed write is never saved or queued.
 pub fn tags(tags: &[String]) -> Result<(), RuleError> {
     let mut faults: Vec<(String, FieldError)> = tags
         .iter()
@@ -164,9 +143,7 @@ pub fn tags(tags: &[String]) -> Result<(), RuleError> {
     refuse(Code::ValidationError, faults)
 }
 
-/// The server refuses a tag write that leaves an item more tags than the
-/// bound only where it holds more than it did, so a row an archive restored
-/// over the bound can still shed them.
+/// Only a write that leaves more tags than before is refused over the bound, so a row an archive restored over it can still shed them.
 pub fn tag_count(before: usize, after: usize) -> Result<(), RuleError> {
     refuse(
         Code::ValidationError,
@@ -183,7 +160,6 @@ pub fn tag_count(before: usize, after: usize) -> Result<(), RuleError> {
     )
 }
 
-/// The property names a write may carry, as the server holds them: not empty.
 pub fn property_names(properties: &Map<String, Value>) -> Result<(), RuleError> {
     refuse(
         Code::ValidationError,
@@ -202,8 +178,6 @@ pub fn property_names(properties: &Map<String, Value>) -> Result<(), RuleError> 
     )
 }
 
-/// The properties an edit clears, refused as the server refuses them: an
-/// empty name, and one the same edit also sets.
 pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(), RuleError> {
     let mut faults = Vec::new();
     if cleared.iter().any(String::is_empty) {
@@ -228,10 +202,7 @@ pub fn cleared_names(cleared: &[String], set: &Map<String, Value>) -> Result<(),
     refuse(Code::ValidationError, faults)
 }
 
-/// An id a write names, as the server's `isValidId` takes one: a lowercase
-/// UUIDv7. The server refuses any other `400 invalid_id`, and then refuses a
-/// read of it the same way, so a copy that queued one could never read the
-/// row back to put itself right.
+/// A lowercase UUIDv7. The server refuses any other id, on a read too, so a copy that queued one could never read the row back to put itself right.
 pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
     let bytes = id.as_bytes();
     let hex = |b: &u8| b.is_ascii_digit() || (b'a'..=b'f').contains(b);
@@ -258,8 +229,6 @@ pub fn id(field: &str, id: &str) -> Result<(), RuleError> {
 
 const NUL_REFUSED: &str = "Must not contain a null byte (U+0000)";
 
-/// Whether the properties hold what the fields, by name, declare: every value
-/// of the kind its field names, and with `complete`, every required one.
 pub fn properties(
     fields: &BTreeMap<&str, &Value>,
     properties: &Map<String, Value>,
@@ -338,12 +307,10 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
     Ok(match kind {
         "string" => match value.as_str() {
             None => expected("string"),
-            // `currency` is the one format whose value is judged.
             Some(text) if definition.get("format").and_then(Value::as_str) == Some("currency") => currency(text),
             Some(text) => bounded(text),
         },
-        // Whether the word is one the type declares is judged apart, only
-        // where a write changes it (`Catalog::validate_merged`).
+        // Whether the word is one the type declares is judged apart, only where a write changes it.
         "status" => field("string", &Value::Null, value)?,
         "enum" => match value.as_str() {
             None => expected("string"),
@@ -375,8 +342,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
     })
 }
 
-/// A currency code as the server takes one: three capital letters from A to
-/// Z. Whether ISO 4217 assigns the code is left alone, as that list changes.
+/// Three capital letters from A to Z. Whether ISO 4217 assigns the code is left alone, as that list changes.
 fn currency(text: &str) -> Option<Problem> {
     let taken = text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_uppercase());
     (!taken).then(|| {
@@ -387,8 +353,6 @@ fn currency(text: &str) -> Option<Problem> {
     })
 }
 
-/// Where `number` falls outside the `minimum` and `maximum` the field names,
-/// both inclusive.
 fn in_range(definition: &Value, number: f64) -> Option<Problem> {
     let bound = |key| definition.get(key).filter(|bound| bound.is_number());
     if let Some(minimum) =
@@ -409,10 +373,7 @@ fn in_range(definition: &Value, number: f64) -> Option<Problem> {
         })
 }
 
-/// Each element of an array that is not a value of the field's
-/// `items_type`, judged as a field of that type judges a value. An
-/// `items_type` that names no field type leaves the elements unchecked, as the
-/// server leaves them.
+/// An `items_type` that names no field type leaves the elements unchecked.
 fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, RuleError> {
     let Some(items) = definition.get("items_type").and_then(Value::as_str) else {
         return Ok(None);
@@ -427,7 +388,6 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, Rul
     let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
         match field(items, &element, value) {
-            // `field` fails only on a kind it does not know.
             Err(RuleError {
                 code: Code::Decoding,
                 ..
@@ -442,10 +402,7 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<Problem>, Rul
     Ok(Problem::all_of(found))
 }
 
-/// Each entry of a list that is not an object with at least one member, only
-/// members the field declares, every member it requires and a value for each
-/// that a field of the member's definition takes. A member with no value is
-/// left out, and a `null` is no value.
+/// A member with no value is left out, and a `null` is no value.
 fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<Problem>, RuleError> {
     let mut found = Vec::new();
     for (index, value) in values.iter().enumerate() {
@@ -454,7 +411,6 @@ fn entries(members: &Map<String, Value>, values: &[Value]) -> Result<Option<Prob
     Ok(Problem::all_of(found))
 }
 
-/// The first thing wrong with one entry of a list.
 fn entry(
     members: &Map<String, Value>,
     index: usize,
@@ -497,11 +453,7 @@ fn entry(
     Ok(None)
 }
 
-/// A `url` value as the server holds it, or `None` where the server refuses
-/// it. The server trims the text as JavaScript's `trim` does, judges it as the
-/// WHATWG URL standard does, and keeps it without the tabs and line breaks the
-/// standard ignores. The `url` crate parts from the standard on some authorities,
-/// which `url_host` corrects.
+/// None where the text is refused. It is trimmed, judged as the WHATWG URL standard judges it, and kept without the tabs and line breaks the standard ignores. The `url` crate parts from the standard on some authorities, which `url_host` corrects.
 pub fn url_value(text: &str) -> Option<String> {
     let kept: String = text
         .trim_matches(js::is_space)
@@ -516,8 +468,7 @@ pub fn url_value(text: &str) -> Option<String> {
     taken.then_some(kept)
 }
 
-// The server uses Zod's practical email pattern, rather than RFC 5322 or
-// HTML's broader email shape. Keep its accepted neighbours here too.
+// A practical email pattern, narrower than RFC 5322 or HTML's email shape.
 pub fn email(text: &str) -> bool {
     let Some((local, domain)) = text.split_once('@') else {
         return false;
@@ -706,9 +657,6 @@ mod tests {
 
     #[test]
     fn a_url_is_trimmed_and_judged_as_the_server_does() {
-        // Each expectation is what the server answers: JavaScript's `trim`,
-        // `URL.canParse` of the result, and the result without tabs and line
-        // breaks as the stored value.
         for (text, stored) in [
             ("https://example.com/a", "https://example.com/a"),
             ("  https://example.com/a  ", "https://example.com/a"),

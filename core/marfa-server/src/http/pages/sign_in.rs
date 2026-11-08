@@ -4,7 +4,6 @@ use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
 use crate::app::refusal::Result;
 
-/// What the sign-in form's redirect said went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignInProblem {
     InvalidCredentials,
@@ -14,8 +13,7 @@ pub enum SignInProblem {
 }
 
 impl SignInProblem {
-    /// The page's `error` and `retry_after` query values. No error names no
-    /// problem, and the page never repeats a code it was not built to know.
+    /// No error names no problem; a code the page was not built to know is never repeated.
     pub fn from_query(error: Option<&str>, retry_after: Option<&str>) -> Option<SignInProblem> {
         Some(match error? {
             "" => return None,
@@ -46,14 +44,11 @@ impl SignInProblem {
 #[derive(Debug, Clone)]
 pub struct SignIn {
     pub instance_name: String,
-    /// The email typed before, so a wrong password costs one field.
     pub email: String,
     /// A path on the instance. The caller has already replaced anything else.
     pub return_to: String,
-    /// The signed link the page was opened with, which a refused form comes
-    /// back with so the page still names the app.
+    /// A refused form comes back with it so the page still names the app.
     pub authorization: Option<String>,
-    /// The app an authorization the instance signed sent the person for.
     pub app: Option<String>,
     pub problem: Option<SignInProblem>,
 }
@@ -97,7 +92,6 @@ struct SignedInBody<'a> {
     view: &'a SignedIn,
 }
 
-/// A path on this instance, or `/`.
 fn local_path(candidate: &str) -> &str {
     let is_path = candidate.starts_with('/')
         && !candidate.starts_with("//")

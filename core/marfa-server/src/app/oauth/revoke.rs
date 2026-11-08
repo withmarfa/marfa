@@ -1,5 +1,4 @@
-//! `POST /auth/oauth2/revoke`. A token that is unknown, foreign or already
-//! ended answers as a revoked one does, so the door tells nobody which it was.
+//! Unknown, foreign and already-ended tokens answer as revoked, so the door reveals nothing.
 
 use std::sync::Arc;
 

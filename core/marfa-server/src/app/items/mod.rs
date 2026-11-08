@@ -1,8 +1,4 @@
-//! Items: what they hold, how they are answered and how they are written.
-//!
-//! Every write goes through [`write::apply`], and only `rows` holds the SQL of
-//! the item tables, so no other part of the crate can change an item without
-//! the checks, the version step, the audit entry and the event.
+//! Every write goes through [`write::apply`]; only `rows` holds the SQL of the item tables.
 
 pub mod bulk;
 pub mod expiry;
@@ -36,7 +32,6 @@ pub(crate) use write::settle_late_part;
 
 const UNTITLED: &str = "Untitled";
 
-/// The keys a purge can leave a tombstone of.
 #[derive(Clone, Debug)]
 pub enum Keys {
     Links(Vec<String>),
@@ -46,7 +41,6 @@ pub enum Keys {
     },
 }
 
-/// Refuses `keys` where `type_id` cannot hold them.
 fn check_keys(catalog: &Catalog, type_id: &str, keys: Option<&Keys>) -> Result<()> {
     if !catalog.rules.known(type_id) {
         return Err(
@@ -64,8 +58,7 @@ fn check_keys(catalog: &Catalog, type_id: &str, keys: Option<&Keys>) -> Result<(
     Ok(())
 }
 
-/// An item as stored. `properties` is the stored JSON as text, which goes out
-/// as it stands.
+/// `properties` is stored JSON text, passed through unparsed.
 #[derive(Clone, Debug)]
 pub struct Item {
     seq: i64,
@@ -89,18 +82,14 @@ pub struct Item {
     mark: Option<Mark>,
 }
 
-/// Why a row is in the bin when no one named it there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark {
-    /// The row whose move took this one.
     with: String,
     /// That row's type, which decides who may read its id on this row.
     with_type: String,
-    /// Whether this row went as a part of its hosts.
     hosts: bool,
 }
 
-/// Who wrote a version.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Writer {
     pub kind: String,
@@ -108,7 +97,6 @@ pub struct Writer {
     pub name: String,
 }
 
-/// An item as it stood at a version it left.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub id: String,
@@ -123,14 +111,12 @@ pub struct Snapshot {
     pub created_at: String,
 }
 
-/// How much of a bin mark a printed item names.
 #[derive(Clone, Copy)]
 enum Marks<'a> {
     To(&'a Caller),
     Logged,
 }
 
-/// An item's text with `blocks` under `edges`.
 fn with_blocks(mut item: String, blocks: &str) -> String {
     item.pop();
     item.push_str(",\"edges\":");
@@ -186,7 +172,6 @@ struct SnapshotHead<'a> {
     created_at: &'a str,
 }
 
-/// `head`, a JSON object, with `properties` added as text that is not parsed.
 pub(crate) fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
     let printed = marfa_rules::js::to_vec(head)
         .ok()
@@ -198,7 +183,6 @@ pub(crate) fn with_properties(head: &impl Serialize, properties: &str) -> Result
     Ok(format!("{open},\"properties\":{properties}}}"))
 }
 
-/// A stored JSON object, as a value to work on.
 pub(crate) fn parsed(text: &str) -> Result<Map<String, Value>> {
     match serde_json::from_str(text) {
         Ok(Value::Object(object)) => Ok(object),
@@ -237,7 +221,6 @@ impl Item {
         }
     }
 
-    /// The item as an answer to `caller` gives it.
     pub fn answered(&self, tx: &Transaction<'_>, caller: &Caller) -> Result<String> {
         let read_only = read_only(tx, &self.source, &self.type_id)?;
         with_properties(
@@ -246,8 +229,6 @@ impl Item {
         )
     }
 
-    /// The item as an answer gives it, with the outbound edges the caller may
-    /// read.
     pub(crate) fn hydrated(
         &self,
         tx: &Transaction<'_>,
@@ -258,13 +239,11 @@ impl Item {
         Ok(with_blocks(self.answered(tx, caller)?, &blocks.text))
     }
 
-    /// The item as the event log keeps it. A frame adds `read_only` when it
-    /// is sent, as registrations stand then.
+    /// A frame adds `read_only` when it is sent.
     fn logged(&self) -> Result<String> {
         with_properties(&self.head(None, Marks::Logged), &self.properties)
     }
 
-    /// The item as a conflict answer names it.
     fn state_named(&self) -> Result<Value> {
         Ok(json!({
             "id": self.id,
@@ -287,7 +266,6 @@ impl Item {
 }
 
 impl Snapshot {
-    /// The snapshot as a history gives it.
     fn answered(&self) -> Result<String> {
         let head = SnapshotHead {
             id: &self.id,
@@ -303,7 +281,6 @@ impl Snapshot {
         with_properties(&head, &self.properties)
     }
 
-    /// The snapshot as a conflict answer names it.
     fn state_named(&self) -> Result<Value> {
         Ok(json!({
             "id": self.item_id,
@@ -325,8 +302,6 @@ impl Snapshot {
     }
 }
 
-/// The one answer to whether an item of `type_id` under `source` is read only.
-/// A connector registration is what makes one so, and none can exist yet.
 pub fn read_only(_tx: &Transaction<'_>, _source: &str, _type_id: &str) -> Result<bool> {
     Ok(false)
 }
@@ -335,8 +310,6 @@ fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
-/// The link a type's `field` makes of `properties`: only text with something
-/// in it is a link.
 fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a str> {
     properties
         .get(field)
@@ -351,8 +324,6 @@ fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String
     let shown = match untitled.then(|| edges::naming_host(tx, catalog, &row.id)) {
         Some(found) => match found? {
             Some(host) => {
-                // A host whose stored properties cannot be read is named as
-                // one that holds none.
                 let held = parsed(&host.properties).unwrap_or_default();
                 let host_name = rules
                     .display(&host.type_id, &held)
@@ -372,7 +343,6 @@ fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String
     Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
 }
 
-/// An item by its name, with nothing of its content.
 fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Value> {
     Ok(json!({
         "id": row.id,
@@ -388,7 +358,6 @@ pub(crate) fn is_system(type_id: &str) -> bool {
     type_id.split('.').next() == Some("system")
 }
 
-/// What `properties` of `type_id` are found by under a title lookup.
 fn title_key(rules: &Rules, type_id: &str, properties: &Map<String, Value>) -> Option<String> {
     if is_system(type_id) {
         return None;
@@ -399,7 +368,6 @@ fn title_key(rules: &Rules, type_id: &str, properties: &Map<String, Value>) -> O
         .and_then(names::title_key)
 }
 
-/// The metadata of an item, as text, holding what `shown` lets through.
 fn metadata_text(
     tx: &Transaction<'_>,
     item: &Item,
@@ -432,32 +400,26 @@ fn extensions_text(
     Ok(format!("{{{}}}", entries.join(",")))
 }
 
-/// The metadata an answer to `caller` gives.
 fn metadata_for(tx: &Transaction<'_>, item: &Item, caller: &Caller) -> Result<String> {
     metadata_text(tx, item, |namespace| caller.may_read_extension(namespace))
 }
 
-/// The row `id`, wherever it stands.
 pub(crate) fn row(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     rows::by_id(tx, id)
 }
 
-/// The type of the row `id`, wherever it stands.
 pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.map(|row| row.type_id))
 }
 
-/// The type of the row whose trash took `id`, which outlives that row.
 pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
 }
 
-/// How many items hold `type_id`, in any state.
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     rows::count_of_type(tx, type_id)
 }
 
-/// Which of `names` a stored item of one of `types` holds.
 pub fn held_names(tx: &Transaction<'_>, types: &[String], names: &[String]) -> Result<Vec<String>> {
     if types.is_empty() {
         return Ok(Vec::new());
@@ -465,22 +427,16 @@ pub fn held_names(tx: &Transaction<'_>, types: &[String], names: &[String]) -> R
     rows::held_names(tx, types, names)
 }
 
-/// Makes the search index agree with `after`, for each type whose searchable
-/// fields it changes: what fits a page now, the rest by [`reindex_page`].
 pub fn reindex_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Result<()> {
     index::queue_changed(tx, before, after)?;
     index::reindex_page(tx, after, index::REINDEX_PAGE)?;
     Ok(())
 }
 
-/// Reindexes one page of what a type's change queued, answering whether more
-/// is left.
 pub fn reindex_page(tx: &Transaction<'_>, rules: &Rules) -> Result<bool> {
     index::reindex_page(tx, rules, index::REINDEX_PAGE)
 }
 
-/// Makes the title keys of the items of `types` agree with `after`, for each
-/// type it gives another title property than `before` did.
 pub fn rekey_changed(
     tx: &Transaction<'_>,
     before: &Rules,
@@ -499,9 +455,7 @@ pub fn rekey_changed(
     Ok(())
 }
 
-/// Makes the links of the items of `types` agree with `after`, for each type
-/// whose `link_field` it changes. A tombstone recorded a value of the old
-/// field, which says nothing about the new one.
+/// A tombstone recorded a value of the old field, which says nothing about the new one.
 pub fn relink_changed(
     tx: &Transaction<'_>,
     before: &Catalog,
@@ -536,7 +490,6 @@ pub fn relink_changed(
     Ok(())
 }
 
-/// Forgets what purges left under a type just registered.
 pub fn drop_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
     rows::drop_tombstones(tx, type_id)
 }

@@ -1,6 +1,5 @@
-//! Sign-in by OAuth. The rules that decide on untrusted text (`scope`,
-//! `redirect`, `client`, `pkce` and their kin) need no database or HTTP; the
-//! rest read and write the rows in `store` around them.
+//! Sign-in by OAuth. `scope`, `redirect`, `client`, `pkce` and the like decide on
+//! untrusted text without a database or HTTP; the rest use `store`.
 
 pub mod authorize;
 mod bearer;
@@ -37,8 +36,6 @@ const DEVICE_CODE_SECONDS: i64 = 600;
 const DEVICE_INTERVAL_SECONDS: i64 = 5;
 const MS_PER_SECOND: i64 = 1_000;
 
-/// A refusal in the form the OAuth RFCs give, for a door that answers one
-/// rather than the error envelope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Problem {
     pub status: u16,
@@ -64,11 +61,10 @@ impl Problem {
     }
 }
 
-/// What a door's logic answers when the refusal is the outcome and whatever
-/// it wrote still commits, as a replayed token ending its chain must.
+/// A refusal that is the outcome while what the logic wrote still commits, as a
+/// replayed token ending its chain must.
 pub type Answered<T> = std::result::Result<T, Problem>;
 
-/// This instance as an authorization server names itself, as it stands now.
 pub fn issuer(app: &App) -> String {
     format!("{}/auth", app.addresses().sign_in().origin())
 }

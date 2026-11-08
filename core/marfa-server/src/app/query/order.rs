@@ -1,5 +1,3 @@
-//! The order a page reads in, and the rows past a position in it.
-
 use marfa_rules::query::{SortDirection, SortField, property_sort_expression};
 use rusqlite::types::Value;
 
@@ -14,23 +12,19 @@ pub struct Key {
     pub nullable: bool,
 }
 
-/// What a caller asked the order to be.
 #[derive(Clone, Debug, Default)]
 pub struct Sort {
     pub field: Option<SortField>,
     pub direction: Option<SortDirection>,
 }
 
-/// An order: its keys, first key first, then `i.id`.
 #[derive(Clone, Debug)]
 pub struct Order {
     pub keys: Vec<Key>,
     pub id_descending: bool,
-    /// How a cursor names this order.
     pub spelled: String,
 }
 
-/// The value a property sorts by, its path bound.
 pub fn property_key(name: &str) -> Sql {
     let text = property_sort_expression("i", "?");
     let mut sql = Sql::new(&text);
@@ -76,7 +70,6 @@ impl Order {
         }
     }
 
-    /// The order of `GET /items`.
     pub fn listing(sort: &Sort, ask: &Ask) -> Order {
         if ask.updated_after.is_some() {
             return Order::timed(column("updated_at"), "updated_at", false);
@@ -133,7 +126,6 @@ impl Order {
         }
     }
 
-    /// The order of a view: `keys`, then the id.
     pub fn view(keys: Vec<Key>, id_descending: bool) -> Order {
         Order {
             keys,
@@ -166,7 +158,6 @@ impl Order {
         self.keys.len()
     }
 
-    /// The keys and the id, as the columns of a `SELECT`.
     pub fn columns(&self, sql: &mut Sql) {
         for (at, key) in self.keys.iter().enumerate() {
             sql.append(&key.expression);

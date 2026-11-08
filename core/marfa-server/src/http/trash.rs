@@ -1,5 +1,3 @@
-//! The doors that move an item through its lifecycle, and the owner's bin.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -105,7 +103,6 @@ pub async fn purge(
     .await
 }
 
-/// The IDs a trash names, each once, in the order first named.
 fn trash_ids(sent: &Map<String, Value>) -> Result<Vec<String>> {
     let Some(named) = sent.get("ids") else {
         return Err(missing_field("ids"));
@@ -305,8 +302,8 @@ pub async fn owner_purge(
     Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Purge).await?)
 }
 
-/// Purges one page of the bin, each row at the version the page read, in a
-/// write of its own so that other requests pass between them.
+/// Each row is purged at the version the page read, in a write of its own so that other
+/// requests pass between pages.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_direct()?;
     caller.require_recent(&app.clock.stamp())?;

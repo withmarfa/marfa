@@ -1,5 +1,3 @@
-//! The documents an app reads before it knows anything about this instance.
-
 use serde_json::{Value, json};
 
 use super::client::GrantType;
@@ -21,7 +19,7 @@ fn published(app: &App) -> ScopeSet {
     Registries::of(&app.catalog_handle().load()).published()
 }
 
-/// RFC 8414 metadata, naming this instance as it stands now.
+/// RFC 8414.
 pub fn authorization_server(app: &App) -> Value {
     let issuer = issuer(app);
     json!({
@@ -48,8 +46,7 @@ pub fn authorization_server(app: &App) -> Value {
     })
 }
 
-/// RFC 9728 metadata for `path`, which is empty for the API or one of
-/// [`MCP_PATHS`]. A path that is neither has none.
+/// RFC 9728.
 pub fn protected_resource(app: &App, path: &str) -> Option<Value> {
     if !path.is_empty() && !MCP_PATHS.contains(&path) {
         return None;

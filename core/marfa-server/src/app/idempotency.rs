@@ -1,11 +1,7 @@
-//! `Idempotency-Key`: a claim on a request, the answer kept for its repeat,
-//! and what a repeat must still hold before it gets that answer.
-//!
-//! A claim is committed before the write runs. A write that succeeds completes
-//! it in its own transaction, so the answer and the write land together. A
-//! refusal keeps or releases the claim afterwards, which is safe where a
-//! commit's outcome is unknown: a commit that landed has already completed the
-//! claim, and the release matches only one still in flight.
+//! `Idempotency-Key`: a claim committed before the write runs and completed in
+//! the write's own transaction, so the answer and the write land together. A
+//! refusal keeps or releases the claim afterwards; the release matches only a
+//! claim still in flight, which is safe when a commit's outcome is unknown.
 
 mod expiry;
 
@@ -31,13 +27,11 @@ const LEASE_MS: i64 = 60_000;
 const MAX_KEPT_BYTES: usize = 1_048_576;
 const CONTENT_TYPE: &str = "application/json";
 
-/// What a repeat must still hold.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "need", rename_all = "snake_case")]
 pub enum Need {
     Reach,
     Purge,
-    /// A row the answer names, whose type the answer does not record.
     ItemRef {
         id: String,
     },
@@ -62,16 +56,13 @@ pub enum Need {
         name: String,
         write: bool,
     },
-    /// The type of a row an edge that cascades ends at.
     CascadeTarget {
         name: String,
     },
-    /// An edge a write acted on, with the type of the source it had then.
     EdgeSource {
         id: String,
         type_id: String,
     },
-    /// One end of a blocking edge a refusal named.
     BlockingEnd {
         id: String,
         type_id: String,
@@ -94,8 +85,7 @@ impl Need {
     }
 }
 
-/// A request's hold on its key. It outlives a rolled-back attempt, so what
-/// that attempt needed is still known when its refusal is kept.
+/// Outlives a rolled-back attempt, so its needs are known when the refusal is kept.
 #[derive(Clone, Debug)]
 pub struct Claim {
     credential: String,
@@ -112,7 +102,6 @@ impl Claim {
         }
     }
 
-    /// What names this attempt across the credential's requests.
     pub fn attempt(&self) -> String {
         format!("{}\0{}", self.credential, self.key)
     }
@@ -124,7 +113,6 @@ impl Claim {
     }
 }
 
-/// An answer kept for a repeat.
 #[derive(Debug)]
 pub struct Kept {
     pub status: u16,
@@ -132,15 +120,13 @@ pub struct Kept {
     pub body: Vec<u8>,
 }
 
-/// What a request carrying a key goes on to.
 #[derive(Debug)]
 pub enum Entry {
     Fresh(Claim),
     Replay(Kept),
 }
 
-/// What makes a repeat a repeat. The credential is not in it: the record is
-/// already that credential's own.
+/// The credential is not part of it: the record is already its own.
 pub fn fingerprint(
     contract: u32,
     method: &str,
@@ -201,7 +187,6 @@ fn elapsed_ms(from: &str, to: &str) -> i64 {
     }
 }
 
-/// Claims `key` for this request, or says what the request gets instead.
 pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -> Result<Entry> {
     let credential = caller.credential_handle();
     let clock = app.clock.clone();
@@ -295,7 +280,6 @@ fn may_not_read() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
-/// Holds `caller` to what the first request needed, as things stand now.
 fn edge_gone() -> Refusal {
     Refusal::new(Code::EdgeNotFound, "Edge not found")
 }
@@ -380,8 +364,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
     Ok(())
 }
 
-/// A kept answer's `read_only` is the one thing about it that is judged at the
-/// replay.
+/// A kept answer's `read_only` is the one thing judged at replay.
 fn with_current_read_only(tx: &Transaction<'_>, status: u16, body: Vec<u8>) -> Result<Vec<u8>> {
     if !(200..300).contains(&status) {
         return Ok(body);
@@ -420,7 +403,6 @@ fn read_only_set(body: Vec<u8>, now: bool) -> Vec<u8> {
     }
 }
 
-/// What a kept answer tells the reader, beyond what the request needed.
 fn disclosures(tx: &Transaction<'_>, claim: &Claim, body: &[u8]) -> Result<()> {
     if let Ok(answer) = serde_json::from_slice::<Value>(body) {
         visit(tx, claim, &answer)?;
@@ -539,8 +521,7 @@ fn record(
     )?)
 }
 
-/// Keeps a write's answer in that write's transaction. A claim another request
-/// took over once its lease ran out refuses the write, so it cannot land twice.
+/// A claim taken over after its lease ran out refuses the write, so it cannot land twice.
 pub fn complete(unit: &Unit<'_, '_>, claim: &Claim, status: u16, body: &[u8]) -> Result<()> {
     if record(unit.tx(), claim, &unit.at, status, body)? == 0 {
         return Err(Refusal::new(
@@ -554,8 +535,7 @@ pub fn complete(unit: &Unit<'_, '_>, claim: &Claim, status: u16, body: &[u8]) ->
     Ok(())
 }
 
-/// Ends a claim whose request was refused: keeps the refusal, unless it is
-/// about the credential or the server, when the same key may try again.
+/// Keeps the refusal unless it concerns the credential or the server, which may retry.
 pub async fn settle(app: &App, claim: Claim, status: u16, body: Vec<u8>) {
     let clock = app.clock.clone();
     let keeps = !(status >= 500 || status == 401 || status == 403);
@@ -575,7 +555,6 @@ pub async fn settle(app: &App, claim: Claim, status: u16, body: Vec<u8>) {
     }
 }
 
-/// Lets go of a claim whose request never reached an answer.
 pub async fn release(app: &App, claim: Claim) {
     let released = app
         .db

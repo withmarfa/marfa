@@ -1,5 +1,4 @@
-//! The `settings` table: the registry's stored values, and the server's own
-//! small notes beside them.
+//! The `settings` table: registry values and the server's own notes.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -11,8 +10,6 @@ use super::refusal::{Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry;
 
-/// A stored setting's new value. `None` or a blank value clears its row, which
-/// returns it to its default.
 #[derive(Clone, Debug)]
 pub struct Change {
     pub key: String,
@@ -43,7 +40,6 @@ pub fn put(tx: &Transaction<'_>, key: &str, value: &str) -> Result<()> {
     write_row(tx, key, value)
 }
 
-/// What a row holds, whether a setting's or a note's.
 pub fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
     Ok(tx
         .prepare_cached("SELECT value FROM settings WHERE key = ?1")?
@@ -51,13 +47,11 @@ pub fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
-/// Removes one of the server's notes.
 pub fn remove(tx: &Transaction<'_>, key: &str) -> Result<()> {
     tx.execute("DELETE FROM settings WHERE key = ?1", [key])?;
     Ok(())
 }
 
-/// A change as its row: the key and normalized text, or no text to clear it.
 fn row_of(change: Change) -> Result<(String, Option<String>)> {
     let Some(entry) = registry::entry(&change.key) else {
         return Err(Refusal::validation(format!(
@@ -73,11 +67,8 @@ fn row_of(change: Change) -> Result<(String, Option<String>)> {
     Ok((change.key, text.filter(|text| !text.is_empty())))
 }
 
-/// Rows as they are to be written: the key and its normalized text, or no
-/// text to clear it.
 pub type Rows = [(String, Option<String>)];
 
-/// Writes settings' rows, clearing those given no text.
 pub fn write_rows(tx: &Transaction<'_>, rows: &Rows) -> Result<()> {
     for (key, text) in rows {
         match text {
@@ -88,8 +79,6 @@ pub fn write_rows(tx: &Transaction<'_>, rows: &Rows) -> Result<()> {
     Ok(())
 }
 
-/// The table as a write left it, numbered for publishing once the write has
-/// committed.
 pub struct Staged {
     generation: u64,
     rows: Vec<(String, String)>,
@@ -105,17 +94,14 @@ pub fn stage(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
 }
 
 impl Staged {
-    /// Makes the rows live, unless a later commit already is.
     pub fn publish(self, app: &App) {
         app.settings.publish(self.generation, &self.rows);
     }
 }
 
-/// Runs a write that may change settings, and makes them live once it has
-/// committed. It runs as a task of its own: a commit outlives a caller who
-/// goes away, and its publish must too. When the commit's outcome is unknown,
-/// the settings are read again from the database, so a change that landed is
-/// live.
+/// Runs as a task of its own, since a commit outlives a caller who goes away and so must
+/// its publish. When the commit's outcome is unknown the settings are read again, so a
+/// change that landed is live.
 pub async fn committing<T, F>(app: &Arc<App>, write: F) -> Result<T>
 where
     T: Send + 'static,
@@ -142,9 +128,7 @@ where
     .map_err(|_| Refusal::internal("a settings change did not finish"))?
 }
 
-/// Takes the committed rows as the live settings. It is a write of its own, so
-/// it waits for any write still running and follows it in the order of the
-/// commits.
+/// A write of its own: it waits for any write still running and follows it in the commit order.
 async fn reload(app: &Arc<App>) {
     let numbering = app.clone();
     let staged = app
@@ -159,8 +143,6 @@ async fn reload(app: &Arc<App>) {
     }
 }
 
-/// Applies changes together or not at all, and makes them live once they have
-/// committed.
 pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Result<()> {
     let changes = changes
         .into_iter()

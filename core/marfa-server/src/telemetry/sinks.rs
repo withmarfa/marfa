@@ -1,5 +1,5 @@
-//! Where an unhandled fault is told to someone: PostHog's error tracking and
-//! the error webhook. Both post from a thread of their own and neither retries.
+//! PostHog's error tracking and the error webhook. Both post from a thread of their own
+//! and neither retries.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,16 +13,12 @@ use super::config::{Exceptions, Webhook};
 use super::fault::Fault;
 use super::lane::Lane;
 
-/// How many reports wait for a thread that is slow to post.
 const QUEUE: usize = 256;
-/// Reports are gathered for this long, so a burst is one post.
 const WINDOW: Duration = Duration::from_secs(2);
 const BATCH: usize = 20;
-/// The same error at the same path is told once in this long.
 const DEBOUNCE: Duration = Duration::from_secs(60);
 const MAX_DEBOUNCED: usize = 1_024;
 
-/// One fault, with the request it ended.
 #[derive(Clone)]
 pub struct Report {
     pub fault: Arc<Fault>,
@@ -33,9 +29,8 @@ pub struct Report {
     pub timestamp: String,
 }
 
-/// An agent for a post that may take `total`, and no longer, to `target`. A
-/// proxy from the environment is used for an address on another host and not
-/// for one on this machine, which a proxy cannot reach.
+/// A proxy from the environment is used for an address on another host, not for one on
+/// this machine, which a proxy cannot reach.
 pub fn agent(total: Duration, target: &str) -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder()
         .root_certs(ureq::tls::RootCerts::PlatformVerifier)
@@ -54,7 +49,6 @@ pub fn agent(total: Duration, target: &str) -> ureq::Agent {
     config.build().into()
 }
 
-/// Exception reports to error tracking, in batches.
 pub fn exceptions(config: Exceptions, attributes: Vec<(String, String)>) -> Lane<Report> {
     let agent = agent(config.timeout, &config.url);
     Lane::start(
@@ -102,8 +96,6 @@ fn event(report: &Report, attributes: &[(String, String)]) -> Value {
     .json()
 }
 
-/// A notice of a 500 to the error webhook, one for the same error at the same
-/// path in a minute.
 pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
     let agent = agent(config.timeout, &config.url);
     let mut told: HashMap<String, Instant> = HashMap::new();

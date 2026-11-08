@@ -1,5 +1,4 @@
-//! The SQL of the edges table. Nothing outside `edges` reaches this module, so
-//! every write to the table goes through `write`.
+//! Nothing outside `edges` reaches this module, so every write to the table goes through `write`.
 
 use marfa_rules::edges::{Graph, Link, OnDelete};
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
@@ -44,7 +43,6 @@ pub(super) fn by_triple(
         .optional()?)
 }
 
-/// Every edge leaving `id` under `edge_type`.
 pub(super) fn leaving(tx: &Transaction<'_>, id: &str, edge_type: &str) -> Result<Vec<Edge>> {
     let mut statement = tx.prepare_cached(&format!(
         "{EDGE} WHERE source_id = ?1 AND edge_type = ?2 ORDER BY created_at, id"
@@ -53,7 +51,6 @@ pub(super) fn leaving(tx: &Transaction<'_>, id: &str, edge_type: &str) -> Result
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Every edge touching `id`, leaving it first.
 pub(super) fn touching(tx: &Transaction<'_>, id: &str) -> Result<Vec<Edge>> {
     let mut statement = tx.prepare_cached(&format!(
         "{EDGE} WHERE source_id = ?1 UNION ALL {EDGE} WHERE target_id = ?1 AND source_id <> ?1"
@@ -62,7 +59,6 @@ pub(super) fn touching(tx: &Transaction<'_>, id: &str) -> Result<Vec<Edge>> {
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// What a new edge holds.
 pub(super) struct NewEdge<'a> {
     pub id: &'a str,
     pub source_id: &'a str,
@@ -88,7 +84,6 @@ pub(super) fn insert(tx: &Transaction<'_>, edge: &NewEdge<'_>) -> Result<Edge> {
     stored(tx, edge.id)
 }
 
-/// What an edge holds once a write lands on it.
 pub(super) struct Landed<'a> {
     pub source_id: &'a str,
     pub target_id: &'a str,
@@ -96,7 +91,6 @@ pub(super) struct Landed<'a> {
     pub at: &'a str,
 }
 
-/// Moves `edge` to the next version.
 pub(super) fn advance(tx: &Transaction<'_>, edge: &Edge, next: &Landed<'_>) -> Result<Edge> {
     tx.prepare_cached(
         "UPDATE edges SET source_id = ?2, target_id = ?3, properties = jsonb(?4), \
@@ -128,7 +122,6 @@ pub(super) fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64
         .query_row([edge_type], |row| row.get(0))?)
 }
 
-/// Each type a stored edge of `edge_type` has at its target, once.
 pub(super) fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare(
         "SELECT DISTINCT i.type FROM edges e JOIN items i ON i.id = e.target_id \
@@ -138,7 +131,6 @@ pub(super) fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The edge types stored at an item's end, sorted.
 pub(super) fn kinds_at(
     tx: &Transaction<'_>,
     from: Option<&str>,
@@ -156,10 +148,8 @@ pub(super) fn kinds_at(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// A place in a listing: the time it orders by, then the edge's id.
 pub(super) type Position = (String, String);
 
-/// Which rows a page reads, in its order.
 #[derive(Clone, Copy)]
 pub(super) struct Page<'a> {
     pub from: Option<&'a str>,
@@ -168,13 +158,10 @@ pub(super) struct Page<'a> {
     pub updated_after: Option<&'a str>,
     pub updated_before: Option<&'a str>,
     pub after: Option<&'a Position>,
-    /// Reads the catch-up order, oldest change first.
     pub by_change: bool,
     pub limit: i64,
 }
 
-/// Up to `page.limit` edges past `page.after`, source rows joined so a source
-/// filter can cut before the limit does.
 pub(super) fn page(
     tx: &Transaction<'_>,
     page: &Page<'_>,
@@ -238,7 +225,6 @@ pub(super) fn page(
     Ok(kept)
 }
 
-/// The type and source of each row a page names, read once.
 struct SourceCache<'a, 'c> {
     tx: &'a Transaction<'c>,
     held: std::collections::HashMap<String, Option<(String, String)>>,
@@ -269,9 +255,6 @@ impl<'a, 'c> SourceCache<'a, 'c> {
     }
 }
 
-/// The graph as the transaction holds it.
-/// Each host `id`'s edges reach out of the bin, oldest edge first: its edge
-/// type, its type and its properties.
 pub(super) fn hosts_out_of_bin(
     tx: &Transaction<'_>,
     id: &str,

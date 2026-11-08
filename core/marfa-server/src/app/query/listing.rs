@@ -1,5 +1,3 @@
-//! `GET /items` and `GET /items/stats`.
-
 use rusqlite::types::Value;
 use serde_json::{Map, Value as Json, json};
 
@@ -12,7 +10,6 @@ use crate::app::access::Caller;
 use crate::app::items::{self, Many, Reader, reading};
 use crate::app::refusal::Result;
 
-/// A page of `GET /items`.
 #[derive(Clone, Debug)]
 pub struct Listing {
     pub ask: Ask,
@@ -22,7 +19,6 @@ pub struct Listing {
     pub include: Many,
 }
 
-/// What a count groups by.
 #[derive(Clone, Copy, Debug)]
 pub enum By {
     State,
@@ -40,13 +36,11 @@ impl By {
     }
 }
 
-/// One row of a keyset page.
 pub(super) struct Found {
     pub seq: i64,
     pub position: Position,
 }
 
-/// The query for a keyset page of `selected` in `order`, one row past `limit`.
 pub(super) fn page_sql(
     selected: &Sql,
     ask: &Ask,
@@ -85,8 +79,6 @@ pub(super) fn found(read: &Reader<'_, '_>, sql: &Sql, width: usize) -> Result<Ve
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The envelope of a keyset page: `rows` less the one that says another
-/// follows, answered as `shown` says.
 pub(super) fn answered(
     read: &Reader<'_, '_>,
     mut rows: Vec<Found>,

@@ -1,5 +1,3 @@
-//! What a handler answers with: one JSON writer, and one shape for a refusal.
-
 use std::any::Any;
 use std::sync::Arc;
 
@@ -14,11 +12,9 @@ use crate::telemetry::Fault;
 
 const CLIENT_CLOSED: u16 = 499;
 
-/// Why a handler ended without an answer of its own.
 #[derive(Debug)]
 pub enum Stopped {
     Refused(Refusal),
-    /// The client closed the connection, so nobody reads what comes back.
     ClientClosed,
 }
 
@@ -37,8 +33,7 @@ pub struct Page {
     pub message: String,
 }
 
-/// Left on the answer to a request that ended in a fault no refusal foresaw,
-/// for the layer that tells the outside of it, once.
+/// Left on the answer to a fault no refusal foresaw, for the layer that tells the outside once.
 #[derive(Clone, Debug)]
 pub struct Unhandled(pub Arc<Fault>);
 
@@ -57,8 +52,6 @@ pub fn json_answer(status: StatusCode, value: &impl Serialize) -> Response {
     }
 }
 
-/// An answer whose JSON is already text, so that what was stored goes out as
-/// it stands.
 pub fn text_answer(status: StatusCode, body: impl Into<Body>) -> Response {
     let mut response = Response::new(body.into());
     *response.status_mut() = status;
@@ -87,7 +80,6 @@ fn envelope(refusal: &Refusal) -> Value {
     Value::Object(out)
 }
 
-/// A refusal's body as it is sent, for what keeps it.
 pub fn refusal_body(refusal: &Refusal) -> Vec<u8> {
     marfa_rules::js::to_vec(&envelope(refusal)).unwrap_or_default()
 }
@@ -141,7 +133,6 @@ impl IntoResponse for Stopped {
     }
 }
 
-/// The answer to a handler that panicked.
 pub fn panicked(_: Box<dyn Any + Send>) -> Response {
     refusal_answer(&Refusal::panicked("a request panicked"))
 }

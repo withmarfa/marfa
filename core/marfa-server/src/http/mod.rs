@@ -51,7 +51,6 @@ use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
 type Routes = Router<Arc<App>>;
 
-/// What a path or method no operation serves is answered.
 async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     let mut response = if method == Method::OPTIONS {
         let mut empty = Response::new(Body::empty());
@@ -68,7 +67,6 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     response
 }
 
-/// The doors `X-Marfa-Reach` may name, as their routes are written.
 const REACH_DOORS: [&str; 9] = [
     "/items",
     "/items/{id}",
@@ -139,8 +137,7 @@ async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next)
     next.run(Request::from_parts(parts, body)).await
 }
 
-/// `search-and-filters/owner-read-boundary`: counts admit a browser's session
-/// and no local command.
+/// Counts admit a browser's session and no local command.
 async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
     if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {
@@ -202,8 +199,6 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, within_a_map))
 }
 
-/// The doors the instance's own authority reaches by the name of an item,
-/// never its content.
 fn owner_item_doors() -> Routes {
     Router::new()
         .route("/items/summaries", get(trash::summaries))
@@ -265,7 +260,6 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
-/// The public doors, for a listener that declares itself.
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
     let routes = shared(app.clone())
         .merge(auth::doors())

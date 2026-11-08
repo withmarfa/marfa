@@ -1,7 +1,6 @@
-//! Work handed to a thread of its own so that a request never waits on a
-//! receiver. The queue is bounded and a full one drops what comes, so a
-//! storm of faults, or a receiver that hangs, holds a fixed amount of memory
-//! and changes nothing for a request.
+//! Work handed to a thread of its own so that a request never waits on a receiver. The
+//! queue is bounded and a full one drops what comes, so a storm of faults or a hung
+//! receiver holds a fixed amount of memory.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender, TrySendError, sync_channel};
@@ -18,9 +17,8 @@ pub struct Lane<T> {
 }
 
 impl<T: Send + 'static> Lane<T> {
-    /// Starts the thread. `send` gets items together once `window` has passed
-    /// since the first of them, or `batch` of them are waiting, or a flush is
-    /// asked for. Whatever it does with them, a panic in it ends nothing.
+    /// `send` gets items together once `window` has passed since the first, or `batch` are
+    /// waiting, or a flush is asked for. A panic in it ends nothing.
     pub fn start(
         name: &str,
         capacity: usize,
@@ -71,16 +69,14 @@ impl<T: Send + 'static> Lane<T> {
         Lane { queue }
     }
 
-    /// Queues an item, or drops it when the queue is full.
     pub fn offer(&self, item: T) {
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
             self.queue.try_send(Message::Item(item))
         {
-            // Dropped on purpose: see the module.
+            // Dropped on purpose.
         }
     }
 
-    /// Has everything queued sent, waiting no longer than `within`.
     pub fn flush(&self, within: Duration) {
         let (done, finished) = sync_channel(1);
         if self.queue.try_send(Message::Flush(done)).is_ok() {

@@ -1,6 +1,5 @@
-//! The one write every edge goes through. [`write`] makes each check on the
-//! state its transaction commits, so a door, an inline write, a bulk entry
-//! and a conflicted copy all meet the same rules.
+//! [`write`] makes each check on the state its transaction commits, so a door, an inline write, a
+//! bulk entry and a conflicted copy all meet the same rules.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -28,7 +27,6 @@ const FOLDER_PATH: &str = "path";
 const MAX_FOLDER_PATH: usize = 1024;
 const FOLDER_TYPE: &str = "system.folder";
 
-/// One write's hold on the transaction and the catalog it judges by.
 pub struct Writing<'a, 't, 'c> {
     pub unit: &'a Unit<'t, 'c>,
     pub catalog: &'a Catalog,
@@ -37,21 +35,15 @@ pub struct Writing<'a, 't, 'c> {
     pub audited: bool,
 }
 
-/// Who a write answers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum By {
-    /// A caller's write, held to every rule.
     Caller,
-    /// A caller's edge written with an item, held to every rule. Whether its
-    /// source goes to the bin with a binned host is judged once every edge
-    /// the write lists stands, so the order they are listed in decides nothing.
+    /// Whether the source goes to the bin with a binned host is judged once every listed edge
+    /// stands, so listing order decides nothing.
     Inline,
-    /// An edge a conflicted copy takes from its original, held to the writer's
-    /// grants and to every rule but the property schema: the edge is the
-    /// original's and stands as stored until it is written.
+    /// Held to the writer's grants and every rule but the property schema: the edge stands as stored.
     Copy,
-    /// The link from a conflicted copy to its original, which the server
-    /// writes whatever the writer's edge grants.
+    /// Written whatever the writer's edge grants.
     Link,
 }
 
@@ -83,7 +75,6 @@ pub enum Op {
     Delete(Delete),
 }
 
-/// What a write did.
 pub enum Wrote {
     Created(Edge),
     /// A create repeating an edge that stands, written by nothing.
@@ -138,14 +129,12 @@ fn constraint(refusal: Refused) -> Refusal {
     refused(refusal, Code::EdgeConstraintViolation)
 }
 
-/// A refusal naming the body key that caused it.
 fn at_path(path: &str, message: String) -> Refusal {
     Refusal::validation(message.clone())
         .with_detail("errors", json!([{ "path": path, "message": message }]))
 }
 
-/// Whether a constraint list takes `type_id`. An unregistered type's parent
-/// and roles are not known, so only a list open to every type takes it.
+/// An unregistered type's parent and roles are not known, so only a list open to every type takes it.
 fn admitted(catalog: &Catalog, constraints: &[String], type_id: &str) -> bool {
     match lineage_of(catalog.types.rows(), type_id) {
         Some(lineage) => lineage_admits(&lineage, constraints),
@@ -157,7 +146,6 @@ fn lineage_admits(lineage: &Lineage, constraints: &[String]) -> bool {
     lineage.admitted_by(constraints).unwrap_or(false)
 }
 
-/// An edge as it would stand after a write.
 struct Stands<'a> {
     kind: &'a EdgeType,
     source: &'a Item,
@@ -237,8 +225,6 @@ impl<'c> Writing<'_, '_, 'c> {
         self.caller().require_type(&row.type_id, Level::Write)
     }
 
-    /// A row a write may start an edge from: one that stands out of the bin
-    /// and that the caller may read.
     pub(super) fn source_row(&self, id: &str) -> Result<Item> {
         self.note(Need::Reach);
         self.caller().require_reach()?;
@@ -247,8 +233,7 @@ impl<'c> Writing<'_, '_, 'c> {
             .ok_or_else(|| source_missing(id))
     }
 
-    /// A row a write may end an edge at. A row in the bin takes only a part
-    /// arriving late.
+    /// A row in the bin takes only a part arriving late.
     fn target_row(&self, kind: &EdgeType, id: &str) -> Result<Item> {
         let row = items::row(self.tx(), id)?
             .filter(|row| self.caller().may_read_type(&row.type_id))
@@ -265,7 +250,6 @@ impl<'c> Writing<'_, '_, 'c> {
         Ok(row)
     }
 
-    /// The stored edge `id`, read as no edge where the caller may not read it.
     fn readable(&self, id: &str) -> Result<(Edge, Item)> {
         self.note(Need::Reach);
         self.caller().require_reach()?;
@@ -330,10 +314,8 @@ impl<'c> Writing<'_, '_, 'c> {
         })
     }
 
-    /// Every rule of an edge as it would stand, from the self-loop on, in the
-    /// order the contract gives them. It is here that an edge that cascades
-    /// asks for write on its target's type, so no way of making or moving an
-    /// edge can leave it out.
+    /// Here an edge that cascades asks for write on its target's type, so no way of making or
+    /// moving an edge can leave it out.
     fn judge(&self, edge: &Stands<'_>) -> Result<()> {
         let Stands {
             kind,
@@ -685,7 +667,6 @@ fn stale(edge: &Edge, named: i64) -> Result<Refusal> {
     .with_member("current", edge.value()?))
 }
 
-/// Refuses a repeat of `held`'s id that names another triple.
 pub(super) fn repeat(held: &Edge, source: &str, target: &str, edge_type: &str) -> Result<()> {
     let mut differs = Vec::new();
     if held.source_id != source {
@@ -747,8 +728,7 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     Ok(())
 }
 
-/// Runs `op` as one write. With a `claim`, the answer is recorded under it in
-/// the same transaction.
+/// With a `claim`, the answer is recorded under it in the same transaction.
 pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, op: Op) -> Result<Done> {
     let cache = app.catalog_handle();
     let action = match op {
@@ -785,7 +765,6 @@ pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, op: Op) -> Re
     .await
 }
 
-/// Writes one edge, or refuses it and writes nothing.
 pub fn write(writing: &Writing<'_, '_, '_>, op: Op, by: By) -> Result<Wrote> {
     match op {
         Op::Create(create) => writing.create(create, by),
@@ -794,8 +773,7 @@ pub fn write(writing: &Writing<'_, '_, '_>, op: Op, by: By) -> Result<Wrote> {
     }
 }
 
-/// Announces an edge as `source` holds it. `purged_with` names the purge that
-/// took it.
+/// `purged_with` names the purge that took the edge.
 pub(crate) fn announce(
     unit: &Unit<'_, '_>,
     event_type: &'static str,
@@ -819,7 +797,6 @@ pub(crate) fn announce(
     })
 }
 
-/// Deletes the edge a purge takes, naming the row that took it.
 pub(crate) fn purge_edge(
     unit: &Unit<'_, '_>,
     edge: &Edge,
@@ -830,12 +807,10 @@ pub(crate) fn purge_edge(
     announce(unit, "edge.deleted", edge, source, Some(purged_with))
 }
 
-/// Every stored edge touching `id`, in no promised order.
 pub(crate) fn touching(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<Vec<Edge>> {
     rows::touching(tx, id)
 }
 
-/// The edges an item write names inline, by edge type, in the order sent.
 pub type Inline = Vec<(String, Vec<String>)>;
 
 fn once(targets: &[String]) -> Vec<&String> {
@@ -846,8 +821,6 @@ fn once(targets: &[String]) -> Vec<&String> {
         .collect()
 }
 
-/// What an inline write answers before the item is judged at all: a grant it
-/// lacks, an id that cannot be one, and a target it may not know of.
 pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Result<()> {
     for (edge_type, _) in inline {
         writing.require_edge_write(edge_type)?;
@@ -874,9 +847,8 @@ pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Re
     Ok(())
 }
 
-/// Makes `source`'s edges of each listed type what `inline` lists: an edge it
-/// holds to a listed target stands untouched, the others go, and only then
-/// are the new ones judged, so a replaced edge counts for nothing against them.
+/// The edges `inline` replaces are judged only after the old ones go, so a replaced edge counts for
+/// nothing against them.
 pub(crate) fn inline_replace(
     writing: &Writing<'_, '_, '_>,
     source: &Item,
@@ -924,9 +896,8 @@ pub(crate) fn inline_replace(
     Ok(())
 }
 
-/// Refuses a change of `item` to `next_type` that an edge it would go on
-/// holding could not stand. The edges `inline` replaces are not held, and an
-/// edge of a type no longer registered has no rule to meet.
+/// The edges `inline` replaces are not held, and an edge of a type no longer registered has no rule
+/// to meet.
 pub(crate) fn judge_retype(
     writing: &Writing<'_, '_, '_>,
     item: &Item,
@@ -994,9 +965,8 @@ fn lowered(refusal: &Refused) -> String {
     message
 }
 
-/// The edges a conflicted copy takes from `original`, and the link back to
-/// it. An edge the copy may not hold is left out, and nothing is said of it,
-/// so a repeat of the write owes nothing to what was left out.
+/// An edge the copy may not hold is left out without a word, so a repeat of the write owes nothing
+/// to what was left out.
 pub(crate) fn copy_edges(
     writing: &Writing<'_, '_, '_>,
     original: &Item,

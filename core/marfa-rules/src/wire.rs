@@ -1,5 +1,3 @@
-//! A type catalog as a server lists it.
-
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -30,14 +28,7 @@ pub struct WireType {
     pub rest: Map<String, Value>,
 }
 
-/// Every field the listing always sends is required, so a row missing one is
-/// refused rather than held with a default that says something else. The two
-/// labels are the exception: a catalog held or listed before every edge type
-/// carried them has none, so [`WireEdgeType::label`] and
-/// [`WireEdgeType::reverse_label`] fill them as the server does. So are
-/// `acyclic` and `flat`, which such a catalog reads as `false`: the copy then
-/// judges no cycle or nesting of its own and the server, which still does,
-/// answers for them.
+/// A row missing a field the listing always sends is refused rather than given a default. The exceptions are the two labels, filled by [`WireEdgeType::label`] and [`WireEdgeType::reverse_label`], and `acyclic` and `flat`, read as `false` by a catalog from before they existed: that copy then judges no cycle or nesting of its own and the server answers for them.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeType {
     pub id: String,
@@ -63,7 +54,6 @@ pub struct WireEdgeType {
 }
 
 impl WireEdgeType {
-    /// The listed `label`, or the one the id makes where the row has none.
     pub fn label(&self) -> String {
         match self.label.as_deref() {
             Some(label) if !label.is_empty() => label.to_string(),
@@ -71,8 +61,7 @@ impl WireEdgeType {
         }
     }
 
-    /// The listed `reverse_label`, or the `label` where the row has none: the
-    /// relation is two-way.
+    /// The `label` where the row has none: the relation is two-way.
     pub fn reverse_label(&self) -> String {
         match self.reverse_label.as_deref() {
             Some(label) if !label.is_empty() => label.to_string(),
@@ -81,20 +70,12 @@ impl WireEdgeType {
     }
 }
 
-/// The label a type gets when it names none: the last segment of its id, with
-/// each hyphen and underscore made a space and each word capitalized.
-/// `labelFromId` in `@withmarfa/shared` is the same function; a test on each
-/// side holds both to the same answers.
+/// The last segment of the id, with each hyphen and underscore made a space and each word capitalized.
 pub fn label_from_id(id: &str) -> String {
     label_from_name(id.rsplit('.').next().unwrap_or(id))
 }
 
-/// The label a field or a member of a list's entries gets when nothing names
-/// one: each hyphen and underscore made a space and the first character at the
-/// start or after a space capitalized, whatever its script, so `due_at`
-/// becomes `Due At` and `résumé` becomes `Résumé`. `labelFromName` in
-/// `@withmarfa/types` is the same function; a test on each side holds both to
-/// the same answers.
+/// Each hyphen and underscore made a space and the first character at the start or after a space capitalized, whatever its script: `due_at` becomes `Due At`, `résumé` becomes `Résumé`.
 pub fn label_from_name(name: &str) -> String {
     let mut label = String::with_capacity(name.len());
     let mut word_start = true;
@@ -110,11 +91,7 @@ pub fn label_from_name(name: &str) -> String {
     label
 }
 
-/// The plural a type gets when it names none, made from its label by the
-/// regular English rule on lowercase letters: a consonant and `y` become
-/// `ies`, an ending of `s`, `x`, `z`, `ch` or `sh` takes `es`, and any other
-/// label takes `s`. `pluralFromLabel` in `@withmarfa/types` is the same
-/// function; a test on each side holds both to the same answers.
+/// Regular English rule on lowercase letters: a consonant and `y` become `ies`, an ending of `s`, `x`, `z`, `ch` or `sh` takes `es`, any other label takes `s`.
 pub fn plural_from_label(label: &str) -> String {
     let mut chars = label.chars().rev();
     let last = chars.next();
@@ -134,11 +111,9 @@ pub fn plural_from_label(label: &str) -> String {
     }
 }
 
-/// Both catalogs, read together so a copy never holds one without the other.
 #[derive(Debug, Clone)]
 pub struct WireCatalog {
     pub types: Vec<WireType>,
-    /// Each row as listed, checked to read as a `WireEdgeType`.
     pub edge_types: Vec<Value>,
 }
 
@@ -146,7 +121,6 @@ pub struct WireCatalog {
 mod tests {
     use super::{WireEdgeType, label_from_id, label_from_name, plural_from_label};
 
-    /// The same table as `type-label.test.ts` in `@withmarfa/shared`.
     pub const LABELS: [(&str, &str); 6] = [
         ("acme.list-member", "List Member"),
         ("parent-of", "Parent Of"),
@@ -156,8 +130,6 @@ mod tests {
         ("acme.v2--draft", "V2  Draft"),
     ];
 
-    /// The same table as `NAMES` in `type-label.test.ts` in
-    /// `@withmarfa/shared`.
     pub const NAMES: [(&str, &str); 6] = [
         ("résumé", "Résumé"),
         ("éclair", "Éclair"),
@@ -179,8 +151,6 @@ mod tests {
         }
     }
 
-    /// The same table as `PLURALS` in `type-label.test.ts` in
-    /// `@withmarfa/shared`.
     pub const PLURALS: [(&str, &str); 10] = [
         ("Note", "Notes"),
         ("Story", "Stories"),

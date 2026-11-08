@@ -1,5 +1,4 @@
-//! The words both approval pages use for a grant. One home, so the consent
-//! screen and the device approval page cannot say the same thing two ways.
+//! Words shared by both approval pages, so they cannot say the same thing two ways.
 
 use crate::app::access::Level;
 use crate::app::oauth::offer::{LevelRow, Reach};
@@ -17,7 +16,6 @@ pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
 pub const POWERS_TITLE: &str = "More control over Marfa";
 pub const UNDONE_MARK: &str = "Can't be undone.";
 
-/// A power's title and the line under it. The key form says the same.
 pub struct PowerWords {
     pub title: &'static str,
     pub note: Option<&'static str>,
@@ -110,7 +108,6 @@ const POWERS: [(&str, PowerWords); 12] = [
     ),
 ];
 
-/// Where a permission sits in the list a page shows; an unknown one last.
 pub fn power_rank(literal: &str) -> usize {
     POWERS
         .iter()
@@ -125,7 +122,6 @@ pub fn power(literal: &str) -> Option<&'static PowerWords> {
         .map(|(_, words)| words)
 }
 
-/// A title as it reads inside a sentence.
 pub fn lower_first(text: &str) -> String {
     let mut characters = text.chars();
     match characters.next() {
@@ -134,8 +130,6 @@ pub fn lower_first(text: &str) -> String {
     }
 }
 
-/// The title of a pattern the page itself names, or of a type or link type
-/// the registry labels.
 pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
     let own = match (reach, pattern) {
         (Reach::Type, "*") => Some("All your data"),
@@ -167,7 +161,6 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
     }
 }
 
-/// How far a grant that grows reaches, naming what it covers today.
 pub fn reach_line(covers: &[String]) -> String {
     if covers.is_empty() {
         "Covers what exists today, and anything added later".to_string()
@@ -197,7 +190,6 @@ fn edge_line(pattern: &str) -> Option<&'static str> {
     })
 }
 
-/// What a row says under its title, apart from the reach line.
 pub fn description(row: &LevelRow) -> Option<String> {
     let writes = row
         .choices

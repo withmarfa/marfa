@@ -1,5 +1,4 @@
-//! The rows the OAuth server keeps. Nothing here decides anything: a caller
-//! reads a row and judges it, inside the write that acts on the judgment.
+//! Rows only: a caller reads a row and judges it inside the write that acts on the judgment.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -11,14 +10,12 @@ use super::scope::ScopeSet;
 use crate::app::access::printable;
 use crate::app::refusal::{Refusal, Result};
 
-/// An instant of the instance's clock, as these tables hold it.
 pub fn ms_of(at: &str) -> Result<i64> {
     DateTime::parse_from_rfc3339(at)
         .map(|at| at.timestamp_millis())
         .map_err(|_| Refusal::internal("an instant did not read"))
 }
 
-/// An instant these tables hold, as every other record writes one.
 pub fn stamp_of(ms: i64) -> String {
     DateTime::<Utc>::from_timestamp_millis(ms)
         .unwrap_or_default()
@@ -60,7 +57,6 @@ fn list_text(list: &[String]) -> String {
     Value::from(list.to_vec()).to_string()
 }
 
-/// A registered client, or a metadata document's copy of one.
 #[derive(Clone, Debug)]
 pub struct Client {
     pub id: String,
@@ -69,8 +65,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// What a person is shown this client as: the name it gave, held to what
-    /// a page may show, or its ID where that leaves nothing.
     pub fn name(&self) -> String {
         let named = self
             .registration
@@ -132,8 +126,7 @@ pub fn client(tx: &Connection, id: &str) -> Result<Option<Client>> {
         .optional()?)
 }
 
-/// Holds `registration` as `id`, in place of any copy already there, which
-/// keeps its first date and when it was last offered.
+/// Replaces any copy already there, which keeps its first date and when it was last offered.
 pub fn put_client(tx: &Connection, id: &str, registration: &Registration, now: i64) -> Result<()> {
     let words = |list: Vec<&'static str>| Value::from(list).to_string();
     tx.execute(
@@ -199,7 +192,6 @@ pub fn note_offered(tx: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// The instant a stored document's copy goes stale, if `id` came from one.
 pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<i64>> {
     Ok(tx
         .query_row(
@@ -220,7 +212,6 @@ pub fn note_document(tx: &Connection, id: &str, now: i64, fresh_until: i64) -> R
     Ok(())
 }
 
-/// A person's consent to an app.
 #[derive(Clone, Debug)]
 pub struct Consent {
     pub client_id: String,
@@ -262,7 +253,6 @@ pub fn consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<Option
         .optional()?)
 }
 
-/// The standing consent shown as `grant_id`, if it is one of `user_id`'s.
 pub fn standing_grant(tx: &Connection, grant_id: &str, user_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(
@@ -274,7 +264,6 @@ pub fn standing_grant(tx: &Connection, grant_id: &str, user_id: &str) -> Result<
         .optional()?)
 }
 
-/// Every standing consent of `user_id`, oldest approval first.
 pub fn standing_consents(tx: &Connection, user_id: &str) -> Result<Vec<Consent>> {
     let mut query = tx.prepare(
         "SELECT * FROM auth_oauth_consent WHERE user_id = ?1 AND withdrawn_at IS NULL \
@@ -285,8 +274,7 @@ pub fn standing_consents(tx: &Connection, user_id: &str) -> Result<Vec<Consent>>
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// What a person's consent to `client_id` covers, which is nothing while it
-/// is withdrawn.
+/// Nothing while the consent is withdrawn.
 pub fn held_scopes(tx: &Connection, client_id: &str, user_id: &str) -> Result<ScopeSet> {
     Ok(consent(tx, client_id, user_id)?
         .filter(Consent::stands)
@@ -309,8 +297,7 @@ pub fn insert_consent(tx: &Connection, consent: &Consent) -> Result<()> {
     Ok(())
 }
 
-/// Stands `consent` again, or changes what it covers. A grant stood again
-/// after a withdrawal has not been used yet.
+/// A grant stood again after a withdrawal has not been used yet.
 pub fn renew_consent(
     tx: &Connection,
     client_id: &str,
@@ -327,8 +314,7 @@ pub fn renew_consent(
     Ok(())
 }
 
-/// Lowers what a standing consent covers. When it was approved stays as it
-/// was, so its inactivity boundary does too.
+/// The approval date stays, so the inactivity boundary does too.
 pub fn narrow_consent(
     tx: &Connection,
     client_id: &str,
@@ -342,8 +328,6 @@ pub fn narrow_consent(
     Ok(())
 }
 
-/// Records `client`'s registered list as what the person's approval covers,
-/// in place of what it covered.
 pub fn approve_destinations(tx: &Connection, client: &Client, user_id: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_oauth_consent_destination WHERE client_id = ?1 AND user_id = ?2",
@@ -374,8 +358,7 @@ pub fn approved_destinations(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Drops from what people approved of `client_id` whatever `registration` no
-/// longer offers. It adds nothing.
+/// Drops whatever `registration` no longer offers; adds nothing.
 pub fn narrow_destinations(
     tx: &Connection,
     client_id: &str,
@@ -398,7 +381,6 @@ pub fn narrow_destinations(
     Ok(())
 }
 
-/// Whether a consent that stands approved a page at `origin`.
 pub fn origin_approved(tx: &Connection, origin: &str) -> Result<bool> {
     Ok(tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM auth_oauth_consent_destination AS destination \
@@ -439,7 +421,6 @@ pub fn note_consent_used(tx: &Connection, client_id: &str, user_id: &str, now: i
     Ok(())
 }
 
-/// A code, from the moment it is issued to the exchange that takes it.
 #[derive(Clone, Debug)]
 pub struct Code {
     pub digest: String,
@@ -510,7 +491,6 @@ pub fn spend_code(tx: &Connection, digest: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// Names what a spent code issued, or that nothing of it is left to end.
 pub fn name_code_chain(tx: &Connection, digest: &str, chain_id: Option<&str>) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_code SET chain_id = ?2 WHERE digest = ?1",
@@ -547,7 +527,6 @@ impl DeviceStatus {
     }
 }
 
-/// A device code, by the digests of both its codes.
 #[derive(Clone, Debug)]
 pub struct DeviceCode {
     pub digest: String,
@@ -616,8 +595,7 @@ pub fn device_code_by_user_code(tx: &Connection, digest: &str) -> Result<Option<
         .optional()?)
 }
 
-/// Decides a pending code, and clears its polls so the first one after the
-/// decision never waits.
+/// Clears its polls so the first one after the decision never waits.
 pub fn decide_device_code(
     tx: &Connection,
     digest: &str,
@@ -794,7 +772,6 @@ pub fn rotate_refresh_token(tx: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// Ends every token of one chain.
 pub fn end_chain(tx: &Connection, chain_id: &str, now: i64) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_oauth_access_token WHERE chain_id = ?1",
@@ -808,8 +785,7 @@ pub fn end_chain(tx: &Connection, chain_id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// The chain of each token an app can still use for a person, with what the
-/// token holds. A chain can appear once for each of its tokens.
+/// A chain can appear once for each of its tokens.
 pub fn usable_tokens(
     tx: &Connection,
     client_id: &str,
@@ -828,8 +804,7 @@ pub fn usable_tokens(
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Ends every code an app has not exchanged for a person. An approved device
-/// code nobody has polled ends as spent.
+/// An approved device code nobody has polled ends as spent.
 pub fn end_outstanding_codes(tx: &Connection, client_id: &str, user_id: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_oauth_code WHERE client_id = ?1 AND user_id = ?2",
@@ -843,8 +818,7 @@ pub fn end_outstanding_codes(tx: &Connection, client_id: &str, user_id: &str) ->
     Ok(())
 }
 
-/// Ends what an app holds for a person: every token and every code, and any
-/// device code still waiting for an answer, which names nobody yet.
+/// Includes a device code still waiting for an answer, which names nobody yet.
 pub fn end_grant_credentials(
     tx: &Connection,
     client_id: &str,

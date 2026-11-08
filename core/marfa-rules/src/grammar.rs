@@ -1,14 +1,8 @@
-//! The grammar of a type identifier, which a server and a client hold a name
-//! to.
-
 use crate::error::RuleError;
 
-/// What a type is, said where a name is refused for breaking the grammar.
 pub const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
 
-/// The server's type pattern grammar (`types/id-grammar` and
-/// `types/id-reserved-scope-root`): a type identifier, or a namespace under
-/// `.*`. The bare `*` is no pattern here; each caller says what it means.
+/// A type identifier, or a namespace under `.*`. The bare `*` is no pattern.
 pub fn type_pattern(name: &str) -> Result<bool, RuleError> {
     let segment = |part: &str| {
         let mut characters = part.chars();
@@ -22,7 +16,6 @@ pub fn type_pattern(name: &str) -> Result<bool, RuleError> {
     if name.len() > 128 {
         return Ok(false);
     }
-    // A wildcard's root is a namespace, held to the segments alone.
     if let Some(root) = name.strip_suffix(".*") {
         return Ok(!root.is_empty() && root.split('.').all(segment));
     }
@@ -39,13 +32,10 @@ pub fn type_pattern(name: &str) -> Result<bool, RuleError> {
     })
 }
 
-/// A type identifier the server's grammar takes, and no namespace pattern.
 pub fn type_id(name: &str) -> Result<bool, RuleError> {
     Ok(!name.ends_with(".*") && type_pattern(name)?)
 }
 
-/// The root of a type identifier that only Marfa's own build may create, where
-/// `name` begins with one.
 pub fn platform_root(name: &str) -> Option<&'static str> {
     match name.split('.').next() {
         Some("core") => Some("core"),

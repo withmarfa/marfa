@@ -1,5 +1,3 @@
-//! The polling task, and what stands over each run.
-
 use std::future::{Future, poll_fn};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::pin;
@@ -19,12 +17,10 @@ use crate::db::Write;
 use crate::settings::registry::{ERROR_REPORTING_ENABLED, HOUSEKEEPING_POLL_INTERVAL_MS};
 use crate::telemetry::{Fault, Finished};
 
-/// A long poll is waited for in slices, so a shorter one takes effect.
 const SLICE: Duration = Duration::from_secs(1);
 const RECORD_RETRY_FIRST: Duration = Duration::from_millis(100);
 const RECORD_RETRY_MOST: Duration = Duration::from_secs(5);
 
-/// Each job this instance runs, by its live interval.
 pub fn wanted(app: &App) -> Vec<Wanted> {
     let live = app.settings.live();
     JOBS.iter()
@@ -37,7 +33,6 @@ pub fn wanted(app: &App) -> Vec<Wanted> {
         .collect()
 }
 
-/// One look at the table: a write only if something should change.
 async fn pass(app: &Arc<App>) -> Result<()> {
     let rows = app.db.read(schedule::rows).await?;
     let steps = schedule::plan(&rows, &wanted(app), app.clock.now_ms());
@@ -61,8 +56,6 @@ async fn pass(app: &Arc<App>) -> Result<()> {
     Ok(())
 }
 
-/// Waits out the poll interval as it stands, or until a run has left work that
-/// should not wait for it.
 async fn rest(app: &App, stopping: &mut watch::Receiver<bool>) {
     let began = Instant::now();
     loop {
@@ -115,7 +108,6 @@ async fn caught<F: Future>(future: F) -> std::result::Result<F::Output, Arc<Faul
     .await
 }
 
-/// How a run went wrong, as the table and telemetry are told it.
 struct Failed {
     message: String,
     fault: Option<Arc<Fault>>,

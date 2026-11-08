@@ -1,5 +1,3 @@
-//! The doors under `/keys`.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, Request, State};
@@ -22,7 +20,6 @@ use crate::settings::registry::{
 
 const LIMIT_HEADER: &str = "x-ratelimit-limit";
 
-/// Holds a credential to the cap the operations here share.
 pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let live = app.settings.live();
     if !live.get(RATE_LIMIT_ENABLED) {

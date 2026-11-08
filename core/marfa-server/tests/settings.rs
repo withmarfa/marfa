@@ -1,5 +1,4 @@
-//! The settings as a real process meets them: its log, its files and its
-//! restarts.
+//! The settings as a real process meets them: its log, files and restarts.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -81,7 +80,6 @@ impl Server {
         server
     }
 
-    /// Stops the process and returns all it logged.
     fn stop(mut self) -> String {
         let pid = self.child.id().to_string();
         assert!(Command::new("kill").arg(&pid).status().unwrap().success());

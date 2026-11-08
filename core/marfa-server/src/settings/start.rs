@@ -14,7 +14,6 @@ const MAX_CLOCK_OFFSET_MS: u64 = 3_153_600_000_000;
 const MAX_I32: u64 = 2_147_483_647;
 const MIN_AUTH_SECRET: usize = 32;
 
-/// Where the database lives, as `SQLITE_PATH` names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DatabasePath {
     File(PathBuf),
@@ -33,7 +32,6 @@ impl DatabasePath {
         }
     }
 
-    /// The database's file, unless it is held in memory.
     pub fn file(&self) -> Option<PathBuf> {
         match self {
             DatabasePath::File(path) => Some(path.clone()),
@@ -51,7 +49,6 @@ impl DatabasePath {
         }
     }
 
-    /// The folder the database's files sit in.
     pub fn folder(&self) -> PathBuf {
         self.file()
             .as_deref()
@@ -62,7 +59,6 @@ impl DatabasePath {
     }
 }
 
-/// Everything fixed when the process starts, but for its secrets.
 pub struct Fixed {
     pub port: u16,
     pub listen_host: Option<String>,
@@ -81,13 +77,10 @@ pub struct Fixed {
     pub blob_path: PathBuf,
     /// Never stored and never logged: its address can hold a credential.
     pub heartbeat_url: Option<String>,
-    /// Whether a place to send an error report is set. It is judged by the
-    /// presence of the settings that name it, not by whether it can be reached.
+    /// Judged by the presence of the settings that name it, not by reachability.
     pub error_receiver: bool,
 }
 
-/// Everything fixed when the process starts. Reaching one means its secrets
-/// are filled in.
 pub struct Start {
     fixed: Fixed,
     pub api_key_salt: String,
@@ -162,7 +155,6 @@ impl Reader<'_> {
         }
     }
 
-    /// An absolute `http` or `https` address, whose value never reaches a refusal.
     fn url_kept_private(&mut self, name: &str) -> Option<String> {
         let text = self.environment.get(name)?;
         let usable = Url::parse(text).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
@@ -195,15 +187,12 @@ impl Reader<'_> {
 }
 
 impl Fixed {
-    /// Whether test hooks are on. A value outside its rule counts as off, and
-    /// [`Fixed::read`] refuses it.
     pub(super) fn hooks_on(environment: &Environment) -> bool {
         environment
             .get("MARFA_TEST_HOOKS")
             .is_some_and(|text| rule::boolean(text).unwrap_or(false))
     }
 
-    /// Reads every setting, adding a line for each one outside its rule.
     pub(super) fn read(
         environment: &Environment,
         problems: &mut Vec<String>,
@@ -269,7 +258,6 @@ impl Fixed {
         (!failed).then_some((fixed, given))
     }
 
-    /// The rules that compare settings, once every setting has parsed.
     pub(super) fn check_together(&self, environment: &Environment, problems: &mut Vec<String>) {
         if !self.test_hooks {
             let hooked = |name: &'static str| environment.get(name).map(|value| (name, value));

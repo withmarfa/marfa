@@ -1,6 +1,3 @@
-//! A listing cannot be compiled without its reach: each shape of query below is
-//! compiled, and each must carry the reach it was given.
-
 use marfa_rules::filter;
 use rusqlite::types::Value;
 

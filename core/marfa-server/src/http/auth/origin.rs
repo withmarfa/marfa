@@ -1,5 +1,3 @@
-//! Where a browser says a request came from.
-
 use axum::http::header::{ORIGIN, REFERER};
 use axum::http::{HeaderMap, HeaderValue};
 

@@ -1,5 +1,5 @@
-//! The doors under `/items` and `/metadata/tags`. A door judges what can be
-//! judged without the store; what the store decides happens in `app::items`.
+//! A door judges what can be judged without the store; what the store decides happens in
+//! `app::items`.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -86,7 +86,6 @@ where
     }
 }
 
-/// A write request as it arrived.
 pub struct Sent {
     method: Method,
     uri: Uri,
@@ -297,7 +296,6 @@ pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
 
-/// The edges an item write lists, by edge type.
 pub(super) fn edges_of(body: &Map<String, Value>) -> Result<Option<Inline>> {
     let Some(sent) = body.get("edges") else {
         return Ok(None);

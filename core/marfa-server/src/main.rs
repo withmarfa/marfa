@@ -11,9 +11,7 @@ use marfa_server::{log, run, telemetry};
 #[command(version, about)]
 struct Cli {}
 
-/// Reads every setting, the telemetry ones with the rest, and refuses all of
-/// what is outside its rule in one refusal. A rule between telemetry settings
-/// is asked only when every setting has read.
+/// A rule between telemetry settings is asked only when every setting has read.
 fn read_settings() -> Result<(marfa_server::settings::Accepted, Config), Failure> {
     let environment = Environment::of_process();
     let mut own = Vec::new();

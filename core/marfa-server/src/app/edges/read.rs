@@ -1,7 +1,5 @@
-//! Reads of edges. An edge is readable through its edge type and its source's
-//! type. A source filter cuts in the query, before the limit, so paging stays
-//! whole; what the key may not read is left out after the cut, so a page can
-//! come back short with a cursor still to follow.
+//! A source filter cuts in the query, before the limit, so paging stays whole; what the key may
+//! not read is left out after the cut, so a page can come back short with a cursor still to follow.
 
 use rusqlite::Transaction;
 use serde_json::Value;
@@ -18,14 +16,12 @@ const BLOCK_CAP: i64 = 50;
 const BY_CREATION: &str = "edges";
 const BY_CHANGE: &str = "edges-changed";
 
-/// Which way an item's edges run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
     Outbound,
     Inbound,
 }
 
-/// What `GET /edges` asks for.
 #[derive(Debug, Default)]
 pub struct Listing {
     pub edge_types: Vec<String>,
@@ -35,7 +31,6 @@ pub struct Listing {
     pub limit: i64,
 }
 
-/// What `GET /items/{id}/edges` and `/backrefs` ask for.
 #[derive(Debug, Default)]
 pub struct ItemListing {
     pub edge_types: Vec<String>,
@@ -48,7 +43,6 @@ fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> 
         .is_some_and(|source| caller.may_read_edge(&edge.edge_type, &source)))
 }
 
-/// One page of what `asked` selects, printed, and the cursor past it.
 fn page_of(
     tx: &Transaction<'_>,
     caller: &Caller,
@@ -180,13 +174,9 @@ pub async fn of_item(
     .await
 }
 
-/// The blocks of an item's edges an answer carries: by edge type, at most
-/// `BLOCK_CAP` each, with a cursor the item's listing continues under that
-/// type. A block left empty says only that something hidden exists, so it goes.
+/// A block left empty says only that something hidden exists, so it goes.
 pub struct Blocks {
-    /// The object as text.
     pub text: String,
-    /// The rows at the far end of the edges shown, each once, in block order.
     pub far_ends: Vec<String>,
 }
 

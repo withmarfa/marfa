@@ -1,19 +1,14 @@
-//! Where an OTLP signal is sent, and with what, as the standard `OTEL_*`
-//! variables say.
-
 use url::Url;
 
 use crate::environment::text;
 use crate::identity::headers;
 
-/// A signal sent over OTLP, and the variables that are its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
     Traces,
     Logs,
 }
 
-/// The base address of every signal.
 pub const GENERAL_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 pub const GENERAL_HEADERS: &str = "OTEL_EXPORTER_OTLP_HEADERS";
 
@@ -49,16 +44,12 @@ impl Signal {
 
 #[derive(Debug, PartialEq)]
 pub enum Endpoint {
-    /// No endpoint: nothing is sent.
     Off,
-    /// An endpoint that cannot be used. Names the variable and never its
-    /// value, which can carry a credential.
+    /// Names the variable, never its value, which can carry a credential.
     Ignored(&'static str),
     On(String),
 }
 
-/// The address `signal` posts to: its own endpoint as written, otherwise the
-/// general one with `v1/<signal>` under it.
 pub fn endpoint(get: &impl Fn(&str) -> Option<String>, signal: Signal) -> Endpoint {
     let (variable, named, appends) = match (
         text(get, signal.endpoint_variable()),
@@ -88,8 +79,8 @@ pub fn endpoint(get: &impl Fn(&str) -> Option<String>, signal: Signal) -> Endpoi
     Endpoint::On(parsed.to_string())
 }
 
-/// The headers a signal is sent with, the general variable's overridden by
-/// the signal's by name, and whether every pair of both could be read.
+/// The signal's headers override the general variable's by name; also reports whether
+/// every pair of both was readable.
 pub fn signal_headers(
     get: &impl Fn(&str) -> Option<String>,
     signal: Signal,
@@ -159,7 +150,6 @@ mod tests {
             general("http://collector:4318/base/", Signal::Traces),
             "http://collector:4318/base/v1/traces"
         );
-        // A query stays a query, and a fragment is not sent.
         assert_eq!(
             general("http://collector:4318/?token=abc", Signal::Traces),
             "http://collector:4318/v1/traces?token=abc"

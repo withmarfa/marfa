@@ -1,10 +1,7 @@
-//! The types and edge types the instance holds, read as one catalog.
-//!
-//! A catalog carries the generation of the database it was read from. The
-//! generation is raised in the transaction that changes a type or an edge
-//! type, so a transaction asks for the catalog of its own snapshot: the
-//! shared one when the generations agree, one read from the transaction when
-//! they do not. Only a catalog read from a committed snapshot is shared.
+//! A catalog carries the database generation it was read at, raised in the
+//! transaction that changes a type or edge type. A transaction uses the shared
+//! catalog when generations agree, else reads its own; only a committed
+//! snapshot is shared.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,35 +20,26 @@ use super::refusal::{Refusal, Result};
 
 const GENERATION: &str = "catalog_generation";
 
-/// Where a stored type came from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Provenance {
     pub origin: &'static str,
     pub created_by: Option<Value>,
 }
 
-/// Which snapshot a caller asks the catalog of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Snapshot {
-    /// A read transaction: what it sees is committed, so it may be shared.
     Committed,
-    /// A write transaction: what it sees may roll back, so it is never shared.
     Pending,
 }
 
 #[derive(Debug)]
 pub struct Catalog {
     pub generation: i64,
-    /// Every edge type by id, shipped and registered, as the rules read one.
     edge_kinds: HashMap<String, EdgeType>,
-    /// The types whose stored definition reads, with their owners' icons.
     pub types: Registry,
     pub provenance: HashMap<String, Provenance>,
-    /// The ids whose stored definition does not read, sorted.
     pub unreadable: Vec<String>,
-    /// The edge types registered here, by id.
     pub edge_types: Vec<Obj>,
-    /// The same types, as what judges an item's properties.
     pub rules: Rules,
 }
 
@@ -76,9 +64,7 @@ impl Catalog {
         self.unreadable.iter().any(|held| held == id)
     }
 
-    /// Whether Marfa ships `id`.
-    /// The field `type_id` itself names as its link. A subtype inherits the
-    /// field, never the link.
+    /// A subtype inherits the field, never the link.
     pub fn link_field(&self, type_id: &str) -> Option<&str> {
         self.types.get(type_id)?.get("link_field")?.as_str()
     }
@@ -87,7 +73,6 @@ impl Catalog {
         builtin::ships(id).unwrap_or(false)
     }
 
-    /// The platform types stored here that this build no longer ships, sorted.
     pub fn retired(&self) -> Vec<&str> {
         let mut ids: Vec<&str> = self
             .provenance
@@ -105,17 +90,14 @@ impl Catalog {
             .find(|held| held.get("id").and_then(Value::as_str) == Some(id))
     }
 
-    /// The rules of the edge type `id`, shipped or registered here.
     pub fn edge_kind(&self, id: &str) -> Option<&EdgeType> {
         self.edge_kinds.get(id)
     }
 
-    /// Every edge type this instance holds, shipped or registered here.
     pub fn edge_kinds(&self) -> impl Iterator<Item = &EdgeType> {
         self.edge_kinds.values()
     }
 
-    /// The edge types that make their source a part of their target.
     pub fn with_hosts_types(&self) -> Vec<&str> {
         self.edge_kinds
             .values()
@@ -136,7 +118,6 @@ pub fn generation(tx: &Transaction<'_>) -> Result<i64> {
     Ok(held.and_then(|text| text.parse().ok()).unwrap_or(0))
 }
 
-/// Raises the generation, in the transaction that changes the catalog.
 pub fn raise(tx: &Transaction<'_>) -> Result<()> {
     tx.execute(
         "INSERT INTO instance (key, value) VALUES (?1, '1') \
@@ -249,8 +230,7 @@ fn rules_of(rows: &[Obj]) -> Rules {
     Rules::new(entries.collect(), None)
 }
 
-/// The catalog `tx` sees. A shared catalog read from a newer snapshot is
-/// never replaced by an older one.
+/// A shared catalog read from a newer snapshot is never replaced by an older one.
 pub fn current(
     cache: &ArcSwap<Catalog>,
     tx: &Transaction<'_>,
@@ -274,8 +254,7 @@ pub fn current(
     Ok(loaded)
 }
 
-/// Brings the stored platform types to the set this build ships. A type this
-/// build no longer ships stays, as a retired one, until it is removed.
+/// A type this build no longer ships stays, as a retired one, until it is removed.
 pub fn reconcile(tx: &Transaction<'_>, at: &str) -> Result<()> {
     let shipped = builtin::shipped_types()
         .map_err(|error| Refusal::internal(&format!("the shipped types do not read: {error}")))?;
@@ -321,14 +300,12 @@ pub fn reconcile(tx: &Transaction<'_>, at: &str) -> Result<()> {
 }
 
 impl App {
-    /// The catalog `tx` sees. See [`current`].
     pub fn catalog(&self, tx: &Transaction<'_>, snapshot: Snapshot) -> Result<Arc<Catalog>> {
         current(&self.catalog, tx, snapshot)
     }
 
-    /// Shares the catalog of the newest committed snapshot, which a write
-    /// that changed it calls once it has committed. A reader that finds the
-    /// catalog behind publishes it itself, so a failure here costs nothing.
+    /// Called once a write that changed the catalog has committed. A reader that finds
+    /// the shared catalog behind publishes it itself, so a failure here costs nothing.
     pub async fn publish_catalog(&self) {
         let cache = self.catalog_handle();
         let published = self
@@ -342,7 +319,6 @@ impl App {
     }
 }
 
-/// The shape a stored type's provenance is answered in.
 pub fn provenance_json(held: Option<&Provenance>) -> Value {
     match held {
         Some(held) => json!({

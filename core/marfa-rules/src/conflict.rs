@@ -1,14 +1,10 @@
-//! What a write against an older version means: which of its changes collide
-//! with what landed since, how the type's merge policy settles a collision,
-//! and the copy that keeps the losing value. Values in, values out; the write
-//! that applies the answer lives with the storage.
+//! What a write against an older version collides with, how the merge policy settles it, and the copy that keeps the losing value. Values in, values out.
 
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-/// A rule for one colliding field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strategy {
     LastWriterWins,
@@ -32,7 +28,6 @@ impl Strategy {
     }
 }
 
-/// A type's merge policy, its chain's entries already laid over each other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MergePolicy {
     pub default: Option<Strategy>,
@@ -48,8 +43,7 @@ impl MergePolicy {
             .unwrap_or(Strategy::LastWriterWins)
     }
 
-    /// Lays `declared`, a type's `merge_policy` member, over this policy: its
-    /// `fields` key by key, and its `default` in place of the one held.
+    /// Lays `declared` over this policy: its `fields` key by key, its `default` in place of the one held.
     pub fn laid_over_by(mut self, declared: &Value) -> MergePolicy {
         if let Some(fields) = declared.get("fields").and_then(Value::as_object) {
             for (field, word) in fields {
@@ -85,8 +79,7 @@ impl MergePolicy {
     }
 }
 
-/// The item's own versioned fields. On a write, `None` is a field it does not
-/// name; on a stored version, a field that holds nothing.
+/// On a write, `None` is a field it does not name; on a stored version, a field that holds nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ItemFields {
     pub tier: Option<String>,
@@ -114,12 +107,9 @@ impl ItemFields {
     }
 }
 
-/// A stale write and the two states it meets.
 #[derive(Clone, Copy, Debug)]
 pub struct Stale<'a> {
-    /// The properties it sends, nulls a replace leaves out already removed.
     pub sent: &'a Map<String, Value>,
-    /// The properties it clears, a replace's left-out ones among them.
     pub cleared: &'a [String],
     pub fields: &'a ItemFields,
     pub current: &'a Map<String, Value>,
@@ -128,30 +118,23 @@ pub struct Stale<'a> {
     pub ancestor_fields: &'a ItemFields,
 }
 
-/// What a stale write collides with, and what it changes either way.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Detection {
-    /// Sorted. Empty where the write merges cleanly.
     pub conflicting: Vec<String>,
     pub colliding_item_fields: Vec<&'static str>,
-    /// The item fields it genuinely changes: an echo is no change.
+    /// An echo is no change.
     pub changed_fields: ItemFields,
-    /// The current properties with its genuine changes applied, where nothing
-    /// collided.
     pub merged: Option<Map<String, Value>>,
 }
 
-/// How `conflict=auto` settles a collision.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub merged: Map<String, Value>,
-    /// The fields the original keeps and the copy takes, sorted.
     pub keep_both: Vec<String>,
     pub strategies: BTreeMap<String, Strategy>,
 }
 
-/// Whether two values are one value to a reader: numbers by what they name
-/// and objects whatever the order of their members.
+/// Numbers compare by what they name; objects ignore member order.
 pub fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
@@ -183,7 +166,6 @@ impl Stale<'_> {
             .is_some_and(|held| same(value, held))
     }
 
-    /// A clear changes only a field the writer read and that is still there.
     fn clears(&self) -> impl Iterator<Item = &String> {
         self.cleared.iter().filter(|name| {
             self.ancestor.contains_key(*name)
@@ -193,9 +175,7 @@ impl Stale<'_> {
     }
 }
 
-/// Finds where a stale write collides with what landed since. A field sent
-/// at the value the writer read is an echo: it changes nothing and collides
-/// with nothing, or it would revert a value written since.
+/// A field sent at the value the writer read is an echo: it changes nothing and collides with nothing, or it would revert a value written since.
 pub fn detect(stale: &Stale<'_>) -> Detection {
     let moved_since = |name: &str| !same_at(stale.current, stale.ancestor, name);
     let mut conflicting: Vec<String> = stale
@@ -245,8 +225,7 @@ pub fn detect(stale: &Stale<'_>) -> Detection {
     }
 }
 
-/// Settles a collision by `policy`. An item field has no strategy of its own:
-/// a copy is a copy of properties, so the later writer takes it.
+/// An item field has no strategy of its own: a copy is a copy of properties, so the later writer takes it.
 pub fn plan(stale: &Stale<'_>, detection: &Detection, policy: &MergePolicy) -> Plan {
     let mut merged = stale.current.clone();
     let mut keep_both = Vec::new();
@@ -285,8 +264,6 @@ pub fn plan(stale: &Stale<'_>, detection: &Detection, policy: &MergePolicy) -> P
     }
 }
 
-/// What the copy holds: the item as it stands, with the writer's side of each
-/// field the original kept.
 pub fn copy_properties(stale: &Stale<'_>, keep_both: &[String]) -> Map<String, Value> {
     let mut properties = stale.current.clone();
     for name in keep_both {
@@ -302,8 +279,7 @@ pub fn copy_properties(stale: &Stale<'_>, keep_both: &[String]) -> Map<String, V
     properties
 }
 
-/// The id of the copy one write makes, the same on every attempt of that
-/// write, shaped as a UUIDv7.
+/// The same on every attempt of one write; shaped as a UUIDv7.
 pub fn copy_id(item_id: &str, base_version: i64, key: &str) -> String {
     let digest = Sha256::digest(format!("conflicted-copy\0{item_id}\0{base_version}\0{key}"));
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -323,14 +299,10 @@ pub fn copy_id(item_id: &str, base_version: i64, key: &str) -> String {
     )
 }
 
-/// How a named version stands against the one the item holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Precondition {
-    /// The write stands on the current version, or names none.
     Current,
-    /// The write stands on another version and may merge.
     Stale,
-    /// The write asked for that version and no other.
     Refused,
 }
 
@@ -347,9 +319,7 @@ pub fn precondition(held: i64, named: Option<i64>, exact: bool) -> Precondition 
     }
 }
 
-/// The properties a write at the current version leaves: `sent` laid over
-/// `current`, or in its place under `replace`, a null there being a property
-/// left out. A property keeps its place; a new one goes after.
+/// `sent` laid over `current`, or in its place under `replace`; a null is a property left out. A property keeps its place; a new one goes after.
 pub fn laid_over(
     current: &Map<String, Value>,
     sent: &Map<String, Value>,

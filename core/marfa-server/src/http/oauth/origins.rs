@@ -1,5 +1,3 @@
-//! The pages the owner approved, which a browser may let read an answer.
-
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -16,7 +14,7 @@ use crate::app::App;
 use crate::app::oauth::clients::page_approved;
 
 const METHODS: &str = "GET, HEAD, PUT, POST, DELETE, PATCH";
-/// What RFC 9700 section 2.6 keeps from every page's scripts.
+/// RFC 9700 section 2.6: no page's scripts may read these.
 const AUTHORIZATION_DOORS: [&str; 4] = [
     "/auth/oauth2/authorize",
     "/auth/authorize",
@@ -44,8 +42,6 @@ fn preflight_answer(
     answer
 }
 
-/// `keys-and-oauth/page-origin-allowed`. What a door answers for itself, as
-/// the documents every origin may read do, stands.
 pub async fn page_origins(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     if AUTHORIZATION_DOORS.contains(&request.uri().path()) {
         return next.run(request).await;

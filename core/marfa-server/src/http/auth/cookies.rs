@@ -1,5 +1,3 @@
-//! The cookies of signing in, written and read by hand.
-
 use axum::http::{HeaderMap, HeaderValue, header};
 
 use crate::app::addresses::Address;

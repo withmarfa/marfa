@@ -1,6 +1,5 @@
-//! A person's standing consent to an app, and the `system.connection` item
-//! that shows it. Each change here writes both, in the transaction of the
-//! write that called it, so neither is ever seen without the other.
+//! Each change writes the consent and its `system.connection` item in the caller's transaction,
+//! so neither is ever seen without the other.
 
 use arc_swap::ArcSwap;
 use rusqlite::{Connection, OptionalExtension};
@@ -17,12 +16,10 @@ use crate::app::unit::Unit;
 const TYPE: &str = "system.connection";
 pub(super) const CONSENT_SOURCE: &str = "marfa/oauth2/consent";
 pub(super) const DEVICE_SOURCE: &str = "marfa/oauth/device";
-/// The action of an approval's write. The grant has its own entry, and its item
-/// another by what was done to it.
+/// The grant has its own entry, and its item another by what was done to it.
 pub(super) const GRANT_WRITE: &str = "item.create";
 pub(super) const GRANT_CREATED: &str = "auth.grant.created";
 
-/// What approving left standing.
 #[derive(Clone, Debug)]
 pub struct Stood {
     pub grant_id: String,
@@ -53,7 +50,6 @@ fn shown(tx: &Connection, id: &str) -> Result<Option<Map<String, Value>>> {
     .transpose()
 }
 
-/// What a grant's item says it reaches, where it has an item.
 pub(super) fn shown_scopes(tx: &Connection, id: &str) -> Result<Option<ScopeSet>> {
     Ok(shown(tx, id)?.map(|fields| {
         fields
@@ -66,7 +62,6 @@ pub(super) fn shown_scopes(tx: &Connection, id: &str) -> Result<Option<ScopeSet>
     }))
 }
 
-/// The name the owner gave a grant, if they gave one.
 pub(super) fn own_name(tx: &Connection, id: &str) -> Result<Option<String>> {
     Ok(shown(tx, id)?
         .as_ref()
@@ -141,8 +136,7 @@ fn update_item(
     )
 }
 
-/// Leaves the person's consent reaching `approved` beside whatever it reaches
-/// now, and never less.
+/// Never reaches less than it does now.
 pub(super) fn stand(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -208,8 +202,8 @@ pub(super) fn stand(
     })
 }
 
-/// Ends a grant: every credential issued under it stops, the consent is
-/// withdrawn and the item says so. Answers whether a grant stood.
+/// Stops every credential issued under it, withdraws the consent and marks the item. Answers
+/// whether a grant stood.
 pub(super) fn end(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -236,8 +230,7 @@ pub(super) fn end(
     Ok(true)
 }
 
-/// Leaves a standing grant reaching `scopes`, which the caller has judged to
-/// be no more than it reaches now.
+/// The caller has judged `scopes` to be no more than it reaches now.
 pub(super) fn narrow(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -258,7 +251,6 @@ pub(super) fn narrow(
     Ok(())
 }
 
-/// Gives a standing grant the owner's own name.
 pub(super) fn rename(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -277,7 +269,6 @@ pub(super) fn rename(
     )
 }
 
-/// Removes a withdrawn grant altogether: its item and its consent.
 pub(super) fn forget(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

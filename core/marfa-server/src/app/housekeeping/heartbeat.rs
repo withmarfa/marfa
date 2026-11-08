@@ -1,6 +1,5 @@
-//! The `heartbeat` job: a request to `MARFA_HEARTBEAT_URL`, so that something
-//! else can notice when the requests stop. A receiver that does not answer is
-//! a heartbeat that says so, not a failed run.
+//! A request to `MARFA_HEARTBEAT_URL`, so that something else can notice when the requests stop.
+//! A receiver that does not answer is a heartbeat that says so, not a failed run.
 
 use std::sync::Arc;
 use std::time::Duration;

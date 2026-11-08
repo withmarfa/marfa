@@ -539,8 +539,6 @@ fn a_file_that_is_not_a_database_is_refused_and_left_as_it_was() {
     assert_eq!(beside.count(), 1);
 }
 
-/// Starts a write that sleeps through `naps`, beating after each if `beats`,
-/// and answers once it holds the writer.
 async fn long_write(db: &Arc<Db>, naps: u32, beats: bool) -> tokio::task::JoinHandle<Result<()>> {
     let (holding, held) = tokio::sync::oneshot::channel();
     let pulse = db.pulse();

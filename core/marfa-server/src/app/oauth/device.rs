@@ -1,6 +1,3 @@
-//! The device grant: a device asks for a code, a person approves it in a
-//! browser, and the device polls `token` for the answer.
-
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -28,7 +25,6 @@ use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.verification.create";
 
-/// Issues a device code for a client that names what it wants.
 pub async fn request(
     app: &Arc<App>,
     client_id: Option<&str>,
@@ -123,9 +119,8 @@ pub async fn request(
     })))
 }
 
-/// Spends one attempt at a user code, in its own write so a refused lookup
-/// still counts. Answers how long to wait when none is left. A verified
-/// session spends from the owner's lanes, anyone else from the address's.
+/// Own write so a refused lookup still counts. A verified session spends from the
+/// owner's lanes, anyone else from the address's.
 pub async fn admit_lookup(
     app: &App,
     address: Option<IpAddr>,
@@ -149,7 +144,6 @@ pub async fn admit_lookup(
     }
 }
 
-/// What a typed user code found.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Lookup {
     Unknown,
@@ -185,8 +179,6 @@ pub async fn look_up(app: &App, typed: &str) -> Result<Lookup> {
         .await
 }
 
-/// What the approval page for a user code shows, if the code can still be
-/// approved and its client is there. `Err` carries what stands in the way.
 pub async fn screen(
     app: &Arc<App>,
     typed: &str,
@@ -227,14 +219,12 @@ pub async fn screen(
         .await
 }
 
-/// Why a user code cannot be shown for approval.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Blocked {
     Code(Lookup),
     ClientGone,
 }
 
-/// What a person's answer to a user code came to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Answer {
     Approved,
@@ -242,8 +232,7 @@ pub enum Answer {
     Code(Lookup),
 }
 
-/// Answers a user code, reading it again inside the write so an answer lands
-/// only on a code still pending.
+/// Reads again inside the write so an answer lands only on a pending code.
 pub async fn answer(
     app: &Arc<App>,
     owner: &Caller,

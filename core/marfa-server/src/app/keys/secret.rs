@@ -1,5 +1,3 @@
-//! A key's secret text, and the hash the database holds in its place.
-
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -15,8 +13,6 @@ pub fn new_secret() -> Result<String> {
     Ok(format!("{PREFIX}{}", hex::encode(bytes)))
 }
 
-/// Whether `text` has the shape [`new_secret`] gives, so nothing else is
-/// hashed or looked up.
 pub fn looks_like_a_key(text: &str) -> bool {
     text.strip_prefix(PREFIX).is_some_and(|rest| {
         rest.len() == SECRET_HEX_LEN

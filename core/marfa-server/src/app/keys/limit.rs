@@ -1,5 +1,3 @@
-//! The fixed window the operations under `/keys` share, per credential.
-
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
@@ -19,8 +17,6 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    /// Counts one request, and answers the seconds to wait if it is over
-    /// `cap`.
     pub fn take(&self, credential: &str, now_ms: i64, cap: u64, window_ms: u64) -> Option<u64> {
         let span = i64::try_from(window_ms).unwrap_or(i64::MAX);
         let ended = |window: &Window| now_ms.saturating_sub(window.started_ms) >= span;
