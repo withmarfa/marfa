@@ -278,11 +278,7 @@ fn admit(
     let found = match fs::symlink_metadata(dir) {
         Ok(found) => found,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return if root_install {
-                check_parents(dir, 0)
-            } else {
-                Ok(())
-            };
+            return check_parents(dir, if root_install { 0 } else { user });
         }
         Err(error) => return Err(error.into()),
     };
@@ -323,6 +319,7 @@ fn admit(
                 dir.display()
             )));
         }
+        check_parents(dir, user)?;
     }
     let mut names = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -392,10 +389,9 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
         }
         if crate::local::foreign_owner(&found, trusted) {
             return Err(CliError::Usage(format!(
-                "{} is not owned by root (it belongs to user {}), and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir, or give {} to root",
+                "{} belongs to another account (user {}), and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir",
                 current.display(),
-                found.uid(),
-                current.display()
+                found.uid()
             )));
         }
         if crate::local::open_to_others(&found) {
@@ -623,6 +619,23 @@ mod tests {
     }
 
     #[test]
+    fn an_install_of_ones_own_refuses_a_folder_above_it_that_others_can_write() {
+        let me = unsafe { libc::geteuid() };
+        let top = scratch("own-parents");
+        let parent = top.join("parent");
+        let dir = parent.join("marfa");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        admit(&dir, false, None, me).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o775)).unwrap();
+        let error = admit(&dir, false, None, me).unwrap_err().to_string();
+        assert!(error.contains("written by group or others"), "{error}");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(admit(&dir, false, None, me).is_err());
+    }
+
+    #[test]
     fn a_folder_above_the_install_folder_that_another_account_owns_is_refused() {
         let me = unsafe { libc::geteuid() };
         let top = scratch("owner");
@@ -633,7 +646,7 @@ mod tests {
         let error = check_parents(&dir, me.wrapping_add(1))
             .unwrap_err()
             .to_string();
-        assert!(error.contains("not owned by root"), "{error}");
+        assert!(error.contains("belongs to another account"), "{error}");
         check_parents(&dir, me).unwrap();
     }
 
@@ -661,7 +674,7 @@ mod tests {
         let error = admit_folder(&top.join("marfa"), true, Some(988))
             .unwrap_err()
             .to_string();
-        assert!(error.contains("not owned by root"), "{error}");
+        assert!(error.contains("belongs to another account"), "{error}");
     }
 
     #[test]
