@@ -135,7 +135,11 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
         (".*", false),
         ("*", false),
     ] {
-        assert_eq!(crate::hydrate::type_pattern(name), Ok(takes), "{name}");
+        assert_eq!(
+            marfa_rules::grammar::type_pattern(name),
+            Ok(takes),
+            "{name}"
+        );
     }
     let server = Scripted::start();
     let core = Core::open_in_memory(Some(Server {
@@ -349,7 +353,13 @@ fn a_status_word_the_type_does_not_declare_is_refused_only_where_a_write_changes
             serde_json::json!({ "title": "Old", "status": "pending" }),
         );
         held.source_id = Some("old-task".into());
-        store::upsert_item(&conn, &held, None, &crate::catalog::Indexing::default()).unwrap();
+        store::upsert_item(
+            &conn,
+            &held,
+            None,
+            &marfa_rules::catalog::Indexing::default(),
+        )
+        .unwrap();
     }
     // A create naming the row's natural key is an update of it.
     let keyed = |properties: serde_json::Value| crate::Draft {
@@ -406,7 +416,13 @@ fn a_stale_keyed_create_judges_the_status_word_against_the_row_it_lands_on() {
         );
         held.source_id = Some("old-task".into());
         held.version = 3;
-        store::upsert_item(&conn, &held, None, &crate::catalog::Indexing::default()).unwrap();
+        store::upsert_item(
+            &conn,
+            &held,
+            None,
+            &marfa_rules::catalog::Indexing::default(),
+        )
+        .unwrap();
     }
     // Read at an earlier version, so the server merges it as a stale upsert.
     let keyed = |properties: serde_json::Value| crate::Draft {
@@ -451,7 +467,13 @@ fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
             "2026-01-01T00:00:00.000Z",
             serde_json::json!({ "title": "Sweep", "status": status }),
         );
-        store::upsert_item(&conn, &row, None, &crate::catalog::Indexing::default()).unwrap();
+        store::upsert_item(
+            &conn,
+            &row,
+            None,
+            &marfa_rules::catalog::Indexing::default(),
+        )
+        .unwrap();
         id
     };
     let to_task = crate::Edit {

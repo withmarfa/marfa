@@ -8,7 +8,7 @@ use yaml_rust2::{Event, Yaml, YamlEmitter, YamlLoader};
 
 use crate::body::text::links;
 use crate::error::CoreError;
-use crate::integers;
+use marfa_rules::integers;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {

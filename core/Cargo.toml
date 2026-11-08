@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-core", "marfa-cli", "bindings/node"]
+members = ["marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "bindings/node"]
 exclude = ["bindings/swift"]
 
 [workspace.package]
@@ -11,6 +11,8 @@ publish = false
 
 [workspace.dependencies]
 marfa-core = { path = "marfa-core" }
+marfa-rules = { path = "marfa-rules" }
+marfa-telemetry = { path = "marfa-telemetry" }
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }

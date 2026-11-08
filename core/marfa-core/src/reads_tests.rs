@@ -17,7 +17,7 @@ const NOTE: &str = "core.note";
 
 fn note(core: &Core, id: &str, title: &str, body: &str) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     let row = store::testing::wire_item(
         id,
         NOTE,

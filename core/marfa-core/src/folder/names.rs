@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::names::folded;
+use marfa_rules::names::folded;
 
 /// The longest name, in bytes of UTF-8, that APFS and ext4 take.
 const NAME_LIMIT: usize = 255;

@@ -600,7 +600,7 @@ impl Folder {
                 }
             }
         }
-        if let Err(error) = crate::validation::property_names(&properties) {
+        if let Err(error) = marfa_rules::validation::property_names(&properties) {
             let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
             flagged.push(Flagged::of(&file.key, &held_for));
             return self
@@ -673,8 +673,9 @@ impl Folder {
                 .collect();
             let mut after = kept.clone();
             after.extend(changes.added.iter().map(String::as_str));
-            if let Err(error) = crate::validation::tags(&changes.added)
-                .and_then(|()| crate::validation::tag_count(kept.len(), after.len()))
+            if let Err(error) = marfa_rules::validation::tags(&changes.added)
+                .and_then(|()| marfa_rules::validation::tag_count(kept.len(), after.len()))
+                .map_err(CoreError::from)
             {
                 let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                 flagged.push(Flagged::of(&file.key, &held_for));
@@ -854,7 +855,7 @@ impl Folder {
     ) -> Result<Option<Retitle>> {
         let name = name_of(&file.key);
         if !carries_frontmatter(Path::new(&file.key))
-            || crate::names::same(name_of(&bound.path), name)
+            || marfa_rules::names::same(name_of(&bound.path), name)
         {
             return Ok(None);
         }

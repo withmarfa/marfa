@@ -12,9 +12,9 @@ use crate::body::embed::{
     read_as,
 };
 use crate::body::text::{self, Embed};
-use crate::catalog::Catalog;
 use crate::model::{Item, ItemState};
-use crate::names::{folded, name_of, same};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::names::{folded, name_of, same};
 
 pub const ATTACHMENT_EDGE: &str = "attached-to";
 

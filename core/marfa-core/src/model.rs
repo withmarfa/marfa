@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 
 use crate::error::CoreError;
 use crate::wire::WireItem;
+pub use marfa_rules::query::{SortDirection, SortField};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -345,107 +346,6 @@ pub struct SearchFilters {
     pub occurred_before: Option<String>,
     pub filter: Option<String>,
     pub beneath: Option<String>,
-}
-
-/// What a local list orders by, in the server's `sort` grammar: a time of the
-/// item, or `properties.<field>` for the scalar a property stores.
-// The shared `At` suffix is the column naming rule, not noise.
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SortField {
-    CreatedAt,
-    UpdatedAt,
-    OccurredAt,
-    /// The name after `properties.`, one or more of `a` to `z`, `0` to `9`
-    /// and `_`.
-    Property(String),
-    /// When each row went to the bin, or its `updated_at` where it holds no
-    /// such time: the order of a list of the bin alone that names no field
-    /// (`device/bin-local-order`). No caller names it, as no server takes it.
-    TrashedAt,
-}
-
-impl fmt::Display for SortField {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SortField::CreatedAt => f.write_str("created_at"),
-            SortField::UpdatedAt => f.write_str("updated_at"),
-            SortField::OccurredAt => f.write_str("occurred_at"),
-            SortField::Property(name) => write!(f, "properties.{name}"),
-            SortField::TrashedAt => f.write_str("trashed_at"),
-        }
-    }
-}
-
-impl SortField {
-    /// A property sort names its property as the server's grammar allows.
-    pub fn property(name: &str) -> Result<SortField, CoreError> {
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-        {
-            return Err(CoreError::Validation {
-                code: "validation_error".into(),
-                message: format!("Invalid sort property field \"{name}\"; expected ^[a-z0-9_]+$"),
-                details: None,
-            });
-        }
-        Ok(SortField::Property(name.to_string()))
-    }
-}
-
-impl FromStr for SortField {
-    type Err = CoreError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text {
-            "created_at" => Ok(SortField::CreatedAt),
-            "updated_at" => Ok(SortField::UpdatedAt),
-            "occurred_at" => Ok(SortField::OccurredAt),
-            other => match other.strip_prefix("properties.") {
-                Some(name) => SortField::property(name),
-                None => Err(CoreError::Validation {
-                    code: "validation_error".into(),
-                    message: format!(
-                        "Invalid sort field \"{other}\"; expected one of created_at, updated_at, occurred_at or properties.<field>"
-                    ),
-                    details: None,
-                }),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SortDirection {
-    Ascending,
-    Descending,
-}
-
-impl SortDirection {
-    pub fn as_sql(self) -> &'static str {
-        match self {
-            SortDirection::Ascending => "ASC",
-            SortDirection::Descending => "DESC",
-        }
-    }
-}
-
-impl FromStr for SortDirection {
-    type Err = CoreError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text {
-            "asc" | "ascending" => Ok(SortDirection::Ascending),
-            "desc" | "descending" => Ok(SortDirection::Descending),
-            other => Err(CoreError::Invalid(format!(
-                "direction must be asc or desc, not {other:?}"
-            ))),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -937,7 +837,7 @@ impl Draft {
         let at = self
             .occurred_at
             .as_deref()
-            .map(crate::time::projected)
+            .map(marfa_rules::time::projected)
             .unwrap_or_else(crate::store::now_iso);
         WireItem {
             id: id.to_string(),
@@ -1715,52 +1615,6 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Thumbnail {
-    pub mime_type: String,
-    pub bytes: Vec<u8>,
-}
-
-/// The server's cap on a decoded thumbnail.
-pub const THUMBNAIL_MAX_BYTES: usize = 16 * 1024;
-
-impl Thumbnail {
-    /// Checks what the server checks, because a held value may have been
-    /// written before its type declared the field, when nothing checked it.
-    pub fn from_data_uri(value: &str) -> Result<Thumbnail, CoreError> {
-        use base64::Engine;
-        let unreadable =
-            |why: &str| CoreError::Decoding(format!("a thumbnail that is {why}: {:.40}", value));
-        let (mime_type, data) = value
-            .strip_prefix("data:")
-            .and_then(|rest| rest.split_once(";base64,"))
-            .ok_or_else(|| unreadable("not a base64 data URI"))?;
-        let signed: fn(&[u8]) -> bool = match mime_type {
-            "image/png" => |bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-            "image/jpeg" => |bytes| bytes.starts_with(b"\xff\xd8\xff"),
-            "image/webp" => {
-                |bytes| bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP".as_slice())
-            }
-            _ => return Err(unreadable("not a PNG, JPEG or WebP image")),
-        };
-        // The standard engine refuses unused bits set and non-canonical
-        // padding, matching the server's canonical rule.
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|_| unreadable("not canonical base64"))?;
-        if bytes.len() > THUMBNAIL_MAX_BYTES {
-            return Err(unreadable("over the thumbnail cap"));
-        }
-        if !signed(&bytes) {
-            return Err(unreadable("not the image its data URI names"));
-        }
-        Ok(Thumbnail {
-            mime_type: mime_type.to_string(),
-            bytes,
-        })
-    }
-}
-
 /// In the order they go out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Attached {
@@ -1837,7 +1691,6 @@ impl MetadataWrite {
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine;
 
     use super::*;
 
@@ -1859,19 +1712,6 @@ mod tests {
         assert!("all".parse::<Tier>().is_err());
     }
 
-    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
-    const JPEG: &[u8] = b"\xff\xd8\xff\xe0";
-    const WEBP: &[u8] = b"RIFF\0\0\0\0WEBPVP8 ";
-
-    fn uri(mime_type: &str, head: &[u8], size: usize) -> String {
-        let mut bytes = head.to_vec();
-        bytes.resize(size, 7);
-        format!(
-            "data:{mime_type};base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        )
-    }
-
     #[test]
     fn timestamp_projection_keeps_the_original_request() {
         let draft = Draft {
@@ -1885,70 +1725,6 @@ mod tests {
         assert_eq!(row.occurred_at, "2026-01-01T00:00:00.500Z");
         assert_eq!(row.created_at, row.occurred_at);
         assert_eq!(row.updated_at, row.occurred_at);
-    }
-
-    #[test]
-    fn a_thumbnail_reads_as_the_image_its_data_uri_names() {
-        for (mime_type, head) in [
-            ("image/png", PNG),
-            ("image/jpeg", JPEG),
-            ("image/webp", WEBP),
-        ] {
-            let read = Thumbnail::from_data_uri(&uri(mime_type, head, 64)).unwrap();
-            assert_eq!(read.mime_type, mime_type);
-            assert_eq!(read.bytes.len(), 64);
-            assert!(read.bytes.starts_with(head));
-        }
-        let at_cap = Thumbnail::from_data_uri(&uri("image/png", PNG, THUMBNAIL_MAX_BYTES)).unwrap();
-        assert_eq!(at_cap.bytes.len(), THUMBNAIL_MAX_BYTES);
-    }
-
-    #[test]
-    fn a_value_the_server_would_refuse_is_not_read_as_a_thumbnail() {
-        let refused = [
-            ("not an image", uri("text/plain", PNG, 64)),
-            ("another image", uri("image/gif", b"GIF89a", 64)),
-            ("an uppercase type", uri("image/PNG", PNG, 64)),
-            ("not the image it names", uri("image/jpeg", PNG, 64)),
-            (
-                "a signature short by a byte",
-                uri("image/png", &PNG[..7], 64),
-            ),
-            (
-                "a RIFF that is not WebP",
-                uri("image/webp", b"RIFF\0\0\0\0WAVEfmt ", 64),
-            ),
-            (
-                "over the cap",
-                uri("image/png", PNG, THUMBNAIL_MAX_BYTES + 1),
-            ),
-            (
-                "unused bits set",
-                "data:image/png;base64,iVBORw0KGgp=".to_string(),
-            ),
-            (
-                "padding left off",
-                "data:image/png;base64,iVBORw0KGgo".to_string(),
-            ),
-            ("a link", "https://example.com/thumb.png".to_string()),
-            ("empty", "data:image/png;base64,".to_string()),
-        ];
-        for (what, value) in refused {
-            assert!(
-                matches!(
-                    Thumbnail::from_data_uri(&value),
-                    Err(CoreError::Decoding(_))
-                ),
-                "{what} was read as a thumbnail"
-            );
-        }
-        // Witness for the two base64 cases.
-        assert_eq!(
-            Thumbnail::from_data_uri("data:image/png;base64,iVBORw0KGgo=")
-                .unwrap()
-                .bytes,
-            PNG
-        );
     }
 
     fn row(verdict: Option<Verdict>, reason: Option<&str>, answer: Option<&str>) -> QueuedWrite {

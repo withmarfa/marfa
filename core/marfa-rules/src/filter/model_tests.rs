@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::*;
-use crate::error::CoreError;
+use crate::error::Code;
 
 /// The cases the server's parser is held to in
 /// `packages/server/src/storage/filter-fixtures.test.ts`, so the two cannot
@@ -44,7 +44,9 @@ fn shared() -> Shared {
 
 fn refusal(result: Result<impl std::fmt::Debug>) -> (String, String) {
     match result {
-        Err(CoreError::Validation { code, message, .. }) => (code, message),
+        Err(error) if error.code == Code::ValidationError => {
+            (error.code.as_str().to_string(), error.message)
+        }
         other => panic!("expected a validation refusal, got {other:?}"),
     }
 }

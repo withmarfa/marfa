@@ -25,14 +25,14 @@ fn bulk() -> String {
 fn open(dir: &Path) -> Core {
     let core = Core::open(dir.join("core.sqlite"), None).unwrap();
     let conn = core.conn().unwrap();
-    store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+    store::replace_catalog(&conn, &marfa_rules::builtin::catalog().unwrap()).unwrap();
     drop(conn);
     core
 }
 
 pub(crate) fn put(core: &Core, id: &str, title: &str) {
     let conn = core.conn().unwrap();
-    let catalog = crate::catalog::Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     crate::reach::set_listed(&conn, id, true).unwrap();
     let row = store::testing::wire_item(
         id,

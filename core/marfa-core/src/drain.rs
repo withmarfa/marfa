@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
 
-use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
 use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
@@ -2752,7 +2751,7 @@ fn queue_owed_time_clear(
     let Some(held) = store::item_by_id(conn, &answered.id)? else {
         return Ok(false);
     };
-    let catalog = crate::catalog::Catalog::load(conn)?;
+    let catalog = crate::catalog::load(conn)?;
     let queued = store::catalog_scope(conn, |conn| {
         #[cfg(debug_assertions)]
         if crate::fault::fails(|| "owed-time-clear") {
@@ -3109,7 +3108,7 @@ fn land(
     }
     let refused = store::land_on_held_row(&tx, row, id)?;
     apply_read_back_unchecked(&tx, &read)?;
-    let catalog = Catalog::load(&tx)?;
+    let catalog = crate::catalog::load(&tx)?;
     // The read-back lays nothing over a later row the copy already holds, so
     // the work moved onto the server's id above is laid over it here.
     store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
@@ -3588,7 +3587,7 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
                 store::settle_read_back(conn, Subject::Item, &item.id)?;
                 return Ok(());
             }
-            let catalog = Catalog::load(conn)?;
+            let catalog = crate::catalog::load(conn)?;
             let let_go = !store::slice_holds(conn, &catalog, item)?
                 && !store::waiting_write_names(conn, &item.id)?;
             if let_go {

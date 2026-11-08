@@ -19,6 +19,7 @@ ARG LITESTREAM_VERSION=0.5.17
 FROM rust:1-slim-bookworm AS cli-build
 WORKDIR /repo
 COPY core/ ./core/
+COPY packages/types/generated/icon-set-lucide.json packages/types/generated/icon-set-simple-icons.json ./packages/types/generated/
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 RUN cargo fetch --locked --manifest-path core/Cargo.toml
 # A release build stamps its version into the workspace the way

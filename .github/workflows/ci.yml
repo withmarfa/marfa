@@ -419,7 +419,7 @@ jobs:
       - name: Key the device under test
         id: device-key
         if: ${{ matrix.device }}
-        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', 'packages/types/generated/icon-set-*.json', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the device under test
         id: device
         if: ${{ matrix.device && github.event_name == 'pull_request' }}
@@ -439,7 +439,7 @@ jobs:
       - name: Key the Node module under test
         id: module-key
         if: ${{ matrix.device }}
-        run: echo "key=marfa-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-module-$RUNNER_OS-${{ hashFiles('core/**', 'packages/types/generated/icon-set-*.json', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the Node module under test
         id: module
         if: ${{ matrix.device && github.event_name == 'pull_request' }}
@@ -770,7 +770,7 @@ jobs:
       # a dispatch always build it, with the current compiler.
       - name: Key the binary under test
         id: device-key
-        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', 'packages/types/generated/icon-set-*.json', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the binary under test
         id: device
         if: ${{ github.event_name == 'pull_request' }}
@@ -1052,9 +1052,9 @@ jobs:
       - run: pnpm build
       - name: Regenerate what the core is built from and check for drift
         run: |
-          rm -f core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json
+          rm -f core/marfa-core/src/contract.rs core/marfa-rules/src/builtin_catalog.json
           pnpm run generate:core
-          generated="core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json"
+          generated="core/marfa-core/src/contract.rs core/marfa-rules/src/builtin_catalog.json"
           if [ -n "$(git status --porcelain $generated)" ]; then
             git status --porcelain $generated
             echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."

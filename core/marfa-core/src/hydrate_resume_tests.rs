@@ -110,12 +110,12 @@ fn interrupted_as(server: &Scripted, signed_in: bool) -> Arc<Core> {
     }
     {
         let conn = core.conn().unwrap();
-        store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+        store::replace_catalog(&conn, &marfa_rules::builtin::catalog().unwrap()).unwrap();
         store::put_server_item(
             &conn,
             &store::testing::note("a", "a", "body", "2026-01-01T00:00:00Z"),
             Some(&[]),
-            &crate::catalog::Catalog::load(&conn).unwrap(),
+            &crate::catalog::load(&conn).unwrap(),
         )
         .unwrap();
         store::pin(&conn, "pinned").unwrap();
@@ -165,7 +165,11 @@ fn the_rest(server: &Scripted, events: Vec<String>, live: &str) {
 fn a_hydration_fills_from_a_server_that_answers_fewer_rows_than_it_asked() {
     let server = Scripted::start();
     let core = copy(&server);
-    store::replace_catalog(&core.conn().unwrap(), &crate::builtin::catalog().unwrap()).unwrap();
+    store::replace_catalog(
+        &core.conn().unwrap(),
+        &marfa_rules::builtin::catalog().unwrap(),
+    )
+    .unwrap();
     let ids: Vec<String> = (0..450).map(|at| format!("n{at:03}")).collect();
     let rows = |from: usize, to: usize| -> Vec<&str> {
         ids[from..to].iter().map(String::as_str).collect()

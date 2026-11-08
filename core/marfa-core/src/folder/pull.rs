@@ -270,11 +270,11 @@ impl Folder {
             names::renamed_for(name_of(path), title)
         );
         let taken = |candidate: &str| {
-            !crate::names::same(candidate, path)
+            !marfa_rules::names::same(candidate, path)
                 && (self.exists(self.root.join(candidate))
                     || renaming
                         .reserved
-                        .get(&crate::names::folded(candidate))
+                        .get(&marfa_rules::names::folded(candidate))
                         .is_some_and(|edges| edges.iter().any(|edge| edge.source_id != item_id)))
         };
         let renamed = if taken(&renamed) {
@@ -381,7 +381,7 @@ impl Folder {
         let lists = settings.lists()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
-            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
+            (crate::catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let narrow = match (selection.as_deref_mut(), pick.as_mut()) {
             (Some(selection), Some(pick)) if planning.is_none() => {
@@ -670,7 +670,9 @@ impl Folder {
                 // A name its file already has in another case or form is that
                 // file's, which keeps its own name.
                 .map(|want| match &bound {
-                    Some(bound) if crate::names::same(&bound.path, &want) => bound.path.clone(),
+                    Some(bound) if marfa_rules::names::same(&bound.path, &want) => {
+                        bound.path.clone()
+                    }
                     _ => want,
                 })
             else {
@@ -720,14 +722,14 @@ impl Folder {
         // one disk holds as one file.
         let wanted: HashSet<String> = placing
             .iter()
-            .map(|entry| crate::names::folded(&entry.want))
+            .map(|entry| marfa_rules::names::folded(&entry.want))
             .collect();
         let mut taken: HashSet<String> = HashSet::new();
         for entry in &mut placing {
-            if taken.contains(&crate::names::folded(&entry.want)) {
+            if taken.contains(&marfa_rules::names::folded(&entry.want)) {
                 let own = entry.bound.as_ref().map(|bound| bound.path.as_str());
                 let free = |candidate: &str| {
-                    let name = crate::names::folded(candidate);
+                    let name = marfa_rules::names::folded(candidate);
                     !taken.contains(&name)
                         && self.writes_at(&lists, candidate)
                         && (own == Some(candidate)
@@ -736,7 +738,7 @@ impl Folder {
                 entry.want = beside(&entry.want, |candidate| !free(candidate));
                 report.beside += 1;
             }
-            taken.insert(crate::names::folded(&entry.want));
+            taken.insert(marfa_rules::names::folded(&entry.want));
         }
         if let Some(plan) = planning {
             // Every entry still unbound is a file the pull will write, but
@@ -753,7 +755,7 @@ impl Folder {
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
                 if bound
                     .iter()
-                    .any(|path| crate::names::same(path, &entry.want))
+                    .any(|path| marfa_rules::names::same(path, &entry.want))
                 {
                     plan.write += 1;
                     plan.beside += 1;
@@ -775,7 +777,7 @@ impl Folder {
                     .as_ref()
                     .filter(|bound| bound.path != entry.want)
             })
-            .map(|bound| crate::names::folded(&bound.path))
+            .map(|bound| marfa_rules::names::folded(&bound.path))
             .collect();
         let mut waiting = Vec::new();
         context.same_copy(&*self.core.conn()?)?;
@@ -796,7 +798,7 @@ impl Folder {
             match self.write_placed(&entry, &rendering, &withheld, Some(&leaving), report)? {
                 PlacementWrite::Waiting => waiting.push(entry),
                 PlacementWrite::Refused => {
-                    refused.insert(crate::names::folded(&entry.want));
+                    refused.insert(marfa_rules::names::folded(&entry.want));
                 }
                 PlacementWrite::Done => {}
             }
@@ -807,7 +809,7 @@ impl Folder {
                 self.write_placed(&entry, &rendering, &withheld, None, report)?,
                 PlacementWrite::Refused
             ) {
-                refused.insert(crate::names::folded(&entry.want));
+                refused.insert(marfa_rules::names::folded(&entry.want));
             }
         }
         context.same_copy(&*self.core.conn()?)?;
@@ -882,11 +884,11 @@ impl Folder {
         let held: HashMap<String, String> = state::bound_paths(&*self.core.conn()?)?
             .into_iter()
             .filter(|(_, item_id)| !placed.contains(item_id.as_str()))
-            .map(|(path, item_id)| (crate::names::folded(&path), item_id))
+            .map(|(path, item_id)| (marfa_rules::names::folded(&path), item_id))
             .collect();
         Ok(placing
             .iter()
-            .any(|entry| held.contains_key(&crate::names::folded(&entry.want))))
+            .any(|entry| held.contains_key(&marfa_rules::names::folded(&entry.want))))
     }
 
     /// Leaves a file changed since the scan read it alone: the permission is
@@ -1206,7 +1208,7 @@ impl Folder {
         let rebound =
             occupied && bound.is_none() && self.read(&path).is_ok_and(|found| found == bytes);
         if occupied && !rebound {
-            if leaving.is_some_and(|leaving| leaving.contains(&crate::names::folded(&want))) {
+            if leaving.is_some_and(|leaving| leaving.contains(&marfa_rules::names::folded(&want))) {
                 return Ok(PlacementWrite::Waiting);
             }
             report.not_written(
@@ -1779,7 +1781,7 @@ impl Folder {
                 .filter(|bound| !missing.contains(bound.path.as_str()))
                 .map(|bound| bound.item_id)
                 .collect();
-            (Catalog::load(&conn)?, bound)
+            (crate::catalog::load(&conn)?, bound)
         };
         // Only a document something is attached to, or one that references
         // something as an embed does, can place a file.
@@ -1920,7 +1922,7 @@ impl Folder {
         };
         let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
-            if refused.contains(&crate::names::folded(&row.path))
+            if refused.contains(&marfa_rules::names::folded(&row.path))
                 || rendering.pick.is_some_and(|pick| pick.leaves(&row.item_id))
             {
                 continue;
@@ -2321,7 +2323,7 @@ impl Folder {
             super::edge_types::typed(value).ok().map(|targets| {
                 targets
                     .iter()
-                    .map(|target| crate::names::folded(&target.raw))
+                    .map(|target| marfa_rules::names::folded(&target.raw))
                     .collect()
             })
         };
@@ -2346,10 +2348,10 @@ impl Folder {
                     edges.iter().any(|edge| {
                         edge.edge_type == edge_type.id
                             && match end {
-                                crate::catalog::End::Source => {
+                                marfa_rules::catalog::End::Source => {
                                     edge.source_id == item.id && edge.target_id == line.other
                                 }
-                                crate::catalog::End::Target => {
+                                marfa_rules::catalog::End::Target => {
                                     edge.target_id == item.id && edge.source_id == line.other
                                 }
                             }
@@ -2574,7 +2576,7 @@ impl Folder {
         // Where its file stays, a document whose title changed takes the name
         // the new title makes.
         let staying = |path: String| match bound {
-            Some(bound) if crate::names::same(&bound.path, &path) => self
+            Some(bound) if marfa_rules::names::same(&bound.path, &path) => self
                 .retitled(item, bound, catalog, renaming)
                 .unwrap_or(path),
             _ => path,
@@ -2839,7 +2841,7 @@ mod tests {
                 store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
                 store::item_by_id(&conn, "file").unwrap().unwrap()
             };
-            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            let catalog = crate::catalog::load(&folder.core.conn().unwrap()).unwrap();
             let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
             let edge_types = EdgeTypes::default();
             let lists = Lists::new(&[], &[]).unwrap();
@@ -2991,7 +2993,7 @@ mod tests {
             drop(core);
             let (item, bound) = item;
             let folder = Folder::open(dir.path(), None).unwrap();
-            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            let catalog = crate::catalog::load(&folder.core.conn().unwrap()).unwrap();
             let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
             let edge_types = EdgeTypes::default();
             let ignore = if ignored { vec!["x/**".into()] } else { vec![] };

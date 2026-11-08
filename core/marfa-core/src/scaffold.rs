@@ -32,21 +32,21 @@ pub fn scaffold_type(
     fields: &[ScaffoldField],
 ) -> Result<Value, CoreError> {
     let invalid = |message: String| CoreError::Invalid(message);
-    crate::catalog::declaration(&json!({ "id": id, "fields": {} }), &|_| true)?;
+    marfa_rules::catalog::declaration(&json!({ "id": id, "fields": {} }), &|_| true)?;
     if let Some(parent) = parent {
         if parent == id {
             return Err(invalid(format!("{id} cannot be its own parent")));
         }
-        if !crate::hydrate::type_id(parent)? {
+        if !marfa_rules::grammar::type_id(parent)? {
             return Err(invalid(format!(
                 "not a parent for {id}: {parent:?}; {}",
-                crate::hydrate::GRAMMAR
+                marfa_rules::grammar::GRAMMAR
             )));
         }
     }
-    let kinds = crate::builtin::field_types()?;
-    let reserved = crate::builtin::reserved_field_names()?;
-    let searched = crate::builtin::searched_field_names()?;
+    let kinds = marfa_rules::builtin::field_types()?;
+    let reserved = marfa_rules::builtin::reserved_field_names()?;
+    let searched = marfa_rules::builtin::searched_field_names()?;
     let mut held = Map::new();
     let mut thumbnail = false;
     let mut status = None;
@@ -106,7 +106,7 @@ pub fn scaffold_type(
                     if parent.is_none() {
                         return Err(invalid(format!(
                             "{name} is a status field, which needs its words, each with its group: one of {}",
-                            crate::catalog::STATUS_GROUPS.join(", ")
+                            marfa_rules::catalog::STATUS_GROUPS.join(", ")
                         )));
                     }
                 } else {
@@ -120,9 +120,10 @@ pub fn scaffold_type(
             }
             _ => {}
         }
-        if let Some(problem) =
-            crate::catalog::status_declaration(&field.kind, &Value::Object(definition.clone()))
-        {
+        if let Some(problem) = marfa_rules::catalog::status_declaration(
+            &field.kind,
+            &Value::Object(definition.clone()),
+        ) {
             return Err(invalid(format!("{name} {problem}")));
         }
         if field.kind == "thumbnail" {
@@ -171,7 +172,7 @@ const SHAPE: [&str; 7] = [
 ];
 
 fn agree_with_shipped(parent: &str, held: &Map<String, Value>) -> Result<(), CoreError> {
-    let catalog = crate::builtin::catalog()?;
+    let catalog = marfa_rules::builtin::catalog()?;
     let Some(inherited) = catalog
         .types
         .iter()
@@ -394,7 +395,7 @@ mod tests {
 
     #[test]
     fn a_declaration_takes_what_it_printed_for_every_field_type() {
-        let kinds = crate::builtin::field_types().unwrap();
+        let kinds = marfa_rules::builtin::field_types().unwrap();
         let fields: Vec<ScaffoldField> = kinds
             .iter()
             .map(|kind| ScaffoldField {

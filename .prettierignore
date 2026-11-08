@@ -5,7 +5,7 @@
 packages/types/generated/
 packages/client/src/generated/
 # The types the core carries, written from the registry by the generator.
-core/marfa-core/src/builtin_catalog.json
+core/marfa-rules/src/builtin_catalog.json
 # Auto-generated OpenAPI spec — emitted as JSON from route definitions.
 openapi.json
 # Lockfile — owned by pnpm, not Prettier.

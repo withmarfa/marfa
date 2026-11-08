@@ -478,6 +478,26 @@ impl From<url::ParseError> for CoreError {
     }
 }
 
+impl From<marfa_rules::RuleError> for CoreError {
+    fn from(error: marfa_rules::RuleError) -> Self {
+        use marfa_rules::Code;
+        match error.code {
+            Code::ValidationError | Code::InvalidProperties | Code::InvalidId => {
+                CoreError::Validation {
+                    code: error.code.as_str().into(),
+                    message: error.message,
+                    details: None,
+                }
+            }
+            Code::UnknownType => CoreError::UnknownType {
+                message: error.message,
+            },
+            Code::Invalid => CoreError::Invalid(error.message),
+            Code::Decoding => CoreError::Decoding(error.message),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +738,40 @@ mod tests {
         assert!(
             !text.contains("line 0") && !text.contains("private words"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn a_rule_refusal_keeps_its_code_and_its_words_on_the_wire() {
+        use marfa_rules::{Code, RuleError};
+
+        for (code, wire) in [
+            (Code::ValidationError, "validation_error"),
+            (Code::InvalidProperties, "invalid_properties"),
+            (Code::InvalidId, "invalid_id"),
+        ] {
+            assert_eq!(
+                CoreError::from(RuleError::new(code, "words")),
+                CoreError::Validation {
+                    code: wire.into(),
+                    message: "words".into(),
+                    details: None,
+                }
+            );
+        }
+        assert_eq!(
+            CoreError::from(RuleError::new(Code::UnknownType, "words")),
+            CoreError::UnknownType {
+                message: "words".into()
+            }
+        );
+        assert_eq!(
+            CoreError::from(RuleError::invalid("words")),
+            CoreError::Invalid("words".into())
+        );
+        assert_eq!(
+            CoreError::from(RuleError::decoding("words")),
+            CoreError::Decoding("words".into())
         );
     }
 }

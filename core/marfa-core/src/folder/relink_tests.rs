@@ -30,7 +30,7 @@ fn linked_folder_with(hosts: &[(&str, &str, &str)]) -> (ScannedDir, Folder) {
         store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
         store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         let at = "2026-01-01T00:00:00Z";
         store::put_server_item(&conn, &testing::note(TARGET, "Old", "", at), None, &catalog)
             .unwrap();
@@ -64,7 +64,7 @@ fn linked_folder_with(hosts: &[(&str, &str, &str)]) -> (ScannedDir, Folder) {
 /// Another device retitles `id`, and this copy hears it.
 fn retitle(folder: &Folder, id: &str, title: &str, version: i64) {
     let conn = folder.core.conn().unwrap();
-    let catalog = Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     let mut item = testing::note(id, title, "", "2026-01-01T00:00:00Z");
     item.version = version;
     item.updated_at = format!("2026-01-0{version}T00:00:00Z");
@@ -137,7 +137,7 @@ fn a_title_another_item_answers_to_names_the_item_by_its_id() {
     let (dir, folder) = linked_folder();
     {
         let conn = folder.core.conn().unwrap();
-        let catalog = Catalog::load(&conn).unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
         store::put_server_item(
             &conn,
             &testing::note(NAMESAKE, "New", "", "2026-01-01T00:00:00Z"),
@@ -195,7 +195,7 @@ fn a_retitle_this_copy_has_not_heard_the_server_take_rewrites_nothing() {
 /// A namesake titled `New`, so a link to the retitled item names it by id.
 fn add_namesake(folder: &Folder) {
     let conn = folder.core.conn().unwrap();
-    let catalog = Catalog::load(&conn).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
     store::put_server_item(
         &conn,
         &testing::note(NAMESAKE, "New", "", "2026-01-01T00:00:00Z"),

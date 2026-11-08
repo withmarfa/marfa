@@ -10,8 +10,8 @@ use super::{
     identity, is_document, named_by_its_file, near, near_limit, one_per_name, state, text_of,
 };
 use crate::Result;
-use crate::catalog::Catalog;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
+use marfa_rules::catalog::Catalog;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileStatus {
@@ -150,7 +150,7 @@ impl Folder {
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
             crate::store::catalog_scope(&conn, |conn| {
-                let catalog = Catalog::load(conn)?;
+                let catalog = crate::catalog::load(conn)?;
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "folder-status-catalog");
                 let edge_types = EdgeTypes::load(conn)?;
@@ -638,7 +638,9 @@ fn display_dir(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Core, catalog::Indexing, store, wire::WireCatalog};
+    use crate::{Core, store};
+    use marfa_rules::catalog::Indexing;
+    use marfa_rules::wire::WireCatalog;
     use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
     use std::sync::{
         Arc,

@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Compare, Condition, Field, Literal, Op, Term, parse, refused, system_literal, term};
-use crate::Result;
+use crate::error::Result;
 use crate::js;
 
 /// The conditions of a filter and the one word that joins them: the grammar

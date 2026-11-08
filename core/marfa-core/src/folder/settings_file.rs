@@ -333,10 +333,8 @@ impl Folder {
         let mut merged = base.clone();
         merged.retain(|key, _| setting(key));
         merged.extend(changed.clone());
-        let checked =
-            Settings::read(&self.folder, FOLDER_TYPE, "active", &merged).and_then(|settings| {
-                settings.check_types(&crate::catalog::Catalog::load(&*self.core.conn()?)?)
-            });
+        let checked = Settings::read(&self.folder, FOLDER_TYPE, "active", &merged)
+            .and_then(|settings| settings.check_types(&crate::catalog::load(&*self.core.conn()?)?));
         if let Err(error) = checked {
             return self.flag(&text, error.to_string());
         }
@@ -424,7 +422,7 @@ impl Folder {
             let mut conn = self.core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            let catalog = crate::catalog::Catalog::load(&tx)?;
+            let catalog = crate::catalog::load(&tx)?;
             crate::hydrate::hold_row(&tx, &catalog, &row, &[])?;
             tx.commit()?;
         }

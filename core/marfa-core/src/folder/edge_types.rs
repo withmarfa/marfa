@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::body::text::Typed;
-use crate::catalog::{EdgeType, End, WrittenAt};
 use crate::error::CoreError;
+use marfa_rules::catalog::{EdgeType, End, WrittenAt};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeTypes {
@@ -95,7 +95,7 @@ pub(crate) fn typed(value: &Value) -> Result<Vec<Typed>, String> {
         }
         if !found
             .iter()
-            .any(|held| crate::names::same(&held.raw, raw.trim()))
+            .any(|held| marfa_rules::names::same(&held.raw, raw.trim()))
         {
             found.push(target);
         }
@@ -140,7 +140,12 @@ mod tests {
 
     #[test]
     fn an_end_holds_one_edge_where_the_cardinality_says() {
-        let parent = EdgeType::of("parent-of", Some("child-of"), End::Target, "one-to-many");
+        let parent = crate::catalog::edge_type_for_tests(
+            "parent-of",
+            Some("child-of"),
+            End::Target,
+            "one-to-many",
+        );
         assert!(parent.one_at(End::Target) && !parent.one_at(End::Source));
         assert_eq!(parent.name_at(End::Target), Some("child-of"));
         let types = EdgeTypes::of(vec![parent]);
