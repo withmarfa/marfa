@@ -30,12 +30,9 @@ const QUEUED: usize = 2;
 pub(super) const SANDBOX: &str = "sandbox; default-src 'none'";
 const POLICY: &str = "all";
 
-/// A body a door reads for itself, at its own pace and under its own cap, whose size the
-/// general cap does not hold in check.
+/// A body the server streams to a store, whose size no cap holds in check.
 pub fn is_upload(request: &Request) -> bool {
-    let (method, path) = (request.method(), request.uri().path());
-    (method == axum::http::Method::POST && path == "/blobs")
-        || (method == axum::http::Method::PUT && super::profile::is_picture_path(path))
+    request.method() == axum::http::Method::POST && request.uri().path() == "/blobs"
 }
 
 fn media_type(headers: &HeaderMap) -> Result<String, Refusal> {

@@ -24,8 +24,16 @@ use crate::app::refusal::{Code, Refusal};
 const OWNER_PICTURE: &str = "/owner/picture";
 const PROFILE_PICTURE: &str = "/profile/picture";
 
-pub fn is_picture_path(path: &str) -> bool {
-    path == OWNER_PICTURE || path == PROFILE_PICTURE
+/// A picture's body is read by its own door, under its own cap.
+pub fn is_picture(request: &Request) -> bool {
+    let path = request.uri().path();
+    request.method() == axum::http::Method::PUT
+        && (path == OWNER_PICTURE || path == PROFILE_PICTURE)
+}
+
+/// A body the general cap and deadline leave to the door that reads it.
+pub fn reads_own_body(request: &Request) -> bool {
+    super::blobs::is_upload(request) || is_picture(request)
 }
 
 fn too_large() -> Refusal {
