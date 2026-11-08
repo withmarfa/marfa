@@ -214,8 +214,7 @@ fn chunks<'a>(
     Ok(())
 }
 
-/// A `RIFF` that declares the file's size less eight, and chunks that fill it. Every image
-/// header must be within the limit and agree with the canvas.
+/// Checks the RIFF boundary and every image against its canvas and the size limit.
 fn webp(bytes: &[u8]) -> Found {
     let declared = le32(bytes, 4).ok_or(Fault::Damaged)?;
     if usize::try_from(declared).ok() != bytes.len().checked_sub(8) {

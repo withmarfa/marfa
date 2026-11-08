@@ -549,12 +549,7 @@ CREATE TABLE IF NOT EXISTS blob_proofs (
     PRIMARY KEY (hash, holder)
 ) STRICT, WITHOUT ROWID;
 
--- Which row names which digest. `kind` is the row's table: an item or an edge
--- (`seq` is its `seq`), an extension namespace on an item (`seq` and
--- `namespace`) or an item version (`seq` and `version`). A reference that
--- `lends` gives its readers the blob; one that does not only keeps it.
--- Cached lender types let reads skip duplicate references; versions and the owner's picture
--- (`owner`, `seq` 0) have neither and never lend.
+-- Non-lending references retain bytes without granting access.
 CREATE TABLE IF NOT EXISTS blob_references (
     hash TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version', 'owner')),
