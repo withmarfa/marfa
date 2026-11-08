@@ -63,8 +63,7 @@ fn declared_headers(document: &serde_json::Value) -> BTreeSet<String> {
     found
 }
 
-/// Every response header the published document declares, so that a page can read what a
-/// client needs, such as the contract version.
+/// Pages need access to the response headers declared in the document.
 static EXPOSED: LazyLock<Option<HeaderValue>> = LazyLock::new(|| {
     let document: serde_json::Value = serde_json::from_str(DOCUMENT).ok()?;
     let mut found = declared_headers(&document);

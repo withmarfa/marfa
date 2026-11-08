@@ -60,10 +60,7 @@ pub struct Judging {
     pub unjudged: Arc<HashSet<&'static str>>,
 }
 
-/// Judged once a credential has been found and before the write's own refusals, a body too
-/// deep to read among them. A request with no credential that verifies goes on to its door,
-/// which answers `401`; a door that takes none judges the header itself. The local command
-/// holds no copy and is not judged.
+/// A door that takes no credential judges the header itself.
 pub async fn judged(State(judging): State<Judging>, request: Request, next: Next) -> Response {
     let on_socket = request
         .extensions()

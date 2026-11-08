@@ -12,8 +12,7 @@ use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 use crate::settings::registry::MAX_REQUEST_BYTES;
 
-/// Each feature the root advertises, with the door that proves it is served. A feature is
-/// added with its door and not before.
+/// A feature is advertised only when its door is served.
 const FEATURES: &[(&str, &str)] = &[
     ("items", "GET /items"),
     ("search", "GET /search"),

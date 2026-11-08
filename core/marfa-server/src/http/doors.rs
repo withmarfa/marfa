@@ -137,8 +137,7 @@ impl Doors {
         self
     }
 
-    /// Marks every path held so far as one `X-Marfa-Instance-Id` is not judged at: a door
-    /// whose caller holds no copy of the instance.
+    /// Exempts the paths already held from instance-header checks.
     pub fn unjudged(mut self) -> Self {
         self.unjudged.extend(self.paths.iter().copied());
         self

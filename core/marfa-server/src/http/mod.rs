@@ -322,8 +322,7 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
-/// A door judges `X-Marfa-Instance-Id` unless its group is marked `unjudged`, whatever a
-/// later piece adds. The sign-in, grant and OAuth doors hold no copy of the instance.
+/// Sign-in, grant and OAuth callers hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
     shared(app)
         .merge(oauth::grant_doors().unjudged())
