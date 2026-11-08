@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value};
 
+use crate::app::auth;
 use crate::app::refusal::{Refusal, Result};
 
 pub struct Registration {
@@ -32,6 +33,14 @@ pub struct Run {
 pub struct Hold {
     pub process: String,
     pub expires_at: String,
+    expires_ms: i64,
+}
+
+impl Hold {
+    /// Whether the hold still stands at the stored-form moment `at`.
+    pub fn stands_at(&self, at: &str) -> Result<bool> {
+        Ok(self.expires_ms > auth::millis_of(at)?)
+    }
 }
 
 pub struct Document {
@@ -60,6 +69,34 @@ fn stored<T: serde::de::DeserializeOwned>(row: &Row<'_>, column: &str) -> rusqli
     })
 }
 
+fn unread(row: &Row<'_>, column: &str) -> rusqlite::Error {
+    let index = row.as_ref().column_index(column).unwrap_or(0);
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        rusqlite::types::Type::Text,
+        format!("{column} is not a stored time").into(),
+    )
+}
+
+/// A stored time that does not read is a fault, never a default.
+fn time(row: &Row<'_>, column: &str) -> rusqlite::Result<(String, i64)> {
+    let text: String = row.get(column)?;
+    let millis = auth::millis_of(&text).map_err(|_| unread(row, column))?;
+    Ok((text, millis))
+}
+
+fn moment(row: &Row<'_>, column: &str) -> rusqlite::Result<String> {
+    Ok(time(row, column)?.0)
+}
+
+fn optional_moment(row: &Row<'_>, column: &str) -> rusqlite::Result<Option<String>> {
+    let present: Option<String> = row.get(column)?;
+    present
+        .map(|text| auth::millis_of(&text).map(|_| text))
+        .transpose()
+        .map_err(|_| unread(row, column))
+}
+
 fn registration(row: &Row<'_>) -> rusqlite::Result<Registration> {
     Ok(Registration {
         id: row.get("id")?,
@@ -68,9 +105,9 @@ fn registration(row: &Row<'_>) -> rusqlite::Result<Registration> {
         name: row.get("name")?,
         description: row.get("description")?,
         read_only_types: stored(row, "read_only_types")?,
-        registered_at: row.get("registered_at")?,
-        updated_at: row.get("updated_at")?,
-        last_heartbeat_at: row.get("last_heartbeat_at")?,
+        registered_at: moment(row, "registered_at")?,
+        updated_at: moment(row, "updated_at")?,
+        last_heartbeat_at: optional_moment(row, "last_heartbeat_at")?,
     })
 }
 
@@ -80,11 +117,11 @@ fn run(row: &Row<'_>) -> rusqlite::Result<Run> {
         id: row.get("id")?,
         connector_id: row.get("connector_id")?,
         outcome: row.get("outcome")?,
-        started_at: row.get("started_at")?,
-        finished_at: row.get("finished_at")?,
+        started_at: moment(row, "started_at")?,
+        finished_at: moment(row, "finished_at")?,
         summary: row.get("summary")?,
         error: row.get("error")?,
-        reported_at: row.get("reported_at")?,
+        reported_at: moment(row, "reported_at")?,
     })
 }
 
@@ -93,7 +130,7 @@ fn agreement(row: &Row<'_>) -> rusqlite::Result<Agreement> {
         item_id: row.get("item_id")?,
         waiting: row.get::<_, i64>("waiting")? == 1,
         record: stored(row, "record")?,
-        updated_at: row.get("updated_at")?,
+        updated_at: moment(row, "updated_at")?,
     })
 }
 
@@ -239,9 +276,11 @@ pub fn hold(tx: &Transaction<'_>, connector_id: &str) -> Result<Option<Hold>> {
     Ok(tx
         .prepare_cached("SELECT process, expires_at FROM connector_holds WHERE connector_id = ?1")?
         .query_row([connector_id], |row| {
+            let (expires_at, expires_ms) = time(row, "expires_at")?;
             Ok(Hold {
-                process: row.get(0)?,
-                expires_at: row.get(1)?,
+                process: row.get("process")?,
+                expires_at,
+                expires_ms,
             })
         })
         .optional()?)
@@ -276,7 +315,7 @@ pub fn document(tx: &Transaction<'_>, source: &str) -> Result<Option<Document>> 
             Ok(Document {
                 state: stored(row, "state")?,
                 problems: stored(row, "problems")?,
-                updated_at: row.get("updated_at")?,
+                updated_at: moment(row, "updated_at")?,
             })
         })
         .optional()?)

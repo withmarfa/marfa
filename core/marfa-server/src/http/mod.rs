@@ -51,7 +51,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::Declaration;
+use crate::listener::{Declaration, Transport};
 use answer::{panicked, refusal_answer};
 use caller::identify;
 pub use listening::serve;
@@ -222,6 +222,19 @@ fn config_doors() -> Routes {
         .route("/config/settings", get(config::settings))
 }
 
+/// A connector door answers the credential a request presents, or the private socket. An
+/// owner's browser session reaches it no more than any other cookie.
+async fn presented_only(request: Request, next: Next) -> Response {
+    let local = request
+        .extensions()
+        .get::<observe::RequestContext>()
+        .is_some_and(|context| context.transport == Transport::LocalSocket);
+    if !local && !caller::bears_token(request.headers()) {
+        return refusal_answer(&unauthorized());
+    }
+    next.run(request).await
+}
+
 fn connector_doors() -> Routes {
     Doors::new()
         .route(
@@ -255,6 +268,7 @@ fn connector_doors() -> Routes {
             "/connectors/{id}/agreements/lookup",
             post(connectors::lookup_agreements),
         )
+        .route_layer(from_fn(presented_only))
 }
 
 fn shared(app: Arc<App>) -> Routes {

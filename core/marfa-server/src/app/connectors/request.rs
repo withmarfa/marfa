@@ -198,11 +198,10 @@ impl Run {
             }
         };
         let moment = |name: &str| -> Result<String> {
-            let held = required(fields, name, name)?
+            required(fields, name, name)?
                 .as_str()
-                .filter(|held| time::is_timestamp(held))
-                .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))?;
-            Ok(held.to_string())
+                .and_then(|held| time::rfc3339(held, name).ok())
+                .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))
         };
         let started_at = moment("started_at")?;
         let finished_at = moment("finished_at")?;
@@ -225,9 +224,7 @@ impl Run {
     /// The two times as stored, and the check that the run did not finish before it started.
     pub fn checked(&self) -> Result<(String, String)> {
         self.stray.refuse()?;
-        let rule = |error: marfa_rules::RuleError| Refusal::validation(error.message);
-        let started = time::normalize(&self.started_at, "started_at").map_err(rule)?;
-        let finished = time::normalize(&self.finished_at, "finished_at").map_err(rule)?;
+        let (started, finished) = (self.started_at.clone(), self.finished_at.clone());
         if finished < started {
             return Err(invalid(
                 "finished_at",

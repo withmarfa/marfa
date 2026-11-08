@@ -67,9 +67,10 @@ fn run_json(run: &store::Run) -> Value {
 
 fn registration_json(tx: &Transaction<'_>, registration: &Registration, at: &str) -> Result<Value> {
     let last_run = store::last_run(tx, &registration.id)?.map(|run| run_json(&run));
-    let hold = store::hold(tx, &registration.id)?
-        .filter(|hold| hold.expires_at.as_str() > at)
-        .map(|hold| hold.expires_at);
+    let hold = match store::hold(tx, &registration.id)? {
+        Some(hold) if hold.stands_at(at)? => Some(hold.expires_at),
+        _ => None,
+    };
     Ok(json!({
         "id": registration.id,
         "key_id": registration.key_id,
@@ -306,7 +307,7 @@ pub async fn state(app: &App, caller: &Caller, id: String) -> Result<Value> {
 
 fn fence(tx: &Transaction<'_>, id: &str, process: &str, at: &str) -> Result<()> {
     match store::hold(tx, id)? {
-        Some(hold) if hold.expires_at.as_str() > at => {
+        Some(hold) if hold.stands_at(at)? => {
             if hold.process == process {
                 Ok(())
             } else {
@@ -384,7 +385,10 @@ pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) ->
         unit.caller
             .require_own_connector_key(&registration.key_id)?;
         request.checked()?;
-        let live = store::hold(tx, &id)?.filter(|hold| hold.expires_at.as_str() > unit.at.as_str());
+        let live = match store::hold(tx, &id)? {
+            Some(hold) if hold.stands_at(&unit.at)? => Some(hold),
+            _ => None,
+        };
         if let Some(other) = live.as_ref().filter(|hold| hold.process != request.process) {
             return Err(held(Some(&other.expires_at)));
         }

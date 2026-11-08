@@ -6,14 +6,15 @@ use rusqlite::{OptionalExtension, Transaction};
 
 use super::store;
 use crate::app::access::{Axis, Level};
+use crate::app::auth;
 use crate::app::catalog::Snapshot;
 use crate::app::keys;
-use crate::app::refusal::Result;
+use crate::app::refusal::{Refusal, Result};
 
 const GENERATION: &str = "read_only_generation";
 
 struct Holding {
-    until: Option<String>,
+    until: Option<i64>,
     declared: HashSet<String>,
 }
 
@@ -42,12 +43,13 @@ impl Registry {
                 .into_iter()
                 .filter(|name| Axis::Type.level(map, name) == Level::Write)
                 .collect();
+            let until = key.expires_at.as_deref().map(auth::millis_of).transpose()?;
             let reached: HashSet<&String> = std::iter::once(&key.source)
                 .chain(&key.grants.sources)
                 .collect();
             for source in reached {
                 holdings.entry(source.clone()).or_default().push(Holding {
-                    until: key.expires_at.clone(),
+                    until,
                     declared: declared.clone(),
                 });
             }
@@ -67,14 +69,17 @@ fn generation(tx: &Transaction<'_>) -> Result<i64> {
             |row| row.get(0),
         )
         .optional()?;
-    Ok(held.and_then(|text| text.parse().ok()).unwrap_or(0))
+    held.map_or(Ok(0), |text| {
+        text.parse()
+            .map_err(|_| Refusal::internal("the read-only generation did not read"))
+    })
 }
 
 /// The registrations as they stand, answered for a moment `now`.
 #[derive(Clone)]
 pub struct ReadOnly {
     registry: Arc<Registry>,
-    now: String,
+    now: i64,
 }
 
 impl ReadOnly {
@@ -84,12 +89,7 @@ impl ReadOnly {
         };
         let mut live = held
             .iter()
-            .filter(|holding| {
-                holding
-                    .until
-                    .as_deref()
-                    .is_none_or(|until| until > self.now.as_str())
-            })
+            .filter(|holding| holding.until.is_none_or(|until| until > self.now))
             .peekable();
         live.peek().is_some() && live.all(|holding| holding.declared.contains(type_id))
     }
@@ -121,7 +121,7 @@ pub fn current(
     };
     Ok(ReadOnly {
         registry,
-        now: now.to_string(),
+        now: auth::millis_of(now)?,
     })
 }
 
@@ -129,13 +129,15 @@ pub fn current(
 mod tests {
     use super::*;
 
-    type Held<'a> = (Option<&'a str>, &'a [&'a str]);
+    const NOW: i64 = 1_767_225_600_000;
+
+    type Held<'a> = (Option<i64>, &'a [&'a str]);
 
     fn registry(held: &[Held<'_>]) -> ReadOnly {
         let holdings = held
             .iter()
             .map(|(until, declared)| Holding {
-                until: until.map(str::to_string),
+                until: *until,
                 declared: declared.iter().map(|name| name.to_string()).collect(),
             })
             .collect();
@@ -144,7 +146,7 @@ mod tests {
                 generation: 0,
                 holdings: HashMap::from([("rss".to_string(), holdings)]),
             }),
-            now: "2026-01-01T00:00:00.000Z".to_string(),
+            now: NOW,
         }
     }
 
@@ -164,7 +166,7 @@ mod tests {
 
     #[test]
     fn an_expired_holding_no_longer_counts() {
-        let lapsed = "2025-12-31T00:00:00.000Z";
+        let lapsed = NOW - 86_400_000;
         let beside = registry(&[(Some(lapsed), &[]), (None, &["rss.entry"])]);
         assert!(beside.of("rss", "rss.entry"));
         let alone = registry(&[(Some(lapsed), &["rss.entry"])]);
