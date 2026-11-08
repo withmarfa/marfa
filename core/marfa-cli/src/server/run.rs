@@ -58,9 +58,7 @@ fn version_of(server: &Path) -> Result<String, CliError> {
         .arg("--version")
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| {
-            CliError::Install(format!("cannot run {}: {error}", server.display()))
-        })?;
+        .map_err(|error| CliError::Install(format!("cannot run {}: {error}", server.display())))?;
     String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .last()
@@ -229,7 +227,10 @@ mod tests {
         assert_eq!(version_of(&server).unwrap(), "0.0.70");
         agree(&server, "0.0.70").unwrap();
         let error = agree(&server, "0.0.71").unwrap_err().to_string();
-        assert!(error.contains("0.0.70") && error.contains("0.0.71"), "{error}");
+        assert!(
+            error.contains("0.0.70") && error.contains("0.0.71"),
+            "{error}"
+        );
     }
 
     #[test]

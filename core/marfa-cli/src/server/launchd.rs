@@ -408,7 +408,9 @@ mod tests {
     fn the_container_agent_brings_the_engine_up_first() {
         let plist = agent(Job::Container).plist().unwrap();
         assert!(
-            plist.contains("<string>start</string>\n\t\t<string>--wait</string>\n\t\t<string>600</string>"),
+            plist.contains(
+                "<string>start</string>\n\t\t<string>--wait</string>\n\t\t<string>600</string>"
+            ),
             "{plist}"
         );
         assert!(!plist.contains("<string>run</string>"));

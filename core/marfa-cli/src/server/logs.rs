@@ -114,7 +114,10 @@ mod tests {
     fn a_log_reopened_counts_what_it_already_holds() {
         let dir = scratch("reopen");
         let path = dir.join("t.log");
-        RotatingLog::open(&path, 8).unwrap().write(b"12345678").unwrap();
+        RotatingLog::open(&path, 8)
+            .unwrap()
+            .write(b"12345678")
+            .unwrap();
         let mut again = RotatingLog::open(&path, 8).unwrap();
         again.write(b"x").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"x");

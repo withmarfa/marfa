@@ -379,15 +379,16 @@ impl Folder {
         let runtime_name = field("MARFA_RUNTIME")?;
         let runtime = Runtime::parse(&runtime_name)
             .ok_or_else(|| CliError::Usage(format!("MARFA_RUNTIME in .env is {runtime_name}")))?;
-        let manager = match runtime {
-            Runtime::Docker => None,
-            Runtime::Native => {
-                let name = field("MARFA_SERVICE")?;
-                Some(Manager::parse(&name).ok_or_else(|| {
-                    CliError::Usage(format!("MARFA_SERVICE in .env is {name}"))
-                })?)
-            }
-        };
+        let manager =
+            match runtime {
+                Runtime::Docker => None,
+                Runtime::Native => {
+                    let name = field("MARFA_SERVICE")?;
+                    Some(Manager::parse(&name).ok_or_else(|| {
+                        CliError::Usage(format!("MARFA_SERVICE in .env is {name}"))
+                    })?)
+                }
+            };
         let https_port = dotenv
             .get("MARFA_HTTPS_PORT")
             .map(|value| {
@@ -474,7 +475,6 @@ fn checked_release(release: &str) -> Result<String, CliError> {
     })
 }
 
-
 /// The address devices sign in at, written the way the server reads it. A
 /// device signs in over https only, so this takes no `http` address, which the
 /// server also takes for its own machine.
@@ -531,17 +531,11 @@ fn cidr_contains(range: &str, network: &str) -> bool {
     range_bits <= network_bits && (range_address & mask) == (network_address & mask)
 }
 
-
 /// What a settings file that something else owns lacks for this install. It
 /// names settings, never their values, which can be secrets. `network` is
 /// what the trusted proxy range must contain, and `of` says what it is the
 /// range of.
-fn external_problems(
-    settings: &EnvFile,
-    access: Access,
-    network: &str,
-    of: &str,
-) -> Vec<String> {
+fn external_problems(settings: &EnvFile, access: Access, network: &str, of: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for secret in names::SECRETS {
         if settings.get(secret).is_none_or(|value| value.is_empty()) {
@@ -594,7 +588,6 @@ fn local_address(port: u16) -> String {
 fn free_port(from: u16) -> Option<u16> {
     (from..from.saturating_add(100)).find(|port| port_is_free(*port).is_ok())
 }
-
 
 fn http_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -690,15 +683,27 @@ mod tests {
         let mut settings = EnvFile::parse("");
         settings.set(names::API_KEY_SALT, "a").unwrap();
         settings.set(names::AUTH_SECRET, "b").unwrap();
-        settings.set(names::PROXY_CIDRS, native::LOOPBACK_PROXIES).unwrap();
+        settings
+            .set(names::PROXY_CIDRS, native::LOOPBACK_PROXIES)
+            .unwrap();
         assert!(
-            external_problems(&settings, Access::Proxy, native::LOOPBACK_NETWORK, "the loopback")
-                .is_empty()
+            external_problems(
+                &settings,
+                Access::Proxy,
+                native::LOOPBACK_NETWORK,
+                "the loopback"
+            )
+            .is_empty()
         );
         settings.set(names::PROXY_CIDRS, "10.0.0.0/8").unwrap();
         assert_eq!(
-            external_problems(&settings, Access::Proxy, native::LOOPBACK_NETWORK, "the loopback")
-                .len(),
+            external_problems(
+                &settings,
+                Access::Proxy,
+                native::LOOPBACK_NETWORK,
+                "the loopback"
+            )
+            .len(),
             1
         );
     }

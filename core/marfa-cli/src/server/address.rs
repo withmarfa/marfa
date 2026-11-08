@@ -24,7 +24,11 @@ pub fn normalise(raw: &str) -> Result<String, CliError> {
     match url.scheme() {
         "https" => {}
         "http" if here => {}
-        _ => return Err(bad("devices sign in only over https; http works for localhost")),
+        _ => {
+            return Err(bad(
+                "devices sign in only over https; http works for localhost",
+            ));
+        }
     }
     if host.is_empty()
         || !url.username().is_empty()
@@ -89,7 +93,10 @@ mod tests {
     fn an_address_is_a_scheme_a_host_and_maybe_a_port() {
         for (raw, written) in [
             ("https://marfa.example.com/", "https://marfa.example.com"),
-            ("https://Marfa.Example.com:8443", "https://marfa.example.com:8443"),
+            (
+                "https://Marfa.Example.com:8443",
+                "https://marfa.example.com:8443",
+            ),
             ("https://marfa.example.com:443", "https://marfa.example.com"),
             ("http://localhost:8600", "http://localhost:8600"),
             ("http://localhost:80", "http://localhost"),
@@ -124,13 +131,17 @@ mod tests {
         let set = ensure_with(
             "https://a.example",
             held(json!({"sign_in_address": "https://a.example"})),
-            |body| Ok(written.push(body)),
+            |body| {
+                written.push(body);
+                Ok(())
+            },
         )
         .unwrap();
         assert!(!set && written.is_empty());
         for current in [json!({}), json!({"sign_in_address": "https://b.example"})] {
             let set = ensure_with("https://a.example", held(current), |body| {
-                Ok(written.push(body))
+                written.push(body);
+                Ok(())
             })
             .unwrap();
             assert!(set);

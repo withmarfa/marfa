@@ -217,7 +217,11 @@ mod tests {
             "/opt/Cellar-things/bin/marfa",
             "/opt/homebrew/Cellar/marfa",
         ] {
-            assert_eq!(stable_binary(Path::new(real), run_by.clone()), run_by, "{real}");
+            assert_eq!(
+                stable_binary(Path::new(real), run_by.clone()),
+                run_by,
+                "{real}"
+            );
         }
     }
 

@@ -129,16 +129,121 @@ esac
 "#;
 
 const FAKE_LAUNCHCTL: &str = r#"#!/bin/sh
-# A launchd that remembers what was loaded.
+# A launchd that remembers what was loaded, and runs a native server by
+# letting the stand-in health endpoint answer.
 H="$MARFA_AUTOSTART_ROOT"
+S="$FAKE_DOCKER_STATE"
 echo "$*" >> "$H/launchctl.log"
 label=$(printf '%s' "$*" | sed -n 's/.*so\.marfa\.server\.\([a-z0-9_-]*\).*/\1/p')
+begin() {
+  plist="$1"
+  grep -q '<string>run</string>' "$plist" || return 0
+  dir=$(awk '/<string>--dir<\/string>/{getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit}' "$plist")
+  name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
+  if [ -e "$S/refuse" ]; then
+    mkdir -p "$H/Library/Logs/Marfa"
+    echo "marfa-server will not start on the database (exit status 78)" >> "$H/Library/Logs/Marfa/$name.log"
+    return 0
+  fi
+  port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
+  touch "$S/go-$port"
+}
 case "$1" in
-  print) [ -e "$H/loaded-$label" ] ;;
-  bootstrap) label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//'); touch "$H/loaded-$label" ;;
-  bootout) rm -f "$H/loaded-$label" ;;
+  print)
+    [ -e "$H/loaded-$label" ] || exit 1
+    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; fi ;;
+  bootstrap)
+    [ -e "$H/bootstrap-fails" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+    label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//')
+    touch "$H/loaded-$label"; rm -f "$H/stopped-$label"; begin "$3" ;;
+  kickstart) rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
+  bootout) rm -f "$H/loaded-$label" "$S"/go-* ;;
 esac
 "#;
+
+const FAKE_SYSTEMCTL: &str = r#"#!/bin/sh
+# A systemd that remembers what is enabled and active, and runs a native
+# server by letting the stand-in health endpoint answer.
+H="$MARFA_AUTOSTART_ROOT"
+S="$FAKE_DOCKER_STATE"
+echo "systemctl $*" >> "$H/systemctl.log"
+[ "$1" = --user ] && shift
+cmd="$1"; shift
+[ "$1" = --quiet ] && shift
+unit="$1"
+begin() {
+  f="$H/.config/systemd/user/$unit"
+  dir=$(sed -n 's/.*"--dir" "\{0,1\}\([^" ]*\).*/\1/p' "$f")
+  name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
+  touch "$H/active-$unit"
+  if [ -e "$S/refuse" ]; then
+    echo "marfa-server will not start on the database (exit status 78)" >> "$S/server-log"
+    return 0
+  fi
+  port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
+  touch "$S/go-$port"
+}
+case "$cmd" in
+  show-environment) [ -e "$H/no-user-session" ] && { echo "Failed to connect to bus" >&2; exit 1; }; exit 0 ;;
+  daemon-reload) exit 0 ;;
+  enable) touch "$H/enabled-$unit" ;;
+  disable) rm -f "$H/enabled-$unit" ;;
+  is-enabled) [ -e "$H/enabled-$unit" ] ;;
+  is-active) [ -e "$H/active-$unit" ] ;;
+  start|restart) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
+  stop) rm -f "$H/active-$unit" "$S"/go-* ;;
+esac
+"#;
+
+const FAKE_LOGINCTL: &str = r#"#!/bin/sh
+H="$MARFA_AUTOSTART_ROOT"
+case "$1" in
+  show-user) cat "$H/linger" 2>/dev/null ;;
+  enable-linger)
+    [ -e "$H/linger-refused" ] && { echo "Access denied" >&2; exit 1; }
+    echo yes > "$H/linger" ;;
+esac
+"#;
+
+const FAKE_JOURNALCTL: &str = r#"#!/bin/sh
+cat "$FAKE_DOCKER_STATE/server-log" 2>/dev/null
+exit 0
+"#;
+
+/// What `marfa-server --version` prints and a server that does nothing.
+const FAKE_SERVER: &str = r#"#!/bin/sh
+case "$1" in
+  --version) echo "marfa-server ${FAKE_SERVER_VERSION:-0.0.0}"; exit 0 ;;
+esac
+env > "$FAKE_DOCKER_STATE/server-env"
+if [ -n "$FAKE_SERVER_SAYS" ]; then echo "$FAKE_SERVER_SAYS"; fi
+if [ -n "$FAKE_SERVER_TRAP" ]; then
+  trap "touch '$FAKE_DOCKER_STATE/term'; exit $FAKE_SERVER_TRAP" TERM INT
+  touch "$FAKE_DOCKER_STATE/ready"
+  while :; do sleep 0.1; done
+fi
+exit "${FAKE_SERVER_EXIT:-0}"
+"#;
+
+/// Answers the `marfa` commands the installer sends to the server's socket.
+const FAKE_CONTROL: &str = r#"#!/bin/sh
+S="$FAKE_DOCKER_STATE"
+echo "$*" >> "$S/control.log"
+case "$*" in
+  *"setup status"*) if [ -e "$S/claimed" ]; then echo '{"claimed":true}'; else echo '{"claimed":false}'; fi ;;
+  *"config get"*) if [ -e "$S/address" ]; then printf '{"sign_in_address":"%s"}\n' "$(cat "$S/address")"; else echo '{}'; fi ;;
+  *"config update"*) printf '%s' "$*" | sed -n 's/.*"sign_in_address":"\([^"]*\)".*/\1/p' > "$S/address"; echo '{}' ;;
+  *"setup open"*) echo '{"url":"http://localhost/setup#handoff=TICKET123","expires_at":"2030-01-01T00:00:00Z"}' ;;
+  *) echo "{}" ;;
+esac
+"#;
+
+const FAKE_GETFACL: &str = "#!/bin/sh\nexit 0\n";
+
+fn script(path: &Path, body: &str) {
+    fs::write(path, body).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
 
 struct Rig {
     root: PathBuf,
@@ -155,17 +260,23 @@ impl Rig {
         let _ = fs::remove_dir_all(&root);
         let state = root.join("state");
         fs::create_dir_all(&state).unwrap();
-        let script = root.join("docker");
-        fs::write(&script, FAKE_DOCKER).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let docker = root.join("docker");
+        fs::write(&docker, FAKE_DOCKER).unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
         let tailscale = root.join("tailscale");
         fs::write(&tailscale, FAKE_TAILSCALE).unwrap();
         fs::set_permissions(&tailscale, fs::Permissions::from_mode(0o755)).unwrap();
         let home = root.join("home");
         fs::create_dir_all(home.join("bin")).unwrap();
-        let launchctl = home.join("bin/launchctl");
-        fs::write(&launchctl, FAKE_LAUNCHCTL).unwrap();
-        fs::set_permissions(&launchctl, fs::Permissions::from_mode(0o755)).unwrap();
+        script(&home.join("bin/launchctl"), FAKE_LAUNCHCTL);
+        script(&home.join("bin/systemctl"), FAKE_SYSTEMCTL);
+        script(&home.join("bin/loginctl"), FAKE_LOGINCTL);
+        script(&home.join("bin/journalctl"), FAKE_JOURNALCTL);
+        let tools = root.join("bin");
+        fs::create_dir_all(&tools).unwrap();
+        script(&tools.join("marfa-server"), FAKE_SERVER);
+        script(&tools.join("getfacl"), FAKE_GETFACL);
+        script(&root.join("control"), FAKE_CONTROL);
         let port = free_port();
         let stop = Arc::new(AtomicBool::new(false));
         let health = {
@@ -196,7 +307,9 @@ impl Rig {
             .env("MARFA_DOCKER", self.root.join("docker"))
             .env("FAKE_DOCKER_STATE", &self.state)
             .env("MARFA_TAILSCALE", self.root.join("tailscale"))
-            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"));
+            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
+            .env("MARFA_SERVER_CONTROL", self.root.join("control"))
+            .env("PATH", self.path());
         for (name, value) in env {
             command.env(name, value);
         }
@@ -214,7 +327,15 @@ impl Rig {
         let port = self.port.to_string();
         let mut command = quiet::marfa();
         command
-            .args(["server", "install", "--docker", "--release", "0.0.22", "--port", &port])
+            .args([
+                "server",
+                "install",
+                "--docker",
+                "--release",
+                "0.0.22",
+                "--port",
+                &port,
+            ])
             .args(["--yes", "--wait", "5"])
             .args(extra)
             .arg("--dir")
@@ -224,8 +345,7 @@ impl Rig {
             .env("MARFA_TAILSCALE", self.root.join("tailscale"))
             .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
             .env("TERM", "xterm-256color")
-            .env_remove("NO_COLOR")
-            ;
+            .env_remove("NO_COLOR");
         for (name, value) in env {
             command.env(name, value);
         }
@@ -280,6 +400,11 @@ impl Rig {
         }));
     }
 
+    /// The tools a native install reaches: the stand-in server first.
+    fn path(&self) -> String {
+        format!("{}:/usr/bin:/bin", self.root.join("bin").display())
+    }
+
     /// The sign-in address the stand-in server holds.
     fn address(&self) -> Option<String> {
         fs::read_to_string(self.state.join("address"))
@@ -313,49 +438,52 @@ impl Drop for Rig {
 
 /// Answers `200` on the port once the stand-in has started a container.
 fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
-    let listener = loop {
-        if stop.load(Ordering::Relaxed) {
-            return;
-        }
-        if state.join(format!("go-{port}")).exists() {
-            let _held = SOCKETS.lock().unwrap();
-            if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
-                break listener;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    listener.set_nonblocking(true).unwrap();
+    let go = state.join(format!("go-{port}"));
     while !stop.load(Ordering::Relaxed) {
-        let accepted = {
+        if !go.exists() {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        let listener = {
             let _held = SOCKETS.lock().unwrap();
-            listener.accept()
+            TcpListener::bind(("127.0.0.1", port))
         };
-        match accepted {
-            Ok((mut stream, _)) => {
-                // macOS gives an accepted socket the listener's non-blocking
-                // mode, so a single read can return before the request has
-                // arrived. Closing with request bytes unread then resets the
-                // connection, and the client reports the server as down. The
-                // head is read whole before the answer goes.
-                let _ = stream.set_nonblocking(false);
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-                let mut head = Vec::new();
-                let mut buffer = [0u8; 512];
-                while !head.windows(4).any(|window| window == b"\r\n\r\n") {
-                    match stream.read(&mut buffer) {
-                        Ok(0) | Err(_) => break,
-                        Ok(size) => head.extend_from_slice(&buffer[..size]),
+        let Ok(listener) = listener else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        listener.set_nonblocking(true).unwrap();
+        while !stop.load(Ordering::Relaxed) && go.exists() {
+            let accepted = {
+                let _held = SOCKETS.lock().unwrap();
+                listener.accept()
+            };
+            match accepted {
+                Ok((mut stream, _)) => {
+                    // macOS gives an accepted socket the listener's non-blocking
+                    // mode, so a single read can return before the request has
+                    // arrived. Closing with request bytes unread then resets the
+                    // connection, and the client reports the server as down. The
+                    // head is read whole before the answer goes.
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                    let mut head = Vec::new();
+                    let mut buffer = [0u8; 512];
+                    while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                        match stream.read(&mut buffer) {
+                            Ok(0) | Err(_) => break,
+                            Ok(size) => head.extend_from_slice(&buffer[..size]),
+                        }
                     }
+                    let answer: &[u8] = if state.join("unhealthy").exists() {
+                        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
+                    } else {
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                    };
+                    let _ = stream.write_all(answer);
                 }
-                let answer: &[u8] = if state.join("unhealthy").exists() {
-                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
-                } else {
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
-                };
-                let _ = stream.write_all(answer);
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
             }
-            Err(_) => std::thread::sleep(Duration::from_millis(10)),
         }
     }
 }
@@ -1296,10 +1424,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("does not exist"), "{stderr}");
 
-    managed_elsewhere(
-        &rig,
-        "API_KEY_SALT=sssssssssssssssssssssssssssssssss\n",
-    );
+    managed_elsewhere(&rig, "API_KEY_SALT=sssssssssssssssssssssssssssssssss\n");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "cloudflare",
@@ -1590,7 +1715,10 @@ fn the_tailnet_address_follows_the_install() {
     let map = || fs::read_to_string(&map_file).unwrap_or_default();
     rig.installed(&["--access", "tailscale"]);
     assert_eq!(map(), format!("443 http://127.0.0.1:{}\n", rig.port));
-    assert_eq!(rig.address().as_deref(), Some("https://host.example.ts.net"));
+    assert_eq!(
+        rig.address().as_deref(),
+        Some("https://host.example.ts.net")
+    );
     assert_eq!(
         rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
@@ -1666,7 +1794,9 @@ fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
     fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
     fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
     let (code, stdout, stderr) = rig.marfa_with(
-        &["install", "--docker", "--yes", "--wait", "5", "--access", "local"],
+        &[
+            "install", "--docker", "--yes", "--wait", "5", "--access", "local",
+        ],
         &[("MARFA_TAILSCALE", &broken)],
     );
     assert_eq!(code, 0, "{stderr}");
@@ -1675,4 +1805,612 @@ fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
         stderr.contains("The old address stays on your tailnet"),
         "{stderr}"
     );
+}
+
+// ---- a server run without Docker ----------------------------------------
+
+const MANAGER: &str = if cfg!(target_os = "macos") {
+    "launchd"
+} else {
+    "systemd-user"
+};
+
+impl Rig {
+    /// A native `install` with the options given, apart from not asking.
+    fn native(&self, extra: &[&str]) -> (i32, String, String) {
+        let port = self.port.to_string();
+        let mut args = vec!["install", "--yes", "--wait", "5", "--port", &port];
+        args.extend(extra);
+        self.marfa(&args)
+    }
+
+    fn native_installed(&self, extra: &[&str]) {
+        let (code, stdout, stderr) = self.native(extra);
+        assert_eq!(code, 0, "{stdout}\n{stderr}");
+    }
+
+    /// The file the service manager reads the service from.
+    fn service_file(&self, name: &str) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.agent(name)
+        } else {
+            self.home()
+                .join(format!(".config/systemd/user/marfa-{name}.service"))
+        }
+    }
+
+    fn manager_log(&self) -> String {
+        let name = if cfg!(target_os = "macos") {
+            "launchctl.log"
+        } else {
+            "systemctl.log"
+        };
+        fs::read_to_string(self.home().join(name)).unwrap_or_default()
+    }
+
+    fn control_log(&self) -> String {
+        fs::read_to_string(self.state.join("control.log")).unwrap_or_default()
+    }
+
+    /// The folder as the command sees it, with links followed.
+    fn real_dir(&self) -> PathBuf {
+        fs::canonicalize(&self.root).unwrap().join("install")
+    }
+}
+
+#[test]
+fn a_native_install_runs_the_server_as_a_service_and_prints_the_link_and_no_secret() {
+    let rig = Rig::new("n-first");
+    let (code, stdout, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    assert!(stdout.contains("TICKET123"), "{stdout}");
+    assert!(stdout.contains("Marfa 0.0.0 is running"), "{stdout}");
+    let dotenv = rig.file(".env");
+    for line in [
+        "MARFA_RUNTIME=native".to_string(),
+        format!("MARFA_SERVICE={MANAGER}"),
+        format!("MARFA_PORT={}", rig.port),
+        "MARFA_AUTOSTART=on".to_string(),
+    ] {
+        assert!(dotenv.contains(&line), "{line}\n{dotenv}");
+    }
+    assert!(!rig.dir.join("compose.yaml").exists());
+    assert!(
+        !rig.log().contains("compose"),
+        "a native install ran Docker: {}",
+        rig.log()
+    );
+    let [salt, secret] = secrets(&rig);
+    assert_eq!((salt.len(), secret.len()), (64, 64));
+    for text in [&stdout, &stderr] {
+        assert!(!text.contains(&salt) && !text.contains(&secret));
+    }
+    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
+    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+
+    let service = fs::read_to_string(rig.service_file("marfa")).unwrap();
+    assert!(
+        service.contains("server") && service.contains("run") && service.contains("--dir"),
+        "{service}"
+    );
+    assert!(
+        service.contains(&rig.real_dir().display().to_string()),
+        "{service}"
+    );
+    assert!(!service.contains(&salt) && !service.contains(&secret));
+
+    let (_, status, _) = rig.marfa(&["--json", "status"]);
+    assert!(status.contains("\"runtime\": \"native\""), "{status}");
+    assert!(status.contains("\"healthy\": true"), "{status}");
+}
+
+#[test]
+fn running_a_native_install_again_changes_nothing() {
+    let rig = Rig::new("n-again");
+    rig.native_installed(&["--access", "local"]);
+    let before = (
+        rig.file(".env"),
+        rig.file("marfa.env"),
+        fs::read_to_string(rig.service_file("marfa")).unwrap(),
+    );
+    let calls = rig.manager_log().lines().count();
+    let (code, stdout, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("TICKET123"), "{stdout}");
+    let after = (
+        rig.file(".env"),
+        rig.file("marfa.env"),
+        fs::read_to_string(rig.service_file("marfa")).unwrap(),
+    );
+    assert_eq!(before, after);
+    assert!(
+        !rig.manager_log()
+            .lines()
+            .skip(calls)
+            .any(|line| line.contains("bootstrap") || line.contains("restart")),
+        "the second run reloaded the service: {}",
+        rig.manager_log()
+    );
+}
+
+#[test]
+fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socket() {
+    let rig = Rig::new("n-proxy");
+    rig.native_installed(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com/",
+    ]);
+    assert_eq!(
+        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        Some("127.0.0.1/32,::1/128")
+    );
+    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
+    let socket = format!("{}/data/control/marfa.sock", rig.real_dir().display());
+    assert!(rig.control_log().contains(&socket) || rig.control_log().contains("config update"));
+
+    rig.native_installed(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(
+        rig.setting("TRUSTED_PROXY_HEADER").as_deref(),
+        Some("CF-Connecting-IP")
+    );
+    // The address was held already, so it is not written again.
+    let writes = rig
+        .control_log()
+        .lines()
+        .filter(|line| line.contains("config update"))
+        .count();
+    assert_eq!(writes, 1, "{}", rig.control_log());
+}
+
+#[test]
+fn an_install_keeps_its_runtime_and_a_release_is_for_docker() {
+    let rig = Rig::new("n-runtime");
+    rig.native_installed(&["--access", "local"]);
+    let (code, _, stderr) = rig.native(&["--docker"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("keeps its runtime") && stderr.contains("marfa export"),
+        "{stderr}"
+    );
+    assert!(rig.file(".env").contains("MARFA_RUNTIME=native"));
+
+    let other = Rig::new("n-release");
+    let (code, _, stderr) = other.native(&["--release", "0.0.22"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--release is for --docker"), "{stderr}");
+    assert!(!other.dir.exists());
+
+    let docker = Rig::new("n-docker-first");
+    docker.installed(&["--access", "local"]);
+    let (code, _, stderr) = docker.native(&[]);
+    assert_eq!(
+        code, 0,
+        "an install made with Docker stays on Docker: {stderr}"
+    );
+    assert!(docker.file(".env").contains("MARFA_RUNTIME=docker"));
+}
+
+#[test]
+fn a_server_that_is_missing_or_of_another_release_is_refused_before_anything_is_written() {
+    let rig = Rig::new("n-server");
+    fs::remove_file(rig.root.join("bin/marfa-server")).unwrap();
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains("marfa-server was not found"), "{stderr}");
+    assert!(!rig.dir.exists());
+
+    let rig = Rig::new("n-version");
+    let (code, _, stderr) = rig.marfa_with(
+        &[
+            "install",
+            "--yes",
+            "--access",
+            "local",
+            "--port",
+            &rig.port.to_string(),
+        ],
+        &[("FAKE_SERVER_VERSION", Path::new("9.9.9"))],
+    );
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("9.9.9")
+            && stderr.contains("0.0.0")
+            && stderr.contains("released together"),
+        "{stderr}"
+    );
+    assert!(!rig.dir.exists());
+}
+
+#[test]
+fn a_port_in_use_is_refused_for_a_native_server_too() {
+    let rig = Rig::new("n-port");
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let busy = held.local_addr().unwrap().port().to_string();
+    let (code, _, stderr) = rig.marfa(&["install", "--yes", "--access", "local", "--port", &busy]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("cannot be used"), "{stderr}");
+    assert!(!rig.dir.exists());
+}
+
+#[test]
+fn a_service_manager_that_refuses_says_what_it_said_and_what_to_run() {
+    let rig = Rig::new("n-refuses");
+    let (flag, wanted) = if cfg!(target_os = "macos") {
+        ("bootstrap-fails", "launchctl bootstrap")
+    } else {
+        ("start-fails", "systemctl --user start")
+    };
+    fs::write(rig.home().join(flag), "").unwrap();
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains(wanted), "{stderr}");
+}
+
+#[test]
+fn a_server_that_refuses_its_database_is_reported_and_not_waited_for() {
+    let rig = Rig::new("n-refused");
+    fs::write(rig.state.join("refuse"), "").unwrap();
+    let started = std::time::Instant::now();
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("will not start on its database"),
+        "{stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "the install waited out the clock on a refusal"
+    );
+}
+
+#[test]
+fn a_native_server_stops_starts_and_upgrades_with_its_service() {
+    let rig = Rig::new("n-lifecycle");
+    rig.native_installed(&["--access", "local"]);
+
+    let (code, stdout, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Stopped"), "{stdout}");
+    let (_, status, _) = rig.marfa(&["--json", "status"]);
+    assert!(status.contains("\"running\": false"), "{status}");
+    assert!(rig.file(".env").contains("MARFA_RUNTIME=native"));
+    let (code, stdout, _) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("was not running"), "{stdout}");
+
+    let (code, stdout, stderr) = rig.marfa(&["start", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("is running"), "{stdout}");
+    let (_, status, _) = rig.marfa(&["--json", "status"]);
+    assert!(status.contains("\"running\": true"), "{status}");
+
+    // The release is the installed program, so it is not named.
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.9"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("scripts/install.sh"), "{stderr}");
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Already on 0.0.0"), "{stdout}");
+
+    // An install made by a newer release is not taken back to an older one.
+    fs::write(
+        rig.dir.join(".env"),
+        rig.file(".env")
+            .replace("MARFA_RELEASE=0.0.0", "MARFA_RELEASE=0.0.5"),
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("older"), "{stderr}");
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("older"), "{stderr}");
+}
+
+#[test]
+fn uninstalling_a_native_server_keeps_its_data_unless_told_to_delete_it() {
+    let rig = Rig::new("n-uninstall");
+    rig.native_installed(&["--access", "local"]);
+    let data = rig.dir.join("data");
+    fs::create_dir_all(&data).unwrap();
+    fs::write(data.join("marfa.db"), "rows").unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["uninstall"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Its data stays in"), "{stdout}");
+    assert!(!rig.service_file("marfa").exists());
+    assert!(data.join("marfa.db").exists() && rig.dir.join("marfa.env").exists());
+    if cfg!(target_os = "macos") {
+        assert!(!rig.home().join("loaded-marfa").exists());
+    }
+
+    // Data is never started on new secrets: with the settings gone, an install refuses.
+    let secrets_copy = rig.file("marfa.env");
+    fs::remove_file(rig.dir.join("marfa.env")).unwrap();
+    fs::remove_file(rig.dir.join(".env")).unwrap();
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("already holds data"), "{stderr}");
+    fs::write(rig.dir.join("marfa.env"), secrets_copy).unwrap();
+    rig.native_installed(&["--access", "local"]);
+
+    let (code, _, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!rig.dir.exists(), "the folder and its data were left");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_user_service_asks_for_lingering_and_says_the_one_line_when_it_is_refused() {
+    let rig = Rig::new("n-linger");
+    rig.native_installed(&["--access", "local"]);
+    assert!(
+        rig.home().join("linger").exists(),
+        "lingering was not asked for"
+    );
+    assert!(rig.home().join("enabled-marfa-marfa.service").exists());
+
+    let refused = Rig::new("n-linger-refused");
+    fs::write(refused.home().join("linger-refused"), "").unwrap();
+    let (code, stdout, stderr) = refused.native(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("sudo loginctl enable-linger"), "{stdout}");
+    assert!(stdout.contains("TICKET123"), "{stdout}");
+
+    let none = Rig::new("n-no-session");
+    fs::write(none.home().join("no-user-session"), "").unwrap();
+    let (code, _, stderr) = none.native(&["--access", "local"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("systemd is not running for this account"),
+        "{stderr}"
+    );
+    assert!(!none.dir.exists());
+}
+
+// ---- `marfa server run` -------------------------------------------------
+
+impl Rig {
+    /// `marfa server run` as a child process that outlives the call.
+    fn run_server(&self, env: &[(&str, &str)]) -> std::process::Child {
+        let mut command = quiet::marfa();
+        command
+            .args(["server", "run", "--dir"])
+            .arg(&self.dir)
+            .env("FAKE_DOCKER_STATE", &self.state)
+            .env("MARFA_AUTOSTART_ROOT", self.home())
+            .env("PATH", self.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(fs::File::create(self.root.join("run.out")).unwrap())
+            .stderr(fs::File::create(self.root.join("run.err")).unwrap());
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let _held = SOCKETS.lock().unwrap();
+        command.spawn().unwrap()
+    }
+
+    fn run_said(&self) -> String {
+        fs::read_to_string(self.root.join("run.err")).unwrap_or_default()
+    }
+}
+
+/// Waits for the child to end, and gives up (stopping it by its process ID)
+/// after `seconds`.
+fn ended(child: &mut std::process::Child, seconds: u64) -> Option<std::process::ExitStatus> {
+    let until = std::time::Instant::now() + Duration::from_secs(seconds);
+    while std::time::Instant::now() < until {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = Command::new("kill")
+        .arg("-KILL")
+        .arg(child.id().to_string())
+        .status();
+    let _ = child.wait();
+    None
+}
+
+fn wait_for(path: &Path) {
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        assert!(
+            std::time::Instant::now() < until,
+            "{} never appeared",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn signal(child: &std::process::Child, name: &str) {
+    assert!(
+        Command::new("kill")
+            .arg(format!("-{name}"))
+            .arg(child.id().to_string())
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn run_starts_the_server_with_the_settings_of_its_folder() {
+    let rig = Rig::new("r-env");
+    rig.native_installed(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    let mut child = rig.run_server(&[]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0));
+    let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
+    let dir = rig.real_dir();
+    for line in [
+        format!("PORT={}", rig.port),
+        "MARFA_LISTEN_HOST=127.0.0.1".to_string(),
+        format!("SQLITE_PATH={}/data/marfa.db", dir.display()),
+        format!("BLOB_PATH={}/data/blobs", dir.display()),
+        format!(
+            "MARFA_CONTROL_SOCKET={}/data/control/marfa.sock",
+            dir.display()
+        ),
+        "TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
+        format!("API_KEY_SALT={}", secrets(&rig)[0]),
+    ] {
+        assert!(
+            env.lines().any(|set| set == line),
+            "{line}\n{}",
+            env.replace(&secrets(&rig)[1], "...")
+        );
+    }
+    // Where the machine has launchd, the log is kept in a file of the account.
+    if cfg!(target_os = "macos") {
+        let log = rig.home().join("Library/Logs/Marfa/marfa.log");
+        assert!(log.exists(), "no log at {}", log.display());
+    }
+}
+
+#[test]
+fn run_sets_nothing_the_settings_file_already_sets() {
+    let rig = Rig::new("r-own");
+    rig.native_installed(&["--access", "local"]);
+    let mut text = rig.file("marfa.env");
+    text.push_str("PORT=9123\nMARFA_LISTEN_HOST=0.0.0.0\n");
+    fs::write(rig.dir.join("marfa.env"), text).unwrap();
+    let mut child = rig.run_server(&[]);
+    ended(&mut child, 20).expect("run did not end");
+    let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
+    assert!(env.lines().any(|line| line == "PORT=9123"), "{env}");
+    assert!(
+        env.lines().any(|line| line == "MARFA_LISTEN_HOST=0.0.0.0"),
+        "{env}"
+    );
+    assert_eq!(
+        env.lines().filter(|line| line.starts_with("PORT=")).count(),
+        1
+    );
+}
+
+#[test]
+fn run_ends_with_the_status_of_the_server() {
+    let rig = Rig::new("r-status");
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[("FAKE_SERVER_EXIT", "7")]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(7));
+}
+
+#[test]
+fn a_stop_reaches_the_server_and_run_ends_with_what_it_ended_with() {
+    let rig = Rig::new("r-term");
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[("FAKE_SERVER_TRAP", "9")]);
+    wait_for(&rig.state.join("ready"));
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end after a stop");
+    assert!(
+        rig.state.join("term").exists(),
+        "the server never heard the stop"
+    );
+    assert_eq!(status.code(), Some(9));
+}
+
+#[test]
+fn a_server_that_refuses_its_database_is_not_started_again_and_run_waits_to_be_stopped() {
+    let rig = Rig::new("r-refused");
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[
+        ("FAKE_SERVER_EXIT", "78"),
+        ("FAKE_SERVER_SAYS", "the database is from a newer release"),
+    ]);
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    while !rig.run_said().contains("will not start on the database") {
+        assert!(
+            std::time::Instant::now() < until,
+            "no refusal said: {}",
+            rig.run_said()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "run ended on a refusal, so a supervisor would start it into the same one"
+    );
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end after a stop");
+    assert_eq!(status.code(), Some(0));
+}
+
+#[test]
+fn run_refuses_a_server_of_another_release_and_a_missing_one() {
+    let rig = Rig::new("r-refuse");
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[("FAKE_SERVER_VERSION", "9.9.9")]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(3));
+    let said = rig.run_said();
+    assert!(said.contains("9.9.9") && said.contains("0.0.0"), "{said}");
+    assert!(!rig.state.join("server-env").exists());
+
+    fs::remove_file(rig.root.join("bin/marfa-server")).unwrap();
+    let mut child = rig.run_server(&[]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(3));
+    assert!(
+        rig.run_said().contains("marfa-server was not found"),
+        "{}",
+        rig.run_said()
+    );
+}
+
+// ---- the address on the socket ------------------------------------------
+
+#[test]
+fn the_address_for_setup_is_set_only_through_the_private_socket() {
+    let rig = Rig::new("s-address");
+    for args in [
+        &[
+            "setup",
+            "open",
+            "--no-browser",
+            "--address",
+            "https://marfa.example.com",
+        ][..],
+        &[
+            "setup",
+            "claim",
+            "--address",
+            "https://marfa.example.com",
+            "--email",
+            "a@example.com",
+        ][..],
+    ] {
+        let mut command = quiet::marfa();
+        command
+            .args(args)
+            .args(["--url", "http://127.0.0.1:1", "--key", "k"]);
+        command.env("HOME", rig.home());
+        let output = output_of(&mut command);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("--socket"),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

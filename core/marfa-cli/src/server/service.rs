@@ -34,9 +34,13 @@ impl Manager {
     }
 
     pub fn parse(name: &str) -> Option<Manager> {
-        [Manager::Launchd, Manager::SystemdUser, Manager::SystemdSystem]
-            .into_iter()
-            .find(|manager| manager.name() == name)
+        [
+            Manager::Launchd,
+            Manager::SystemdUser,
+            Manager::SystemdSystem,
+        ]
+        .into_iter()
+        .find(|manager| manager.name() == name)
     }
 
     /// The manager for a new install on this machine.
@@ -106,8 +110,12 @@ impl Service<'_> {
     pub fn describe(&self) -> String {
         match self.manager {
             Manager::Launchd => format!("the launchd agent {}", launchd::label(self.name)),
-            Manager::SystemdUser => format!("the systemd user service {}", systemd::service(self.name)),
-            Manager::SystemdSystem => format!("the systemd service {}", systemd::service(self.name)),
+            Manager::SystemdUser => {
+                format!("the systemd user service {}", systemd::service(self.name))
+            }
+            Manager::SystemdSystem => {
+                format!("the systemd service {}", systemd::service(self.name))
+            }
         }
     }
 
@@ -121,12 +129,7 @@ impl Service<'_> {
     /// Writes the service, loads it, and starts it. Only a service that
     /// `autostart` names starts again when the machine, or the person's
     /// login, does.
-    pub fn on(
-        &self,
-        autostart: bool,
-        binary: &Path,
-        server: &Path,
-    ) -> Result<Started, CliError> {
+    pub fn on(&self, autostart: bool, binary: &Path, server: &Path) -> Result<Started, CliError> {
         match self.manager {
             Manager::Launchd => {
                 let agent = launchd::Agent {
@@ -238,7 +241,9 @@ impl Service<'_> {
         match self.manager {
             Manager::Launchd => {
                 let read = |path: Result<PathBuf, CliError>| {
-                    path.ok().map(|path| tail_of_file(&path, lines)).unwrap_or_default()
+                    path.ok()
+                        .map(|path| tail_of_file(&path, lines))
+                        .unwrap_or_default()
                 };
                 let log = match (mark, launchd::server_log(self.name)) {
                     (Some(Mark::Bytes(from)), Ok(path)) => tail_of_file_from(&path, *from, lines),
@@ -304,8 +309,14 @@ pub fn tail_of_file(path: &Path, lines: usize) -> String {
 
 /// How this command reaches the server's private socket.
 pub enum Control<'a> {
-    Container { docker: &'a Docker, name: &'a str },
-    Process { socket: PathBuf, as_account: Option<Identity> },
+    Container {
+        docker: &'a Docker,
+        name: &'a str,
+    },
+    Process {
+        socket: PathBuf,
+        as_account: Option<Identity>,
+    },
 }
 
 impl<'a> Control<'a> {

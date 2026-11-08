@@ -174,6 +174,7 @@ marfa setup open [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--no-browser` | Print the handoff link without opening a browser. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. The server holds it, and the link is at it, so it is set first unless the server holds it already. |
 
 ### marfa setup claim
 
@@ -188,6 +189,7 @@ marfa setup claim [OPTIONS]
 | `--email <EMAIL>` | The owner's email address. Required when using terminal prompts. |
 | `--name <NAME>` | The owner's display name. |
 | `--stdin` | Read JSON containing email, password, optional name, and code for a remote claim. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Private socket only. It is set on the server first, unless the server holds it already. |
 
 ## owner
 
@@ -4206,7 +4208,7 @@ marfa docs topics [OPTIONS]
 
 ## server
 
-A server on this machine, in Docker: install it, upgrade it, see how it is and take it down.
+A server on this machine, run natively or in Docker: install it, upgrade it, see how it is and take it down.
 
 ### marfa server
 
@@ -4218,9 +4220,11 @@ marfa server [OPTIONS] <COMMAND>
 
 Set up a server on this machine and print the link that claims it.
 
-Needs Docker with Compose. It writes a Compose file and two settings files into `--dir`, makes the server's two secrets once and keeps them in `marfa.env`, which only you can read, starts the pinned release with a restart policy, and prints the one-time setup link. It never prints a secret. Running it again changes only what is not already as asked, and never a secret.
+The server runs as a service of this machine, without Docker: a launchd agent on a Mac, and a systemd service on Linux (in your own account, or as the `marfa` account when root runs this). Use `--docker` to run the release's image in Docker instead.
 
-It asks how the server is reached, because that decides which caller address the server believes. Every question has a flag, and `--yes` or a non-terminal answers none: the flag or the default is used.
+It writes two settings files into `--dir`, makes the server's two secrets once and keeps them in `marfa.env`, which only you can read, starts the service, and prints the one-time setup link. It never prints a secret. Running it again changes only what is not already as asked, and never a secret or the runtime.
+
+It asks how the server is reached, because that decides which caller address the server believes and the address people sign in at. Every question has a flag, and `--yes` or a non-terminal answers none: the flag or the default is used.
 
 ```text
 marfa server install [OPTIONS]
@@ -4228,29 +4232,25 @@ marfa server install [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
-| `--name <NAME>` | What this install is called: the container, the data volume and the Compose project are named from it. The default is `marfa`. |
-| `--release <VERSION>` | The release to run, such as `0.0.22`. The default is this binary's own version, and for a server already installed, the release it runs. |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--name <NAME>` | What this install is called: the service, the container and the data volume are named from it. The default is `marfa`. |
+| `--docker` | Run the server in Docker, from the release's image, in place of as a service of this machine. Needs Docker with Compose. An install keeps its runtime: to change it, export the data and restore it into a new install. |
+| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs. A native server runs the release installed beside this `marfa`. |
 | `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
-| `--address <URL>` | The address devices use, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. |
 | `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
 | `--https-port <PORT>` | The port Tailscale serves on, for `--access tailscale`. The default is 443. |
-| `--s3-bucket <BUCKET>` | Keep a copy of the data in an S3-compatible bucket: its name. Setting any `--s3-` option turns the copy on. The secret key is read from `S3_SECRET_ACCESS_KEY` or asked for, never taken as an option. |
-| `--s3-region <REGION>` | The bucket's region. |
-| `--s3-endpoint <URL>` | The bucket's address, for a store other than Amazon S3. |
-| `--s3-access-key-id <ID>` | The bucket's access key ID. |
-| `--s3-prefix <PREFIX>` | Where in the bucket this install keeps its copy. It must be this install's own. The default is the install's name. |
-| `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets, the address and the proxy setting this install needs, and says what is missing. It reads a quoted value the way Docker Compose reads it. |
-| `--autostart` | Start the server when you log in, even if Docker is not running yet: a launchd agent that runs `server start`. The default on a Mac. |
-| `--no-autostart` | Do not start the server at login. |
+| `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets and the proxy setting this install needs, and says what is missing. It reads a quoted value the way Docker Compose reads it. |
+| `--autostart` | Start the server when you log in (on a Mac) or when the machine starts (on Linux). The default; a Docker install on Linux relies on Docker starting at boot. |
+| `--no-autostart` | Do not start the server at login or at boot. `marfa server start` starts it. |
 | `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 | `-y, --yes` | Ask nothing: use the flags and the defaults. |
 
 ### marfa server upgrade
 
-Move the server to a release, which updates its database in place.
+Move the server to the release now installed, and update its database.
 
-Moves to the release you name, or to this binary's own. A release whose database schema is newer copies the database beside it first, then updates it, and this command says where the copy is. It refuses an older release than the one installed, because an older release does not know what a newer one changed in the database.
+A native server runs the `marfa-server` installed beside this `marfa`, so install the release you want first (Homebrew, or the install script), then run this. A Docker install moves to the release you name with `--release`, or to this binary's own. A release whose database schema is newer copies the database beside it first, then updates it. It refuses an older release than the one installed, because an older release does not know what a newer one changed in the database.
 
 ```text
 marfa server upgrade [OPTIONS]
@@ -4258,13 +4258,15 @@ marfa server upgrade [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
-| `--release <VERSION>` | The release to move to. The default is this binary's own version. |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--release <VERSION>` | The release to move to, for a Docker install. The default is this binary's own version. A native server moves to the release installed. |
 | `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 
 ### marfa server status
 
 Whether the server runs, its release and address, and whether it is claimed.
+
+When the server is not running, it shows the end of its log.
 
 ```text
 marfa server status [OPTIONS]
@@ -4272,11 +4274,13 @@ marfa server status [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 
 ### marfa server start
 
-Bring the server up: start Docker's engine if it is down (on a Mac), then the container. What the login agent runs.
+Start the server, if it is not running.
+
+On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 
 ```text
 marfa server start [OPTIONS]
@@ -4284,14 +4288,40 @@ marfa server start [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 | `--wait <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
+
+### marfa server stop
+
+Stop the server, keeping the service, its data and its settings.
+
+```text
+marfa server stop [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+
+### marfa server run
+
+Run the server in the foreground. This is what the service runs.
+
+It starts the `marfa-server` of the same release as this `marfa`, with the settings in `--dir` (the data below it, and the port from `.env`); without `--dir` it uses the settings in its own environment, as the container does. It passes a stop on to the server and ends with its status. On a Mac it keeps the server's output in `~/Library/Logs/Marfa`. A server that refuses its database is not started again: this command says so and waits until it is stopped.
+
+```text
+marfa server run [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 
 ### marfa server uninstall
 
-Stop the server and remove its container, keeping its data.
+Remove the service, keeping its data and settings.
 
-The data volume, the settings and the secrets stay, so `install` brings the same server back. `--delete-data` removes the volume too.
+The data, the settings and the secrets stay, so `install` brings the same server back. `--delete-data` removes the data folder (or the Docker volume) and `marfa.env` too.
 
 ```text
 marfa server uninstall [OPTIONS]
@@ -4299,6 +4329,6 @@ marfa server uninstall [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
-| `--delete-data` | Also delete the data volume and the settings. This cannot be undone. |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--delete-data` | Also delete the data and the settings. This cannot be undone. |
 | `-y, --yes` | Do not ask before `--delete-data`. |

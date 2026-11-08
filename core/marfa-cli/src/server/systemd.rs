@@ -59,7 +59,11 @@ impl Unit {
                     "User={account}\nGroup={account}\nNoNewPrivileges=yes\nProtectSystem=strict\nReadWritePaths={paths}\nPrivateTmp=yes\n{home}",
                     account = account::NAME,
                     paths = quoted(text(&self.dir)?, false),
-                    home = if self.protect_home { "ProtectHome=yes\n" } else { "" },
+                    home = if self.protect_home {
+                        "ProtectHome=yes\n"
+                    } else {
+                        ""
+                    },
                 );
                 (
                     "After=network.target\n".to_string(),
@@ -302,7 +306,14 @@ pub fn log_tail(scope: Scope, name: &str, lines: usize, since: Option<u64>) -> S
     if scope == Scope::User {
         command.arg("--user");
     }
-    command.args(["-u", &unit, "-n", &lines.to_string(), "--no-pager", "--output=cat"]);
+    command.args([
+        "-u",
+        &unit,
+        "-n",
+        &lines.to_string(),
+        "--no-pager",
+        "--output=cat",
+    ]);
     if let Some(since) = since {
         command.arg(format!("--since=@{since}"));
     }
@@ -359,7 +370,12 @@ mod tests {
 
     #[test]
     fn home_is_hidden_from_the_service_only_when_it_needs_none_of_it() {
-        assert!(unit(Scope::System).text().unwrap().contains("ProtectHome=yes"));
+        assert!(
+            unit(Scope::System)
+                .text()
+                .unwrap()
+                .contains("ProtectHome=yes")
+        );
         let mut open = unit(Scope::System);
         open.protect_home = false;
         assert!(!open.text().unwrap().contains("ProtectHome"));
@@ -369,7 +385,10 @@ mod tests {
         ]));
         assert!(!clear_of_home(&[Path::new("/root/.local/bin/marfa")]));
         assert!(!clear_of_home(&[Path::new("/home/x/marfa-server")]));
-        assert!(clear_of_home(&[Path::new("/homes/x"), Path::new("/rooted")]));
+        assert!(clear_of_home(&[
+            Path::new("/homes/x"),
+            Path::new("/rooted")
+        ]));
     }
 
     #[test]

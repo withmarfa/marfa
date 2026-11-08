@@ -14,9 +14,9 @@ use super::service::{Control, Manager, Mark, Service};
 use super::systemd::Linger;
 use super::{
     AGENT_HINT, Access, DEFAULT_PORT, Folder, IMAGE, InstallArgs, OPTIONS_HINT, Runtime, State,
-    Steps, account, address, checked_release, external_problems, files, free_port,
-    http_agent, launchd, local_address, names, native, own_release, port_is_free, proxy_trust,
-    public_address, refuse_older, tailscale, valid_name,
+    Steps, account, address, checked_release, external_problems, files, free_port, http_agent,
+    launchd, local_address, names, native, own_release, port_is_free, proxy_trust, public_address,
+    refuse_older, tailscale, valid_name,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -58,7 +58,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         )));
     }
 
-    let runtime = match (args.docker, existing.as_ref().map(|(state, _)| state.runtime)) {
+    let runtime = match (
+        args.docker,
+        existing.as_ref().map(|(state, _)| state.runtime),
+    ) {
         (true, Some(Runtime::Native)) => {
             return Err(CliError::Usage(format!(
                 "{dir} is a native install, and an install keeps its runtime, because its data is in {dir}/data and a Docker install keeps it in a volume. To move to Docker, export the data with `marfa export`, install with --docker in another --dir, and restore the archive into it",
@@ -283,7 +286,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                     local_address(port)
                 );
             }
-            let raw = match (&args.address, existing.as_ref().and_then(|(s, _)| s.address.clone())) {
+            let raw = match (
+                &args.address,
+                existing.as_ref().and_then(|(s, _)| s.address.clone()),
+            ) {
                 (Some(address), _) => address.clone(),
                 (None, Some(address)) => address,
                 (None, None) => prompter.text(
@@ -671,7 +677,9 @@ fn native_release(args: &InstallArgs, existing: Option<&State>) -> Result<String
 /// The account a root install runs as can run the program the service names;
 /// a program in root's own home cannot be.
 fn check_account_runs(identity: account::Identity, binary: &Path) -> Result<(), CliError> {
-    let ran = account::command_as(identity, binary).arg("--version").output();
+    let ran = account::command_as(identity, binary)
+        .arg("--version")
+        .output();
     if ran.is_ok_and(|output| output.status.success()) {
         return Ok(());
     }
@@ -741,19 +749,19 @@ impl Watch<'_> {
     /// Why the server will not come up, when it has said so.
     fn failed(&self) -> Result<Option<String>, CliError> {
         Ok(match self {
-            Watch::Container { docker, name } => {
-                match docker.container(name)? {
-                    Some(state) if matches!(state.status.as_str(), "exited" | "dead") => Some(
-                        format!("the server stopped: {}\n{}", state.status, docker.logs_tail(name)),
-                    ),
-                    _ => {
-                        let tail = docker.logs_tail(name);
-                        tail.contains(CONTAINER_REFUSED).then(|| {
-                            format!("the server will not start on its database. Its log ends:\n{tail}")
-                        })
-                    }
+            Watch::Container { docker, name } => match docker.container(name)? {
+                Some(state) if matches!(state.status.as_str(), "exited" | "dead") => Some(format!(
+                    "the server stopped: {}\n{}",
+                    state.status,
+                    docker.logs_tail(name)
+                )),
+                _ => {
+                    let tail = docker.logs_tail(name);
+                    tail.contains(CONTAINER_REFUSED).then(|| {
+                        format!("the server will not start on its database. Its log ends:\n{tail}")
+                    })
                 }
-            }
+            },
             Watch::Process { service, mark } => {
                 let tail = service.log_after(Some(mark), 20);
                 tail.contains(REFUSED_DATABASE).then(|| {
@@ -771,11 +779,7 @@ impl Watch<'_> {
     }
 }
 
-pub(super) fn wait_until_healthy(
-    watch: &Watch,
-    port: u16,
-    seconds: u64,
-) -> Result<(), CliError> {
+pub(super) fn wait_until_healthy(watch: &Watch, port: u16, seconds: u64) -> Result<(), CliError> {
     let agent = http_agent();
     let url = format!("http://127.0.0.1:{port}/health");
     let deadline = Instant::now() + Duration::from_secs(seconds);

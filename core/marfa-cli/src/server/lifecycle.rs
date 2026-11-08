@@ -17,7 +17,11 @@ use crate::style::{self, Stream};
 
 /// The service of a native install, after a check that this account can
 /// manage it.
-fn service_of<'a>(state: &'a State, folder: &'a Folder, trace: bool) -> Result<Service<'a>, CliError> {
+fn service_of<'a>(
+    state: &'a State,
+    folder: &'a Folder,
+    trace: bool,
+) -> Result<Service<'a>, CliError> {
     let manager = state.manager.expect("a native install records its service");
     manager.check_account()?;
     Ok(Service {
@@ -346,16 +350,19 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let folder = Folder::new(&args)?;
     let (state, _) = folder.require_state()?;
     let trace = false;
-    let (service, container, docker): (Option<Service>, Option<docker::ContainerState>, Option<Docker>) =
-        match state.runtime {
-            Runtime::Native => (Some(service_of(&state, &folder, trace)?), None, None),
-            Runtime::Docker => {
-                let docker = Docker::new(false);
-                docker.check()?;
-                let container = docker.container(&state.name)?;
-                (None, container, Some(docker))
-            }
-        };
+    let (service, container, docker): (
+        Option<Service>,
+        Option<docker::ContainerState>,
+        Option<Docker>,
+    ) = match state.runtime {
+        Runtime::Native => (Some(service_of(&state, &folder, trace)?), None, None),
+        Runtime::Docker => {
+            let docker = Docker::new(false);
+            docker.check()?;
+            let container = docker.container(&state.name)?;
+            (None, container, Some(docker))
+        }
+    };
     let running = match (&service, &container) {
         (Some(service), _) => service.running(),
         (_, Some(container)) => container.status == "running",
