@@ -497,6 +497,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_value_the_client_wrote_while_the_file_was_read_is_kept() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let (id, hash) = file(&app, b"the file's own words").await;
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        let (seq, _) = files[0].clone();
+        let Begun::Reading(offered) = begin(&app, seq, &hash).await.unwrap() else {
+            panic!("the file was not offered");
+        };
+        let update = Update {
+            id: id.clone(),
+            properties: Some(map(json!({ "extracted_text": "the client's words" }))),
+            version: 1,
+            ..Update::default()
+        };
+        items::write::run(
+            &app,
+            &Caller::local(),
+            None,
+            Change::Update(Box::new(update)),
+        )
+        .await
+        .unwrap();
+        let counted = store(
+            &app,
+            &plan,
+            seq,
+            &hash,
+            offered.id,
+            read_text("the file's own words"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(counted, Count::None);
+        assert_eq!(
+            properties(&app, &id).await["extracted_text"],
+            "the client's words"
+        );
+    }
+
+    #[tokio::test]
+    async fn bytes_named_by_another_property_are_not_the_files_bytes() {
+        let (_dir, app) = started().await;
+        let plan = Plan::of(&app.settings.live());
+        let named = upload(&app, b"bytes a description names").await;
+        let (id, own) = file(&app, b"the file's own bytes").await;
+        let update = Update {
+            id,
+            properties: Some(map(json!({ "description": format!("see {named}") }))),
+            version: 1,
+            ..Update::default()
+        };
+        items::write::run(
+            &app,
+            &Caller::local(),
+            None,
+            Change::Update(Box::new(update)),
+        )
+        .await
+        .unwrap();
+        let (files, _) = pick(&app, &plan).await.unwrap();
+        assert_eq!(files.len(), 2);
+        let other = Hash::parse(&named).unwrap();
+        for (seq, stored) in files {
+            let hash = Hash::parse(&stored).unwrap();
+            let began = begin(&app, seq, &hash).await.unwrap();
+            assert_eq!(matches!(began, Begun::Reading(_)), hash == own, "{stored}");
+            assert_eq!(hash == other, !matches!(began, Begun::Reading(_)));
+        }
+        assert_eq!(pick(&app, &plan).await.unwrap().0.len(), 1);
+    }
+
+    #[tokio::test]
     async fn a_file_in_the_bin_is_not_written_and_waits() {
         let (_dir, app) = started().await;
         let plan = Plan::of(&app.settings.live());
