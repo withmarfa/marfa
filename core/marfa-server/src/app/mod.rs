@@ -21,6 +21,7 @@ pub mod instance;
 pub mod items;
 pub mod keys;
 pub mod oauth;
+pub mod overview;
 pub mod query;
 pub mod refusal;
 mod reindex;

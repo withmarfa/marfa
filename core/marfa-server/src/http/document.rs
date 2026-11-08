@@ -175,7 +175,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
     "GET /occurrences",
-    "GET /overview",
     "GET /webhooks",
     "GET /webhooks/{id}",
     "GET /webhooks/{id}/deliveries",
