@@ -326,6 +326,15 @@ fn a_length_nobody_could_have_is_malformed() {
 }
 
 #[test]
+fn a_length_of_negative_zero_is_zero() {
+    let duration = element(&[0x44, 0x89], &(-0.0f64).to_be_bytes());
+    let bytes = matroska(&[scale(), duration].concat(), &cluster(&[], false), false);
+    let seconds = read(&bytes, "video/webm").duration.expect("a length");
+    assert_eq!(seconds, 0.0);
+    assert!(seconds.is_sign_positive(), "{seconds:?} would print as -0");
+}
+
+#[test]
 fn a_file_of_endless_elements_is_stopped() {
     let mut bytes = matroska(&scale(), &[], true);
     // Millions of empty blocks in a cluster that never ends.

@@ -29,10 +29,10 @@ pub(crate) struct Media {
 }
 
 /// A duration that can be told to a person: a number from zero up to
-/// `MAX_DURATION_SECONDS`.
+/// `MAX_DURATION_SECONDS`. A negative zero is zero, which prints as `0`, not `-0`.
 pub(crate) fn checked_duration(seconds: f64) -> Result<f64, Refusal> {
     if (0.0..=MAX_DURATION_SECONDS).contains(&seconds) {
-        Ok(seconds)
+        Ok(if seconds == 0.0 { 0.0 } else { seconds })
     } else {
         Err(Refusal::Malformed(
             "the file states no real duration".into(),
