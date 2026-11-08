@@ -84,9 +84,7 @@ pub fn held_in(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<bool
     )?)
 }
 
-/// The distinct answers the read rule asks of the rows that lend a blob, read lazily in index
-/// order, so a caller stops at the first it may read. Each answer costs at most four index
-/// seeks, however many rows lend it.
+/// Each distinct lender costs at most four seeks, regardless of duplicate references.
 pub fn lenders<'a, 'c>(tx: &'a Transaction<'c>, hash: &'a Hash) -> Lenders<'a, 'c> {
     Lenders {
         tx,
@@ -96,9 +94,7 @@ pub fn lenders<'a, 'c>(tx: &'a Transaction<'c>, hash: &'a Hash) -> Lenders<'a, '
     }
 }
 
-/// The next distinct answer after the one read, each a seek past every row that shares
-/// the answer up to one column. SQLite seeks a row-value comparison on its first column
-/// alone, so a single `(a, b) > (?, ?)` would walk every row that lends alike.
+// Separate ranges avoid scanning duplicates with SQLite's row-value comparisons.
 const LENDER_AFTER: [&str; 4] = [
     "SELECT kind, item_type, edge_type, namespace FROM blob_references \
      WHERE hash = ?1 AND lends = 1 AND kind > ?2 \
@@ -119,8 +115,7 @@ pub struct Lenders<'a, 'c> {
     hash: &'a Hash,
     /// The last answer read, or `None` once the walk has ended.
     after: Option<[String; 4]>,
-    /// The deepest query in `LENDER_AFTER` that `after` bounds: only the first before any
-    /// answer is read.
+    /// Only the first query has a bound before any answer is read.
     deepest: usize,
 }
 

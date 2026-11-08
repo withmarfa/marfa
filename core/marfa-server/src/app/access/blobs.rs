@@ -66,10 +66,7 @@ impl Caller {
         self.holds(Permission::BlobsManage)
     }
 
-    /// A blob is read through a row that lends it and that the caller may read: an item of a
-    /// readable type, an edge its map and its source's type reach, or an extension its map
-    /// reaches on an item of a readable type. Whoever manages blobs reads every blob held.
-    /// The lenders are read only until one answers.
+    /// Stop at the first readable lender to avoid fetching the rest from storage.
     pub fn may_read_blob(&self, lenders: impl IntoIterator<Item = Result<Lender>>) -> Result<bool> {
         if self.reads_every_blob() {
             return Ok(true);
