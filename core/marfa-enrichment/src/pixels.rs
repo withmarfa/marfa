@@ -7,7 +7,7 @@ use image::imageops::{self, FilterType};
 use image::metadata::Orientation;
 use image::{DynamicImage, GrayImage, ImageDecoder, ImageFormat, ImageReader, Limits};
 
-use crate::Refusal;
+use crate::{Limit, Refusal};
 
 /// The most pixels OCR reads in one picture. A larger one is scaled down to it.
 ///
@@ -77,9 +77,12 @@ pub(crate) fn decode(bytes: &[u8], max_bytes: u64) -> Result<GrayImage, Refusal>
     let (width, height) = decoder.dimensions();
     let needed = peak_bytes(decoder.total_bytes(), u64::from(width) * u64::from(height));
     if needed > max_bytes {
-        return Err(Refusal::OverLimit(format!(
-            "the image needs {needed} bytes to decode and scale, and the limit is {max_bytes}"
-        )));
+        return Err(Refusal::OverLimit(
+            Limit::Memory,
+            format!(
+                "the image needs {needed} bytes to decode and scale, and the limit is {max_bytes}"
+            ),
+        ));
     }
     let mut limits = Limits::default();
     limits.max_alloc = Some(max_bytes);
@@ -98,7 +101,7 @@ pub(crate) fn decode(bytes: &[u8], max_bytes: u64) -> Result<GrayImage, Refusal>
 
 fn refusal(error: image::ImageError) -> Refusal {
     match error {
-        image::ImageError::Limits(error) => Refusal::OverLimit(error.to_string()),
+        image::ImageError::Limits(error) => Refusal::OverLimit(Limit::Memory, error.to_string()),
         error => Refusal::Malformed(format!("cannot decode the image: {error}")),
     }
 }

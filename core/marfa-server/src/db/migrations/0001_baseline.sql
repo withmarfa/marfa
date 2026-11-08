@@ -613,9 +613,14 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
     signature TEXT NOT NULL DEFAULT '',
+    -- The limit that stopped an over-limit file, and what it was then.
+    capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
+    capped_at INTEGER,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (item_seq, hash),
-    CHECK ((state = 'skipped') = (reason IS NOT NULL))
+    CHECK ((state = 'skipped') = (reason IS NOT NULL)),
+    CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
+    CHECK ((capped_by IS NULL) = (capped_at IS NULL))
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);

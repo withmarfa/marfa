@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use marfa_enrichment::{
-    DEFAULT_OCR_LANGUAGES, NATIVE, OcrOptions, Options, Reading, Refusal as Unread,
+    DEFAULT_OCR_LANGUAGES, Limit, NATIVE, OcrOptions, Options, Reading, Refusal as Unread,
 };
 use serde_json::json;
 
@@ -23,7 +23,7 @@ use crate::settings::registry::{
     ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, ENRICHMENT_TESSDATA_DIR,
     Snapshot as Settings,
 };
-use queue::{Signatures, Why};
+use queue::{Cap, Signatures, Why};
 
 const ACTION: &str = "item.enrich";
 
@@ -34,6 +34,8 @@ struct Plan {
     batch: usize,
     max_attempts: u64,
     max_blob_bytes: u64,
+    max_inflated_bytes: u64,
+    max_memory_bytes: u64,
     signatures: Signatures,
 }
 
@@ -64,10 +66,14 @@ impl Plan {
             batch: usize::try_from(live.get(ENRICHMENT_BATCH_SIZE)).unwrap_or(usize::MAX - 1),
             max_attempts: live.get(ENRICHMENT_MAX_ATTEMPTS),
             max_blob_bytes,
+            max_inflated_bytes: max_inflated,
+            max_memory_bytes: max_memory,
             signatures: Signatures {
                 native: NATIVE.to_string(),
-                limits: format!("{max_blob_bytes}:{max_inflated}:{max_memory}"),
                 ocr: format!("{ocr}:{NATIVE}:{languages}:{folder}"),
+                blob: max_blob_bytes,
+                inflated: max_inflated,
+                memory: max_memory,
             },
         }
     }
@@ -107,11 +113,15 @@ impl Fate {
     }
 }
 
-fn fate_of_refusal(refusal: &Unread) -> Fate {
+fn fate_of_refusal(refusal: &Unread, plan: &Plan) -> Fate {
     match refusal {
         Unread::Unsupported => Fate::Skip(Why::Unsupported),
         Unread::Encrypted => Fate::Skip(Why::Encrypted),
-        Unread::OverLimit(_) => Fate::Skip(Why::OverLimit),
+        Unread::OverLimit(limit, _) => Fate::Skip(Why::OverLimit(match limit {
+            Limit::Inflated => Cap::Inflated(plan.max_inflated_bytes),
+            Limit::Memory => Cap::Memory(plan.max_memory_bytes),
+            Limit::Fixed => Cap::Fixed,
+        })),
         Unread::OcrUnavailable(_) => Fate::Skip(Why::Ocr),
         Unread::Malformed(_) | Unread::TimedOut | Unread::Crashed(_) => Fate::Retry,
         Unread::ReaderUnavailable(_) => Fate::Untried,
@@ -135,12 +145,12 @@ fn judge(read: std::result::Result<Reading, Unread>, mime: &str, plan: &Plan) ->
     };
     let reading = match read {
         Ok(reading) => reading,
-        Err(refusal) => return nothing(fate_of_refusal(&refusal)),
+        Err(refusal) => return nothing(fate_of_refusal(&refusal, plan)),
     };
     let size = reading.dimensions.map(|size| (size.width, size.height));
     let text = (!reading.text.is_empty()).then_some(reading.text);
     let fate = if let Some(refusal) = &reading.text_refused {
-        fate_of_refusal(refusal)
+        fate_of_refusal(refusal, plan)
     } else if (marfa_enrichment::is_image(mime) && size.is_none() && text.is_none())
         || (marfa_enrichment::ocr_applies(mime) && text.is_none() && !(plan.ocr && NATIVE))
     {
@@ -342,7 +352,14 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Coun
         .clone()
         .unwrap_or_else(|| blob.mime_type.clone());
     if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
-        return settle(app, plan, seq, &hash, Fate::Skip(Why::OverLimit)).await;
+        return settle(
+            app,
+            plan,
+            seq,
+            &hash,
+            Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes))),
+        )
+        .await;
     }
     let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
     if let Err(Unread::ReaderUnavailable(reason)) = &read {
@@ -612,24 +629,68 @@ mod tests {
         assert!(pick(&app, &plan).await.unwrap().0.is_empty());
     }
 
-    #[tokio::test]
-    async fn a_skip_comes_back_when_the_settings_it_depends_on_change() {
+    async fn waiting_after(cap: Cap, change: impl Fn(&mut Signatures)) -> usize {
         let (_dir, app) = started().await;
         let plan = Plan::of(&app.settings.live());
         let (_, hash) = file(&app, b"a file past a limit").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
-        let seq = files[0].0;
-        settle(&app, &plan, seq, &hash, Fate::Skip(Why::OverLimit))
-            .await
-            .unwrap();
+        settle(
+            &app,
+            &plan,
+            files[0].0,
+            &hash,
+            Fate::Skip(Why::OverLimit(cap)),
+        )
+        .await
+        .unwrap();
         assert!(pick(&app, &plan).await.unwrap().0.is_empty());
         let mut other = Plan::of(&app.settings.live());
-        other.signatures.ocr.push('+');
-        other.signatures.native.push('+');
-        assert!(pick(&app, &other).await.unwrap().0.is_empty());
-        let mut raised = Plan::of(&app.settings.live());
-        raised.signatures.limits.push('+');
-        assert_eq!(pick(&app, &raised).await.unwrap().0.len(), 1);
+        change(&mut other.signatures);
+        pick(&app, &other).await.unwrap().0.len()
+    }
+
+    #[tokio::test]
+    async fn a_skip_comes_back_only_when_the_limit_that_stopped_it_is_raised() {
+        let now = Plan::of(&started().await.1.settings.live()).signatures;
+        let caps = [
+            Cap::Blob(now.blob),
+            Cap::Inflated(now.inflated),
+            Cap::Memory(now.memory),
+        ];
+        let raise: [fn(&mut Signatures); 3] =
+            [|s| s.blob += 1, |s| s.inflated += 1, |s| s.memory += 1];
+        let lower: [fn(&mut Signatures); 3] =
+            [|s| s.blob -= 1, |s| s.inflated -= 1, |s| s.memory -= 1];
+        for (stopped, cap) in caps.into_iter().enumerate() {
+            for (changed, (up, down)) in raise.iter().zip(lower.iter()).enumerate() {
+                let back = usize::from(stopped == changed);
+                assert_eq!(
+                    waiting_after(cap, up).await,
+                    back,
+                    "{cap:?} raised {changed}"
+                );
+                assert_eq!(
+                    waiting_after(cap, down).await,
+                    0,
+                    "{cap:?} lowered {changed}"
+                );
+            }
+            let unrelated = |s: &mut Signatures| {
+                s.ocr.push('+');
+                s.native.push('+');
+            };
+            assert_eq!(waiting_after(cap, unrelated).await, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_skip_for_a_bound_of_the_readers_does_not_come_back() {
+        let raised = |s: &mut Signatures| {
+            s.blob += 1;
+            s.inflated += 1;
+            s.memory += 1;
+        };
+        assert_eq!(waiting_after(Cap::Fixed, raised).await, 0);
     }
 
     #[tokio::test]
@@ -643,7 +704,9 @@ mod tests {
             .unwrap();
         let mut changed = Plan::of(&app.settings.live());
         changed.signatures.native.push('+');
-        changed.signatures.limits.push('+');
+        changed.signatures.blob += 1;
+        changed.signatures.inflated += 1;
+        changed.signatures.memory += 1;
         changed.signatures.ocr.push('+');
         assert!(pick(&app, &changed).await.unwrap().0.is_empty());
     }
@@ -677,8 +740,16 @@ mod tests {
         assert_eq!(fate(Unread::Unsupported), Fate::Skip(Why::Unsupported));
         assert_eq!(fate(Unread::Encrypted), Fate::Skip(Why::Encrypted));
         assert_eq!(
-            fate(Unread::OverLimit("x".into())),
-            Fate::Skip(Why::OverLimit)
+            fate(Unread::OverLimit(Limit::Memory, "x".into())),
+            Fate::Skip(Why::OverLimit(Cap::Memory(plan.max_memory_bytes)))
+        );
+        assert_eq!(
+            fate(Unread::OverLimit(Limit::Inflated, "x".into())),
+            Fate::Skip(Why::OverLimit(Cap::Inflated(plan.max_inflated_bytes)))
+        );
+        assert_eq!(
+            fate(Unread::OverLimit(Limit::Fixed, "x".into())),
+            Fate::Skip(Why::OverLimit(Cap::Fixed))
         );
         assert_eq!(
             fate(Unread::OcrUnavailable("x".into())),

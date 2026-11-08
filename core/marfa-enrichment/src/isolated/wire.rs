@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kind::Kind;
 use crate::media::checked_duration;
-use crate::{Dimensions, OcrOptions, Options, Reading, Refusal, Sandbox};
+use crate::{Dimensions, Limit, OcrOptions, Options, Reading, Refusal, Sandbox};
 
 /// The longest reason a child may give.
 pub(super) const MAX_REASON_BYTES: usize = 2048;
@@ -116,7 +116,9 @@ pub(super) enum RefusalKind {
     Unsupported,
     Encrypted,
     Malformed,
-    OverLimit,
+    OverInflated,
+    OverMemory,
+    OverFixed,
     OcrUnavailable,
 }
 
@@ -125,7 +127,9 @@ impl Refused {
         let (kind, reason) = match refusal {
             Refusal::Unsupported => (RefusalKind::Unsupported, String::new()),
             Refusal::Encrypted => (RefusalKind::Encrypted, String::new()),
-            Refusal::OverLimit(reason) => (RefusalKind::OverLimit, reason),
+            Refusal::OverLimit(Limit::Inflated, reason) => (RefusalKind::OverInflated, reason),
+            Refusal::OverLimit(Limit::Memory, reason) => (RefusalKind::OverMemory, reason),
+            Refusal::OverLimit(Limit::Fixed, reason) => (RefusalKind::OverFixed, reason),
             Refusal::OcrUnavailable(reason) => (RefusalKind::OcrUnavailable, reason),
             Refusal::Malformed(reason)
             | Refusal::Crashed(reason)
@@ -150,7 +154,9 @@ impl Refused {
             RefusalKind::Unsupported => Refusal::Unsupported,
             RefusalKind::Encrypted => Refusal::Encrypted,
             RefusalKind::Malformed => Refusal::Malformed(reason),
-            RefusalKind::OverLimit => Refusal::OverLimit(reason),
+            RefusalKind::OverInflated => Refusal::OverLimit(Limit::Inflated, reason),
+            RefusalKind::OverMemory => Refusal::OverLimit(Limit::Memory, reason),
+            RefusalKind::OverFixed => Refusal::OverLimit(Limit::Fixed, reason),
             RefusalKind::OcrUnavailable => Refusal::OcrUnavailable(reason),
         })
     }
@@ -182,7 +188,10 @@ impl Asked {
             RefusalKind::Encrypted => {
                 matches!(self.kind, Kind::Document(_) | Kind::Sheet(_) | Kind::Pdf)
             }
-            RefusalKind::Malformed | RefusalKind::OverLimit => true,
+            RefusalKind::Malformed
+            | RefusalKind::OverInflated
+            | RefusalKind::OverMemory
+            | RefusalKind::OverFixed => true,
             RefusalKind::OcrUnavailable => self.reads_pictures(),
         }
     }
@@ -192,7 +201,11 @@ impl Asked {
             && matches!(self.kind, Kind::Image { .. })
             && matches!(
                 kind,
-                RefusalKind::Malformed | RefusalKind::OverLimit | RefusalKind::OcrUnavailable
+                RefusalKind::Malformed
+                    | RefusalKind::OverInflated
+                    | RefusalKind::OverMemory
+                    | RefusalKind::OverFixed
+                    | RefusalKind::OcrUnavailable
             )
     }
 }
@@ -445,7 +458,7 @@ mod tests {
     fn a_refusal_a_child_may_give_is_passed_on() {
         assert_eq!(
             judged(r#"{"refusal":{"kind":"over_limit","reason":"big"}}"#),
-            Err(Refusal::OverLimit("big".into()))
+            Err(Refusal::OverLimit(Limit::Memory, "big".into()))
         );
     }
 
@@ -472,7 +485,7 @@ mod tests {
         );
         assert_eq!(
             judged(&beside).unwrap().text_refused,
-            Some(Refusal::OverLimit("a b".into()))
+            Some(Refusal::OverLimit(Limit::Inflated, "a b".into()))
         );
     }
 

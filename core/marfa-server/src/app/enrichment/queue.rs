@@ -4,12 +4,34 @@ use rusqlite::{Transaction, params};
 
 use crate::app::refusal::Result;
 
+/// The limit that stopped a file, with its value then. Only raising that limit brings the file back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    Blob(u64),
+    Inflated(u64),
+    Memory(u64),
+    /// A bound of the readers, which no setting raises.
+    Fixed,
+}
+
+impl Cap {
+    fn stored(self) -> (&'static str, i64) {
+        let value = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        match self {
+            Cap::Blob(at) => ("blob", value(at)),
+            Cap::Inflated(at) => ("inflated", value(at)),
+            Cap::Memory(at) => ("memory", value(at)),
+            Cap::Fixed => ("fixed", 0),
+        }
+    }
+}
+
 /// Why a file was left, which decides what brings it back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
     Unsupported,
     Encrypted,
-    OverLimit,
+    OverLimit(Cap),
     Ocr,
 }
 
@@ -18,7 +40,7 @@ impl Why {
         match self {
             Why::Unsupported => "unsupported",
             Why::Encrypted => "encrypted",
-            Why::OverLimit => "over_limit",
+            Why::OverLimit(_) => "over_limit",
             Why::Ocr => "ocr",
         }
     }
@@ -28,38 +50,47 @@ impl Why {
 #[derive(Clone, Debug)]
 pub struct Signatures {
     pub native: String,
-    pub limits: String,
     pub ocr: String,
+    pub blob: u64,
+    pub inflated: u64,
+    pub memory: u64,
 }
 
 impl Signatures {
     pub fn of(&self, why: Why) -> &str {
         match why {
             Why::Unsupported => &self.native,
-            Why::Encrypted => "",
-            Why::OverLimit => &self.limits,
+            Why::Encrypted | Why::OverLimit(_) => "",
             Why::Ocr => &self.ocr,
         }
+    }
+
+    fn bound(&self) -> [rusqlite::types::Value; 5] {
+        let value = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        [
+            self.native.clone().into(),
+            value(self.blob).into(),
+            value(self.inflated).into(),
+            value(self.memory).into(),
+            self.ocr.clone().into(),
+        ]
     }
 }
 
 const BACK: &str = "state = 'skipped' AND ((reason = 'unsupported' AND signature <> ?1) \
-     OR (reason = 'over_limit' AND signature <> ?2) OR (reason = 'ocr' AND signature <> ?3))";
+     OR (reason = 'over_limit' AND capped_at < CASE capped_by WHEN 'blob' THEN ?2 \
+         WHEN 'inflated' THEN ?3 WHEN 'memory' THEN ?4 ELSE -1 END) \
+     OR (reason = 'ocr' AND signature <> ?5))";
 
 /// Whether a run has anything to do: a file waiting, or a skip the settings now reverse.
 pub fn due(tx: &Transaction<'_>, max_attempts: i64, signatures: &Signatures) -> Result<bool> {
     Ok(tx
         .prepare_cached(&format!(
             "SELECT EXISTS (SELECT 1 FROM enrichment_files \
-             WHERE (state = 'waiting' AND attempts < ?4) OR ({BACK}))"
+             WHERE (state = 'waiting' AND attempts < ?6) OR ({BACK}))"
         ))?
         .query_row(
-            params![
-                signatures.native,
-                signatures.limits,
-                signatures.ocr,
-                max_attempts
-            ],
+            rusqlite::params_from_iter(signatures.bound().into_iter().chain([max_attempts.into()])),
             |row| row.get(0),
         )?)
 }
@@ -68,13 +99,9 @@ pub fn due(tx: &Transaction<'_>, max_attempts: i64, signatures: &Signatures) -> 
 pub fn requeue(tx: &Transaction<'_>, signatures: &Signatures) -> Result<()> {
     tx.prepare_cached(&format!(
         "UPDATE enrichment_files SET state = 'waiting', attempts = 0, reason = NULL, \
-         signature = '' WHERE {BACK}"
+         signature = '', capped_by = NULL, capped_at = NULL WHERE {BACK}"
     ))?
-    .execute(params![
-        signatures.native,
-        signatures.limits,
-        signatures.ocr
-    ])?;
+    .execute(rusqlite::params_from_iter(signatures.bound()))?;
     Ok(())
 }
 
@@ -122,7 +149,7 @@ pub fn drop_row(tx: &Transaction<'_>, seq: i64, hash: &str) -> Result<()> {
 pub fn read(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'read', reason = NULL, signature = '', \
-         updated_at = ?3 WHERE item_seq = ?1 AND hash = ?2",
+         capped_by = NULL, capped_at = NULL, updated_at = ?3 WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![seq, hash, at])?;
     Ok(())
@@ -136,11 +163,26 @@ pub fn skip(
     signature: &str,
     at: &str,
 ) -> Result<()> {
+    let (capped_by, capped_at) = match why {
+        Why::OverLimit(cap) => {
+            let (by, at) = cap.stored();
+            (Some(by), Some(at))
+        }
+        _ => (None, None),
+    };
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'skipped', reason = ?3, signature = ?4, \
-         updated_at = ?5 WHERE item_seq = ?1 AND hash = ?2",
+         capped_by = ?5, capped_at = ?6, updated_at = ?7 WHERE item_seq = ?1 AND hash = ?2",
     )?
-    .execute(params![seq, hash, why.word(), signature, at])?;
+    .execute(params![
+        seq,
+        hash,
+        why.word(),
+        signature,
+        capped_by,
+        capped_at,
+        at
+    ])?;
     Ok(())
 }
 

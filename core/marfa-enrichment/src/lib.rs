@@ -182,6 +182,17 @@ pub struct Dimensions {
     pub height: u32,
 }
 
+/// Which limit a file was past, so that only raising that one can let it read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Limit {
+    /// `Options::max_inflated_bytes`.
+    Inflated,
+    /// `Options::max_memory_bytes`.
+    Memory,
+    /// A bound of the readers themselves, which no option raises.
+    Fixed,
+}
+
 /// Why a file was not read. The kinds are told apart because a caller treats them
 /// differently: `Unsupported`, `Encrypted` and `Malformed` are about the file,
 /// `OverLimit` and `TimedOut` about the limits it met, and `OcrUnavailable` and
@@ -199,8 +210,8 @@ pub enum Refusal {
     Malformed(String),
     /// Reading the file would use more than a limit allows. Raising the limit
     /// may let it read. The reason is for a log.
-    #[error("the file is past a limit: {0}")]
-    OverLimit(String),
+    #[error("the file is past a limit: {1}")]
+    OverLimit(Limit, String),
     /// OCR is on, and cannot start: a language that neither the data folder nor the
     /// program holds, or a model that does not load. The file may be fine, and
     /// fixing the setting lets it read. The reason is for the person who sets OCR
@@ -289,7 +300,12 @@ fn read_file(
     let bytes = source
         .read_all()
         .map_err(|error| Refusal::Malformed(format!("the file cannot be read: {error}")))?
-        .ok_or_else(|| Refusal::OverLimit(format!("no memory to hold a file of {len} bytes")))?;
+        .ok_or_else(|| {
+            Refusal::OverLimit(
+                Limit::Memory,
+                format!("no memory to hold a file of {len} bytes"),
+            )
+        })?;
     read_bytes(&bytes, kind, mime, options, clock)
 }
 

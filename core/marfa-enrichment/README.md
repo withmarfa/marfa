@@ -79,7 +79,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 | `Unsupported` | An unknown type, or a PDF without `native`. No child is started. |
 | `Encrypted` | A password-protected file. |
 | `Malformed` | A file that does not parse. |
-| `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes` that is held whole, or a child over its memory limit. Raising the limit may let it read. |
+| `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes` that is held whole, or a child over its memory limit. It names the limit: `Inflated` and `Memory` are options, and raising that one may let the file read; `Fixed` is a bound of the readers, which no option raises. |
 | `TimedOut` | The child ended at the deadline. |
 | `Crashed` | The child ended by a signal, or gave an answer that cannot be believed. |
 | `OcrUnavailable` | A language or model that does not load. The setting is at fault, not the file. |
