@@ -150,8 +150,24 @@ impl Disk {
     /// Reads a blob's file through and answers its size and what it hashes to, with its first
     /// byte changed when `changed` says so.
     pub fn rehash(&self, hash: &Hash, changed: bool) -> io::Result<Option<(u64, Hash)>> {
-        let mut file = match self.open_blob(hash) {
+        self.rehash_opened(hash, changed, |path| File::open(path))
+    }
+
+    fn rehash_opened(
+        &self,
+        hash: &Hash,
+        changed: bool,
+        open: impl FnOnce(&Path) -> io::Result<File>,
+    ) -> io::Result<Option<(u64, Hash)>> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        let mut file = match open(&self.path_of(hash)) {
             Ok(file) => file,
+            // A drive that went away after the first look shows every file as missing.
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !self.reachable() => {
+                return Err(Disk::unreachable());
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
@@ -363,6 +379,19 @@ mod tests {
         disk.delete(&hash).unwrap();
         disk.delete(&hash).unwrap();
         assert_eq!(disk.rehash(&hash, false).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_missing_because_the_folder_went_away_is_unreachable_not_missing() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(dir.path()).unwrap();
+        let hash = Hash::from_digest(&Sha256::digest(b"never kept"));
+        assert_eq!(disk.rehash(&hash, false).unwrap(), None);
+        let unmounted = disk.rehash_opened(&hash, false, |path| {
+            fs::remove_file(dir.path().join(MARKER))?;
+            File::open(path)
+        });
+        assert!(unmounted.is_err(), "{unmounted:?}");
     }
 
     #[test]
