@@ -19,11 +19,14 @@ import { tmpdir } from "node:os";
  *   tsx scripts/marfa-server.ts restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...]
  *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>|pause|resume
  *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
+ *   tsx scripts/marfa-server.ts log [--state <dir>]
  *
  * `refused` boots the same server on a state directory and waits for it to end
  * instead of for `/health`: for a boot that is meant to be refused. With
  * `--kill-when`, it kills the server's process group with `SIGKILL` as soon
  * as the server's log holds the text, for a boot stopped partway.
+ *
+ * `log` prints what the server wrote to its log, then to stderr.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
@@ -131,7 +134,15 @@ const RUN_SERVER = resolve(
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
-  command: "up" | "down" | "status" | "refused" | "restart" | "clock" | "fault";
+  command:
+    | "up"
+    | "down"
+    | "status"
+    | "refused"
+    | "restart"
+    | "clock"
+    | "fault"
+    | "log";
   state: string;
   port?: number;
   nodeEnv?: string;
@@ -172,13 +183,14 @@ const COMMANDS = [
   "restart",
   "clock",
   "fault",
+  "log",
 ] as const;
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | log [--state <dir>]",
     );
   }
   const args: Args = {
@@ -1006,6 +1018,14 @@ async function refuseToClearUnderALiveServer(state: string): Promise<void> {
   }
 }
 
+/** What the server wrote to stdout, then to stderr. */
+function printLog(state: string): void {
+  const p = paths(state);
+  for (const file of [p.log, p.stderr]) {
+    if (existsSync(file)) process.stdout.write(readFileSync(file, "utf8"));
+  }
+}
+
 function status(args: Args): void {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -1159,6 +1179,7 @@ if (
     if (args.command === "up") await bootServer(boot);
     else if (args.command === "refused") await bootRefused(boot, args.killWhen);
     else if (args.command === "restart") await restartServer(boot, args.signal);
+    else if (args.command === "log") printLog(args.state);
     else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);
     } else if (args.command === "down") {

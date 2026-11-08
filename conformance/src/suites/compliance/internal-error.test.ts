@@ -1,10 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * A fault nothing foresaw answers `500 internal_error`, in the envelope,
@@ -12,16 +11,20 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  *
  * **A fault the fixture makes, on a server of its own.** The server answers
  * every input it knows a refusal for, so no request reaches a fault: that is
- * the point of the refusals. What reaches one is an instance whose storage is
- * not what the server expects, here the audit log's table renamed in the
- * stored file while the server runs, which the audit door reads. The table is
- * renamed back afterward.
+ * the point of the refusals. What reaches one is a store that fails, which
+ * the target interface's faults make it do: `refuse:read` fails every read,
+ * and `fail:audit` fails the audit entry of one write, aimed at one entry of
+ * a page.
  */
 let server: FreshServer | undefined;
 
 beforeAll(async () => {
   server = await bootFreshServer("internal-error");
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+afterEach(async () => {
+  await server?.clearFault();
+});
 
 afterAll(async () => {
   await server?.stop();
@@ -33,18 +36,12 @@ function audit(): Promise<Response> {
   });
 }
 
-function renameAuditLog(from: string, to: string): void {
-  withInstanceDatabase(server!.sqlitePath, (db) => {
-    db.exec(`ALTER TABLE ${from} RENAME TO ${to}`);
-  });
-}
-
 describe("an unhandled fault", () => {
   it("answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone", async () => {
     // The control: the door answers before the fault is made.
     expect((await audit()).status).toBe(200);
 
-    renameAuditLog("audit_log", "audit_log_gone");
+    await server!.setFault("refuse:read");
     try {
       const faulted = await audit();
       expect(faulted.status).toBe(500);
@@ -56,29 +53,14 @@ describe("an unhandled fault", () => {
         error: { code: "internal_error", message: "Internal server error" },
       });
     } finally {
-      renameAuditLog("audit_log_gone", "audit_log");
+      await server!.clearFault("refuse:read");
     }
 
     expect((await audit()).status).toBe(200);
   });
 });
 
-/**
- * A fault that one entry of a bulk page meets, which the page reports on
- * the entry: a trigger in the stored file refuses the insert of one row, by
- * a value only that entry carries, with a reason of its own.
- */
-function withTrigger<T>(statement: string, use: () => Promise<T>): Promise<T> {
-  withInstanceDatabase(server!.sqlitePath, (db) => {
-    db.exec(statement);
-  });
-  return use().finally(() => {
-    withInstanceDatabase(server!.sqlitePath, (db) => {
-      db.exec("DROP TRIGGER IF EXISTS refuse_entry");
-    });
-  });
-}
-
+/** An unhandled fault that one entry of a bulk page meets, which the page reports on the entry. */
 function bulk(path: string, body: unknown): Promise<Response> {
   return fetch(`${server!.apiUrl}${path}`, {
     method: "POST",
@@ -118,10 +100,8 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
         properties: { body: "c" },
       },
     ];
-    const faulted = await withTrigger(
-      `CREATE TRIGGER refuse_entry BEFORE INSERT ON items WHEN NEW.source_id = '${refused}' BEGIN SELECT RAISE(ABORT, 'refused by the store'); END`,
-      () => bulk("/items/bulk", { atomic: false, items }),
-    );
+    await server!.setFault("fail:audit=items.bulk@2");
+    const faulted = await bulk("/items/bulk", { atomic: false, items });
     expect(faulted.status).toBe(200);
     const page = (await faulted.json()) as Page;
     expect(page.counts).toEqual({
@@ -135,7 +115,7 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
       "errored",
       "created",
     ]);
-    // Exactly the code and the message: nothing of the trigger's reason, the
+    // Exactly the code and the message: nothing of the failure's reason, the
     // statement or the values reaches the entry.
     expect(page.results[1]?.error).toEqual({
       code: "internal_error",
@@ -162,10 +142,8 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
       },
       { type: "core.note", source_id: refused, properties: { body: "b" } },
     ];
-    const faulted = await withTrigger(
-      `CREATE TRIGGER refuse_entry BEFORE INSERT ON items WHEN NEW.source_id = '${refused}' BEGIN SELECT RAISE(ABORT, 'refused by the store'); END`,
-      () => bulk("/items/bulk", { atomic: true, items }),
-    );
+    await server!.setFault("fail:audit=items.bulk");
+    const faulted = await bulk("/items/bulk", { atomic: true, items });
     expect(faulted.status).toBe(500);
     expect(faulted.headers.get("X-Error-Code")).toBe("internal_error");
     expect(await faulted.json()).toEqual({
@@ -198,10 +176,8 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
       target_id,
       edge_type: "references",
     }));
-    const faulted = await withTrigger(
-      `CREATE TRIGGER refuse_entry BEFORE INSERT ON edges WHEN NEW.target_id = '${poisoned}' BEGIN SELECT RAISE(ABORT, 'refused by the store'); END`,
-      () => bulk("/edges/bulk", { atomic: false, edges }),
-    );
+    await server!.setFault("fail:audit=edges.bulk@2");
+    const faulted = await bulk("/edges/bulk", { atomic: false, edges });
     expect(faulted.status).toBe(200);
     const page = (await faulted.json()) as Page;
     expect(page.counts).toMatchObject({ created: 2, errored: 1 });
@@ -210,10 +186,8 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
       message: ENTRY_FAULT,
     });
 
-    const atomic = await withTrigger(
-      `CREATE TRIGGER refuse_entry BEFORE INSERT ON edges WHEN NEW.target_id = '${poisoned}' BEGIN SELECT RAISE(ABORT, 'refused by the store'); END`,
-      () => bulk("/edges/bulk", { atomic: true, edges }),
-    );
+    await server!.setFault("fail:audit=edges.bulk");
+    const atomic = await bulk("/edges/bulk", { atomic: true, edges });
     expect(atomic.status).toBe(500);
     expect(await atomic.json()).toEqual({
       error: { code: "internal_error", message: "Internal server error" },

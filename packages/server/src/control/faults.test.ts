@@ -14,6 +14,8 @@ import {
   holdArmed,
   holdAt,
   POINTS,
+  refuseArmed,
+  refusing,
   setFault,
   storeCheckDeadlineFault,
 } from "./faults.js";
@@ -33,13 +35,15 @@ function arm(name: string, arg: string | null = null): string | undefined {
 
 describe("the declared points", () => {
   it("arm every point the table declares, with a job where a point names one", () => {
-    for (const kind of ["hold", "fail"] as const) {
+    for (const kind of ["hold", "fail", "refuse"] as const) {
       for (const point of POINTS[kind]) {
         const name = `${kind}:${point.name.replace("<job>", JOBS[0]!)}`;
         expect(arm(name), name).toBeUndefined();
       }
     }
-    expect(activeFaults().length).toBe(POINTS.hold.length + POINTS.fail.length);
+    expect(activeFaults().length).toBe(
+      POINTS.hold.length + POINTS.fail.length + POINTS.refuse.length,
+    );
   });
 
   it("refuse a name no point answers to, in every kind", () => {
@@ -300,12 +304,39 @@ describe("a free fault", () => {
     expect(freeFault("blobs")).toBeUndefined();
   });
 
+  it("reads unknown as free space that cannot be read", () => {
+    expect(arm("free:blobs", "unknown")).toBeUndefined();
+    expect(freeFault("blobs")).toBeNull();
+    expect(freeFault("database")).toBeUndefined();
+  });
+
   it("refuses a volume nothing reads, and an argument that is not a whole number of bytes", () => {
     expect(arm("free:elsewhere", "1")).toMatch(/not a volume/);
     expect(arm("free:blobs")).toMatch(/whole number/);
     for (const arg of ["-1", "1.5", "1e3", "", "ten", "9007199254740993"]) {
       expect(arm("free:blobs", arg), arg).toMatch(/whole number/);
     }
+    expect(activeFaults()).toEqual([]);
+  });
+});
+
+describe("a refuse fault", () => {
+  it("refuses every time until cleared, counts each refusal and acts on its own point alone", () => {
+    expect(refusing("read")).toBe(false);
+    expect(arm("refuse:read")).toBeUndefined();
+    expect(refuseArmed("read")).toBe(true);
+    expect(refuseArmed("write")).toBe(false);
+    expect(refusing("read")).toBe(true);
+    expect(refusing("read")).toBe(true);
+    expect(refusing("write")).toBe(false);
+    expect(activeFaults()[0]?.fired).toBe(2);
+    clearFaults();
+    expect(refusing("read")).toBe(false);
+  });
+
+  it("refuses a point nothing declares and an argument", () => {
+    expect(arm("refuse:nowhere")).toMatch(/no refuse point/);
+    expect(arm("refuse:read", "1")).toMatch(/takes no argument/);
     expect(activeFaults()).toEqual([]);
   });
 });

@@ -122,6 +122,8 @@ export interface FreshServer {
    * `faults()` reports. Rejects after `timeoutMs` (60 seconds by default).
    */
   waitForHold(name: string, count?: number, timeoutMs?: number): Promise<void>;
+  /** Everything the server has written so far: its log, then what it printed to stderr. */
+  output(): Promise<string>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
@@ -540,6 +542,13 @@ export async function bootFreshServer(
       }
     },
     faults: listArmedFaults,
+    async output() {
+      const logged = await adapter("log");
+      if (logged.status !== 0) {
+        throw new Error(`the target did not give its log:\n${logged.output}`);
+      }
+      return logged.output;
+    },
     async waitForHold(name, count = 1, timeoutMs = 60_000) {
       const deadline = Date.now() + timeoutMs;
       let seen = 0;
