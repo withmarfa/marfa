@@ -1436,13 +1436,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # The drill uses the same Litestream version as the server image.
       - name: Install the object store and Litestream
         run: |
           curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
           sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
-          version=$(sed -n 's/^ARG LITESTREAM_VERSION=//p' deploy/Dockerfile)
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=0.5.17
           curl --fail --location --retry 3 "https://github.com/benbjohnson/litestream/releases/download/v$version/litestream-$version-linux-x86_64.tar.gz" -o "$RUNNER_TEMP/litestream.tar.gz"
           tar -xzf "$RUNNER_TEMP/litestream.tar.gz" -C "$RUNNER_TEMP" litestream
           sudo install -m 755 "$RUNNER_TEMP/litestream" /usr/local/bin/litestream
