@@ -37,9 +37,9 @@ pub struct Session {
 }
 
 impl Session {
-    /// Whether it was made in the last five minutes.
-    pub fn is_recent(&self, now: i64) -> bool {
-        now - self.created_at <= RECENT_SECONDS
+    /// Second-resolution storage makes the recency check conservative.
+    pub fn is_recent(&self, now_ms: i64) -> bool {
+        now_ms.saturating_sub(self.created_at.saturating_mul(1000)) <= RECENT_SECONDS * 1000
     }
 
     /// What a sign-in is called where it wrote something.

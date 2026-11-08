@@ -14,6 +14,7 @@ use super::rows::{self, Landed, NewEdge, Store};
 use super::{Edge, not_found};
 use crate::app::App;
 use crate::app::access::{Caller, Level};
+use crate::app::blobs::references::{self, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::events::Event;
 use crate::app::idempotency::{self, Claim, Need};
@@ -41,8 +42,9 @@ pub enum By {
     /// Whether the source goes to the bin with a binned host is judged once every listed edge
     /// stands, so listing order decides nothing.
     Inline,
-    /// Held to the writer's grants and every rule but the property schema: the edge stands as stored.
-    Copy,
+    /// Held to the writer's grants and every rule but the property schema: the edge stands as
+    /// stored, and each digest it names keeps the standing it has on the edge `seq`.
+    Copy(i64),
     /// Written whatever the writer's edge grants.
     Link,
 }
@@ -467,6 +469,20 @@ impl<'c> Writing<'_, '_, 'c> {
             )
             .with_detail("existing_id", held.id.as_str()));
         }
+        let inherited = match by {
+            By::Copy(seq) => Some(references::held(self.tx(), Referencing::Edge(seq))?),
+            By::Caller | By::Inline | By::Link => None,
+        };
+        let decided = references::decide(
+            self.tx(),
+            self.caller(),
+            None,
+            &create.properties,
+            Naming {
+                inherited: inherited.as_ref(),
+                ..Naming::default()
+            },
+        )?;
         let minted = Uuid::now_v7().to_string();
         let edge = rows::insert(
             self.tx(),
@@ -479,6 +495,7 @@ impl<'c> Writing<'_, '_, 'c> {
                 at: &self.unit.at,
             },
         )?;
+        decided.apply(self.tx(), Referencing::Edge(edge.seq))?;
         announce(self.unit, "edge.created", &edge, &source, None)?;
         self.record(
             "edge.create",
@@ -588,6 +605,13 @@ impl<'c> Writing<'_, '_, 'c> {
             Some(kind) => self.judge_properties(kind, &properties, By::Caller)?,
             None => {}
         }
+        let decided = references::decide(
+            self.tx(),
+            self.caller(),
+            Some(Referencing::Edge(edge.seq)),
+            &properties,
+            Naming::default(),
+        )?;
         let written = rows::advance(
             self.tx(),
             &edge,
@@ -598,6 +622,7 @@ impl<'c> Writing<'_, '_, 'c> {
                 at: &self.unit.at,
             },
         )?;
+        decided.apply(self.tx(), Referencing::Edge(written.seq))?;
         announce(self.unit, "edge.updated", &written, &stands, None)?;
         let details = if moved {
             json!({
@@ -790,7 +815,7 @@ pub(crate) fn announce(
         type_id: &source.type_id,
         source: &source.source,
         payload: format!(
-            "{{\"event_type\":\"{event_type}\",\"edge\":{},\"source_type\":{}{also}}}",
+            "{{\"edge\":{},\"source_type\":{}{also}}}",
             edge.answered()?,
             Value::from(source.type_id.as_str())
         ),
@@ -1011,7 +1036,7 @@ pub(crate) fn copy_edges(
                 properties: items::parsed(&edge.properties)?,
                 source_version: None,
             },
-            By::Copy,
+            By::Copy(edge.seq),
         );
         match made {
             Err(refusal) if refusal.code == Code::InternalError => return Err(refusal),

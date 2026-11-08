@@ -549,21 +549,38 @@ CREATE TABLE IF NOT EXISTS blob_proofs (
     PRIMARY KEY (hash, holder)
 ) STRICT, WITHOUT ROWID;
 
--- Which row names which digest. `kind` is the row's table: an item or an edge
--- (`seq` is its `seq`), an extension namespace on an item (`seq` and
--- `namespace`) or an item version (`seq` and `version`). A reference that
--- `lends` gives its readers the blob; one that does not only keeps it.
+-- Non-lending references retain bytes without granting access.
 CREATE TABLE IF NOT EXISTS blob_references (
     hash TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version')),
+    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version', 'owner')),
     seq INTEGER NOT NULL,
     namespace TEXT NOT NULL DEFAULT '',
     version INTEGER NOT NULL DEFAULT 0,
     lends INTEGER NOT NULL CHECK (lends IN (0, 1)),
+    item_type TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
     PRIMARY KEY (hash, kind, seq, namespace, version)
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS blob_references_row ON blob_references (kind, seq);
+CREATE INDEX IF NOT EXISTS blob_lenders
+    ON blob_references (hash, kind, item_type, edge_type, namespace) WHERE lends = 1;
+
+CREATE TRIGGER IF NOT EXISTS blob_references_retyped AFTER UPDATE OF type ON items
+WHEN NEW.type IS NOT OLD.type
+BEGIN
+    UPDATE blob_references SET item_type = NEW.type
+    WHERE kind IN ('item', 'extension') AND seq = NEW.seq;
+    UPDATE blob_references SET item_type = NEW.type
+    WHERE kind = 'edge' AND seq IN (SELECT seq FROM edges WHERE source_id = NEW.id);
+END;
+CREATE TRIGGER IF NOT EXISTS blob_references_edge_moved AFTER UPDATE OF source_id, edge_type ON edges
+WHEN NEW.source_id IS NOT OLD.source_id OR NEW.edge_type IS NOT OLD.edge_type
+BEGIN
+    UPDATE blob_references
+    SET item_type = (SELECT type FROM items WHERE id = NEW.source_id), edge_type = NEW.edge_type
+    WHERE kind = 'edge' AND seq = NEW.seq;
+END;
 
 -- Blobs that nothing references, and when a run first found each.
 CREATE TABLE IF NOT EXISTS blob_orphans (
@@ -580,3 +597,11 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     last_error TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
+
+-- The digest omits the `sha256:` prefix used by `blobs.hash`.
+CREATE TABLE IF NOT EXISTS owner_picture (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+    updated_at TEXT NOT NULL
+) STRICT;

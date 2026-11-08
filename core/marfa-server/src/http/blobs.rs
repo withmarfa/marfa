@@ -27,7 +27,7 @@ use crate::app::types::missing_field;
 
 const CHUNK: u64 = 256 * 1024;
 const QUEUED: usize = 2;
-const SANDBOX: &str = "sandbox; default-src 'none'";
+pub(super) const SANDBOX: &str = "sandbox; default-src 'none'";
 const POLICY: &str = "all";
 
 /// A body the server streams to a store, whose size no cap holds in check.
@@ -108,7 +108,7 @@ fn empty() -> Refusal {
     Refusal::validation("The body is empty; send the bytes to keep.").with_detail("field", "body")
 }
 
-fn header_of(value: &str) -> HeaderValue {
+pub(super) fn header_of(value: &str) -> HeaderValue {
     HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static(DEFAULT_TYPE))
 }
 
@@ -141,7 +141,7 @@ impl HttpBody for Reading {
     }
 }
 
-fn stream(file: std::fs::File, first: u64, length: u64, idle: Duration) -> Body {
+pub(super) fn stream(file: std::fs::File, first: u64, length: u64, idle: Duration) -> Body {
     let (send, chunks) = mpsc::channel(QUEUED);
     let stalled = Arc::new(AtomicBool::new(false));
     let flag = stalled.clone();

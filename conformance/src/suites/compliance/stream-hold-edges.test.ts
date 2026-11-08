@@ -17,11 +17,6 @@ import {
  * client that leaves while its stream waits, and a stop while streams wait.
  */
 
-const COPY_QUERY: Array<[string, string]> = [
-  ["edges", "all"],
-  ["copy", "1"],
-];
-
 let server: FreshServer;
 let stopped: FreshServer;
 let working: MarfaClient;
@@ -73,26 +68,23 @@ async function waiting(name: string): Promise<number | undefined> {
 }
 
 describe("several streams held at one point", () => {
-  it.each([
-    ["stream-head", false],
-    ["stream-drain", true],
-  ] as const)(
+  it.each([["stream-head"], ["stream-replay"]] as const)(
     "all go on when the hold at %s is cleared, and each receives what was written meanwhile",
-    async (point, withCopy) => {
+    async (point) => {
       const name = `hold:${point}`;
       await server.setFault(name);
-      const one = await open();
-      const two = await open();
-      // A copy stream can exhaust its opening budget while held at the
-      // head, so only its drain is held here.
-      const three = withCopy ? await open({ query: COPY_QUERY }) : undefined;
-      const count = three ? 3 : 2;
+      // A hold at the replay is reached by a stream that resumes.
+      const resume = point === "stream-replay" ? { lastEventId: "0" } : {};
+      const one = await open(resume);
+      const two = await open(resume);
+      const three = await open(resume);
+      const count = 3;
       await server.waitForHold(name, count);
       expect(await waiting(name)).toBe(count);
 
       const written = await note(`written-while-held-at-${point}`);
       await server.clearFault(name);
-      for (const tap of [one, two, three].filter((t) => t !== undefined)) {
+      for (const tap of [one, two, three]) {
         await tap.until(named("stream_live"), `a stream held at ${point} live`);
         const sentinel = await note(`sentinel-${point}`);
         const after = await tap.until(
@@ -110,8 +102,6 @@ describe("a client that leaves while its stream is held", () => {
   it.each([
     ["stream-head", {}],
     ["stream-replay", { lastEventId: "0" }],
-    ["stream-drain", {}],
-    ["stream-drain", { query: COPY_QUERY }],
   ] as const)(
     "leaves the server whole when %s is released after it left: %j",
     async (point, options) => {
@@ -138,9 +128,9 @@ describe("a client that leaves while its stream is held", () => {
 
 describe("a stop while a stream is held", () => {
   it("ends the held stream with server_stopping and exits with status 0, the hold being released as the stop begins", async () => {
-    await stopped.setFault("hold:stream-drain");
-    const tap = await open({}, stopped);
-    await stopped.waitForHold("hold:stream-drain");
+    await stopped.setFault("hold:stream-replay");
+    const tap = await open({ lastEventId: "0" }, stopped);
+    await stopped.waitForHold("hold:stream-replay");
 
     stopped.signal("SIGTERM");
     await tap.untilClosed();

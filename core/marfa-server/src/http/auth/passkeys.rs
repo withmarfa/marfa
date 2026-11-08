@@ -102,7 +102,7 @@ pub async fn verify_authentication(
         opened.session.remembered,
     )?;
     Ok(with_cookie(
-        json_answer(StatusCode::OK, &signed_in(&opened.session, &found)),
+        json_answer(StatusCode::OK, &signed_in(&app, &opened.session, &found)),
         cookie,
     ))
 }

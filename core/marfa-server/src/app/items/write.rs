@@ -2,6 +2,7 @@
 //! transaction commits, writes the rows, keeps the version left behind, and leaves the audit
 //! entry and the event, all in that transaction.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -23,6 +24,8 @@ use super::{
 };
 use crate::app::App;
 use crate::app::access::{Caller, Level};
+use crate::app::blobs::Hash;
+use crate::app::blobs::references::{self, Decided, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
@@ -37,6 +40,9 @@ use crate::app::views;
 const COPY_TAG: &str = "conflicted-copy";
 const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
 const MAX_EXTENSION_UNITS: usize = 102_400;
+const FILE_TYPE: &str = "core.file";
+const FILE_BYTES: &str = "blob_ref";
+const FILE_SIZE: &str = "size_bytes";
 
 #[derive(Debug, Default)]
 pub struct Put {
@@ -463,6 +469,8 @@ impl Writing {
 
 struct Settled {
     properties: Map<String, Value>,
+    /// What the version a stale write was made against named.
+    base: Option<BTreeSet<String>>,
     fields: ItemFields,
     resolution: Option<Value>,
     copy: Option<Item>,
@@ -474,10 +482,7 @@ pub(super) fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Ite
         item_id: &item.id,
         type_id: &item.type_id,
         source: &item.source,
-        payload: format!(
-            "{{\"event_type\":\"{event_type}\",\"item\":{}}}",
-            item.logged()?
-        ),
+        payload: format!("{{\"item\":{}}}", item.logged()?),
     })
 }
 
@@ -742,7 +747,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             type_id: &item.type_id,
             source: &item.source,
             payload: format!(
-                "{{\"event_type\":\"metadata.changed\",\"item\":{},\"metadata\":{}}}",
+                "{{\"item\":{},\"metadata\":{}}}",
                 item.logged()?,
                 metadata_text(tx, item, |_| true)?
             ),
@@ -932,10 +937,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         rules
             .validate_properties(&put.type_id, &properties, true)
             .map_err(ruled)?;
-        let properties = rules.in_answer_order(
-            &put.type_id,
-            &rules.coerced_properties(&put.type_id, &properties),
-        );
+        let mut properties = rules.coerced_properties(&put.type_id, &properties);
+        let decided = self.referenced(None, &put.type_id, &mut properties, Naming::default())?;
+        let properties = rules.in_answer_order(&put.type_id, &properties);
         let id = put.id.unwrap_or_else(|| Uuid::now_v7().to_string());
         let state = put.state.as_deref().unwrap_or("active");
         let at = self.unit.at.as_str();
@@ -969,6 +973,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 writer: writer.as_ref(),
             },
         )?;
+        decided.apply(tx, Referencing::Item(item.seq))?;
         if let Some(tags) = &put.tags {
             rows::set_tags(tx, item.seq, &distinct(tags))?;
         }
@@ -1097,12 +1102,22 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             return Err(unknown_row(row));
         }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
-        let settled = self.settled(row, resulting, writing)?;
+        let mut settled = self.settled(row, resulting, writing)?;
         if resulting != row.type_id {
             let replaced = writing.edges.as_deref().unwrap_or_default();
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
         }
+        let decided = self.referenced(
+            Some(Referencing::Item(row.seq)),
+            resulting,
+            &mut settled.properties,
+            Naming {
+                base: settled.base.as_ref(),
+                ..Naming::default()
+            },
+        )?;
         let item = self.land(row, resulting, &settled)?;
+        decided.apply(self.unit.tx(), Referencing::Item(item.seq))?;
         if let Some(tags) = &writing.tags {
             rows::set_tags(self.unit.tx(), item.seq, &distinct(tags))?;
         }
@@ -1132,6 +1147,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             }
             return Ok(Settled {
                 properties: self.judged(row, resulting, writing, &current, result)?,
+                base: None,
                 fields: writing.fields(),
                 resolution: None,
                 copy: None,
@@ -1144,10 +1160,19 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             return Err(no_ancestor(row, named)?);
         };
         let held = parsed(&ancestor.properties)?;
-        let nothing = Map::new();
-        let sent_now = sent.as_ref().unwrap_or(&nothing);
+        let sized = [row.type_id.as_str(), resulting]
+            .iter()
+            .any(|type_id| self.is_file(type_id));
+        let mut sent_now = sent.unwrap_or_default();
+        if sized
+            && sent_now
+                .get(FILE_SIZE)
+                .is_some_and(|size| size.is_null() || size.is_i64() || size.is_u64())
+        {
+            sent_now.shift_remove(FILE_SIZE);
+        }
         let mut cleared: Vec<String> = Vec::new();
-        if writing.replace && sent.is_some() {
+        if writing.replace && writing.properties.is_some() {
             cleared.extend(
                 held.keys()
                     .filter(|name| !sent_now.contains_key(*name))
@@ -1155,10 +1180,13 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             );
         }
         cleared.extend(writing.clear.iter().cloned());
+        if sized {
+            cleared.retain(|name| name != FILE_SIZE);
+        }
         let fields = writing.fields();
         let (current_fields, ancestor_fields) = (row.fields(), ancestor.fields());
         let stale = Stale {
-            sent: sent_now,
+            sent: &sent_now,
             cleared: &cleared,
             fields: &fields,
             current: &current,
@@ -1191,6 +1219,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         };
         Ok(Settled {
             properties: self.judged(row, resulting, writing, &current, properties)?,
+            base: Some(references::digests(&held)),
             fields: detection.changed_fields,
             resolution,
             copy,
@@ -1265,7 +1294,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         rules
             .validate_merged(&row.type_id, &properties, true, &written)
             .map_err(|error| self.invalid(error, None))?;
-        let properties = rules.coerced_properties(&row.type_id, &properties);
+        let mut properties = rules.coerced_properties(&row.type_id, &properties);
         let id = match self.claim {
             // A caller may mint any id, so the id must be one it cannot work
             // out, or a row it placed there would pass for this attempt's copy.
@@ -1278,6 +1307,18 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(held) = rows::by_id(tx, &id)? {
             return Ok((false, held));
         }
+        let base = references::digests(stale.ancestor);
+        let inherited = references::held(tx, Referencing::Item(row.seq))?;
+        let decided = self.referenced(
+            None,
+            &row.type_id,
+            &mut properties,
+            Naming {
+                base: Some(&base),
+                inherited: Some(&inherited),
+                ..Naming::default()
+            },
+        )?;
         let at = self.unit.at.as_str();
         let writer = self.writer();
         let key = title_key(rules, &row.type_id, &properties);
@@ -1303,6 +1344,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 writer: writer.as_ref(),
             },
         )?;
+        decided.apply(tx, Referencing::Item(copy.seq))?;
         let mut tags = rows::tags(tx, row.seq)?;
         tags.push(COPY_TAG.to_string());
         rows::set_tags(tx, copy.seq, &distinct(&tags))?;
@@ -1363,6 +1405,50 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             .validate_merged(resulting, &result, true, &written)
             .map_err(|error| self.invalid(error, moved.then_some(resulting)))?;
         Ok(rules.coerced_properties(resulting, &result))
+    }
+
+    fn is_file(&self, type_id: &str) -> bool {
+        self.catalog.rules.matches(FILE_TYPE, type_id)
+    }
+
+    /// Decides the references `properties` give a row of `type_id`, and the size a file holds.
+    /// Each item-writing path comes through here, so the bulk actions' and the folders' doors
+    /// must too.
+    fn referenced(
+        &self,
+        row: Option<Referencing<'_>>,
+        type_id: &str,
+        properties: &mut Map<String, Value>,
+        naming: Naming<'_>,
+    ) -> Result<Decided> {
+        let tx = self.unit.tx();
+        let file = self.is_file(type_id);
+        let bytes = properties
+            .get(FILE_BYTES)
+            .and_then(Value::as_str)
+            .and_then(Hash::whole)
+            .filter(|_| file);
+        let decided = references::decide(
+            tx,
+            self.caller(),
+            row,
+            properties,
+            Naming {
+                bytes: bytes.as_ref(),
+                ..naming
+            },
+        )?;
+        if file {
+            match bytes
+                .map(|hash| decided.lent_size(tx, &hash))
+                .transpose()?
+                .flatten()
+            {
+                Some(size) => properties.insert(FILE_SIZE.to_string(), Value::from(size)),
+                None => properties.shift_remove(FILE_SIZE),
+            };
+        }
+        Ok(decided)
     }
 
     /// Each row-writing path comes through here, so the link rule cannot differ by door.
@@ -1507,7 +1593,16 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 "Extension data exceeds maximum size of 100KB",
             ));
         }
+        let held = Referencing::Extension(row.seq, namespace);
+        let decided = references::decide(
+            self.unit.tx(),
+            self.caller(),
+            Some(held),
+            data,
+            Naming::default(),
+        )?;
         rows::put_extension(self.unit.tx(), row.seq, namespace, &text)?;
+        decided.apply(self.unit.tx(), held)?;
         self.extensions_landed(&row, namespace)
     }
 
@@ -1730,7 +1825,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 type_id: &item.type_id,
                 source: &item.source,
                 payload: format!(
-                    "{{\"event_type\":\"item.restored\",\"item\":{},\"restored_with\":{},\
+                    "{{\"item\":{},\"restored_with\":{},\
                      \"restored_with_type\":{}}}",
                     item.logged()?,
                     Value::from(back.with),

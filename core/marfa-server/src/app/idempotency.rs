@@ -535,10 +535,12 @@ pub fn complete(unit: &Unit<'_, '_>, claim: &Claim, status: u16, body: &[u8]) ->
     Ok(())
 }
 
-/// Keeps the refusal unless it concerns the credential or the server, which may retry.
-pub async fn settle(app: &App, claim: Claim, status: u16, body: Vec<u8>) {
+/// Keeps the refusal unless the same request may be taken later: one that concerns the
+/// credential or the server, or a file whose bytes its writer has yet to upload.
+pub async fn settle(app: &App, claim: Claim, code: Code, body: Vec<u8>) {
     let clock = app.clock.clone();
-    let keeps = !(status >= 500 || status == 401 || status == 403);
+    let status = code.status();
+    let keeps = !(status >= 500 || status == 401 || status == 403 || code == Code::BlobNotFound);
     let settled = app
         .db
         .write(Write::own(), move |tx| {

@@ -494,7 +494,7 @@ describe("the contract the binary was built for", () => {
   );
 
   const endedStreams = [
-    { reason: "reader_behind", exit: 3, code: "stream_incomplete" },
+    { reason: "read_failed", exit: 3, code: "stream_incomplete" },
     { reason: "server_stopping", exit: 3, code: "stream_incomplete" },
     { reason: "credential_ended", exit: 5, code: "unauthorized" },
   ];

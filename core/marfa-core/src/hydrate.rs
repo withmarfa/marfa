@@ -1062,7 +1062,7 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
         }
     }
     Err(CoreError::StreamIncomplete {
-        reason: "replay_failed".into(),
+        reason: "read_failed".into(),
     })
 }
 
@@ -1726,7 +1726,7 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
         }
     }
     Err(CoreError::StreamIncomplete {
-        reason: "replay_failed".into(),
+        reason: "read_failed".into(),
     })
 }
 
