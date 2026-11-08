@@ -16,7 +16,7 @@ use super::wire::{
 };
 use super::{CHILD_ARG, EXIT_BY_SIGNAL, EXIT_DEADLINE, EXIT_OVER_MEMORY, footprint};
 use crate::kind::Kind;
-use crate::{NATIVE, Options, Reading, Refusal, Sandbox};
+use crate::{Limit, NATIVE, Options, Reading, Refusal, Sandbox};
 
 /// How often a running child's memory is looked at, and the longest the loop sleeps.
 const TICK: Duration = Duration::from_millis(10);
@@ -119,10 +119,13 @@ fn refuse_without_a_child(
     }
     let len = metadata.len();
     if kind.loads_whole_file() && len > options.max_memory_bytes {
-        return Err(Refusal::OverLimit(format!(
-            "the file is {len} bytes, and the memory limit is {}",
-            options.max_memory_bytes
-        )));
+        return Err(Refusal::OverLimit(
+            Limit::Memory,
+            format!(
+                "the file is {len} bytes, and the memory limit is {}",
+                options.max_memory_bytes
+            ),
+        ));
     }
     Ok((kind, len))
 }
@@ -581,10 +584,13 @@ fn conclude(
 
 fn over_memory(options: &Options, used: Option<u64>) -> Refusal {
     let limit = options.max_memory_bytes;
-    Refusal::OverLimit(match used {
-        Some(used) => format!("the reader held {used} bytes, and the memory limit is {limit}"),
-        None => format!("the reader ran out of memory under the limit of {limit} bytes"),
-    })
+    Refusal::OverLimit(
+        Limit::Memory,
+        match used {
+            Some(used) => format!("the reader held {used} bytes, and the memory limit is {limit}"),
+            None => format!("the reader ran out of memory under the limit of {limit} bytes"),
+        },
+    )
 }
 
 fn crashed(how: &str, said: &Said) -> Refusal {

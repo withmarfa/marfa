@@ -268,11 +268,7 @@ const READING = [
 ];
 
 /** Doors requiring management grants or direct authority. */
-const MANAGEMENT_OR_DIRECT = [
-  "GET /platform-types/retired",
-  "DELETE /platform-types/:id",
-  "POST /restore",
-];
+const MANAGEMENT_OR_DIRECT = ["POST /restore"];
 
 function schemaDoors(): string[] {
   const under = (path: string, root: string) =>
@@ -284,7 +280,6 @@ function schemaDoors(): string[] {
           (r) =>
             under(r.path, "/types") ||
             under(r.path, "/edge-types") ||
-            under(r.path, "/platform-types") ||
             under(r.path, "/restore"),
         )
         .filter((r) => r.method !== "ALL")
@@ -300,7 +295,7 @@ function schemaDoors(): string[] {
  * a new writer fails until it is named.
  */
 const REGISTRY_WRITE =
-  /\b(?:types\.(?:create|update|delete|deleteRetiredPlatformType)|edgeTypes\.(?:create|delete)|(?:un)?registerTypeSchema|(?:un)?registerEdgeTypeSchema)\(/;
+  /\b(?:types\.(?:create|update|delete)|edgeTypes\.(?:create|delete)|(?:un)?registerTypeSchema|(?:un)?registerEdgeTypeSchema)\(/;
 
 const REGISTRY_WRITERS: Record<string, string> = {
   "routes/types.ts": "POST, PUT and DELETE /types, held to the type map",
@@ -308,7 +303,6 @@ const REGISTRY_WRITERS: Record<string, string> = {
     "POST and DELETE /edge-types, held to the edge map on the id and reverse name",
   "routes/restore-archive-types.ts":
     "the restore's type registrations, reached only through POST /restore",
-  "routes/platform-types.ts": "DELETE /platform-types/:id",
   "routes/archive-validation.ts":
     "the archive export's restore check, which stages an archive's registrations in a registry frame of its own that nothing publishes",
 };

@@ -11,7 +11,7 @@ use crate::ooxml::qualified_id;
 use crate::package::{Package, from_io};
 use crate::sink::Sink;
 use crate::xml::{attribute, reference};
-use crate::{Options, Refusal, encrypted, odf};
+use crate::{Limit, Options, Refusal, encrypted, odf};
 
 pub(crate) fn read(
     sheet: Sheet,
@@ -187,6 +187,7 @@ fn read_xls(bytes: &[u8], options: &Options, sink: &mut Sink) -> Result<(), Refu
     // whole, so its size stands in for what the limit bounds.
     if bytes.len() as u64 > options.max_inflated_bytes {
         return Err(Refusal::OverLimit(
+            Limit::Inflated,
             "the workbook is larger than the limit".into(),
         ));
     }

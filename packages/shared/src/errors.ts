@@ -534,7 +534,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: {
     status: 409,
     summary:
-      "The stored parent chain of a type is circular or too deep to resolve. `PUT /types/{id}` still accepts a corrected schema.",
+      "The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.",
   },
   [ErrorCode.CORE_TYPE_IMMUTABLE]: {
     status: 403,

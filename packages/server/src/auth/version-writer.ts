@@ -1,6 +1,7 @@
 import { VERSION_WRITER_KINDS } from "@withmarfa/shared";
 import type { ApiKey, Item, VersionWriter } from "@withmarfa/shared";
 import type { Context } from "hono";
+import { unreadableFault } from "../control/faults.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { oauthGrantOf } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -84,7 +85,10 @@ export async function grantWriter(
   grant: { clientId: string; authUserId: string },
 ): Promise<VersionWriter> {
   const recordId = await storage.oauthProvider?.findGrantItemId(grant);
-  const record = recordId ? await storage.items.get(recordId) : null;
+  const record =
+    recordId && !unreadableFault("sign-in-record", recordId)
+      ? await storage.items.get(recordId)
+      : null;
   if (record) return appWriter(storage, record);
   // A grant's record removed while its tokens still stand. Naming the app
   // by what is left beats failing a write its token is entitled to.

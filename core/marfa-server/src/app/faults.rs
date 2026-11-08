@@ -68,6 +68,7 @@ points! {
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+    HOLD_BLOB_READ = Hold "blob-read" Nth;
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -82,6 +83,9 @@ points! {
     FAIL_COMMIT = Fail "commit" Write;
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
+    FAIL_SESSION_LOOKUP = Fail "session-lookup" Nth;
+    FAIL_SESSION_DELETE = Fail "session-delete" Nth;
+    FAIL_SESSION_USE = Fail "session-use" Nth;
     FAIL_BLOB_WRITE = Fail "blob-write" Nth;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
     REFUSE_READ = Refuse "read" None;
@@ -176,7 +180,8 @@ fn is_action(text: &str) -> bool {
 fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     let name = point.name;
     let Some(arg) = arg else {
-        return Ok((point.argument != Argument::None).then_some(Aim {
+        let counted = point.kind != Kind::Hold && point.argument != Argument::None;
+        return Ok(counted.then_some(Aim {
             action: None,
             nth: 1,
         }));
@@ -239,6 +244,24 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+/// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
+pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
+const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
+const MAX_LIMIT: u64 = 1_000_000;
+
+/// Stored values an `unreadable:<stored>=<id>` fault makes the server read as damaged.
+pub const TYPE_DEFINITION: &str = "type-definition";
+const UNREADABLE_STORED: [&str; 1] = [TYPE_DEFINITION];
+
+fn is_stored_id(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && text.len() <= 128
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
@@ -288,9 +311,38 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             answers(arg.ok_or("a resolve fault takes the addresses the host resolves to")?)?;
             Ok((None, None))
         }
+        "limit" => {
+            if !LIMIT_LANES.contains(&rest) {
+                return Err(format!(
+                    "{rest} is not a limit: {}",
+                    LIMIT_LANES.join(" or ")
+                ));
+            }
+            let count = arg
+                .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|text| text.parse::<u64>().ok())
+                .filter(|count| (1..=MAX_LIMIT).contains(count))
+                .ok_or_else(|| {
+                    format!("a limit fault takes a whole number of attempts, from 1 to {MAX_LIMIT}")
+                })?;
+            Ok((None, Some(count)))
+        }
+        "unreadable" => {
+            if !UNREADABLE_STORED.contains(&rest) {
+                return Err(format!(
+                    "{rest} is not stored here: {}",
+                    UNREADABLE_STORED.join(" or ")
+                ));
+            }
+            if arg.is_some_and(is_stored_id) {
+                Ok((None, None))
+            } else {
+                Err("an unreadable fault takes the ID of the stored value".to_string())
+            }
+        }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume> or resolve:<host>"
+             deadline:<job>, free:<volume>, resolve:<host>, limit:<lane> or unreadable:<stored>"
                 .to_string(),
         ),
     }
@@ -506,6 +558,22 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
+    pub fn limit(&self, lane: &str) -> Option<i64> {
+        let name = format!("limit:{lane}");
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == name)
+            .and_then(|fault| fault.number)
+            .and_then(|count| i64::try_from(count).ok())
+    }
+
+    pub fn unreadable(&self, stored: &str, id: &str) -> bool {
+        let name = format!("unreadable:{stored}");
+        self.armed()
+            .iter()
+            .any(|fault| fault.name == name && fault.arg.as_deref() == Some(id))
+    }
+
     /// What a `free` fault sets for the volume: its bytes, or `None` for free space that cannot be read.
     pub fn free(&self, volume: Volume) -> Option<Option<u64>> {
         self.armed()
@@ -594,6 +662,10 @@ mod tests {
         assert!(refused("free:elsewhere", Some("1")));
         assert!(refused("free:database", Some("9007199254740992")));
         assert!(refused("free:database", None));
+        assert!(refused("limit:elsewhere", Some("1")));
+        assert!(refused("limit:device-owner-instance", None));
+        assert!(refused("limit:device-owner-instance", Some("0")));
+        assert!(refused("limit:device-owner-instance", Some("1000001")));
         assert!(refused("something", None));
         assert!(refused("refuse:nowhere", None));
         assert!(refused("refuse:read", Some("1")));
@@ -609,6 +681,54 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_lowers_a_lane_to_the_count_it_is_set_to() {
+        let faults = Faults::default();
+        assert_eq!(faults.limit("device-owner-instance"), None);
+        faults
+            .set("limit:device-owner-instance", Some("3"))
+            .unwrap();
+        assert_eq!(faults.limit("device-owner-instance"), Some(3));
+        faults.clear(None);
+        assert_eq!(faults.limit("device-owner-instance"), None);
+    }
+
+    #[test]
+    fn an_unreadable_value_reads_as_damaged_for_its_id_alone() {
+        let faults = Faults::default();
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a1"));
+        faults
+            .set("unreadable:type-definition", Some("a1"))
+            .unwrap();
+        assert!(faults.unreadable(TYPE_DEFINITION, "a1"));
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a2"));
+        faults
+            .set("unreadable:type-definition", Some("a2"))
+            .unwrap();
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a1"));
+        assert!(faults.unreadable(TYPE_DEFINITION, "a2"));
+        faults.clear(None);
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a2"));
+    }
+
+    #[test]
+    fn refuses_an_unreadable_value_nothing_reads_and_an_argument_that_is_no_id() {
+        assert!(refused("unreadable:elsewhere", Some("a1")));
+        assert!(refused("unreadable:sign-in-record", Some("a1")));
+        assert!(refused("unreadable:type-definition", None));
+        for arg in ["", " ", "a b", "/x", "-a"] {
+            assert!(refused("unreadable:type-definition", Some(arg)), "{arg}");
+        }
+        assert!(refused(
+            "unreadable:type-definition",
+            Some(&"a".repeat(129))
+        ));
+        assert!(!refused(
+            "unreadable:type-definition",
+            Some(&"a".repeat(128))
+        ));
+    }
+
+    #[test]
     fn takes_a_job_only_by_a_name_this_build_runs() {
         assert!(refused("hold:housekeeping:no-such-job", None));
         assert!(refused("release:housekeeping:no-such-job", None));
@@ -621,6 +741,16 @@ mod tests {
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
         assert!(!refused("deadline:trash-purge", Some("300")));
+    }
+
+    #[test]
+    fn takes_the_session_points_with_a_count_alone() {
+        for name in ["session-lookup", "session-delete", "session-use"] {
+            assert!(!refused(&format!("fail:{name}"), None));
+            assert!(!refused(&format!("fail:{name}"), Some("2")));
+            assert!(refused(&format!("fail:{name}"), Some("item.create")));
+            assert!(refused(&format!("hold:{name}"), None));
+        }
     }
 
     #[test]
@@ -649,6 +779,8 @@ mod tests {
     fn takes_the_points_the_fixtures_arm() {
         for (name, arg) in [
             ("hold:bulk-page", Some("2")),
+            ("hold:blob-read", None),
+            ("hold:blob-read", Some("2")),
             ("fail:health-write", None),
             ("refuse:read", None),
             ("refuse:write", None),
@@ -677,6 +809,38 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    async fn waiting_after(faults: &Arc<Faults>, reaches: usize, point: &'static Point) -> u64 {
+        let tasks: Vec<_> = (0..reaches)
+            .map(|_| {
+                let faults = faults.clone();
+                tokio::spawn(async move { faults.hold(point, None).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiting = faults.list()[0].waiting;
+        faults.clear(None);
+        for task in tasks {
+            task.await.unwrap();
+        }
+        waiting
+    }
+
+    #[tokio::test]
+    async fn an_unnumbered_hold_holds_every_reach() {
+        for point in [HOLD_BLOB_READ, HOLD_BULK_PAGE, HOLD_WRITE] {
+            let faults = Arc::new(Faults::default());
+            faults.set(&format!("hold:{}", point.name), None).unwrap();
+            assert_eq!(waiting_after(&faults, 3, point).await, 3, "{}", point.name);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_numbered_hold_holds_only_that_reach() {
+        let faults = Arc::new(Faults::default());
+        faults.set("hold:blob-read", Some("2")).unwrap();
+        assert_eq!(waiting_after(&faults, 3, HOLD_BLOB_READ).await, 1);
     }
 
     #[tokio::test]

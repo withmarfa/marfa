@@ -6,15 +6,6 @@ import {
   type SchemaValidationIssue,
 } from "@withmarfa/shared";
 
-export function compatibilityDependents(id: string): string[] {
-  return listTypes()
-    .filter(
-      (schema) => schema.id !== id && schema.compatible_with?.includes(id),
-    )
-    .map((schema) => schema.id)
-    .sort();
-}
-
 /** Call after staging the change, inside the transaction that commits it. */
 export function assertCompatibleDependents(
   changedIds: readonly string[],

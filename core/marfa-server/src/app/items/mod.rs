@@ -28,7 +28,8 @@ pub use read::{
     extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
 pub(crate) use read::{
-    Reader, listed, listed_rows, position_at, position_cursor, reading, reading_under,
+    Reader, listed, listed_rows, position_at, position_cursor, readable_tags, reading,
+    reading_under,
 };
 pub(crate) use write::settle_late_part;
 

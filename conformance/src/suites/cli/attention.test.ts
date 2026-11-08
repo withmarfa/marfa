@@ -4,7 +4,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { Cli, requireBinary } from "./harness.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 let server: FreshServer;
@@ -63,9 +62,7 @@ it("shares owner HTTP and private-socket attention, keeps known concerns, and re
     ]),
   );
   expect(await local.json(["attention"])).toEqual(http);
-  withInstanceDatabase(server.sqlitePath, (db) =>
-    db.exec("ALTER TABLE housekeeping RENAME TO housekeeping_unavailable"),
-  );
+  await server.setFault("fail:housekeeping-read");
   try {
     const incomplete = await local.json<Inventory>(["attention"]);
     expect(incomplete.data).toEqual(
@@ -78,9 +75,7 @@ it("shares owner HTTP and private-socket attention, keeps known concerns, and re
       ]),
     );
   } finally {
-    withInstanceDatabase(server.sqlitePath, (db) =>
-      db.exec("ALTER TABLE housekeeping_unavailable RENAME TO housekeeping"),
-    );
+    await server.clearFault();
   }
 
   await server.setFault("free:blobs=0");
@@ -151,12 +146,8 @@ it("shares owner HTTP and private-socket attention, keeps known concerns, and re
   });
   expect(registered.status).toBe(201);
   const connector = (await registered.json()) as { id: string };
-  // Registration is the only report so far; advancing its stored receipt avoids expiring the fixture's owner session.
-  withInstanceDatabase(server.sqlitePath, (db) =>
-    db
-      .prepare("UPDATE connectors SET registered_at = ? WHERE id = ?")
-      .run(new Date(Date.now() - 2 * 86400000).toISOString(), connector.id),
-  );
+  // Registration is the only report so far, and a day without one is quiet.
+  await server.advanceClock(2 * 86400000);
   const concerns = await local.json<Inventory>(["attention"]);
   expect(concerns.data).toEqual(
     expect.arrayContaining([
