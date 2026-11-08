@@ -582,9 +582,17 @@ When the connector's own key sends `POST /connectors/{id}/hold` with a `process`
 
 ### `connectors/hold-window`
 
-When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `connector_hold_ms` names another. A write to `connector_hold_ms` applies to the next take or renewal without a restart.
+When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `connector_hold_ms` names another.
 
-**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`, `› stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule`.
+**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
+
+### `connectors/hold-window-applies-live`
+
+When a write sets `connector_hold_ms`, the server MUST use the new window for the next take or renewal of a hold, without a restart.
+
+**Reason:** `connector_hold_ms` is a stored setting, so the server reads it again at each take or renewal and an owner changes it with `PATCH /config`.
+
+**Tests:** `compliance/connector-state.test.ts › stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule`.
 
 ### `connectors/hold-ttl`
 

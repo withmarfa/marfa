@@ -716,6 +716,17 @@ container's entrypoint, which starts the Node server, so they do not run
 against another program. There is no object store beside the server in this
 setup, so the object-store half of the blob chapters is not asserted.
 
+`MARFA_SERVER_RELEASE_BIN` names the same server built without the
+`test-hooks` feature, the program a release ships. Only
+`src/suites/compliance/hook-free-server.test.ts` reads it: it starts that
+program itself, as a person starts it, to judge the rules that hold only
+where no hook is built (the refusal of `MARFA_TEST_HOOKS`, no clock or fault
+route, and the generated secrets). Build it with
+`cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml`.
+The Rust contract job builds both and gives each shard the path. The file is
+left out of a run without `MARFA_SERVER_BIN`, and fails at once, saying so,
+when `MARFA_SERVER_RELEASE_BIN` is unset.
+
 ### Read a run
 
 Two tools turn a run of the server's half into a report. Both read Vitest's

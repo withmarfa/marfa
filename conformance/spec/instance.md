@@ -714,13 +714,13 @@ When a credential holding `instance.read` sends `GET /health`, the server MUST a
 
 **Reason:** an owner needs to see that background work has stopped, or that a setting has fallen back to its default, without reading every job. A request without `instance.read` is given no such object, as it is given no `error`.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/health.test.ts › names a job whose last run failed to a key with instance.read, and clears it once the job runs well`, `compliance/health.test.ts › names a stored setting that no longer reads, and the setting stands at its default`.
 
 ### `instance/health-housekeeping-withheld`
 
 When a request without `instance.read` sends `GET /health`, the server MUST answer without a `housekeeping` object.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/health.test.ts › gives no housekeeping object to a request without instance.read, though a job has failed`.
 
 ## A database this build did not write
 
@@ -1310,7 +1310,7 @@ If `MARFA_TEST_HOOKS` is true when the server starts and the server was built wi
 
 **Reason:** the fault registry, the clock offset and the test routes are compiled into a server only when it is built with the cargo feature `test-hooks`. A release build leaves them out, so an instance that holds data has no code a hook could reach. A setting that cannot take effect is refused, never ignored.
 
-**Tests:** none, closed in #2772: the harness drives a server through its hooks, so it cannot boot one built without them, and a fixture was judged not worth building.
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start with MARFA_TEST_HOOKS true and names the setting`.
 
 ### `instance/test-clock-offset-needs-hooks`
 
@@ -1670,7 +1670,7 @@ While `MARFA_TEST_HOOKS` is true, the server MUST take the default of a stored s
 
 **Reason:** a stored setting has one home, so a change made through `/config` always takes effect. The seed lets a harness start a server with a short retention or interval without a write.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/settings-seed.test.ts › starts at the value the environment gives, and a value stored for it stays in force over the variable`.
 
 ### `instance/addresses-origin`
 
@@ -1694,9 +1694,9 @@ When a write names the same origin in more than one spelling, the server MUST st
 
 ### `instance/addresses-hold-sign-in`
 
-If a write sets `addresses` to a list that leaves out the sign-in address in force, then the server MUST answer `400 validation_error` naming `addresses` and the sign-in address, and store none of the write. The sign-in address in force is the stored one or, while none is stored, the instance's own address.
+If a write sets `addresses` to a list that leaves out the sign-in address in force, then the server MUST answer `400 validation_error` naming `addresses` and the sign-in address, and store none of the write.
 
-**Reason:** the sign-in address is always one of the instance's addresses, stored or not.
+**Reason:** the sign-in address is always one of the instance's addresses, stored or not. The sign-in address in force is the stored one or, while none is stored, the instance's own address.
 
 **Tests:** `compliance/instance-addresses.test.ts › are refused together when the list leaves out the sign-in address`, `compliance/instance-addresses.test.ts › are refused together when the list leaves out the instance's own address, though no sign-in address is stored`.
 
@@ -1708,9 +1708,17 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 ### `instance/sign-in-address-authority`
 
-If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write. A write that names either setting at the value it already has changes nothing, and the server MUST NOT refuse it for that.
+If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
 
-**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them. A client that sends the whole configuration back changes neither.
+**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them.
+
+**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+
+### `instance/sign-in-address-authority-unchanged`
+
+If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` or `cors_origins` at the value it already has, then the server MUST apply the write as it would for any other setting.
+
+**Reason:** a client that sends the whole configuration back changes neither setting, and refusing it would make every such client need direct authority.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 
@@ -1752,7 +1760,7 @@ When the sign-in address in a check differs from the one in force and a browser 
 
 When the sign-in address in a check differs from the one in force, the server MUST list the consequence `passkeys_unusable` while a passkey is registered for a host other than the new one and `apps_sign_in_again` while an app is connected, each with its number as its `count` and each left out while its number is 0.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/address-check-consequences.test.ts › names the passkeys that would stop working, with their number, only while one is registered for another host`, `compliance/address-check-consequences.test.ts › names the apps that would have to sign in again, with their number, only while one is connected`.
 
 ### `instance/address-check-removed`
 
@@ -1849,7 +1857,7 @@ When the server starts for the first time and `MARFA_KEY_SALT` or `MARFA_AUTH_SE
 
 **Reason:** an instance that is not configured by hand still has secrets of its own. A secret given in the environment is used as given and is not written to the file.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/hook-free-server.test.ts › generates both into a file only its owner can read, and keeps them across a restart`, `compliance/hook-free-server.test.ts › writes only the secret the environment does not give, and none when it gives both`.
 
 ### `instance/secrets-kept`
 
@@ -1857,7 +1865,7 @@ When the server starts and `marfa.secrets` holds a secret that the environment d
 
 **Reason:** regenerating the salt would end every key.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
 
 ### `instance/secrets-missing-refused`
 
@@ -1865,7 +1873,7 @@ If the database exists, `marfa.secrets` does not and `MARFA_KEY_SALT` is unset w
 
 **Reason:** a new salt would end every key, so a lost file is for the owner to restore and never for the server to replace.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
 
 ### `instance/secrets-not-exported`
 
@@ -1879,7 +1887,7 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 While both `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS` are set, the server MUST read a caller's address from the header only when the request's peer is inside the ranges, and the peer's address stands for any other request.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › is read only from a peer inside the ranges when ranges are set`.
 
 ### `instance/proxy-header-alone`
 
@@ -1887,7 +1895,7 @@ While `MARFA_TRUSTED_PROXY_HEADER` is set and `MARFA_TRUSTED_PROXY_CIDRS` is not
 
 **Reason:** the header names an edge that overwrites it, which says nothing reaches the server except through that edge.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
 
 ### `instance/proxy-header-single`
 
@@ -1895,7 +1903,7 @@ If the header named by `MARFA_TRUSTED_PROXY_HEADER` holds a list, is sent more t
 
 **Reason:** an edge writes exactly one address, so anything else did not come from it.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
 
 ### `instance/proxy-forwarded-walk`
 
@@ -1903,13 +1911,13 @@ While `MARFA_TRUSTED_PROXY_CIDRS` is set and `MARFA_TRUSTED_PROXY_HEADER` is not
 
 **Reason:** each proxy appends the address it saw, so only the entries right of the first address outside the ranges were written by a proxy. Everything further left came from the caller.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › is read from the right, skipping the proxies, so that an address the caller wrote further left is never taken`, `compliance/trusted-proxy.test.ts › is ignored from a peer outside the ranges`.
 
 ### `instance/proxy-forwarded-malformed`
 
 When the server walks `X-Forwarded-For` and meets an entry that is not an IP address, the server MUST stop there and take the last trusted address it read as the caller's address.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › stops at an entry that is not an address and takes the last proxy address it read`.
 
 ### `instance/proxy-forwarded-limit`
 
@@ -1917,10 +1925,10 @@ When the server walks `X-Forwarded-For`, the server MUST read at most 32 entries
 
 **Reason:** more hops than any real chain of proxies has are not read, so a long header costs no more than a short one.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › reads at most 32 entries, however long the chain`.
 
 ### `instance/proxy-mapped-address`
 
 When the server compares an address with `MARFA_TRUSTED_PROXY_CIDRS` or reads one from a header, the server MUST treat an IPv4-mapped IPv6 address as the IPv4 address it maps.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trusted-proxy.test.ts › treats an IPv4-mapped IPv6 address as the IPv4 address it maps, in the ranges and in the chain`.

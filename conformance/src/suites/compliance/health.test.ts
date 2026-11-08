@@ -6,6 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What `GET /health` says when a component is not well, and to whom
@@ -482,4 +483,122 @@ describe("GET /health when the free space cannot be read", () => {
     expect(after.body.components.disk?.status).toBe("ok");
     expect(after.body.components.blob_storage?.status).toBe("ok");
   }, 120_000);
+});
+
+describe("the housekeeping object of GET /health", () => {
+  let own: FreshServer | undefined;
+
+  beforeAll(async () => {
+    own = await bootFreshServer("health-housekeeping");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  interface Housekeeping {
+    failed: { name: string; at: string; error: string }[] | null;
+    unreadable_settings: string[];
+  }
+
+  async function read(credential?: string): Promise<{
+    status: number;
+    body: { status: string; housekeeping?: Housekeeping };
+  }> {
+    const response = await fetch(`${own!.apiUrl}/health`, {
+      headers:
+        credential === undefined
+          ? {}
+          : { Authorization: `Bearer ${credential}` },
+    });
+    return {
+      status: response.status,
+      body: (await response.json()) as {
+        status: string;
+        housekeeping?: Housekeeping;
+      },
+    };
+  }
+
+  async function runJob(name: string): Promise<string> {
+    const ran = await fetch(`${own!.apiUrl}/housekeeping/${name}/run`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${own!.managementKey}` },
+    });
+    expect(ran.status).toBe(200);
+    return ((await ran.json()) as { outcome: string }).outcome;
+  }
+
+  it("names a job whose last run failed to a key with instance.read, and clears it once the job runs well", async () => {
+    // The witness: before any failure there is nothing to name.
+    const before = await read(own!.managementKey);
+    expect(before.status).toBe(200);
+    expect(before.body.housekeeping).toEqual({
+      failed: [],
+      unreadable_settings: [],
+    });
+
+    await own!.setFault("fail:housekeeping:rate-limit-cleanup");
+    try {
+      expect(await runJob("rate-limit-cleanup")).toBe("error");
+    } finally {
+      await own!.clearFault();
+    }
+    const failed = await read(own!.managementKey);
+    expect(failed.body.housekeeping?.failed).toEqual([
+      {
+        name: "rate-limit-cleanup",
+        at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        error: expect.any(String),
+      },
+    ]);
+    expect(failed.body.housekeeping?.unreadable_settings).toEqual([]);
+
+    expect(await runJob("rate-limit-cleanup")).toBe("ok");
+    expect((await read(own!.managementKey)).body.housekeeping?.failed).toEqual(
+      [],
+    );
+  });
+
+  it("gives no housekeeping object to a request without instance.read, though a job has failed", async () => {
+    await own!.setFault("fail:housekeeping:rate-limit-cleanup");
+    try {
+      expect(await runJob("rate-limit-cleanup")).toBe("error");
+    } finally {
+      await own!.clearFault();
+    }
+    // The witness: the failure is there for a key that may read it.
+    expect(
+      (await read(own!.managementKey)).body.housekeeping?.failed,
+    ).toHaveLength(1);
+
+    const appToken = await approvedAppToken(own!);
+    for (const [who, credential] of [
+      ["a working key", own!.workingKey],
+      ["an app's access token", appToken],
+      ["no credential", undefined],
+    ] as [string, string | undefined][]) {
+      const answer = await read(credential);
+      expect(answer.status, who).toBe(200);
+      expect(answer.body, who).not.toHaveProperty("housekeeping");
+    }
+    expect(await runJob("rate-limit-cleanup")).toBe("ok");
+  });
+
+  it("names a stored setting that no longer reads, and the setting stands at its default", async () => {
+    await own!.restart(() => {
+      withInstanceDatabase(own!.sqlitePath, (db) => {
+        db.prepare(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        ).run("trash_retention_days", "a fortnight");
+      });
+    });
+    const answer = await read(own!.managementKey);
+    expect(answer.body.housekeeping?.unreadable_settings).toEqual([
+      "trash_retention_days",
+    ]);
+    const listed = await fetch(`${own!.apiUrl}/config/settings`, {
+      headers: { Authorization: `Bearer ${own!.managementKey}` },
+    });
+    const entry = (
+      (await listed.json()) as { data: { key: string; value: unknown }[] }
+    ).data.find((row) => row.key === "trash_retention_days");
+    expect(entry?.value).toBe(60);
+  });
 });

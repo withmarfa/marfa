@@ -323,7 +323,7 @@ When a run of `trash-purge` cannot purge some of the items it selected, the serv
 
 **Reason:** an owner reading a job's result can then tell a purge that is catching up from one that is stuck.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/trash-purge-passed-over.test.ts › gives the number of items it left for the next run as passed_over, and leaves passed_over out of a run that passed over none`.
 
 ### `housekeeping/retention-maximum-runs`
 
