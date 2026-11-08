@@ -785,7 +785,7 @@ fn a_claimed_server_gets_no_setup_link() {
 
 #[test]
 fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
-    let rig = Rig::new("proxy");
+    let mut rig = Rig::new("proxy");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "proxy",
@@ -825,6 +825,19 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
     let local = format!("http://localhost:{}", rig.port);
     assert_eq!(rig.address().as_deref(), Some(local.as_str()));
+    // A changed published port moves it with the port, and an explicit
+    // `--access local` puts back an address someone moved.
+    let moved = free_port();
+    rig.also_listen(moved);
+    let on_moved = ["--port", &moved.to_string(), "--access", "local"].map(String::from);
+    let on_moved: Vec<&str> = on_moved.iter().map(String::as_str).collect();
+    let (code, _, stderr) = rig.install_as(&on_moved);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
+    fs::write(rig.state.join("address"), "https://moved.example.com\n").unwrap();
+    let (code, _, stderr) = rig.install_as(&on_moved);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
     let fresh = Rig::new("proxy-local");
     fresh.installed(&["--access", "local"]);
     assert_eq!(

@@ -597,7 +597,13 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             && args
                 .https_port
                 .zip(existing.as_ref())
-                .is_some_and(|(port, (state, _))| state.https_port != Some(port)));
+                .is_some_and(|(port, (state, _))| state.https_port != Some(port)))
+        || (access == Access::Local
+            && runtime == Runtime::Docker
+            && (args.access == Some(Access::Local)
+                || existing
+                    .as_ref()
+                    .is_some_and(|(state, _)| state.port != port)));
     let want = match &sign_in {
         Some(address) => address::Want::Set {
             address,
