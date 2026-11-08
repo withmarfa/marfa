@@ -403,7 +403,7 @@ mod tests {
             "ftp://files.example/a",
             "file:///etc/passwd",
             "http://user:secret@files.example/a",
-            "http:///a",
+            "http://",
             "not an address",
         ] {
             assert_eq!(checked(bad).unwrap_err(), Reason::BadUrl, "{bad}");

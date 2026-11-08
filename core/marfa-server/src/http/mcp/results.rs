@@ -16,10 +16,26 @@ pub type Outcome = std::result::Result<Value, Stop>;
 
 /// A tool call that did not give its answer: the error the agent reads, the refusal it came
 /// from, and whether the call had already changed something.
-pub struct Stop {
+pub struct Stop(Box<Detail>);
+
+pub struct Detail {
     pub error: Map<String, Value>,
     pub refusal: Option<Refusal>,
     pub wrote: bool,
+}
+
+impl std::ops::Deref for Stop {
+    type Target = Detail;
+
+    fn deref(&self) -> &Detail {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Stop {
+    fn deref_mut(&mut self) -> &mut Detail {
+        &mut self.0
+    }
 }
 
 fn hint_for(code: &str) -> Option<&'static str> {
@@ -45,11 +61,11 @@ impl Stop {
         let mut error = Map::new();
         error.insert("code".into(), code.into());
         error.insert("message".into(), Value::String(message.into()));
-        Stop {
+        Stop(Box::new(Detail {
             error,
             refusal: None,
             wrote: false,
-        }
+        }))
     }
 
     pub fn invalid(message: impl Into<String>) -> Stop {
@@ -68,11 +84,11 @@ impl Stop {
         if let Some(hint) = hint_for(refusal.code.wire()) {
             error.insert("hint".into(), hint.into());
         }
-        Stop {
+        Stop(Box::new(Detail {
             error,
             refusal: Some(refusal),
             wrote: false,
-        }
+        }))
     }
 
     pub fn with(mut self, name: &str, value: impl Into<Value>) -> Stop {
