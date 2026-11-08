@@ -499,7 +499,7 @@ async fn a_bulk_page_refuses_the_one_entry_and_an_atomic_page_stores_none_of_it(
     let entries = json!([
         file(&own),
         file(&theirs),
-        { "type": "core.note", "properties": { "body": format!("{theirs}") } },
+        { "type": "core.note", "properties": { "body": theirs } },
     ]);
 
     let page = json!({ "atomic": true, "items": entries.clone() });
@@ -564,6 +564,13 @@ async fn a_failed_write_leaves_the_index_as_it_was() {
             assert_eq!(marfa.count("SELECT count(*) FROM blob_orphans"), orphans);
         }
     }
+    let update = json!({ "version": 1, "properties": { "body": second } });
+    let landed = marfa.call(&owner, Method::PATCH, &path, update).await;
+    assert_eq!(landed.status, StatusCode::OK, "{}", landed.text);
+    assert_eq!(
+        marfa.of_item(&id),
+        vec![item(&second, true), version(&first, 1)]
+    );
 }
 
 #[tokio::test]
