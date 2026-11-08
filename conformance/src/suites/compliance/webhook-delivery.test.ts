@@ -24,6 +24,60 @@ let ctx: TestContext;
 let apiUrl: string;
 let receiver: Receiver;
 
+it("delivers promptly while eight other subscriptions never answer", async () => {
+  let received = 0;
+  const stalled = createServer((req) => {
+    req.resume();
+    received++;
+  });
+  await new Promise<void>((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+  const address = stalled.address();
+  if (!address || typeof address === "string")
+    throw new Error("no receiver port");
+  const ids: string[] = [];
+  try {
+    for (let i = 0; i < 8; i++) {
+      const hook = await client.createWebhook({
+        url: `http://127.0.0.1:${address.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      ids.push(hook.data.id);
+    }
+    const hook = await client.createWebhook({
+      url: receiver.hookUrl("unblocked"),
+      events: ["item.created"],
+    });
+    expect(hook.status).toBe(201);
+    ids.push(hook.data.id);
+    await makeNote("unblocked");
+    await waitFor(
+      "healthy delivery beside stalled subscriptions",
+      async () => receiver.received.find((r) => r.path === "/hook/unblocked"),
+      2_000,
+    );
+    await waitFor(
+      "all stalled receivers to have a request",
+      async () => (received === 8 ? true : undefined),
+      2_000,
+    );
+    const second = await makeNote("unblocked-again");
+    await waitFor(
+      "a second healthy delivery beside stalled subscriptions",
+      async () =>
+        receiver.received.find(
+          (r) => r.path === "/hook/unblocked" && r.body.includes(second),
+        ),
+      2_000,
+    );
+    expect(received).toBe(8);
+  } finally {
+    for (const id of ids) await client.deleteWebhook(id);
+    stalled.closeAllConnections();
+    await new Promise<void>((resolve) => stalled.close(() => resolve()));
+  }
+});
+
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",

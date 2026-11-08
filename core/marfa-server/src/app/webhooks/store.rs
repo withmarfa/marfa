@@ -320,15 +320,18 @@ pub fn page(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Pending deliveries whose wait has ended, oldest wait first, leaving out those being attempted.
-pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Result<Vec<i64>> {
+/// One due delivery per idle subscription, oldest wait first within each subscription.
+pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Vec<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     let mut statement = tx.prepare_cached(
-        "SELECT seq FROM webhook_deliveries WHERE status = 'pending' AND due_at <= ?1 \
-         AND seq NOT IN (SELECT value FROM json_each(?2)) ORDER BY due_at, seq LIMIT ?3",
+        "SELECT seq FROM (SELECT seq, due_at, ROW_NUMBER() OVER \
+         (PARTITION BY webhook_id ORDER BY due_at, seq) AS turn \
+         FROM webhook_deliveries WHERE status = 'pending' AND due_at <= ?1 \
+         AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
+         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq",
     )?;
-    let rows = statement.query_map(params![now_ms, busy, limit as i64], |row| row.get(0))?;
+    let rows = statement.query_map(params![now_ms, busy], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -338,10 +341,23 @@ pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     Ok(tx.query_row(
         "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' \
-         AND seq NOT IN (SELECT value FROM json_each(?1))",
+         AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
+         WHERE seq IN (SELECT value FROM json_each(?1)))",
         [busy],
         |row| row.get(0),
     )?)
+}
+
+#[test]
+fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
+    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
+        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
+        (3, 'b', 'pending', 0), (4, 'c', 'pending', 5);").unwrap();
+    assert_eq!(due(&tx, 0, &[]).unwrap(), vec![1, 3]);
+    assert_eq!(due(&tx, 0, &[1]).unwrap(), vec![3]);
+    assert_eq!(next_due(&tx, &[1, 3]).unwrap(), Some(5));
 }
 
 /// Preserves earlier attempts and leaves settled deliveries unchanged.

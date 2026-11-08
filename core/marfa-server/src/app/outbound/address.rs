@@ -69,6 +69,119 @@ fn public_v6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_special_ipv4_range_is_refused_at_both_of_its_ends() {
+        for (first, last) in [
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.0.0", "192.0.0.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.88.99.0", "192.88.99.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+            ("224.0.0.0", "239.255.255.255"),
+            ("240.0.0.0", "255.255.255.255"),
+        ] {
+            for text in [first, last] {
+                let address: IpAddr = text.parse().expect("an address");
+                assert!(!is_public(address), "{text}");
+            }
+        }
+        for text in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "9.255.255.255",
+            "11.0.0.0",
+            "100.63.255.255",
+            "100.128.0.0",
+            "126.255.255.255",
+            "128.0.0.0",
+            "169.253.255.255",
+            "169.255.0.0",
+            "172.15.255.255",
+            "172.32.0.0",
+            "192.0.1.0",
+            "192.167.255.255",
+            "192.169.0.0",
+            "198.17.255.255",
+            "198.20.0.0",
+            "223.255.255.255",
+        ] {
+            let address: IpAddr = text.parse().expect("an address");
+            assert!(is_public(address), "{text}");
+        }
+    }
+
+    #[test]
+    fn ipv6_translations_and_native_addresses_follow_the_public_rule() {
+        for text in [
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "64:ff9b::7f00:1",
+            "100::1",
+            "2001::1",
+            "2001:0:4136:e378::1",
+            "2001:1ff:ffff::1",
+            "2001:db8::1",
+            "2002:7f00:1::1",
+            "3fff::1",
+            "3fff:fff:ffff::1",
+            "fc00::1",
+            "fd00::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+        ] {
+            let address: IpAddr = text.parse().expect("an address");
+            assert!(!is_public(address), "{text}");
+        }
+        for text in [
+            "::8.8.8.8",
+            "::ffff:8.8.8.8",
+            "2001:200::1",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+            "2a00:1450:4009::1",
+            "3ffe::1",
+        ] {
+            let address: IpAddr = text.parse().expect("an address");
+            assert!(is_public(address), "{text}");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn public_native_ipv6_is_global_unicast(segments in proptest::prelude::any::<[u16; 8]>()) {
+            let address = Ipv6Addr::from(segments);
+            let nat64 = within_v6(address, Ipv6Addr::new(0x64, 0xff9b, 0, 0, 0, 0, 0, 0), 96);
+            if is_public(IpAddr::V6(address)) && address.to_ipv4().is_none() && !nat64 {
+                proptest::prop_assert_eq!(segments[0] & 0xe000, 0x2000);
+                proptest::prop_assert!(!address.is_loopback() && !address.is_multicast());
+            }
+        }
+
+        #[test]
+        fn ipv4_translations_share_the_public_rule(octets in proptest::prelude::any::<[u8; 4]>()) {
+            let v4 = Ipv4Addr::from(octets);
+            let expected = is_public(IpAddr::V4(v4));
+            proptest::prop_assert_eq!(is_public(IpAddr::V6(v4.to_ipv6_mapped())), expected);
+            proptest::prop_assert_eq!(is_public(IpAddr::V6(v4.to_ipv6_compatible())), expected);
+            let [a, b, c, d] = octets;
+            let nat64 = Ipv6Addr::new(0x64, 0xff9b, 0, 0, 0, 0, u16::from_be_bytes([a,b]), u16::from_be_bytes([c,d]));
+            proptest::prop_assert_eq!(is_public(IpAddr::V6(nat64)), expected);
+        }
+    }
 
     fn public(text: &str) -> bool {
         is_public(text.parse().expect("an address"))

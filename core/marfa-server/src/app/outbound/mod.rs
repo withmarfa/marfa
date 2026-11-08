@@ -2,7 +2,7 @@
 
 pub mod address;
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -23,6 +23,27 @@ use super::faults::Faults;
 
 /// How long one lookup may take before the name counts as not found.
 pub const LOOKUP_BOUND: Duration = Duration::from_secs(3);
+
+static LOOKUPS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+async fn resolve_with<T: Send + 'static>(
+    lookup: impl FnOnce() -> T + Send + 'static,
+    bound: Duration,
+) -> Option<T> {
+    tokio::time::timeout(bound, async {
+        let permit = LOOKUPS.acquire().await.ok()?;
+        tokio::task::spawn_blocking(move || {
+            // A timed-out caller cannot release a thread still inside the system resolver.
+            let _permit = permit;
+            lookup()
+        })
+        .await
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
 
 /// Checked and connected addresses differ only under a test fault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,11 +85,19 @@ pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Targe
                 .collect(),
         );
     }
-    let found = tokio::time::timeout(LOOKUP_BOUND, tokio::net::lookup_host((host, port)))
-        .await
-        .ok()?
-        .ok()?;
+    let host = host.to_string();
+    let found = resolve_with(
+        move || {
+            (host.as_str(), port)
+                .to_socket_addrs()
+                .map(Iterator::collect::<Vec<_>>)
+        },
+        LOOKUP_BOUND,
+    )
+    .await?
+    .ok()?;
     let targets: Vec<Target> = found
+        .into_iter()
         .map(|socket| Target {
             checked: socket.ip(),
             connected: socket.ip(),
@@ -144,7 +173,12 @@ async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outco
     };
     let mut stream = None;
     for target in targets {
-        if let Ok(connected) = TcpStream::connect(SocketAddr::new(target.connected, port)).await {
+        if let Ok(Ok(connected)) = tokio::time::timeout(
+            Duration::from_secs(3),
+            TcpStream::connect(SocketAddr::new(target.connected, port)),
+        )
+        .await
+        {
             stream = Some(connected);
             break;
         }
@@ -242,6 +276,47 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[tokio::test]
+    async fn timed_out_lookups_keep_their_slots_until_the_threads_finish() {
+        let (release, held) = std::sync::mpsc::channel();
+        let held = Arc::new(std::sync::Mutex::new(held));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let mut jobs = Vec::new();
+        for _ in 0..4 {
+            let held = held.clone();
+            let started = started.clone();
+            jobs.push(tokio::spawn(resolve_with(
+                move || {
+                    started.send(()).unwrap();
+                    held.lock().unwrap().recv().unwrap();
+                },
+                Duration::from_millis(100),
+            )));
+        }
+        for _ in 0..4 {
+            starts.recv().await.unwrap();
+        }
+        for job in jobs {
+            assert!(job.await.unwrap().is_none());
+        }
+        let extra = resolve_with(|| true, Duration::from_millis(100)).await;
+        for _ in 0..4 {
+            release.send(()).unwrap();
+        }
+        assert_eq!(extra, None);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while LOOKUPS.available_permits() != 4 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            resolve_with(|| true, Duration::from_secs(1)).await,
+            Some(true)
+        );
+    }
 
     /// A receiver on loopback that reads one request and then does what `answer` says.
     async fn receiver<F, Fut>(answer: F) -> (Url, tokio::task::JoinHandle<String>)

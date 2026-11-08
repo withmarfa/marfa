@@ -18,7 +18,6 @@ use crate::log;
 use crate::settings::registry::ERROR_REPORTING_ENABLED;
 use crate::telemetry::{Fault, Finished};
 
-const AT_ONCE: usize = 4;
 const METHOD: &str = "WEBHOOKS";
 const PATH: &str = "schedule";
 const CUT_BEFORE_END: Duration = Duration::from_secs(1);
@@ -206,7 +205,6 @@ impl Sender {
     async fn fill(&mut self) -> Option<i64> {
         let now = Instant::now();
         self.held_back.retain(|_, until| *until > now);
-        let free = AT_ONCE.saturating_sub(self.busy.len());
         let mut excluded: Vec<i64> = self
             .busy
             .values()
@@ -218,11 +216,7 @@ impl Sender {
             .app
             .db
             .read(move |tx| {
-                let due = if free > 0 {
-                    store::due(tx, now_ms, &excluded, free)?
-                } else {
-                    Vec::new()
-                };
+                let due = store::due(tx, now_ms, &excluded)?;
                 excluded.extend(&due);
                 Ok((due, store::next_due(tx, &excluded)?))
             })
@@ -262,12 +256,10 @@ impl Sender {
             .values()
             .min()
             .map(|until| until.saturating_duration_since(Instant::now()));
-        let due = next
-            .filter(|_| self.busy.len() < AT_ONCE && !self.app.clock.is_paused())
-            .map(|due| {
-                let wait = due.saturating_sub(self.app.clock.now_ms()).max(0);
-                Duration::from_millis(u64::try_from(wait).unwrap_or(u64::MAX))
-            });
+        let due = next.filter(|_| !self.app.clock.is_paused()).map(|due| {
+            let wait = due.saturating_sub(self.app.clock.now_ms()).max(0);
+            Duration::from_millis(u64::try_from(wait).unwrap_or(u64::MAX))
+        });
         match (held, due) {
             (Some(held), Some(due)) => Some(held.min(due)),
             (held, due) => held.or(due),

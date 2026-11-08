@@ -1561,9 +1561,9 @@ Where the instance does not allow private addresses, if the server answers `400 
 
 ### `events/address-name-unresolved`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup does not finish within the registration limit of 3 seconds, then the server MUST answer `201`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup cannot start or finish within the registration limit of 3 seconds, then the server MUST answer `201`.
 
-**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A fixed limit of four concurrent webhook name lookups includes timed-out lookups until their blocking threads finish, because those threads share a pool with storage and file reading. This deliberately restores a concurrency bound independently of how many times an attempt resolves its name. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
 
 **Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
 
@@ -1654,6 +1654,16 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 **Reason:** events that do not fan out must not consume successive scheduling runs before an event that does fan out can be reached; their payloads are not inspected by webhook scheduling because they cannot create deliveries.
 
 **Tests:** `compliance/webhook-bulk-backlog.test.ts › delivers the next fan-out within ordinary latency after 50,000 bulk rows`.
+
+## Real conditions
+
+### `events/receiver-isolation`
+
+While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish.
+
+**Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
 ## The audit log
 
