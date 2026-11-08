@@ -92,21 +92,18 @@ async function registerPasskey(): Promise<void> {
     ...asked.headers.getSetCookie().map((value) => value.split(";")[0]),
   ].join("; ");
   const device = testAuthenticator();
-  const registered = await fetch(
-    `${origin}/auth/passkey/verify-registration`,
-    {
-      method: "POST",
-      headers: {
-        Origin: origin,
-        Cookie: cookies,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Consequences",
-        response: device.registration(challenge, origin, base.hostname),
-      }),
+  const registered = await fetch(`${origin}/auth/passkey/verify-registration`, {
+    method: "POST",
+    headers: {
+      Origin: origin,
+      Cookie: cookies,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      name: "Consequences",
+      response: device.registration(challenge, origin, base.hostname),
+    }),
+  });
   expect(registered.status, await registered.clone().text()).toBe(200);
 }
 

@@ -76,11 +76,13 @@ describe("the Rust server's release build", () => {
     const names = (build?.steps ?? []).map((candidate) => candidate.name);
     // After the hooked server is kept: the second build replaces the output.
     expect(names.indexOf("Keep the server")).toBeGreaterThan(-1);
-    expect(names.indexOf("Build the Rust server without test hooks")).toBeGreaterThan(
-      names.indexOf("Keep the server"),
-    );
+    expect(
+      names.indexOf("Build the Rust server without test hooks"),
+    ).toBeGreaterThan(names.indexOf("Keep the server"));
     const free = step(build, "Build the Rust server without test hooks");
-    expect(free.run).toBe('core/marfa-enrichment/native/release.sh "$TARGET" --server');
+    expect(free.run).toBe(
+      'core/marfa-enrichment/native/release.sh "$TARGET" --server',
+    );
     expect(free.env?.MARFA_SERVER_FEATURES).toBeUndefined();
     const upload = step(build, "Keep the server without test hooks");
     expect(upload.with?.name).toBe("rust-contract-release-server");

@@ -46,7 +46,9 @@ function releaseProgram(): string {
   }
   const path = resolve(program);
   if (!existsSync(path) || !statSync(path).isFile()) {
-    throw new Error(`MARFA_SERVER_RELEASE_BIN names ${path}, which is not a file`);
+    throw new Error(
+      `MARFA_SERVER_RELEASE_BIN names ${path}, which is not a file`,
+    );
   }
   return path;
 }
@@ -77,7 +79,8 @@ function start(
 ): Run {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
-    const own = name.startsWith("MARFA_") && name !== "MARFA_SERVER_RELEASE_BIN";
+    const own =
+      name.startsWith("MARFA_") && name !== "MARFA_SERVER_RELEASE_BIN";
     const reporting = /^(OTEL_|MARFA_OTEL_|MARFA_POSTHOG_)/.test(name);
     if (!own && !reporting) env[name] = value;
   }
@@ -126,7 +129,9 @@ async function listening(run: Run): Promise<void> {
     for (;;) {
       if (run.output().includes("Marfa server listening")) return;
       if (run.child.exitCode !== null) {
-        throw new Error(`the server exited before it listened:\n${run.output()}`);
+        throw new Error(
+          `the server exited before it listened:\n${run.output()}`,
+        );
       }
       await new Promise((again) => setTimeout(again, 100));
     }
@@ -152,7 +157,11 @@ describe("a server built without test hooks", () => {
   it("refuses to start with MARFA_TEST_HOOKS true and names the setting", async () => {
     const data = folder("marfa-hf-data-");
     const refused = start(data, { MARFA_TEST_HOOKS: "true" });
-    const code = await within(EXIT_BUDGET_MS, "the server exited", refused.exit);
+    const code = await within(
+      EXIT_BUDGET_MS,
+      "the server exited",
+      refused.exit,
+    );
     expect(code).not.toBe(0);
     expect(refused.output()).toContain("MARFA_TEST_HOOKS");
     expect(refused.output()).not.toContain("Marfa server listening");
@@ -283,7 +292,11 @@ describe("the secrets of a server that was not configured by hand", () => {
     // The database is there and the file is not: not a first start.
     rmSync(secretsOf(data));
     const refused = start(data);
-    const code = await within(EXIT_BUDGET_MS, "the server exited", refused.exit);
+    const code = await within(
+      EXIT_BUDGET_MS,
+      "the server exited",
+      refused.exit,
+    );
     expect(code).not.toBe(0);
     expect(refused.output()).toContain("MARFA_KEY_SALT");
     expect(refused.output()).not.toContain("Marfa server listening");

@@ -226,15 +226,15 @@ describe("the edge's header", () => {
       MARFA_TRUSTED_PROXY_HEADER: HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     });
-    expect(
-      await seenAs(inside, { [HEADER]: "203.0.113.5" }, "inside"),
-    ).toBe("203.0.113.5");
+    expect(await seenAs(inside, { [HEADER]: "203.0.113.5" }, "inside")).toBe(
+      "203.0.113.5",
+    );
     const outside = await bootFreshServer("proxy-header-outside", {
       MARFA_TRUSTED_PROXY_HEADER: HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "192.0.2.0/24",
     });
-    expect(
-      await seenAs(outside, { [HEADER]: "203.0.113.5" }, "outside"),
-    ).toBe(PEER);
+    expect(await seenAs(outside, { [HEADER]: "203.0.113.5" }, "outside")).toBe(
+      PEER,
+    );
   });
 });
