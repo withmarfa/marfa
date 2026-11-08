@@ -520,6 +520,13 @@ jobs:
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
 
+      # The arm64 programs are built here on x86_64 and read a sample under emulation.
+      - name: Set up emulation for arm64
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
       - name: Build the programs
         run: bash scripts/release/build-programs.sh "$TARGET"
 
