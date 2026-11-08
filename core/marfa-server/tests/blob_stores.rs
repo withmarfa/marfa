@@ -853,6 +853,69 @@ async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more
     assert_eq!(instance.copies(&kept).await.len(), 2);
 }
 
+#[tokio::test]
+async fn an_object_store_reaching_another_bucket_takes_no_copy_and_the_blob_survives() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"replicated while the endpoint reached another bucket".to_vec();
+    let hash = instance.stored(&bytes).await;
+    let disk = instance.disk().await;
+    let door = format!("/blobs/{hash}/copies/{disk}");
+
+    s3.swap_buckets();
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 0, "{run}");
+    assert_eq!(instance.copies(&hash).await.len(), 1);
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::CONFLICT, "{}", dropped.body);
+    assert_eq!(dropped.code(), "copies_below_minimum");
+
+    s3.swap_buckets();
+    let checked = instance.run("blob-integrity").await;
+    assert_eq!(checked["struck"], 0, "{checked}");
+    assert!(instance.file(&hash).is_file());
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+    assert_eq!(fetched.bytes, bytes);
+
+    // The witness: the store answering as itself takes the copy.
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
+    object_key(&s3, "blobs", &hash);
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_drop_is_not_confirmed_by_another_bucket_holding_the_same_object() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"held by the store and by a copy of its bucket".to_vec();
+    let hash = instance.replicated(&s3, &bytes).await;
+    let disk = instance.disk().await;
+    let door = format!("/blobs/{hash}/copies/{disk}");
+    let key = object_key(&s3, "blobs", &hash);
+    let object = s3.object(&key).unwrap();
+
+    s3.swap_buckets();
+    s3.put_object(&key, &object);
+    let refused = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.code(), "copies_below_minimum");
+    assert!(instance.file(&hash).is_file());
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+
+    // The witness: the store answering as itself confirms the same drop.
+    s3.swap_buckets();
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert!(!instance.file(&hash).exists());
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+    assert_eq!(fetched.bytes, bytes);
+}
+
 /// Occupies the writer until the sender is used or dropped, beating so writes queued behind
 /// it wait. The receiver answers once the writer has started on it.
 fn occupy_writer(

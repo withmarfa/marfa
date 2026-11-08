@@ -1,6 +1,6 @@
 //! An S3-compatible object store in the test process, path style, that keeps objects in
-//! memory and can be told to answer every request `404`, to send a body slowly, or to carry out
-//! a deletion late.
+//! memory and can be told to answer every request `404`, to send a body slowly, to carry out
+//! a deletion late, or to reach another bucket.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,8 @@ pub enum Mode {
 #[derive(Default)]
 struct Held {
     objects: HashMap<String, Vec<u8>>,
+    /// The bucket the endpoint reaches after `swap_buckets`.
+    other: HashMap<String, Vec<u8>>,
     mode: Option<Mode>,
     refused: Vec<String>,
     requests: Vec<(Method, String)>,
@@ -287,6 +289,12 @@ impl FakeS3 {
         let release = Arc::new(Notify::new());
         self.held.lock().unwrap().late_delete = Some(release.clone());
         release
+    }
+
+    /// Makes the endpoint reach the other bucket, as a changed endpoint or proxy does.
+    pub fn swap_buckets(&self) {
+        let held = &mut *self.held.lock().unwrap();
+        std::mem::swap(&mut held.objects, &mut held.other);
     }
 
     /// How many deletions held by `delay_next_delete` have been carried out.

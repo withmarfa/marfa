@@ -406,9 +406,9 @@ impl Blobs {
         }
     }
 
-    /// Whether the store answers now with its own marker. Asked again before each strike, made
-    /// after the answer that found the copy missing, so an endpoint that stopped being the
-    /// store since an earlier answer strikes nothing.
+    /// Whether the store answers now with its own marker. Asked after an object store's answer
+    /// and before a strike, a recorded copy or a drop relies on it, so an endpoint that
+    /// stopped being the store since an earlier answer changes nothing.
     async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;
@@ -1058,10 +1058,14 @@ impl App {
                 .map(|(other, object)| self.blobs.size_of(other, &found.hash, object)),
         )
         .await;
-        let confirmed = answers
-            .iter()
-            .filter(|answer| matches!(answer, Ok(Some(size)) if *size == found.size_bytes))
-            .count();
+        let mut confirmed = 0;
+        for ((other, _), answer) in others.iter().zip(&answers) {
+            if matches!(answer, Ok(Some(size)) if *size == found.size_bytes)
+                && self.blobs.is_itself(other).await
+            {
+                confirmed += 1;
+            }
+        }
         if (confirmed as u64) < min_copies {
             return Err(below(confirmed + 1, min_copies));
         }

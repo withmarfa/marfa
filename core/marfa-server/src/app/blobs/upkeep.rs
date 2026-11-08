@@ -229,11 +229,14 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
                 false
             }
         };
-        let made = if cleared {
+        let mut made = if cleared {
             copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await?
         } else {
             Copy::Skipped
         };
+        if matches!(made, Copy::Made { .. }) && !app.blobs.is_itself(&target).await {
+            made = Copy::TargetSilent;
+        }
         let (from, object) = match made {
             Copy::Made { from, object } => (from, object),
             Copy::Skipped | Copy::TargetSilent => {

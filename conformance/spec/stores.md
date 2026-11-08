@@ -206,6 +206,14 @@ When the server writes a blob's bytes to an object store, the server MUST write 
 
 **Tests:** `compliance/blob-store-bounds.test.ts › writes each object-store copy of a blob to an object of its own`.
 
+### `stores/object-store-itself`
+
+While an attached object store does not answer with the `.marfa-store` marker of the store the server attached, the server MUST NOT change the copy record on that store's answers.
+
+**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone. The server asks for the marker after the store's answer and before it changes the copy record, and counts a store that answers with another marker as one it cannot reach.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
+
 ## Links
 
 A link to a blob's bytes names the instance or the object store as its host, and the lifetime and the signature are `blobs.md`'s.
@@ -370,7 +378,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`).
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
