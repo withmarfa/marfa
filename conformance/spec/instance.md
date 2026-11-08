@@ -708,13 +708,73 @@ When a request that carries a credential the instance does not hold sends `GET /
 
 **Tests:** `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`, `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
 
-## Upgrading
+## A database this build did not write
 
-A database records the schema version of the build that last wrote it. When the server starts on a database at an earlier schema version whose schema is exactly the one an earlier release wrote at that version, it takes a copy of the database beside it and updates the database to its own schema version in one transaction. It refuses to start, before changing the database file, on a database a newer build wrote, on one whose schema is not one it knows, and on an update that fails. An archive carries a database across builds only where the restore accepts it (`search-and-filters/restore-version`).
+A database records the schema version of the build that wrote it. The server starts on a database that holds its own schema, and it refuses to start, before changing the database file, on one a newer build wrote and on one whose schema is not the one it declares. It updates no database from another schema version, so an archive carries data across builds only where the restore accepts it (`search-and-filters/restore-version`).
+
+### `instance/upgrade-refuses-newer`
+
+If the server starts on a database that records a schema version later than its own, then the server MUST refuse to start.
+
+**Reason:** an earlier build does not know what a later one changed, so it cannot read the file safely.
+
+**Tests:** `compliance/database-file.test.ts › refuses to start on a database a newer build wrote, and leaves it as it was`.
+
+### `instance/upgrade-refuses-schema`
+
+If the server starts on a database in which a table, an index or a trigger the server declares differs from the server's definition of it, in which a table the server declares carries an index or a trigger the server does not declare, in which a table the server declares is missing while another of its own tables holds a row, or which records a schema version earlier than its own and not none, then the server MUST refuse to start.
+
+**Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A file an earlier schema wrote is refused as one the server does not know, since no update reaches it. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
+
+**Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`.
+
+### `instance/upgrade-names-cause`
+
+When the server refuses to start on a database under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, the server MUST name in its log message what it found and the path of the database file.
+
+**Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
+
+### `instance/upgrade-leaves-file`
+
+If the server refuses to start on a database under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST leave the database file byte for byte as it found it.
+
+**Reason:** SQLite may create an empty `-wal` file and a `-shm` file beside a database it opens and then refuses, and neither holds anything the database holds.
+
+**Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
+
+### `instance/upgrade-opens-no-port`
+
+If the server refuses to start on a database under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST NOT listen on its port.
+
+**Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
+
+### `instance/upgrade-way-forward`
+
+When the server refuses to start on a database under `instance/upgrade-refuses-schema`, the server MUST say in its log message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there.
+
+**Reason:** no update reaches such a file, and an owner told only that the file was refused goes looking for the cause in the wrong place.
+
+**Tests:** `compliance/database-file.test.ts › says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse`.
+
+### `instance/upgrade-restore-may-refuse`
+
+When the server refuses to start on a database under `instance/upgrade-refuses-schema`, the server MUST say in its log message that the restore it names can refuse an archive the writing build did not write.
+
+**Reason:** the message does not promise a restore the contract does not.
+
+**Tests:** `compliance/database-file.test.ts › says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse`.
+
+### `instance/upgrade-exit-78`
+
+If the server refuses to start on a database under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST exit with status 78.
+
+**Reason:** what supervises the process tells a stop that starting again will not mend from one that it may.
+
+**Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
 
 ### `instance/upgrade-exit-1`
 
-If the server stops for a failure to start that is not a refused database, then the server MUST exit with status 1.
+If the server stops for a failure to start that is not a refusal under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST exit with status 1.
 
 **Reason:** a failed start that starting again may mend, such as a port in use, is not told apart from a refused database by anything but the status.
 
@@ -964,7 +1024,21 @@ When the server answers with an HTML page, the server MUST carry in the page the
 
 ## An unfinished database
 
-The server creates its tables one statement at a time, so a start that is stopped partway leaves a database with the first of them.
+A database can hold some of the server's tables and no rows, such as one a start stopped partway through making its tables leaves.
+
+### `instance/unfinished-completed`
+
+When the server starts on a database that holds some of its own tables, lacks the rest, differs from its schema in nothing else, and none of the tables it creates holds a row, the server MUST create the tables it lacks and start.
+
+**Reason:** nothing is written to the server's own tables before the last is made, so none holds a row, and refusing the database would send an owner looking for another build when no other build wrote it.
+
+**Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
+
+### `instance/unfinished-ends-fresh`
+
+When the server completes an unfinished database, the server MUST leave it holding what a new database holds, unclaimed, with no key, no item and an `instance_id` of its own.
+
+**Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
 ## The configuration operations
 
@@ -1264,14 +1338,6 @@ Where `MARFA_TEST_CONTRACT_VERSION` is set, the server MUST name that version as
 
 **Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document`.
 
-### `instance/test-migration-needs-hooks`
-
-If `MARFA_TEST_MIGRATION_FAULT` or `MARFA_TEST_FREE_DISK_BYTES` is set and `MARFA_TEST_HOOKS` is not true when the server starts, then the server MUST refuse to start and name the setting.
-
-**Reason:** a harness shows that a failed, interrupted or refused update changes nothing, and neither setting belongs on an instance that holds real data.
-
-**Tests:** `compliance/test-hooks.test.ts › refuses %s without MARFA_TEST_HOOKS, naming the setting`.
-
 ### `instance/test-faults-cleared-at-start`
 
 When the server starts, the server MUST hold no fault.
@@ -1467,8 +1533,6 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_TEST_HOOKS`                          | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener, and refused when `NODE_ENV` is production. Leave off on every instance that holds real data.                                                                                                                                                     |
 | `MARFA_TEST_CLOCK_OFFSET_MS`                | `0` ms                        | Whole number of milliseconds, 0 to 3153600000000                   | How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.                                                                                                                                                                                                |
 | `MARFA_TEST_CONTRACT_VERSION`               | The build's contract version  | Whole number, 0 to 2147483647                                      | The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.                                                                                                           |
-| `MARFA_TEST_MIGRATION_FAULT`                | None                          | `hold`, `lose-row` or `change-shape`                               | A failure the update of an earlier schema version meets before it commits: `hold` waits there until the process is stopped, `lose-row` deletes a row the update must keep, and `change-shape` adds a column this build does not declare. Needs `MARFA_TEST_HOOKS`, so a harness can show that a failed or interrupted update changes nothing.                               |
-| `MARFA_TEST_FREE_DISK_BYTES`                | What the volume reports       | Whole number of bytes, 0 or more                                   | The free space, in bytes, the update of an earlier schema version takes the database's volume to have. Needs `MARFA_TEST_HOOKS`, so a harness can show the refusal of an update there is no room for.                                                                                                                                                                       |
 | `SQLITE_BUSY_BUDGET_MS`                     | `5000` ms                     | Whole number of milliseconds, 0 to 2147483647                      | How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.                                                                                                                                                                                                                              |
 | `BLOB_PATH`                                 | `./data/blobs`                | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                                                                                                                                     |
 | `MARFA_DISK_RESERVE_BYTES`                  | `134217728` bytes             | Whole number of bytes, 0 or more                                   | The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                                                                                 |

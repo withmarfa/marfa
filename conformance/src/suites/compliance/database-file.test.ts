@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   copyFileSync,
@@ -23,6 +23,7 @@ import {
   bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
+  type RefusedBoot,
   type ServerExit,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
@@ -555,6 +556,348 @@ describe("a completed claim after credential rows disappear", () => {
       } finally {
         await server.stop();
       }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+/** The exit status of a database this build did not write, which a
+ *  supervisor reads as "starting again will meet the same file". */
+const REFUSED_DATABASE_STATUS = 78;
+
+const EMPTY_FILE = createHash("sha256").update("").digest("hex");
+
+/**
+ * The database file is byte for byte what it was, and the log beside it holds
+ * nothing: opening a database that is in WAL mode makes an empty log and an
+ * index of it even when the open is refused, and neither is a change to what
+ * the database holds.
+ */
+function expectDatabaseUnchanged(refused: RefusedBoot): void {
+  expect(refused.after.db).toBe(refused.before.db);
+  expect(["absent", EMPTY_FILE]).toContain(refused.after.wal);
+}
+
+type Database = Parameters<Parameters<typeof withInstanceDatabase>[1]>[0];
+
+describe("starting on a database this build did not write", () => {
+  let donor: FreshServer;
+  /** A database of this build, stopped and with rows in it. */
+  let image: string;
+  /** The same database after one more start and stop. */
+  let imageAfterAStart: string;
+  const kept: string[] = [];
+
+  beforeAll(async () => {
+    donor = await bootFreshServer("lifecycle-refused");
+    await writeNotes(donor, "lifecycle-refused", 5);
+    const dir = mkdtempSync(join(tmpdir(), "marfa-refused-donor-"));
+    kept.push(dir);
+    image = join(dir, "first.db");
+    imageAfterAStart = join(dir, "second.db");
+    await donor.restart({
+      whileStopped: () => cpSync(donor.sqlitePath, image),
+    });
+    await donor.restart({
+      whileStopped: () => cpSync(donor.sqlitePath, imageAfterAStart),
+    });
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await donor.stop();
+    for (const dir of kept.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** Runs `check` on a boot refused on a copy of the donor's database that
+   *  `change` has altered, and removes its state. */
+  async function expectRefusal(
+    change: (db: Database) => void,
+    check: (refused: RefusedBoot) => void,
+  ): Promise<void> {
+    const refused = await bootRefused("lifecycle-refusal", {
+      prepare: (sqlitePath) => {
+        cpSync(image, sqlitePath);
+        withInstanceDatabase(sqlitePath, change);
+      },
+    });
+    try {
+      check(refused);
+    } finally {
+      await refused.stop();
+    }
+  }
+
+  const CAUSES: [string, (db: Database) => void, RegExp][] = [
+    [
+      "a table that lacks a column this build declares",
+      (db) => db.exec("ALTER TABLE audit_log DROP COLUMN client_ip"),
+      /is not this build's: .*audit_log table lacks client_ip/,
+    ],
+    [
+      "a table that carries a column this build does not declare",
+      (db) => db.exec("ALTER TABLE audit_log ADD COLUMN stray TEXT"),
+      /is not this build's: .*stray/,
+    ],
+    [
+      "an index this build does not declare",
+      (db) => db.exec("CREATE INDEX stray_index ON items (id)"),
+      /is not this build's: .*stray_index/,
+    ],
+  ];
+
+  it("starts on the database the refusals below are made from, and a start that is not refused changes the file", async () => {
+    const health = await fetch(`${donor.apiUrl}/health`);
+    const client = new MarfaClient({
+      baseUrl: donor.apiUrl,
+      apiKey: donor.workingKey,
+    });
+    const listed = await client.listItems({ source: "lifecycle-refused" });
+    const digest = (path: string): string =>
+      createHash("sha256").update(readFileSync(path)).digest("hex");
+
+    expect(health.status).toBe(200);
+    expect(listed.ok && listed.data.data.length).toBe(5);
+    expect(digest(imageAfterAStart)).not.toBe(digest(image));
+  });
+
+  it.each(CAUSES)(
+    "refuses a database holding %s, changes nothing in its files, and opens no port",
+    async (_cause, change, message) => {
+      await expectRefusal(change, (refused) => {
+        expectDatabaseUnchanged(refused);
+        expect(refusalText(refused)).toMatch(message);
+        expect(refusalText(refused)).toContain(refused.sqlitePath);
+        expect(listened(refused)).toBe(false);
+      });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses to start on a database a newer build wrote, and leaves it as it was",
+    async () => {
+      await expectRefusal(
+        (db) => db.exec("PRAGMA user_version = 1000"),
+        (refused) => {
+          expect(refused).toMatchObject({
+            code: REFUSED_DATABASE_STATUS,
+            signal: null,
+          });
+          expectDatabaseUnchanged(refused);
+          expect(listened(refused)).toBe(false);
+          expect(refusalText(refused)).toContain("which a newer build wrote");
+          expect(refusalText(refused)).toContain(refused.sqlitePath);
+        },
+      );
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse",
+    async () => {
+      for (const [cause, change] of CAUSES) {
+        await expectRefusal(change, (refused) => {
+          const text = refusalText(refused);
+          expect(text, cause).toMatch(
+            /export (it )?with the build that wrote/i,
+          );
+          expect(text, cause).toMatch(/start (this build )?on a fresh file/i);
+          expect(text, cause).toContain("restore the archive there");
+          expect(text, cause).toMatch(/restore\b.*\bcan refuse/i);
+        });
+      }
+    },
+    CAUSES.length * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "exits with status 78, not 1, when it refuses a database this build did not write",
+    async () => {
+      for (const [cause, change] of CAUSES) {
+        await expectRefusal(change, (refused) => {
+          expect(refused, cause).toMatchObject({
+            code: REFUSED_DATABASE_STATUS,
+            signal: null,
+          });
+        });
+      }
+    },
+    CAUSES.length * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+/** Every row of every table this build keeps removed (the tables SQLite keeps
+ *  for a virtual table excepted), then `drop` taken out: the file a start
+ *  leaves when it stops partway through making its tables. */
+function emptyThenDrop(db: Database, drop: readonly string[]): void {
+  db.exec("PRAGMA foreign_keys = OFF");
+  const tables = db
+    .prepare(
+      "SELECT name FROM pragma_table_list WHERE schema = 'main' AND type IN ('table', 'virtual') AND name NOT LIKE 'sqlite_%'",
+    )
+    .all()
+    .map((row) => String(row.name));
+  for (const table of tables) db.exec(`DELETE FROM \`${table}\``);
+  for (const table of drop) db.exec(`DROP TABLE \`${table}\``);
+}
+
+/** Every table the database holds, by name. */
+function tablesIn(db: Database): string[] {
+  return db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all()
+    .map((row) => String(row.name));
+}
+
+describe("starting on a database that holds some of the server's tables and no rows", () => {
+  const DROPPED = ["audit_log", "items"];
+  let server: FreshServer;
+  let image: string;
+  const kept: string[] = [];
+
+  beforeAll(async () => {
+    server = await bootFreshServer("lifecycle-unfinished");
+    await writeNotes(server, "lifecycle-unfinished", 5);
+    const dir = mkdtempSync(join(tmpdir(), "marfa-unfinished-donor-"));
+    kept.push(dir);
+    image = join(dir, "marfa.db");
+    await server.restart({
+      whileStopped: () => cpSync(server.sqlitePath, image),
+    });
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await server.stop();
+    for (const dir of kept.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function rootInstanceId(): Promise<string> {
+    const root = (await (await fetch(`${server.apiUrl}/`)).json()) as {
+      instance_id: string;
+    };
+    return root.instance_id;
+  }
+
+  async function startUnprovisioned(change: (db: Database) => void) {
+    await stopServer({ state: server.stateDir });
+    withInstanceDatabase(server.sqlitePath, change);
+    const started = await bootUnclaimedServer({ state: server.stateDir });
+    server.apiUrl = started.url;
+    server.controlSocket = started.controlSocket;
+  }
+
+  it(
+    "creates the tables it lacks and remains unclaimed until a real claim",
+    async () => {
+      const noteIds = await writeNotes(server, "lifecycle-unfinished", 3);
+      const instanceBefore = await rootInstanceId();
+      await startUnprovisioned((db) => {
+        emptyThenDrop(db, DROPPED);
+        for (const table of DROPPED) expect(tablesIn(db)).not.toContain(table);
+      });
+      expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
+      expect(
+        (await controlRequest(server.controlSocket, "/_control/setup/status"))
+          .body.claimed,
+      ).toBe(false);
+      expect(
+        (await controlRequest(server.controlSocket, "/owner")).status,
+      ).toBe(404);
+      expect(await rootInstanceId()).not.toBe(instanceBefore);
+      withInstanceDatabase(server.sqlitePath, (db) => {
+        for (const table of DROPPED) expect(tablesIn(db)).toContain(table);
+        expect(
+          db.prepare("SELECT count(*) AS count FROM api_keys").get()?.count,
+        ).toBe(0);
+        expect(
+          db.prepare("SELECT count(*) AS count FROM items").get()?.count,
+        ).toBe(0);
+      });
+      expect(
+        (
+          await controlRequest(server.controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
+      ).toBe(201);
+      const minted = await controlRequest(server.controlSocket, "/keys", {
+        method: "POST",
+        body: {
+          label: "unfinished-schema",
+          source: "lifecycle-unfinished",
+          permissions: ["audit.read"],
+          type_permissions: { "*": "write" },
+        },
+      });
+      expect(minted.status).toBe(201);
+      const client = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: minted.body.key as string,
+      });
+      expect((await client.getItem(noteIds[0] ?? "")).status).toBe(404);
+      const written = await client.createItem({
+        type: NOTE,
+        source: "lifecycle-unfinished",
+        properties: { body: "written after the tables were made" },
+      });
+      expect(written.status).toBe(201);
+      expect((await client.getItem(written.data.item.id)).status).toBe(200);
+      const audit = await client.listAudit({ action: "owner.claimed" });
+      expect(audit.status).toBe(200);
+      expect(audit.data.data).toHaveLength(1);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  /** Boots on the donor's database changed by `change`, expects it refused,
+   *  and checks the refusal names `message`. */
+  async function expectUnfinishedRefused(
+    change: (db: Database) => void,
+    message: RegExp,
+  ): Promise<void> {
+    const refused = await bootRefused("lifecycle-unfinished-refused", {
+      prepare: (sqlitePath) => {
+        cpSync(image, sqlitePath);
+        withInstanceDatabase(sqlitePath, change);
+      },
+    });
+    try {
+      expect(refused).toMatchObject({
+        code: REFUSED_DATABASE_STATUS,
+        signal: null,
+      });
+      expectDatabaseUnchanged(refused);
+      expect(refusalText(refused)).toMatch(message);
+      expect(listened(refused)).toBe(false);
+    } finally {
+      await refused.stop();
+    }
+  }
+
+  it(
+    "refuses a database that lacks a table and holds a row in one it creates, and changes nothing",
+    async () => {
+      await expectUnfinishedRefused(
+        (db) => db.exec("DROP TABLE audit_log"),
+        /is not this build's: .*the file lacks the audit_log table/,
+      );
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a database that lacks a table and has a column it does not declare, though it holds no rows",
+    async () => {
+      await expectUnfinishedRefused((db) => {
+        emptyThenDrop(db, DROPPED);
+        db.exec("ALTER TABLE api_keys ADD COLUMN stray TEXT");
+      }, /is not this build's: .*stray/);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
