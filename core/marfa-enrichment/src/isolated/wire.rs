@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn a_refusal_a_child_may_give_is_passed_on() {
         assert_eq!(
-            judged(r#"{"refusal":{"kind":"over_limit","reason":"big"}}"#),
+            judged(r#"{"refusal":{"kind":"over_memory","reason":"big"}}"#),
             Err(Refusal::OverLimit(Limit::Memory, "big".into()))
         );
     }
@@ -481,7 +481,7 @@ mod tests {
             Err(Refusal::Malformed("a b [31mc d e".into()))
         );
         let beside = reading(
-            r#""cut_short":false,"size":[3,4],"text_refused":{"kind":"over_limit","reason":"a\nb"}"#,
+            r#""cut_short":false,"size":[3,4],"text_refused":{"kind":"over_inflated","reason":"a\nb"}"#,
         );
         assert_eq!(
             judged(&beside).unwrap().text_refused,
