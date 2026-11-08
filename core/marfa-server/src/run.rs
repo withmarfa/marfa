@@ -130,6 +130,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     if let Some(port) = port {
         tracing::info!("Marfa server listening on port {port}");
     }
+    #[cfg(feature = "test-hooks")]
     if app.settings.start.test_hooks {
         tracing::warn!("Test hooks are on; this instance must hold no real data");
     }
@@ -138,6 +139,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let stopping_at = Instant::now();
     tracing::info!("Stopping");
     app.housekeeping.stop();
+    #[cfg(feature = "test-hooks")]
     app.faults.clear(None);
     app.begin_stop();
     let (closed, ()) = tokio::join!(

@@ -47,7 +47,7 @@ const hosts: Server[] = [];
 beforeAll(async () => {
   server = await bootFreshServer("mcp-scripted", {
     MARFA_MCP_FETCH_MAX_BYTES: String(FETCH_MAX_BYTES),
-    RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_ENABLED: "true",
   });
   mcp = await connectMcp(server.apiUrl, server.workingKey);
 }, FRESH_SERVER_TIMEOUT_MS);

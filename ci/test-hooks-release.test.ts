@@ -67,4 +67,22 @@ describe("the test hooks and what is released", () => {
       }
     }
   });
+
+  it("builds the server with the test-hooks feature for the contract runs and without it for a release", () => {
+    const built = (workflow: string) =>
+      readFileSync(`${root}.github/workflows/${workflow}`, "utf8")
+        .split("\n")
+        .filter((line) => /cargo build .*-p marfa-server/.test(line));
+    for (const workflow of ["ci.yml", "core-live.yml"]) {
+      const lines = built(workflow);
+      expect(lines.length, workflow).toBeGreaterThan(0);
+      for (const line of lines)
+        expect(line, workflow).toContain("--features test-hooks");
+    }
+    const release = readFileSync(
+      `${root}.github/workflows/release.yml`,
+      "utf8",
+    );
+    expect(release).not.toContain("test-hooks");
+  });
 });

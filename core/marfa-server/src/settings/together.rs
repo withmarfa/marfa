@@ -3,11 +3,9 @@
 //! through `/config` and the listing read the same list.
 
 use super::registry::{
-    self, ADDRESSES, ENTRIES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, SIGN_IN_ADDRESS, Seeds,
-    Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS,
-    Value,
+    self, ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, SIGN_IN_ADDRESS, Snapshot,
+    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
-use super::rule;
 use super::start::Fixed;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -79,21 +77,21 @@ pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
 
 /// A write through `/config` is refused, so a seed is the only way a setting can start
 /// outside a rule.
-pub fn seed_lines(seeds: &Seeds, start: &Fixed) -> Vec<String> {
+#[cfg(feature = "test-hooks")]
+pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
     let after = Snapshot::resolve(seeds, &[], 0);
     let touched: Vec<&str> = seeds.keys().copied().collect();
     judge(&after, &touched, start)
         .into_iter()
         .filter_map(|breach| {
             let entry = registry::entry(breach.path)?;
-            let words = ENTRIES
+            let words = registry::ENTRIES
                 .iter()
-                .filter_map(|other| Some((other.key, other.test_name?)))
-                .fold(breach.message, |words, (key, name)| {
-                    words.replace(key, name)
+                .fold(breach.message, |words, other| {
+                    words.replace(other.key, &other.seed_name())
                 });
             let got = after.value(entry).to_json().to_string();
-            Some(rule::line(entry.test_name?, &words, &got))
+            Some(super::rule::line(&entry.seed_name(), &words, &got))
         })
         .collect()
 }

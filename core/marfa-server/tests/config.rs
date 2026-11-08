@@ -109,10 +109,10 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut pairs = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         pairs.extend_from_slice(extra);
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
@@ -278,7 +278,7 @@ async fn a_value_of_the_wrong_kind_or_size_is_named_and_a_null_in_a_put_is_refus
 async fn cors_origins_seed_from_a_comma_list_and_change_as_a_list() {
     let seed = [
         ("MARFA_TEST_HOOKS", "true"),
-        ("CORS_ORIGINS", "https://a.example, https://b.example"),
+        ("MARFA_CORS_ORIGINS", "https://a.example, https://b.example"),
     ];
     let instance = Instance::start(&seed).await;
     assert_eq!(
@@ -744,7 +744,11 @@ async fn audit_rows(instance: &Instance) -> i64 {
 async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_reads() {
     let secret = "salt-that-must-not-print";
     let hook = "https://hooks.example/token-that-must-not-print";
-    let instance = Instance::start(&[("API_KEY_SALT", secret), ("ERROR_WEBHOOK_URL", hook)]).await;
+    let instance = Instance::start(&[
+        ("MARFA_KEY_SALT", secret),
+        ("MARFA_ERROR_WEBHOOK_URL", hook),
+    ])
+    .await;
 
     instance.spoil("audit_retention_days", "soon").await;
 
@@ -760,7 +764,7 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
             .cloned()
             .unwrap()
     };
-    assert_eq!(named("API_KEY_SALT")["set"], true);
+    assert_eq!(named("MARFA_KEY_SALT")["set"], true);
     assert_eq!(named("MARFA_HEARTBEAT_URL")["set"], false);
     assert_eq!(named("MARFA_ERROR_WEBHOOK_TIMEOUT_MS")["secret"], false);
 

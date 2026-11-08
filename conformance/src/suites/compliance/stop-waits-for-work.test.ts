@@ -34,10 +34,10 @@ beforeAll(async () => {
     // The instance defaults the thinning of a plain type follows: a day, two
     // days, twenty. The interval is past reach, so the only runs are the
     // fixture's own.
-    VERSION_RECENT_DAYS: "1",
-    VERSION_DAILY_SNAPSHOT_DAYS: "2",
-    VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
-    VERSION_THINNING_INTERVAL_MS: "3153600000000",
+    MARFA_VERSION_RECENT_DAYS: "1",
+    MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "2",
+    MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
+    MARFA_VERSION_THINNING_INTERVAL_MS: "3153600000000",
     MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "1000",
   });
   writer = writerOf(server);

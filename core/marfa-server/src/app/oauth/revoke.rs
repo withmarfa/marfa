@@ -27,7 +27,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         Ok(client) => client,
         Err(problem) => return Ok(Err(problem)),
     };
-    let digest = digest_of(&app.settings.start.api_key_salt, &token)?;
+    let digest = digest_of(&app.settings.start.key_salt, &token)?;
     let ip = visit.client_ip();
     if looks_like_access_token(&token) {
         app.write(&Caller::Server, TOKEN_REVOKED, move |unit| {

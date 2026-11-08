@@ -275,6 +275,9 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          # The tests above compile the server with its test hooks. A release
+          # build leaves them out, so the server is linted without them too.
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -340,6 +343,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -1056,7 +1060,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the Rust server
         working-directory: core
-        run: cargo build --locked --release -p marfa-server
+        run: cargo build --locked --release -p marfa-server --features test-hooks
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
       # diagnostic, so it is kept on success like the reports.

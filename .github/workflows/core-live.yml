@@ -60,7 +60,7 @@ jobs:
 
       - name: Build the Rust server
         working-directory: core
-        run: cargo build --locked --release -p marfa-server
+        run: cargo build --locked --release -p marfa-server --features test-hooks
 
       - name: Verify local server keys survive a restart
         run: core/scripts/server-keys.test.sh

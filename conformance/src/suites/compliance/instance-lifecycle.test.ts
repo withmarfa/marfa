@@ -463,10 +463,10 @@ describe("starting with a setting outside its rule", () => {
       'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
     ],
     [
-      "AUDIT_RETENTION_DAYS",
+      "MARFA_AUDIT_RETENTION_DAYS",
       "a count above its maximum",
       "36501",
-      'AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
+      'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
     ],
     [
       "SQLITE_BUSY_BUDGET_MS",
@@ -502,7 +502,7 @@ describe("starting with a setting outside its rule", () => {
     async () => {
       const server = await bootFreshServer("lifecycle-settings-edge", {
         MARFA_CONNECTOR_HOLD_MS: "1000",
-        AUDIT_RETENTION_DAYS: "36500",
+        MARFA_AUDIT_RETENTION_DAYS: "36500",
         SQLITE_BUSY_BUDGET_MS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
         S3_ENDPOINT: "https://objects.example.test",
@@ -510,9 +510,9 @@ describe("starting with a setting outside its rule", () => {
         // With no bucket the endpoint is parsed and never reached, whatever
         // object store the run's environment names.
         S3_BUCKET: "",
-        VERSION_RECENT_DAYS: "40",
-        VERSION_DAILY_SNAPSHOT_DAYS: "40",
-        VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
+        MARFA_VERSION_RECENT_DAYS: "40",
+        MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "40",
+        MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
         MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
         MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "500",
         MARFA_AUTH_SECRET: "x".repeat(32),
@@ -587,17 +587,17 @@ describe("starting with a setting outside its rule", () => {
 
   const disagreeing: [string, Record<string, string>, string][] = [
     [
-      "VERSION_DAILY_SNAPSHOT_DAYS",
-      { VERSION_RECENT_DAYS: "40", VERSION_DAILY_SNAPSHOT_DAYS: "39" },
-      'VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS (got "39")',
+      "MARFA_VERSION_DAILY_SNAPSHOT_DAYS",
+      { MARFA_VERSION_RECENT_DAYS: "40", MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "39" },
+      'MARFA_VERSION_DAILY_SNAPSHOT_DAYS must be at least MARFA_VERSION_RECENT_DAYS (got "39")',
     ],
     [
-      "VERSION_WEEKLY_SNAPSHOT_DAYS",
+      "MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS",
       {
-        VERSION_DAILY_SNAPSHOT_DAYS: "100",
-        VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
+        MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "100",
+        MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
       },
-      'VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
+      'MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS must be at least MARFA_VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
     ],
     [
       "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
@@ -637,10 +637,10 @@ describe("starting with a setting outside its rule", () => {
       expect(
         await refusedOverSettings({
           ...disagreement,
-          VERSION_RECENT_DAYS: "soon",
+          MARFA_VERSION_RECENT_DAYS: "soon",
         }),
       ).toEqual([
-        'VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
+        'MARFA_VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
       ]);
 
       // The rules that hold only in production wait too. The three settings

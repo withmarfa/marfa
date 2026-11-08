@@ -166,7 +166,7 @@ struct Issue<'i> {
 fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String, Value>> {
     let tx = unit.tx();
     let now = ms_of(&unit.at)?;
-    let salt = &app.settings.start.api_key_salt;
+    let salt = &app.settings.start.key_salt;
     let access = new_access_token()?;
     store::insert_access_token(
         tx,
@@ -245,7 +245,7 @@ async fn by_code(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &code)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This code cannot be exchanged.");
         let Some(code) = store::code(tx, &digest)?.filter(|code| code.expires_at > now) else {
             return Ok(Err(spent()));
@@ -334,7 +334,7 @@ async fn by_refresh(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &token)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &token)?;
         let dead = || invalid_grant("This refresh token cannot be used.");
         let Some(old) = store::refresh_token_by_digest(tx, &digest)?
             .filter(|old| old.client_id == client.id && old.ended_at.is_none())
@@ -407,7 +407,7 @@ async fn by_device_code(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &code)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This device code cannot be exchanged.");
         let Some(code) =
             store::device_code(tx, &digest)?.filter(|code| code.client_id == client.id)

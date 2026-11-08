@@ -126,12 +126,12 @@ async fn boot(dir: &TempDir) -> Arc<App> {
     let blobs = dir.path().join("blobs");
     let socket = dir.path().join("s.sock");
     let pairs = [
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", blobs.to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
-        ("MARFA_AUTH_BASE_URL", ORIGIN),
-        ("API_KEY_SALT", "a salt for these tests"),
+        ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+        ("MARFA_KEY_SALT", "a salt for these tests"),
     ];
     let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
     App::start(settings).await.unwrap()

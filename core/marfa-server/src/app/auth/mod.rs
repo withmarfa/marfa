@@ -41,9 +41,15 @@ pub fn carries_sessions(address: &Address) -> bool {
 }
 
 /// Under test hooks a server is held to the loopback, so callers named behind it never left this machine.
+#[cfg(feature = "test-hooks")]
 fn takes_fixture_callers(start: &Start) -> bool {
     let held = |host: &str| host.parse().is_ok_and(|ip: IpAddr| ip.is_loopback());
     start.test_hooks && start.listen_host.as_deref().is_some_and(held)
+}
+
+#[cfg(not(feature = "test-hooks"))]
+fn takes_fixture_callers(_start: &Start) -> bool {
+    false
 }
 
 /// Refuses a caller off this machine until the sign-in address is set. The fallback address

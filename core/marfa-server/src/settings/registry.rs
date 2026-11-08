@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 
 use serde_json::Value as Json;
 
+#[cfg(feature = "test-hooks")]
 use super::Environment;
 use super::rule;
 use crate::app::addresses::{self, Address};
@@ -11,7 +12,6 @@ use crate::app::addresses::{self, Address};
 pub enum Rule {
     Whole { min: u64, max: u64 },
     Boolean,
-    Text,
     Address,
     Addresses,
 }
@@ -19,8 +19,6 @@ pub enum Rule {
 #[derive(Debug)]
 pub struct Entry {
     pub key: &'static str,
-    /// Seeds the value under test hooks only.
-    pub test_name: Option<&'static str>,
     pub rule: Rule,
     pub default: &'static str,
     pub description: &'static str,
@@ -31,11 +29,15 @@ impl Entry {
         match self.rule {
             Rule::Whole { min, max } => rule::whole_number(text, min, max).map(Value::Whole),
             Rule::Boolean => rule::boolean(text).map(Value::Boolean),
-            Rule::Text => Ok(Value::Text(text.to_string())),
             Rule::Address if text.is_empty() => Ok(Value::Address(None)),
             Rule::Address => Address::parse(text).map(|address| Value::Address(Some(address))),
             Rule::Addresses => addresses::parse_list(text).map(Value::Addresses),
         }
+    }
+
+    /// The environment name that seeds this setting's default under test hooks.
+    pub fn seed_name(&self) -> String {
+        format!("MARFA_{}", self.key.to_ascii_uppercase())
     }
 
     pub fn row_text(&self, text: &str) -> Result<String, String> {
@@ -44,12 +46,8 @@ impl Entry {
 
     fn phrase(&self) -> String {
         match self.rule {
-            Rule::Whole { min, max } if max >= rule::SAFE_INTEGER => {
-                format!("a whole number, {min} or more")
-            }
             Rule::Whole { min, max } => format!("a whole number, from {min} to {max}"),
             Rule::Boolean => "true or false".to_string(),
-            Rule::Text => "text".to_string(),
             Rule::Address => "an address such as https://marfa.example, or nothing".to_string(),
             Rule::Addresses => "a list of addresses such as https://marfa.example".to_string(),
         }
@@ -67,7 +65,7 @@ impl Entry {
         let text = match (self.rule, value) {
             (Rule::Whole { .. }, Json::Number(number)) => whole_text(number),
             (Rule::Boolean, Json::Bool(flag)) => flag.to_string(),
-            (Rule::Text | Rule::Address, Json::String(text)) => text.clone(),
+            (Rule::Address, Json::String(text)) => text.clone(),
             (Rule::Addresses, Json::Array(items)) if items.iter().all(Json::is_string) => {
                 value.to_string()
             }
@@ -109,7 +107,6 @@ impl<T: Kind> Setting<T> {
 pub enum Value {
     Whole(u64),
     Boolean(bool),
-    Text(String),
     Address(Option<Address>),
     Addresses(Vec<Address>),
 }
@@ -120,9 +117,7 @@ fn whole_text(number: &serde_json::Number) -> String {
         return whole.to_string();
     }
     match number.as_f64() {
-        Some(float) if float.fract() == 0.0 && float.abs() <= rule::SAFE_INTEGER as f64 => {
-            format!("{float:.0}")
-        }
+        Some(float) if float.fract() == 0.0 => format!("{float:.0}"),
         _ => number.to_string(),
     }
 }
@@ -132,7 +127,6 @@ impl Value {
         match self {
             Value::Whole(number) => Json::from(*number),
             Value::Boolean(flag) => Json::from(*flag),
-            Value::Text(text) => Json::from(text.as_str()),
             Value::Address(address) => address
                 .as_ref()
                 .map_or(Json::Null, |address| Json::from(address.origin())),
@@ -146,7 +140,6 @@ impl Value {
         match self {
             Value::Whole(number) => number.to_string(),
             Value::Boolean(flag) => flag.to_string(),
-            Value::Text(text) => text.clone(),
             Value::Address(address) => address
                 .as_ref()
                 .map_or_else(String::new, |address| address.origin().to_string()),
@@ -180,15 +173,6 @@ impl Kind for bool {
     }
 }
 
-impl Kind for String {
-    fn from_value(value: &Value) -> Option<String> {
-        match value {
-            Value::Text(text) => Some(text.clone()),
-            _ => None,
-        }
-    }
-}
-
 impl Kind for Option<Address> {
     fn from_value(value: &Value) -> Option<Option<Address>> {
         match value {
@@ -208,11 +192,10 @@ impl Kind for Vec<Address> {
 }
 
 macro_rules! registry {
-    ($($constant:ident: $kind:ty = $key:literal, $test_name:expr, $rule:expr, $default:literal, $description:literal;)*) => {
+    ($($constant:ident: $kind:ty = $key:literal, $rule:expr, $default:literal, $description:literal;)*) => {
         $(pub const $constant: Setting<$kind> = Setting {
             entry: &Entry {
                 key: $key,
-                test_name: $test_name,
                 rule: $rule,
                 default: $default,
                 description: $description,
@@ -233,45 +216,69 @@ macro_rules! registry {
 
 const INTERVAL: Rule = Rule::Whole {
     min: 1,
-    max: 3_153_600_000_000,
+    max: rule::WEEK_MS,
+};
+const UP_TO_A_DAY: Rule = Rule::Whole {
+    min: 1,
+    max: rule::DAY_MS,
+};
+const UP_TO_AN_HOUR: Rule = Rule::Whole {
+    min: 1,
+    max: rule::HOUR_MS,
+};
+const BYTES: Rule = Rule::Whole {
+    min: 1,
+    max: rule::TERABYTE,
+};
+const BYTES_OR_NONE: Rule = Rule::Whole {
+    min: 0,
+    max: rule::TERABYTE,
+};
+const COUNT: Rule = Rule::Whole {
+    min: 1,
+    max: rule::MILLION,
+};
+const COUNT_OR_NONE: Rule = Rule::Whole {
+    min: 0,
+    max: rule::MILLION,
 };
 
 registry! {
-    MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1048576", "The largest request body the server accepts, in bytes.";
-    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
-    UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", Some("MARFA_UPLOAD_IDLE_TIMEOUT_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
-    BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", Some("MARFA_BLOB_READ_IDLE_TIMEOUT_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
-    BLOB_MIN_COPIES: u64 = "blob_min_copies", Some("MARFA_BLOB_MIN_COPIES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1", "The fewest live copies the server keeps of each blob.";
-    RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true", "Whether requests made with a key, app registrations, device code requests and passkey sign-in challenges are limited.";
-    RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "200", "How many requests one key may make in each window.";
-    RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "60000", "How long one rate-limit window lasts, in milliseconds.";
-    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Some("MARFA_ERROR_REPORTING_ENABLED"), Rule::Boolean, "true", "Whether the server reports its own errors to the receiver set where it runs.";
-    AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Some("AUDIT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
-    DCR_CLIENT_RETENTION_DAYS: u64 = "dcr_client_retention_days", Some("MARFA_DCR_CLIENT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "1", "How many days an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
-    REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Some("MARFA_REVOKED_GRANT_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
-    GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Some("MARFA_GRANT_INACTIVITY_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
-    TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Some("TRASH_RETENTION_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
-    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Some("MARFA_EVENT_LOG_RETENTION_HOURS"), Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log is kept. 0 keeps it for ever.";
-    VERSION_RECENT_DAYS: u64 = "version_recent_days", Some("VERSION_RECENT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
-    VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Some("VERSION_DAILY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";
-    VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Some("VERSION_WEEKLY_SNAPSHOT_DAYS"), Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";
-    VERSION_MAX_VERSIONS: u64 = "version_max_versions", Some("VERSION_MAX_VERSIONS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "500", "The most versions kept for one item.";
-    HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Some("MARFA_HEARTBEAT_ENABLED"), Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
-    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", Some("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
-    AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", Some("AUDIT_CLEANUP_INTERVAL_MS"), INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
-    AUTH_SESSION_CLEANUP_INTERVAL_MS: u64 = "auth_session_cleanup_interval_ms", Some("AUTH_SESSION_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `auth-session-cleanup` job runs, in milliseconds.";
-    DCR_CLIENT_CLEANUP_INTERVAL_MS: u64 = "dcr_client_cleanup_interval_ms", Some("MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `dcr-client-cleanup` job runs, in milliseconds.";
-    SSE_MAX_VIEWERS: u64 = "sse_max_viewers", Some("MARFA_SSE_MAX_VIEWERS"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
-    EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
-    FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
-    HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", Some("MARFA_HEARTBEAT_INTERVAL_MS"), INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
-    RATE_LIMIT_CLEANUP_INTERVAL_MS: u64 = "rate_limit_cleanup_interval_ms", Some("MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `rate-limit-cleanup` job runs, in milliseconds.";
-    REVOKED_KEY_REAP_INTERVAL_MS: u64 = "revoked_key_reap_interval_ms", None, INTERVAL, "3600000", "How often the `revoked-key-reap` job runs, in milliseconds.";
-    TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", Some("TRASH_PURGE_INTERVAL_MS"), INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
-    VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", Some("VERSION_THINNING_INTERVAL_MS"), INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
-    ADDRESSES: Vec<Address> = "addresses", None, Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
-    CORS_ORIGINS: Vec<Address> = "cors_origins", Some("CORS_ORIGINS"), Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
-    SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
+    MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes.";
+    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
+    UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", UP_TO_A_DAY, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
+    BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", UP_TO_A_DAY, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
+    BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
+    RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether requests made with a key, app registrations, device code requests and passkey sign-in challenges are limited.";
+    RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window.";
+    RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", UP_TO_A_DAY, "60000", "How long one rate-limit window lasts, in milliseconds.";
+    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own errors to the receiver set where it runs.";
+    AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
+    DCR_CLIENT_RETENTION_DAYS: u64 = "dcr_client_retention_days", Rule::Whole { min: 0, max: 36_500 }, "1", "How many days an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
+    REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
+    GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
+    TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
+    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log is kept. 0 keeps it for ever.";
+    VERSION_RECENT_DAYS: u64 = "version_recent_days", Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
+    VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";
+    VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";
+    VERSION_MAX_VERSIONS: u64 = "version_max_versions", COUNT, "500", "The most versions kept for one item.";
+    HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
+    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", UP_TO_AN_HOUR, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
+    AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
+    AUTH_SESSION_CLEANUP_INTERVAL_MS: u64 = "auth_session_cleanup_interval_ms", INTERVAL, "3600000", "How often the `auth-session-cleanup` job runs, in milliseconds.";
+    DCR_CLIENT_CLEANUP_INTERVAL_MS: u64 = "dcr_client_cleanup_interval_ms", INTERVAL, "3600000", "How often the `dcr-client-cleanup` job runs, in milliseconds.";
+    SSE_MAX_VIEWERS: u64 = "sse_max_viewers", COUNT_OR_NONE, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
+    EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
+    FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
+    HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
+    RATE_LIMIT_CLEANUP_INTERVAL_MS: u64 = "rate_limit_cleanup_interval_ms", INTERVAL, "3600000", "How often the `rate-limit-cleanup` job runs, in milliseconds.";
+    REVOKED_KEY_REAP_INTERVAL_MS: u64 = "revoked_key_reap_interval_ms", INTERVAL, "3600000", "How often the `revoked-key-reap` job runs, in milliseconds.";
+    TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
+    VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
+    ADDRESSES: Vec<Address> = "addresses", Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
+    CORS_ORIGINS: Vec<Address> = "cors_origins", Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
+    SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
 }
 
 pub fn entry(key: &str) -> Option<&'static Entry> {
@@ -280,6 +287,7 @@ pub fn entry(key: &str) -> Option<&'static Entry> {
 
 pub type Seeds = HashMap<&'static str, Value>;
 
+#[cfg(feature = "test-hooks")]
 fn list_of(text: &str) -> String {
     let origins: Vec<&str> = text
         .split(',')
@@ -289,13 +297,12 @@ fn list_of(text: &str) -> String {
     Json::from(origins).to_string()
 }
 
+#[cfg(feature = "test-hooks")]
 pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
     let mut seeds = Seeds::new();
     for entry in ENTRIES {
-        let Some((name, text)) = entry
-            .test_name
-            .and_then(|name| environment.get(name).map(|text| (name, text)))
-        else {
+        let name = entry.seed_name();
+        let Some(text) = environment.get(&name) else {
             continue;
         };
         let read = match entry.rule {
@@ -306,7 +313,7 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
             Ok(value) => {
                 seeds.insert(entry.key, value);
             }
-            Err(broken) => problems.push(rule::line(name, &broken, text)),
+            Err(broken) => problems.push(rule::line(&name, &broken, text)),
         }
     }
     seeds
@@ -456,24 +463,5 @@ mod tests {
         );
         assert!(read(ADDRESSES.entry, Json::from("https://a.example")).is_err());
         assert!(read(ADDRESSES.entry, serde_json::json!([1])).is_err());
-    }
-
-    #[test]
-    fn text_reads_as_written() {
-        let entry = Entry {
-            key: "region",
-            test_name: None,
-            rule: Rule::Text,
-            default: "",
-            description: "",
-        };
-        assert_eq!(
-            entry
-                .parse("eu west")
-                .as_ref()
-                .ok()
-                .and_then(String::from_value),
-            Some("eu west".to_string())
-        );
     }
 }

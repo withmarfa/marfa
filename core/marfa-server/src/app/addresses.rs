@@ -250,7 +250,7 @@ mod tests {
     }
 
     fn settings(pairs: &[(&str, &str)]) -> Settings {
-        let pairs = [&[("SQLITE_PATH", ":memory:")], pairs].concat();
+        let pairs = [&[("MARFA_DATABASE_PATH", ":memory:")], pairs].concat();
         Settings::read(Environment::from_pairs(&pairs))
             .ok()
             .unwrap()
@@ -265,12 +265,12 @@ mod tests {
         };
         assert_eq!(sign_in(&[], None), "http://localhost:8600");
         assert_eq!(
-            sign_in(&[("PORT", "0")], Some(51234)),
+            sign_in(&[("MARFA_PORT", "0")], Some(51234)),
             "http://localhost:51234"
         );
         assert_eq!(
             sign_in(
-                &[("MARFA_LISTEN_HOST", "127.0.0.1"), ("PORT", "0")],
+                &[("MARFA_LISTEN_HOST", "127.0.0.1"), ("MARFA_PORT", "0")],
                 Some(51234)
             ),
             "http://127.0.0.1:51234"
@@ -279,7 +279,7 @@ mod tests {
             sign_in(&[("MARFA_LISTEN_HOST", "0.0.0.0")], None),
             "http://localhost:8600"
         );
-        assert_eq!(sign_in(&[("PORT", "80")], None), "http://localhost");
+        assert_eq!(sign_in(&[("MARFA_PORT", "80")], None), "http://localhost");
     }
 
     #[test]

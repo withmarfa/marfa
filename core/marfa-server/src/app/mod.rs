@@ -78,10 +78,10 @@ impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
-        let faults = Arc::new(Faults::default());
+        let faults = Arc::<Faults>::default();
         let options = Options {
             path: start.database.clone(),
-            busy_budget: start.busy_budget,
+            write_wait: start.write_wait,
             readers: READERS,
             migrations: MIGRATIONS,
         };
@@ -95,7 +95,10 @@ impl App {
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
+        #[cfg(feature = "test-hooks")]
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
+        #[cfg(not(feature = "test-hooks"))]
+        let clock = Arc::new(Clock::default());
         let at = clock.stamp();
         blobs.register(&db, at.clone()).await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
@@ -164,7 +167,13 @@ impl App {
         let _ = self.bound_port.set(port);
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn contract(&self) -> u32 {
         self.settings.start.contract_version.unwrap_or(0)
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn contract(&self) -> u32 {
+        0
     }
 }

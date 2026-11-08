@@ -281,7 +281,7 @@ fn require_ahead(expires_at: Option<&str>, at: &str) -> Result<()> {
 
 pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, String)> {
     let plain = secret::new_secret()?;
-    let hash = secret::hash(&app.settings.start.api_key_salt, &plain)?;
+    let hash = secret::hash(&app.settings.start.key_salt, &plain)?;
     let key = app
         .write(caller, "key.create", move |unit| {
             let caller = &unit.caller;
@@ -449,7 +449,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
     if !secret::looks_like_a_key(token) {
         return Ok(None);
     }
-    let hash = secret::hash(&app.settings.start.api_key_salt, token)?;
+    let hash = secret::hash(&app.settings.start.key_salt, token)?;
     let at = app.clock.stamp();
     let key = app
         .db

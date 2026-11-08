@@ -291,7 +291,7 @@ function serverEnv(): NodeJS.ProcessEnv {
     // ask for it should not inherit one from whoever started the run.
     ...process.env,
     PORT: "",
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };

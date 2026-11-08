@@ -2636,6 +2636,7 @@ dependencies = [
  "libc",
  "marfa-acl",
  "marfa-rules",
+ "marfa-server",
  "marfa-telemetry",
  "opentelemetry",
  "opentelemetry-http",

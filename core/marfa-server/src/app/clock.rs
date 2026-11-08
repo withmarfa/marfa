@@ -1,13 +1,17 @@
-//! The instance's clock: the one place code asks the time. A test harness can
-//! move it forward and pause it; it never goes back.
+//! The instance's clock: the one place code asks the time. Under test hooks a
+//! harness can move it forward and pause it; it never goes back.
 
+#[cfg(feature = "test-hooks")]
 use std::sync::Mutex;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
+#[cfg(feature = "test-hooks")]
 pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
+#[cfg(feature = "test-hooks")]
 const MAX_INSTANT_MS: i64 = 8_640_000_000_000_000;
 
+#[cfg(feature = "test-hooks")]
 #[derive(Debug)]
 struct State {
     offset_ms: u64,
@@ -15,10 +19,13 @@ struct State {
 }
 
 #[derive(Debug)]
+#[cfg_attr(not(feature = "test-hooks"), derive(Default))]
 pub struct Clock {
+    #[cfg(feature = "test-hooks")]
     state: Mutex<State>,
 }
 
+#[cfg(feature = "test-hooks")]
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Refused {
     #[error("the clock cannot be more than {MAX_OFFSET_MS} ms ahead")]
@@ -32,6 +39,7 @@ fn system_ms() -> i64 {
 }
 
 impl Clock {
+    #[cfg(feature = "test-hooks")]
     pub fn new(offset_ms: u64) -> Clock {
         Clock {
             state: Mutex::new(State {
@@ -41,15 +49,22 @@ impl Clock {
         }
     }
 
+    #[cfg(feature = "test-hooks")]
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn now_ms(&self) -> i64 {
         let state = self.state();
         state.paused_at_ms.unwrap_or_else(system_ms) + state.offset_ms as i64
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn now_ms(&self) -> i64 {
+        system_ms()
     }
 
     pub fn now(&self) -> DateTime<Utc> {
@@ -67,10 +82,12 @@ impl Clock {
             .to_rfc3339_opts(SecondsFormat::Millis, true)
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn offset_ms(&self) -> u64 {
         self.state().offset_ms
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
         let mut state = self.state();
         let offset = state
@@ -87,6 +104,7 @@ impl Clock {
     }
 
     /// Resuming reads the system clock again, so the time paused is caught up.
+    #[cfg(feature = "test-hooks")]
     pub fn pause(&self, paused: bool) {
         let mut state = self.state();
         state.paused_at_ms = if paused {

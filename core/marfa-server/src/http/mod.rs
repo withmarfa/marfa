@@ -32,6 +32,7 @@ mod profile;
 mod query;
 mod root;
 mod sources;
+#[cfg(feature = "test-hooks")]
 mod test_hooks;
 mod trash;
 mod types;
@@ -282,7 +283,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
 }
 
 fn control_doors(app: &Arc<App>) -> Routes {
-    let mut routes = shared(app.clone())
+    let routes = shared(app.clone())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))
@@ -292,8 +293,9 @@ fn control_doors(app: &Arc<App>) -> Routes {
             "/_control/owner/passkeys/add-url",
             get(auth::passkeys::add_url),
         );
-    if app.settings.start.test_hooks {
-        routes = routes
+    #[cfg(feature = "test-hooks")]
+    let routes = if app.settings.start.test_hooks {
+        routes
             .route(
                 "/_control/test/clock",
                 get(test_hooks::read_clock).post(test_hooks::move_clock),
@@ -303,8 +305,10 @@ fn control_doors(app: &Arc<App>) -> Routes {
                 get(test_hooks::read_faults)
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
-            );
-    }
+            )
+    } else {
+        routes
+    };
     routes
 }
 

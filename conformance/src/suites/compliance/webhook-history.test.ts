@@ -42,7 +42,7 @@ let answer = 400;
 beforeAll(async () => {
   server = await bootFreshServer("webhook-history", {
     ...QUIET_SCHEDULE,
-    AUDIT_RETENTION_DAYS: String(RETENTION_DAYS),
+    MARFA_AUDIT_RETENTION_DAYS: String(RETENTION_DAYS),
   });
   clock = movedClock(server);
   receiver = await startReceiver({ status: () => answer });

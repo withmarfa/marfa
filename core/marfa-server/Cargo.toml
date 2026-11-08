@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "marfa-server"
 path = "src/main.rs"
 
+[features]
+# Test hooks: the fault registry, the clock offset and the control socket's test routes.
+test-hooks = []
+
 [dependencies]
 arc-swap = "1"
 argon2 = "0.6"
@@ -56,6 +60,7 @@ uuid.workspace = true
 webauthn-rs = { version = "0.6.2", default-features = false, features = ["conditional-ui", "danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+marfa-server = { path = ".", features = ["test-hooks"] }
 flate2 = "1"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 p256 = "0.14"

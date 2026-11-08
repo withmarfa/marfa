@@ -71,7 +71,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Caller>>
     if !super::tokens::looks_like_access_token(token) {
         return Ok(None);
     }
-    let digest = digest_of(&app.settings.start.api_key_salt, token)?;
+    let digest = digest_of(&app.settings.start.key_salt, token)?;
     let now = app.clock.now_ms();
     let found = app
         .db

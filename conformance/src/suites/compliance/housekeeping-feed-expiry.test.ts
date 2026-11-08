@@ -41,7 +41,7 @@ let sequence = 0;
 beforeAll(async () => {
   server = await bootFreshServer("housekeeping-feed-expiry", {
     // Past reach, so only the runs a case asks for happen.
-    FEED_EXPIRY_INTERVAL_MS: "3153600000000",
+    MARFA_FEED_EXPIRY_INTERVAL_MS: "3153600000000",
     MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: "3153600000000",
   });
   writer = writerOf(server);
@@ -358,7 +358,7 @@ describe("the feed-expiry job", () => {
     expect(archive.status, JSON.stringify(archive.error)).toBe(200);
 
     const target = await bootFreshServer("housekeeping-feed-expiry-restore", {
-      FEED_EXPIRY_INTERVAL_MS: "3153600000000",
+      MARFA_FEED_EXPIRY_INTERVAL_MS: "3153600000000",
     });
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,

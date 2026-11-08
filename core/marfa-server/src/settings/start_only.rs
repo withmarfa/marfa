@@ -43,22 +43,22 @@ const fn hook(name: &'static str, description: &'static str) -> Declared {
 }
 
 pub const DECLARED: &[Declared] = &[
-    plain("PORT", "The port the server listens on."),
+    plain("MARFA_PORT", "The port the server listens on."),
     plain("MARFA_LISTEN_HOST", "The address the server listens on."),
     plain(
-        "TRUSTED_PROXY_CIDRS",
+        "MARFA_TRUSTED_PROXY_CIDRS",
         "The proxies in front of the server whose forwarded addresses it trusts.",
     ),
     plain(
-        "TRUSTED_PROXY_HEADER",
+        "MARFA_TRUSTED_PROXY_HEADER",
         "The header an edge in front of the server puts the caller's address in.",
     ),
-    plain("SQLITE_PATH", "Where the database is."),
+    plain("MARFA_DATABASE_PATH", "Where the database is."),
     plain(
-        "SQLITE_BUSY_BUDGET_MS",
-        "How long a database request waits for the database, in milliseconds.",
+        "MARFA_WRITE_WAIT_MS",
+        "How long a write waits for the one writer before it fails, in milliseconds.",
     ),
-    plain("BLOB_PATH", "Where the server keeps files."),
+    plain("MARFA_BLOB_PATH", "Where the server keeps files."),
     plain(
         "MARFA_CONTROL_SOCKET",
         "Where the private socket for the person running the server is.",
@@ -67,10 +67,10 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_CONTROL_ONLY",
         "Starts the private socket alone, for recovery.",
     ),
-    secret("API_KEY_SALT", "Secret that keys are stored under."),
+    secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
     secret(
-        "ERROR_WEBHOOK_URL",
+        "MARFA_ERROR_WEBHOOK_URL",
         "Where a notice of a server error is sent.",
     ),
     plain(
@@ -164,12 +164,12 @@ mod tests {
 
     #[test]
     fn test_hooks_are_listed_only_when_they_are_on() {
-        let environment = Environment::from_pairs(&[("PORT", "8600")]);
+        let environment = Environment::from_pairs(&[("MARFA_PORT", "8600")]);
         let off = listed(&environment, false);
         assert!(off.iter().all(|entry| !entry.declared.test_hook));
         assert!(
             off.iter()
-                .any(|entry| entry.declared.name == "PORT" && entry.set)
+                .any(|entry| entry.declared.name == "MARFA_PORT" && entry.set)
         );
         assert!(listed(&environment, true).len() > off.len());
     }

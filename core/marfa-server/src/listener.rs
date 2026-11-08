@@ -124,8 +124,8 @@ mod tests {
 
     #[test]
     fn trust_is_read_with_or_without_test_hooks_and_both_settings_narrow_the_header() {
-        let cidrs = ("TRUSTED_PROXY_CIDRS", "10.0.0.0/8");
-        let header = ("TRUSTED_PROXY_HEADER", "X-Client");
+        let cidrs = ("MARFA_TRUSTED_PROXY_CIDRS", "10.0.0.0/8");
+        let header = ("MARFA_TRUSTED_PROXY_HEADER", "X-Client");
         let hooks = ("MARFA_TEST_HOOKS", "true");
         let ranges = Trust::Proxies(proxy_ranges("10.0.0.0/8").unwrap());
         assert_eq!(trust(&[]), Ok(Trust::Nothing));
@@ -147,12 +147,12 @@ mod tests {
     #[test]
     fn each_malformed_trust_setting_is_refused_on_its_own_line() {
         let refused = trust(&[
-            ("TRUSTED_PROXY_CIDRS", "10.0.0.0/8,nonsense"),
-            ("TRUSTED_PROXY_HEADER", "not a header"),
+            ("MARFA_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,nonsense"),
+            ("MARFA_TRUSTED_PROXY_HEADER", "not a header"),
         ])
         .unwrap_err();
         assert_eq!(refused.lines.len(), 2, "{refused}");
-        assert!(refused.lines[0].starts_with("TRUSTED_PROXY_CIDRS must"));
-        assert!(refused.lines[1].starts_with("TRUSTED_PROXY_HEADER must"));
+        assert!(refused.lines[0].starts_with("MARFA_TRUSTED_PROXY_CIDRS must"));
+        assert!(refused.lines[1].starts_with("MARFA_TRUSTED_PROXY_HEADER must"));
     }
 }
