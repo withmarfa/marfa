@@ -634,6 +634,79 @@ record missing `method`, `path`, `status` or `transport`. It names the file and
 line and shows the start of the line. A request that no log line reaches is a
 request nothing checked, so an unreadable line is a failure and not noise.
 
+## Run the server's half against another program
+
+`MARFA_SERVER_BIN` points the meter at a server that is not the TypeScript one.
+`pnpm marfa:up` then starts that program instead of the sources, with the same
+settings, supervisor, state directory and log, and the state directory as its
+working directory. Nothing in the workspace is built for it. The claim and the
+keys go through the private socket as they do for the TypeScript server. The
+Rust server (`core/marfa-server/`) is the program this exists for.
+
+```sh
+cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml
+
+export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
+pnpm marfa:up --state /tmp/marfa
+set -a; . /tmp/marfa/env; set +a
+
+pnpm exec vitest run --project correctness
+pnpm marfa:down --state /tmp/marfa
+```
+
+Setting `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
+listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
+`MARFA_SERVER_BUILT`. The backup fixtures boot the server through the
+container's entrypoint, which starts the Node server, so they do not run
+against another program. There is no object store beside the server in this
+setup, so the object-store half of the blob chapters is not asserted.
+
+### Read a run
+
+Two tools turn a run of the server's half into a report. Both read Vitest's
+JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
+
+- **The file-windows reporter** (`src/utils/file-windows.ts`) writes when each
+  test file started and ended, hooks included, to the file `MARFA_FILE_WINDOWS`
+  names. Vitest's own report bounds a file by its tests alone, so a request
+  made in a `beforeAll` falls outside it. Add
+  `--reporter=./src/utils/file-windows.ts` to a run to get it.
+- **The chapter report** (`pnpm chapter-report --report <vitest.json>`) counts,
+  for each contract chapter, the statements whose cited tests all passed, and
+  the cited tests by outcome. With `--state <dir> --windows <windows.json>` it
+  also reads the run's server log and sorts each failed test file by whether
+  it called an operation the published document declares and the target has no
+  route for. Run it before `marfa:down`, which removes the log. `--markdown`
+  and `--json` write the result to a file.
+
+### Which files the Rust server judges
+
+`RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
+the contract test files that the Rust server must pass whole. It starts empty
+and a file joins it when the Rust server passes that file. A listed file runs
+in the Rust contract jobs only. `vitest.config.ts` leaves it out of the
+TypeScript server's shards, which run with `MARFA_SERVER_BIN` unset, so one
+file is judged by one server. A test checks that every listed path exists.
+
+### How the score is counted
+
+`pnpm rust:score --reports <dir> [--markdown <file>]` reads every `vitest.json`
+under `<dir>`, one per shard, and prints the score. CI writes it to the job
+summary of `Rust contract score`.
+
+- A test passes when Vitest reports it `passed`. A skipped or todo test is not
+  passing, and still counts in the total.
+- A file passes whole when a report names it, it lists at least one test, every
+  test passed, and the file did not fail around its tests, as when an
+  `afterAll` hook throws after every test passed.
+- The score is tests passing out of all tests, by file and by project, over the
+  five projects the server's half has: `correctness`, `compliance`, `sync`,
+  `device` and `cli`. A file on disk that no report names counts with nothing
+  passing and shows as "not reported".
+- The command exits with an error when a file listed in `RUST_JUDGED` does not
+  pass whole or no report names it, when two reports name one file, and when
+  there is no report at all. A file that is not listed never fails it.
+
 ## Test suites
 
 `package.json` carries the full list, and `pnpm test:conformance` is what the
@@ -714,6 +787,16 @@ or when the classifier skipped them all.
   selection, so it runs when the change reaches all three groups; a change to
   one group's fixtures runs that group, and the push to `main` that follows
   runs them all.
+- **Rust contract.** Three jobs run the same fixtures against the Rust server.
+  `Rust server (release build)` builds `marfa-server` for x86_64 Linux and
+  uploads it. Sixteen `Rust contract shard` runners download it and boot it
+  through the meter: correctness and sync on one, the scenario suite on one,
+  compliance over eight and the device over six, split as above. A shard writes
+  Vitest's JSON report as an artifact and fails only when it wrote none, not
+  when a test failed. `Rust contract score` counts the reports as described
+  above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
+  waits for it. A change under `core/marfa-server/` runs these jobs and
+  `Core checks (Linux)`, and none of the TypeScript server's.
 
 `scripts/ci-required.ts` says which groups a change reaches and writes the
 matrix. A change to `spec/` alone runs the offline lane, and the compliance
