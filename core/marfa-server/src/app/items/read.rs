@@ -370,19 +370,24 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
     .await
 }
 
+/// The tags on active items the caller may read, most used first, then by name.
+pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>> {
+    let rules = &read.catalog.rules;
+    let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+    for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
+        if read.caller.may_read_type(&type_id) && read.caller.lists(rules, &type_id, &source) {
+            *counts.entry(tag).or_default() += count;
+        }
+    }
+    let mut listed: Vec<(String, i64)> = counts.into_iter().collect();
+    listed.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(listed)
+}
+
 pub async fn tag_counts(app: &App, caller: &Caller) -> Result<String> {
     reading(app, caller, move |read| {
         read.caller.require_reach()?;
-        let rules = &read.catalog.rules;
-        let mut counts: BTreeMap<String, i64> = BTreeMap::new();
-        for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
-            if read.caller.may_read_type(&type_id) && read.caller.lists(rules, &type_id, &source) {
-                *counts.entry(tag).or_default() += count;
-            }
-        }
-        let mut listed: Vec<(String, i64)> = counts.into_iter().collect();
-        listed.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let data: Vec<Value> = listed
+        let data: Vec<Value> = readable_tags(read)?
             .into_iter()
             .map(|(tag, count)| serde_json::json!({ "tag": tag, "count": count }))
             .collect();

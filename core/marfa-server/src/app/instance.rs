@@ -10,6 +10,7 @@ const NAME: &str = "name";
 const CLAIMED_AT: &str = "claimed_at";
 const OWNER_ID: &str = "owner_id";
 pub const DEFAULT_NAME: &str = "Marfa";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
     Ok(tx

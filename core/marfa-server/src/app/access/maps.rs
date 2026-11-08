@@ -54,6 +54,12 @@ impl Map {
             .any(|level| Level::stored(level) > Level::None)
     }
 
+    pub(super) fn patterns(&self) -> impl Iterator<Item = (&str, Level)> {
+        self.0
+            .iter()
+            .map(|(pattern, level)| (pattern.as_str(), Level::stored(level)))
+    }
+
     fn exact(&self, name: &str) -> Option<Level> {
         self.0.get(name).map(Level::stored)
     }
