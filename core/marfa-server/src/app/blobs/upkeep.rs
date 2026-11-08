@@ -306,6 +306,8 @@ enum Checked {
     /// Struck only once the store answers with its own marker after.
     Missing,
     Silent,
+    /// Present at the blob's size without the store's id: kept, and the store asked no more.
+    Unnamed,
 }
 
 /// Only a store that answers can show a copy missing or altered.
@@ -345,9 +347,12 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
         }
         Store::S3(_) => match blobs.answer_of(store, &copy.hash, &copy.object).await {
             Ok(Answer::Holds(size)) if size == copy.size => Checked::Intact,
-            Ok(Answer::Holds(_)) => Checked::Damaged,
-            // An object the store did not write is not the copy it wrote.
-            Ok(Answer::Missing | Answer::Foreign) => Checked::Missing,
+            Ok(Answer::Foreign(size)) if size == copy.size => {
+                tracing::warn!("The object store answered for a copy without naming itself");
+                Checked::Unnamed
+            }
+            Ok(Answer::Holds(_) | Answer::Foreign(_)) => Checked::Damaged,
+            Ok(Answer::Missing) => Checked::Missing,
             Err(failure) => {
                 tracing::warn!(?failure, "The object store did not answer for a copy");
                 Checked::Silent
@@ -417,6 +422,9 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                 Checked::Silent => {
                     unreachable.insert(copy.store_id.clone());
                     break;
+                }
+                Checked::Unnamed => {
+                    unreachable.insert(copy.store_id.clone());
                 }
                 Checked::Intact => {
                     let (hash, id, object) = (

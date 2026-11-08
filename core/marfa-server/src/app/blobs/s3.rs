@@ -196,7 +196,7 @@ impl S3 {
         }
     }
 
-    /// What the store answers for the object at `key`: its size only if this store wrote it.
+    /// What the store answers for the object at `key`, and whether the object names this store.
     pub async fn answer_for(&self, key: &str) -> io::Result<Answer> {
         let options = GetOptions {
             head: true,
@@ -208,7 +208,7 @@ impl S3 {
                 if writer.is_some_and(|writer| writer.as_ref() == self.id) {
                     Ok(Answer::Holds(found.meta.size))
                 } else {
-                    Ok(Answer::Foreign)
+                    Ok(Answer::Foreign(found.meta.size))
                 }
             }
             Err(error) if is_missing(&error) => Ok(Answer::Missing),

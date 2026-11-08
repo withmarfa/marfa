@@ -936,33 +936,100 @@ async fn a_drop_is_not_confirmed_by_an_object_this_store_did_not_write() {
 }
 
 #[tokio::test]
-async fn integrity_strikes_a_copy_whose_object_the_store_did_not_write_and_it_is_copied_again() {
+async fn integrity_keeps_a_copy_whose_object_does_not_name_the_store_and_asks_the_store_no_more() {
     let s3 = FakeS3::start().await;
     let env = s3.settings(BUCKET, "blobs");
     let instance = Instance::start(&pairs(&env)).await;
     let bytes = b"overwritten by hand with the same bytes";
-    let replaced = instance.replicated(&s3, bytes).await;
-    let kept = instance
-        .replicated(&s3, b"left as the store wrote it")
-        .await;
-    let key = object_key(&s3, "blobs", &replaced);
+    let hash = instance.replicated(&s3, bytes).await;
+    let key = object_key(&s3, "blobs", &hash);
+    let written = s3.stored(&key).unwrap();
+    let s3_stamp = |copies: Vec<Value>| {
+        copies
+            .into_iter()
+            .find(|copy| copy["kind"] == "s3")
+            .map(|copy| copy["verified_at"].clone())
+    };
+    let first = instance.run("blob-integrity").await;
+    assert_eq!(first["verified"], 2, "{first}");
+    let stamp = s3_stamp(instance.copies(&hash).await).unwrap();
+    assert!(stamp.is_string(), "{stamp}");
+    instance.app.clock.advance(1000).unwrap();
+
     s3.put_object(&key, bytes);
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["struck"], 0, "{run}");
+    assert_eq!(run["unreachable"], 1, "{run}");
+    assert_eq!(run["verified"], 1, "{run}");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+    assert_eq!(s3_stamp(instance.copies(&hash).await), Some(stamp.clone()));
+    assert_eq!(s3.object(&key).as_deref(), Some(bytes.as_slice()));
+
+    // The witness: the object the store wrote, back at the same name, is stamped.
+    s3.restore(&key, written);
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["verified"], 2, "{run}");
+    assert_eq!(run["unreachable"], 0, "{run}");
+    assert_ne!(s3_stamp(instance.copies(&hash).await), Some(stamp));
+}
+
+#[tokio::test]
+async fn integrity_strikes_a_copy_whose_unnamed_object_is_not_as_long_as_the_blob() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .replicated(&s3, b"overwritten by hand with fewer bytes")
+        .await;
+    let key = object_key(&s3, "blobs", &hash);
+    s3.put_object(&key, b"fewer bytes");
 
     let run = instance.run("blob-integrity").await;
     assert_eq!(run["struck"], 1, "{run}");
     assert_eq!(run["unreachable"], 0, "{run}");
-    assert_eq!(instance.copies(&replaced).await.len(), 1);
-    // The witness: the object the store wrote is kept and stamped.
-    let copies = instance.copies(&kept).await;
-    assert_eq!(copies.len(), 2);
-    assert!(
-        copies.iter().all(|copy| !copy["verified_at"].is_null()),
-        "{copies:?}"
-    );
+    let copies = instance.copies(&hash).await;
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["kind"], "disk");
 
     let run = instance.run("blob-replicate").await;
     assert_eq!(run["copied"], 1, "{run}");
-    assert_eq!(instance.copies(&replaced).await.len(), 2);
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+}
+
+#[tokio::test]
+async fn integrity_strikes_no_only_copy_in_an_object_store_that_drops_metadata() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let disk = instance.disk().await;
+    let mut objects = Vec::new();
+    for bytes in [b"only copy one".as_slice(), b"only copy two".as_slice()] {
+        let hash = instance.replicated(&s3, bytes).await;
+        let key = object_key(&s3, "blobs", &hash);
+        objects.push((hash, key, bytes.to_vec()));
+    }
+    for (hash, _, _) in &objects {
+        let door = format!("/blobs/{hash}/copies/{disk}");
+        let dropped = instance.call(Method::DELETE, &door, None).await;
+        assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    }
+
+    s3.set_mode(Mode::StripMetadata);
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["struck"], 0, "{run}");
+    assert_eq!(run["verified"], 0, "{run}");
+    assert_eq!(run["unreachable"], 1, "{run}");
+    for (hash, key, bytes) in &objects {
+        assert_eq!(instance.copies(hash).await.len(), 1);
+        assert_eq!(s3.object(key).as_ref(), Some(bytes));
+        assert_eq!(instance.fetch(hash).await.bytes, *bytes);
+    }
+
+    // The witness: the same store answering with its id has both copies stamped.
+    s3.set_mode(Mode::Normal);
+    let run = instance.run("blob-integrity").await;
+    assert_eq!(run["verified"], 2, "{run}");
+    assert_eq!(run["unreachable"], 0, "{run}");
 }
 
 /// Replaces the copy during its marker check, retaining the old object if `kept`.

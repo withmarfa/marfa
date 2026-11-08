@@ -54,8 +54,8 @@ pub enum Answer {
     Missing,
     /// Bytes of this size that the store wrote itself.
     Holds(u64),
-    /// An object the store did not write, so not the copy.
-    Foreign,
+    /// An object of this size that does not name the store, so no evidence of the copy.
+    Foreign(u64),
 }
 
 /// A store that did not answer in time, or answered with a failure.

@@ -16,6 +16,8 @@ use tokio::sync::{Notify, oneshot};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
+    /// Every answer leaves out the objects' `x-amz-meta-` headers, as some proxies do.
+    StripMetadata,
     /// The next write lands, then the endpoint reaches the other bucket.
     SwapAfterPut,
     /// The next `HEAD` that finds its object answers, then the endpoint reaches the other bucket.
@@ -181,7 +183,9 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
                 .header(header::ETAG, "\"e\"")
                 .header(header::LAST_MODIFIED, LAST_MODIFIED);
             for (name, value) in metadata {
-                builder = builder.header(name, value);
+                if mode != Mode::StripMetadata {
+                    builder = builder.header(name, value);
+                }
             }
             if method == Method::HEAD {
                 if mode == Mode::SwapAfterHead {
