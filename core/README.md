@@ -9,7 +9,7 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 | `marfa-cli`        | The `marfa` binary                                                                                           |
 | `marfa-telemetry`  | The exception event and where a token may travel, shared by the command line and the server                  |
 | `marfa-server`     | The Rust server. It depends on `marfa-rules`, not on `marfa-core`                                            |
-| `marfa-enrichment` | Reads text and picture sizes from files, each in a sandboxed child process                                   |
+| `marfa-enrichment` | Reads text, picture sizes and sound or video lengths from files, each in a sandboxed child process           |
 | `bindings/swift`   | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
 | `bindings/node`    | The napi-rs module `@withmarfa/core`                                                                         |
 

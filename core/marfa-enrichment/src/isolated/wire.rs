@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::kind::Kind;
+use crate::media::checked_duration;
 use crate::{Dimensions, OcrOptions, Options, Reading, Refusal, Sandbox};
 
 /// The longest reason a child may give.
@@ -15,8 +16,8 @@ pub(super) const MAX_REASON_BYTES: usize = 2048;
 /// The longest frame a child may write.
 pub(super) const MAX_FRAME_BYTES: usize = 64;
 
-/// The longest request a child reads, before the file's bytes.
-pub(super) const MAX_REQUEST_BYTES: u32 = 64 * 1024;
+/// The longest request a child is given, as one command-line argument.
+pub(super) const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 /// What one reading is to do. The limits a child takes before it reads anything are
 /// on its command line, not here.
@@ -24,7 +25,7 @@ pub(super) const MAX_REQUEST_BYTES: u32 = 64 * 1024;
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
     pub(super) mime: String,
-    /// How many bytes of file follow on stdin.
+    /// How many bytes the file on stdin holds.
     pub(super) len: u64,
     pub(super) max_text_chars: u64,
     pub(super) max_inflated_bytes: u64,
@@ -65,8 +66,8 @@ impl Request {
 }
 
 /// The first thing a child says: one line, written once it is confined and before it
-/// has the file. Until then nothing a file holds has run, so this is the one thing a
-/// child says that the parent can believe, and nothing it says later changes it.
+/// reads a byte of the file. Until then nothing a file holds has run, so this is the one
+/// thing a child says that the parent can believe, and nothing it says later changes it.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Frame {
@@ -94,6 +95,7 @@ pub(super) enum Answer {
         truncated: bool,
         cut_short: bool,
         size: Option<(u32, u32)>,
+        duration: Option<f64>,
         text_refused: Option<Refused>,
     },
     Refusal(Refused),
@@ -207,6 +209,7 @@ impl Answer {
                 truncated: reading.truncated,
                 cut_short: reading.cut_short,
                 size: reading.dimensions.map(|size| (size.width, size.height)),
+                duration: reading.duration,
                 text_refused: reading.text_refused.map(Refused::of),
             },
             Err(refusal) => Self::Refusal(Refused::of(refusal)),
@@ -228,6 +231,7 @@ impl Answer {
                 truncated,
                 cut_short,
                 size,
+                duration,
                 text_refused,
             } => {
                 if text.len() > asked.max_text_chars.saturating_mul(3)
@@ -238,8 +242,20 @@ impl Answer {
                 if size.is_some_and(|(width, height)| width == 0 || height == 0) {
                     return Err(not_believed("an empty image size"));
                 }
-                if size.is_some() && !matches!(asked.kind, Kind::Image { .. }) {
-                    return Err(not_believed("an image size for a file that is no image"));
+                if size.is_some() && !matches!(asked.kind, Kind::Image { .. } | Kind::Media { .. })
+                {
+                    return Err(not_believed("a size for a file that is no image or video"));
+                }
+                if duration.is_some() && !matches!(asked.kind, Kind::Media { .. }) {
+                    return Err(not_believed(
+                        "a duration for a file that is no sound or video",
+                    ));
+                }
+                if duration.is_some_and(|seconds| checked_duration(seconds).is_err()) {
+                    return Err(not_believed("a duration that cannot be real"));
+                }
+                if !text.is_empty() && matches!(asked.kind, Kind::Media { .. }) {
+                    return Err(not_believed("text from a sound or a video"));
                 }
                 if !text.is_empty()
                     && matches!(asked.kind, Kind::Image { .. })
@@ -267,6 +283,7 @@ impl Answer {
                     truncated,
                     cut_short,
                     dimensions: size.map(|(width, height)| Dimensions { width, height }),
+                    duration,
                     text_refused,
                     sandbox: asked.sandbox,
                 })
@@ -322,6 +339,11 @@ mod tests {
         ocr: true,
         ..IMAGE
     };
+    const MEDIA: Asked = Asked {
+        kind: Kind::Media { matroska: false },
+        ocr: false,
+        ..IMAGE
+    };
     const WORD: Asked = Asked {
         kind: Kind::Document(Document::Docx),
         ..TEXT
@@ -348,6 +370,58 @@ mod tests {
                 height: 4
             })
         );
+    }
+
+    fn media(fields: &str) -> String {
+        format!(
+            r#"{{"reading":{{"text":"","truncated":false,"cut_short":false,{fields},"text_refused":null}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_length_and_a_picture_size_are_believed_for_a_video() {
+        let said = media(r#""size":[640,360],"duration":12.5"#);
+        let reading = Answer::judge(said.as_bytes(), &MEDIA).unwrap();
+        assert_eq!(reading.duration, Some(12.5));
+        assert_eq!(reading.dimensions.map(|size| size.height), Some(360));
+        let sound = media(r#""size":null,"duration":0.0"#);
+        assert_eq!(
+            Answer::judge(sound.as_bytes(), &MEDIA).unwrap().duration,
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn a_length_nobody_could_have_is_a_crash() {
+        for seconds in ["-1.0", "1e11", "1e300"] {
+            let said = media(&format!(r#""size":null,"duration":{seconds}"#));
+            assert!(
+                matches!(
+                    Answer::judge(said.as_bytes(), &MEDIA),
+                    Err(Refusal::Crashed(_))
+                ),
+                "believed: {seconds}"
+            );
+        }
+        let said = media(r#""size":null,"duration":3.0"#);
+        for asked in [&IMAGE, &TEXT, &WORD] {
+            assert!(
+                matches!(
+                    Answer::judge(said.as_bytes(), asked),
+                    Err(Refusal::Crashed(_))
+                ),
+                "{asked:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_from_a_sound_is_a_crash() {
+        let said = r#"{"reading":{"text":"hi","truncated":false,"cut_short":false,"size":null,"duration":1.0,"text_refused":null}}"#;
+        assert!(matches!(
+            Answer::judge(said.as_bytes(), &MEDIA),
+            Err(Refusal::Crashed(_))
+        ));
     }
 
     #[test]
