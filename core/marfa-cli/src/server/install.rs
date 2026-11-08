@@ -267,8 +267,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             None
         }
     };
-    // The address people sign in at, which the server holds. A server only
-    // this machine reaches needs none.
+    // The address people sign in at, which the server holds. A native server
+    // only this machine reaches needs none; in a container it would fall back
+    // to the container's own port, not the one published here.
     let sign_in: Option<String> = match access {
         Access::Local => {
             if args.address.is_some() {
@@ -276,7 +277,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                     "--address is for tailscale, cloudflare and proxy: a local server is at http://localhost".into(),
                 ));
             }
-            None
+            match runtime {
+                Runtime::Native => None,
+                Runtime::Docker => Some(local_address(port)),
+            }
         }
         Access::Tailscale => Some(match &args.address {
             Some(address) => public_address(address)?,

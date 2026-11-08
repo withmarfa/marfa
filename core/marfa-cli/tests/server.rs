@@ -569,6 +569,12 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
         "{stdout}"
     );
     assert!(stdout.contains(&format!("http://localhost:{}", rig.port)));
+    // In a container the server's own fallback is the container's port, so the
+    // published one is set as the address people sign in at.
+    assert_eq!(
+        rig.address().as_deref(),
+        Some(format!("http://localhost:{}", rig.port).as_str())
+    );
 
     let mode = |name: &str| {
         fs::metadata(rig.dir.join(name))
@@ -819,11 +825,16 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     let (code, _, stderr) = rig.install(&["--access", "local"]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
-    // Asking for a local server clears the address, which no longer fits it.
-    assert_eq!(rig.address(), None);
+    // Asking for a local server moves the address to the port published here,
+    // since in a container the server's own fallback is the container's port.
+    let local = format!("http://localhost:{}", rig.port);
+    assert_eq!(rig.address().as_deref(), Some(local.as_str()));
     let fresh = Rig::new("proxy-local");
     fresh.installed(&["--access", "local"]);
-    assert_eq!(fresh.address(), None);
+    assert_eq!(
+        fresh.address(),
+        Some(format!("http://localhost:{}", fresh.port))
+    );
 }
 
 #[test]
