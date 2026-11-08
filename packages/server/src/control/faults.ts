@@ -130,6 +130,7 @@ export const POINTS: {
     { name: "stream-replay-row", arg: "nth" },
     { name: "edge-source-type", arg: "nth" },
     { name: "health-write", arg: "nth" },
+    { name: "event-stamp", arg: "nth" },
   ],
   refuse: [
     { name: "read", arg: "none" },

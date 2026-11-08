@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -15,11 +13,9 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  * A replay is built from what the log stores, and a stored row the server
  * can no longer read is withheld rather than guessed at.
  *
- * No request can write such a row, so the fixture damages it in the stored
- * file while the server is stopped.
+ * No request can write such a row, so the server is told to read one stored
+ * row as damaged.
  */
-
-const runSqlite = promisify(execFile);
 
 let server: FreshServer | undefined;
 let writer: MarfaClient;
@@ -54,11 +50,8 @@ describe("a replay over a row the server cannot read", () => {
     async ({ signal }) => {
       const fresh = server!;
       const before = await note("readable-before");
-      // The three ways a row is unreadable: a payload that is not JSON, an
-      // item whose stored row names no type, and an edge whose payload is
-      // not JSON.
-      const notJson = await note("payload-not-json");
-      const noType = await note("item-without-type");
+      // The two kinds of row a replay reads: an item's and an edge's.
+      const damagedItem = await note("payload-not-json");
       const from = await note("edge-source");
       const to = await note("edge-target");
       const created = await writer.createEdge({
@@ -89,56 +82,49 @@ describe("a replay over a row the server cannot read", () => {
       };
 
       const intact = await idsOf(fresh);
-      const eventId = (match: (e: SseEvent) => boolean): bigint => {
-        const frame = intact.events.find(match);
-        expect(frame?.id, "the event is not in the log").toBeDefined();
-        return intact.of(frame!);
+      const rows = intact.events.filter((e) => e.id !== undefined);
+      const rowOf = (match: (e: SseEvent) => boolean): number => {
+        const at = rows.findIndex(match);
+        expect(at, "the event is not in the log").toBeGreaterThanOrEqual(0);
+        return at + 1;
       };
       const damaged = {
-        notJson: eventId((e) => itemOf(e) === notJson),
-        noType: eventId((e) => itemOf(e) === noType),
-        edge: eventId((e) => edgeOf(e) === edge),
+        item: rowOf((e) => itemOf(e) === damagedItem),
+        edge: rowOf((e) => edgeOf(e) === edge),
       };
 
-      await fresh.restart({
-        whileStopped: async () => {
-          await runSqlite("sqlite3", [
-            fresh.sqlitePath,
-            [
-              `UPDATE event_log SET payload = 'not json' WHERE id IN (${String(damaged.notJson)}, ${String(damaged.edge)});`,
-              `UPDATE event_log SET payload = json_remove(payload, '$.item.type') WHERE id = ${String(damaged.noType)};`,
-            ].join(" "),
-          ]);
-        },
-      });
+      for (const [name, row] of Object.entries(damaged)) {
+        await fresh.setFault(`fail:stream-replay-row=${String(row)}`);
+        let replayed: Awaited<ReturnType<typeof idsOf>>;
+        try {
+          replayed = await idsOf(fresh);
+        } finally {
+          await fresh.clearFault("fail:stream-replay-row");
+        }
+        const sent = replayed.events.filter((e) => e.id !== undefined);
+        const sentIds = sent.map((e) => replayed.of(e));
 
-      const replayed = await idsOf(fresh);
-      const sent = replayed.events.filter((e) => e.id !== undefined);
-      const sentIds = sent.map((e) => replayed.of(e));
-
-      // The witness: the replay ran across the damaged rows. The rows on
-      // either side of them, and the edge's two items, are sent.
-      for (const item of [before, from, to, after]) {
+        // The witness: the replay ran across the damaged row. The rows on
+        // either side of it, and the edge's two items, are sent.
+        for (const item of [before, from, to, after]) {
+          expect(
+            sent.some((e) => itemOf(e) === item),
+            `the replay did not send ${item}, a row it can read`,
+          ).toBe(true);
+        }
+        expect(sentIds).toEqual([...sentIds].sort((a, b) => (a < b ? -1 : 1)));
         expect(
-          sent.some((e) => itemOf(e) === item),
-          `the replay did not send ${item}, a row it can read`,
-        ).toBe(true);
-      }
-      expect(sentIds).toEqual([...sentIds].sort((a, b) => (a < b ? -1 : 1)));
-
-      for (const [name, id] of Object.entries(damaged)) {
+          sentIds.includes(intact.of(rows[row - 1]!)),
+          `the replay sent event ${String(row)}, whose stored ${name} row cannot be read`,
+        ).toBe(false);
         expect(
-          sentIds.includes(id),
-          `the replay sent event ${String(id)}, whose stored ${name} row cannot be read`,
+          replayed.events.some(
+            (e) =>
+              e.event === "stream_incomplete" || e.event === "catchup_too_old",
+          ),
+          "the replay ended instead of passing the row it cannot read",
         ).toBe(false);
       }
-      expect(
-        replayed.events.some(
-          (e) =>
-            e.event === "stream_incomplete" || e.event === "catchup_too_old",
-        ),
-        "the replay ended instead of passing the rows it cannot read",
-      ).toBe(false);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

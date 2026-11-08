@@ -3,6 +3,9 @@ import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
+import { failAt } from "../../control/faults.js";
+
+const STAMPED_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 
 export class SqliteEventLogStore implements EventLogStore {
   constructor(private db: DrizzleDb) {}
@@ -21,9 +24,12 @@ export class SqliteEventLogStore implements EventLogStore {
     payload: string;
     enable_fanout?: boolean;
   }): Promise<bigint> {
+    const stamp = new Date(
+      clock.now().getTime() + (failAt("event-stamp") ? STAMPED_AHEAD_MS : 0),
+    );
     const result = await this.db.run(sql`
       INSERT INTO event_log (event_type, item_id, edge_id, payload, enable_fanout, created_at)
-      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.payload}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${clock.now().toISOString()})
+      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.payload}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${stamp.toISOString()})
     `);
     // libsql returns lastInsertRowid as a `bigint` or a number depending on
     // the driver build; normalized to bigint either way so the public wire

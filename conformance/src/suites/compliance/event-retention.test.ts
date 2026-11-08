@@ -6,7 +6,6 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   DAY_MS,
   movedClock,
@@ -130,27 +129,6 @@ async function notes(
   return written;
 }
 
-/**
- * Sets one event's stored time to the instant the server's clock now reads.
- * The log's retention cuts by id, below the oldest event within the window,
- * because `append` stamps an event before its insert waits for the write
- * lock, so a stamp can stand below the stamps of events before it. No door
- * lets a fixture lose that race on purpose, so the one event is stamped in
- * the stored file, the only thing in this fixture that is not the clock.
- */
-async function stampNow(log: Instance, eventId: bigint): Promise<void> {
-  await log.server.restart({
-    whileStopped: () => {
-      withInstanceDatabase(log.server.sqlitePath, (db) => {
-        const stamped = db
-          .prepare("UPDATE event_log SET created_at = ? WHERE id = ?")
-          .run(new Date(log.clock.now()).toISOString(), Number(eventId));
-        expect(stamped.changes).toBe(1);
-      });
-    },
-  });
-}
-
 describe("the event log's retention job", () => {
   it(
     "retires the oldest events together, keeping every event from the oldest one within the window",
@@ -207,7 +185,12 @@ describe("the event log's retention job", () => {
     "never leaves a hole: an event past the window that stands above one within it is kept",
     async ({ signal }) => {
       const log = await instance("event-retention-hole");
+      // The third event is stamped ahead of the clock, as one is that
+      // stamped before the events ahead of it were inserted: the log's ids
+      // and its stamps then disagree.
+      await log.server.setFault("fail:event-stamp=3");
       const old = await notes(log, 4, "past-the-window");
+      await log.server.clearFault("fail:event-stamp");
       await log.clock.advance(PAST_EVENT_WINDOW_MS);
       const young = await notes(log, 2, "within-the-window");
       const written = [...old, ...young];
@@ -215,7 +198,6 @@ describe("the event log's retention job", () => {
       // Of the six, the first two and the fourth are past the window and the
       // rest are within it. The fourth is old but stands above an event the
       // log keeps, so retiring it would leave a hole.
-      await stampNow(log, ids[2]!);
       const read = reach(log).read;
 
       // The witness: nothing has been retired before the job runs.

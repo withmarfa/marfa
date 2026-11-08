@@ -392,6 +392,7 @@ describe("a fail fault on an event point", () => {
       "stream-credential",
       "stream-replay-row",
       "edge-source-type",
+      "event-stamp",
     ]) {
       expect(arm(`fail:${point}`, "2"), point).toBeUndefined();
       expect([failAt(point), failAt(point), failAt(point)]).toEqual([
