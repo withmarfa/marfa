@@ -1344,9 +1344,7 @@ const settingsShape = {
   ),
   MARFA_ENRICHMENT_TESSDATA_DIR: grouped(
     { group: "Text from files", label: "Image reader data folder" },
-    optionalText(
-      "A folder of OCR language models.",
-    ),
+    optionalText("A folder of OCR language models."),
   ),
   MARFA_ENRICHMENT_INTERVAL_MS: grouped(
     { group: "Fine tuning", label: "Read text every" },
