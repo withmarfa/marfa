@@ -699,7 +699,7 @@ impl App {
             .filter(|answer| matches!(answer, Ok(Some(size)) if *size == found.size_bytes))
             .count();
         if (confirmed as u64) < min_copies {
-            return Err(below(holders.len(), min_copies));
+            return Err(below(confirmed + 1, min_copies));
         }
         let (blob, dropped) = (hash.clone(), store_id.to_string());
         self.write(caller, "blob.copy_dropped", move |unit| {

@@ -430,7 +430,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                         continue;
                     }
                     rows::purge(tx, &hash, &stores, &unit.at)?;
-                    unit.audit("blob", hash.as_str(), None)?;
+                    unit.audit("blob", hash.as_str(), Some(json!({})))?;
                     gone.push(hash);
                 }
                 Ok(gone)
