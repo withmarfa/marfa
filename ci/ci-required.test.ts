@@ -688,9 +688,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "image"],
     ],
     [
-      "the native readers' scripts, which the image's programs are built with",
+      "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
-      ["ci-sqlite", "core-native", "image"],
+      ["ci-sqlite", "core-native", "image", "rust-contract"],
     ],
     [
       "the settings, whose names the Dockerfile sets",
