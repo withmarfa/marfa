@@ -128,6 +128,7 @@ export const POINTS: {
     { name: "stream-replay", arg: "nth" },
     { name: "stream-credential", arg: "nth" },
     { name: "stream-replay-row", arg: "nth" },
+    { name: "stream-replay-untyped", arg: "nth" },
     { name: "edge-source-type", arg: "nth" },
     { name: "health-write", arg: "nth" },
     { name: "event-stamp", arg: "nth" },

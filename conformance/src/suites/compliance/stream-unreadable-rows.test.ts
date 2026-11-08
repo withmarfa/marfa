@@ -50,8 +50,11 @@ describe("a replay over a row the server cannot read", () => {
     async ({ signal }) => {
       const fresh = server!;
       const before = await note("readable-before");
-      // The two kinds of row a replay reads: an item's and an edge's.
-      const damagedItem = await note("payload-not-json");
+      // The three ways a row is unreadable: an item's payload that is not
+      // JSON, an item's payload that is JSON and names no type, and an edge's
+      // payload that is not JSON.
+      const notJson = await note("payload-not-json");
+      const noType = await note("item-without-type");
       const from = await note("edge-source");
       const to = await note("edge-target");
       const created = await writer.createEdge({
@@ -88,18 +91,31 @@ describe("a replay over a row the server cannot read", () => {
         expect(at, "the event is not in the log").toBeGreaterThanOrEqual(0);
         return at + 1;
       };
-      const damaged = {
-        item: rowOf((e) => itemOf(e) === damagedItem),
-        edge: rowOf((e) => edgeOf(e) === edge),
-      };
+      const damaged = [
+        {
+          name: "item without JSON",
+          fault: "fail:stream-replay-row",
+          row: rowOf((e) => itemOf(e) === notJson),
+        },
+        {
+          name: "item without a type",
+          fault: "fail:stream-replay-untyped",
+          row: rowOf((e) => itemOf(e) === noType),
+        },
+        {
+          name: "edge without JSON",
+          fault: "fail:stream-replay-row",
+          row: rowOf((e) => edgeOf(e) === edge),
+        },
+      ];
 
-      for (const [name, row] of Object.entries(damaged)) {
-        await fresh.setFault(`fail:stream-replay-row=${String(row)}`);
+      for (const { name, fault, row } of damaged) {
+        await fresh.setFault(`${fault}=${String(row)}`);
         let replayed: Awaited<ReturnType<typeof idsOf>>;
         try {
           replayed = await idsOf(fresh);
         } finally {
-          await fresh.clearFault("fail:stream-replay-row");
+          await fresh.clearFault(fault);
         }
         const sent = replayed.events.filter((e) => e.id !== undefined);
         const sentIds = sent.map((e) => replayed.of(e));

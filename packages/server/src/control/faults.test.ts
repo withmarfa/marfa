@@ -391,6 +391,7 @@ describe("a fail fault on an event point", () => {
       "stream-replay",
       "stream-credential",
       "stream-replay-row",
+      "stream-replay-untyped",
       "edge-source-type",
       "event-stamp",
     ]) {
