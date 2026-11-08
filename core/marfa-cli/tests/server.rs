@@ -2448,7 +2448,7 @@ fn ctrl_c_reaches_the_server_and_run_together() {
     // here ignores nothing and handles nothing.
     assert!(
         Command::new("kill")
-            .args(["-INT", &format!("-{}", child.id())])
+            .args(["-INT", "--", &format!("-{}", child.id())])
             .status()
             .unwrap()
             .success()
