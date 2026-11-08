@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use super::wire::{Answer, Frame, MAX_REQUEST_BYTES, Request};
 use super::{EXIT_BAD_REQUEST, EXIT_DEADLINE, EXIT_OVER_MEMORY, EXIT_PARENT_GONE, confine};
-use crate::{Refusal, read_here};
+use crate::read_here;
 
 #[cfg(feature = "native")]
 unsafe extern "C" {
@@ -27,14 +27,20 @@ fn exit(code: i32) -> ! {
     unsafe { libc::_exit(code) }
 }
 
-fn numbers(mut arguments: impl Iterator<Item = OsString>) -> Option<(u64, u64)> {
+/// The time limit in milliseconds, the memory limit, and the request.
+fn arguments_of(mut arguments: impl Iterator<Item = OsString>) -> Option<(u64, u64, Request)> {
     let time_ms = arguments.next()?.to_str()?.parse().ok()?;
     let memory = arguments.next()?.to_str()?.parse().ok()?;
-    arguments.next().is_none().then_some((time_ms, memory))
+    let json = arguments.next()?;
+    if arguments.next().is_some() || json.len() > MAX_REQUEST_BYTES {
+        return None;
+    }
+    let request = serde_json::from_slice(json.as_encoded_bytes()).ok()?;
+    Some((time_ms, memory, request))
 }
 
 pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
-    let Some((time_ms, memory)) = numbers(arguments) else {
+    let Some((time_ms, memory, request)) = arguments_of(arguments) else {
         exit(EXIT_BAD_REQUEST);
     };
     // SAFETY: getppid takes nothing and cannot fail.
@@ -49,10 +55,9 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
         marfa_exit_when_new_fails(EXIT_OVER_MEMORY)
     };
 
-    // SAFETY: descriptor 0 is the pipe from the parent, and ManuallyDrop keeps its
-    // number in use, so nothing the reader opens can land on it.
-    let mut stdin = ManuallyDrop::new(unsafe { File::from_raw_fd(0) });
-    let request = read_request(&mut stdin);
+    // SAFETY: descriptor 0 is the file from the parent, opened for reading only, and
+    // ManuallyDrop keeps its number in use, so nothing the reader opens can land on it.
+    let file = ManuallyDrop::new(unsafe { File::from_raw_fd(0) });
     let options = request.options(memory);
     let data_dir: Option<PathBuf> = options.ocr.as_ref().and_then(|ocr| ocr.data_dir.clone());
 
@@ -66,57 +71,29 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
     confine::start_no_more_processes();
     write_out(&Frame::line(filter.apply(files)));
 
-    let bytes = read_bytes(&mut stdin, request.len);
     #[cfg(feature = "fault-injection")]
-    if let Some(text) = super::fault::act(&bytes) {
+    if let Some(text) = super::fault::act(&super::fault::opening(&file, request.len)) {
         answer(&Answer::of(Ok(crate::Reading {
             text,
             truncated: false,
             cut_short: false,
             dimensions: None,
+            duration: None,
             text_refused: None,
             sandbox: crate::Sandbox::Off,
         })));
     }
-    let outcome = bytes.and_then(|bytes| read_here(&bytes, &request.mime, &options));
-    answer(&Answer::of(outcome));
-}
-
-fn read_request(stdin: &mut File) -> Request {
-    let mut len = [0u8; 4];
-    if stdin.read_exact(&mut len).is_err() {
-        exit(EXIT_PARENT_GONE);
-    }
-    let len = u32::from_le_bytes(len);
-    if len > MAX_REQUEST_BYTES {
-        exit(EXIT_BAD_REQUEST);
-    }
-    let mut json = vec![0u8; len as usize];
-    if stdin.read_exact(&mut json).is_err() {
-        exit(EXIT_PARENT_GONE);
-    }
-    serde_json::from_slice(&json).unwrap_or_else(|_| exit(EXIT_BAD_REQUEST))
-}
-
-fn read_bytes(stdin: &mut File, len: u64) -> Result<Vec<u8>, Refusal> {
-    let too_big = || Refusal::OverLimit(format!("no memory to hold a file of {len} bytes"));
-    let len = usize::try_from(len).map_err(|_| too_big())?;
-    let mut bytes = Vec::new();
-    bytes.try_reserve_exact(len).map_err(|_| too_big())?;
-    bytes.resize(len, 0);
-    #[cfg(feature = "fault-injection")]
-    let start = super::fault::read_opening(stdin, &mut bytes);
-    #[cfg(not(feature = "fault-injection"))]
-    let start = 0;
-    if stdin.read_exact(&mut bytes[start..]).is_err() {
-        exit(EXIT_PARENT_GONE);
-    }
-    Ok(bytes)
+    answer(&Answer::of(read_here(
+        &file,
+        request.len,
+        &request.mime,
+        &options,
+    )));
 }
 
 /// Ends the process at the deadline, or soon after the parent has gone. A closed pipe
 /// cannot tell it: `poll` on macOS never reports the far end of a pipe closing unless
-/// asked for input, and input here belongs to the main thread.
+/// asked for input.
 ///
 /// Returns once the thread runs, because what a thread does to start is not what the
 /// call filter allows.

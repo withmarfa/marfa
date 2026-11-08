@@ -1,13 +1,14 @@
-//! The parent's side. One loop on the calling thread feeds the child, reads what it
-//! says and watches the clock and its memory, so there is no thread to leak, and a
-//! process that kept a pipe open cannot hold the loop past the child's end.
+//! The parent's side. One loop on the calling thread reads what the child says and
+//! watches the clock and its memory, so there is no thread to leak, and a process that
+//! kept a pipe open cannot hold the loop past the child's end.
 
-use std::io::{ErrorKind, Read, Write};
+use std::fs::File;
+use std::io::{ErrorKind, Read};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::wire::{
@@ -50,29 +51,33 @@ const RUST_OUT_OF_MEMORY: &str = "memory allocation of ";
 
 pub(super) fn read(
     program: Option<&PathBuf>,
-    bytes: &[u8],
+    file: &File,
     mime: &str,
     options: &Options,
 ) -> Result<Reading, Refusal> {
-    let kind = refuse_without_a_child(bytes, mime, options)?;
+    let (kind, len) = refuse_without_a_child(file, mime, options)?;
     let program = program
         .ok_or_else(|| Refusal::ReaderUnavailable("the program cannot find itself".into()))?;
     let time_limit = options.time_limit.min(LONGEST_TIME_LIMIT);
     let deadline = Instant::now() + time_limit;
-    let request = request(bytes, mime, options, time_limit)?;
+    let request = request(len, mime, options, time_limit)?;
+    let stdin = file
+        .try_clone()
+        .map_err(|error| Refusal::ReaderUnavailable(format!("cannot hold the file: {error}")))?;
 
-    let mut watched = Watched::start(program, time_limit, options.max_memory_bytes)?;
+    let mut watched = Watched::start(
+        program,
+        &request,
+        stdin,
+        time_limit,
+        options.max_memory_bytes,
+    )?;
     let cap = options
         .max_text_chars
         .saturating_mul(JSON_BYTES_PER_UNIT)
         .saturating_add(ANSWER_OVERHEAD);
     let mut said = Said::new(cap);
-    let end = watched.run(
-        [&request, bytes],
-        &mut said,
-        options.max_memory_bytes,
-        deadline,
-    );
+    let end = watched.run(&mut said, options.max_memory_bytes, deadline);
     let status = watched.reap();
     conclude(
         end,
@@ -84,8 +89,14 @@ pub(super) fn read(
     )
 }
 
-/// What can be decided from the call alone never starts a process.
-fn refuse_without_a_child(bytes: &[u8], mime: &str, options: &Options) -> Result<Kind, Refusal> {
+/// What can be decided from the call alone never starts a process. The file is read
+/// through a descriptor the child shares with the caller, so it has to be a file the
+/// child can only read: a regular file, opened for reading and not for writing.
+fn refuse_without_a_child(
+    file: &File,
+    mime: &str,
+    options: &Options,
+) -> Result<(Kind, u64), Refusal> {
     if mime.len() > MAX_MIME_BYTES {
         return Err(Refusal::Unsupported);
     }
@@ -93,14 +104,27 @@ fn refuse_without_a_child(bytes: &[u8], mime: &str, options: &Options) -> Result
     if kind == Kind::Pdf && !NATIVE {
         return Err(Refusal::Unsupported);
     }
-    if bytes.len() as u64 > options.max_memory_bytes {
+    let unusable =
+        |why: &str| Refusal::ReaderUnavailable(format!("the file cannot be read: {why}"));
+    let metadata = file
+        .metadata()
+        .map_err(|error| unusable(&error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(unusable("it is not a regular file"));
+    }
+    // SAFETY: the descriptor is open for the length of the call.
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0 || flags & libc::O_ACCMODE != libc::O_RDONLY {
+        return Err(unusable("it is not open for reading only"));
+    }
+    let len = metadata.len();
+    if kind.loads_whole_file() && len > options.max_memory_bytes {
         return Err(Refusal::OverLimit(format!(
-            "the file is {} bytes, and the memory limit is {}",
-            bytes.len(),
+            "the file is {len} bytes, and the memory limit is {}",
             options.max_memory_bytes
         )));
     }
-    Ok(kind)
+    Ok((kind, len))
 }
 
 /// The soft budget stops OCR with time left to send what it read before the deadline.
@@ -111,16 +135,16 @@ fn soft_budget(options: &Options, time_limit: Duration) -> Duration {
         .min(time_limit)
 }
 
-/// The request, after the four bytes of its length.
+/// The request, as the one argument that carries it to the child.
 fn request(
-    bytes: &[u8],
+    len: u64,
     mime: &str,
     options: &Options,
     time_limit: Duration,
-) -> Result<Vec<u8>, Refusal> {
+) -> Result<String, Refusal> {
     let request = Request {
         mime: mime.to_owned(),
-        len: bytes.len() as u64,
+        len,
         max_text_chars: options.max_text_chars as u64,
         max_inflated_bytes: options.max_inflated_bytes,
         time_budget_ms: u64::try_from(soft_budget(options, time_limit).as_millis())
@@ -130,16 +154,14 @@ fn request(
             data_dir: ocr.data_dir.as_deref().map(resolved),
         }),
     };
-    let json = serde_json::to_vec(&request)
+    let json = serde_json::to_string(&request)
         .map_err(|error| Refusal::ReaderUnavailable(format!("cannot write a request: {error}")))?;
-    let len = u32::try_from(json.len())
-        .ok()
-        .filter(|len| *len <= MAX_REQUEST_BYTES)
-        .ok_or_else(|| Refusal::OcrUnavailable("the OCR settings are too long".into()))?;
-    let mut framed = Vec::with_capacity(json.len() + 4);
-    framed.extend_from_slice(&len.to_le_bytes());
-    framed.extend_from_slice(&json);
-    Ok(framed)
+    if json.len() > MAX_REQUEST_BYTES {
+        return Err(Refusal::OcrUnavailable(
+            "the OCR settings are too long".into(),
+        ));
+    }
+    Ok(json)
 }
 
 /// A child works in `/`, and a sandbox names real paths, so a folder given relative or
@@ -165,7 +187,7 @@ enum End {
     Exited,
 }
 
-/// The line a child writes before it is given the file.
+/// The line a child writes before it reads the file.
 #[derive(Clone, Copy, Debug)]
 enum FirstLine {
     Awaited,
@@ -213,11 +235,6 @@ impl Said {
         }
     }
 
-    /// Whether the child has said it is confined, which is when it may have the file.
-    fn is_confined(&self) -> bool {
-        matches!(self.first_line, FirstLine::Said(_))
-    }
-
     fn keep_stderr(&mut self, chunk: &[u8]) {
         self.stderr.extend_from_slice(chunk);
         if self.stderr.len() > STDERR_KEPT {
@@ -248,24 +265,32 @@ impl Said {
 struct Watched {
     child: Child,
     pid: libc::pid_t,
-    stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     reaped: bool,
 }
 
 impl Watched {
-    fn start(program: &Path, time_limit: Duration, max_memory: u64) -> Result<Self, Refusal> {
+    /// The file is the child's stdin, and the request is its last argument: the child
+    /// reads neither until it is confined.
+    fn start(
+        program: &Path,
+        request: &str,
+        file: File,
+        time_limit: Duration,
+        max_memory: u64,
+    ) -> Result<Self, Refusal> {
         let mut child = Command::new(program)
             .arg0(CHILD_NAME)
             .arg(CHILD_ARG)
             .arg(time_limit.as_millis().to_string())
             .arg(max_memory.to_string())
+            .arg(request)
             .env_clear()
             .current_dir("/")
             // Its own group, so anything it started ends with it.
             .process_group(0)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::from(file))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -273,18 +298,15 @@ impl Watched {
                 Refusal::ReaderUnavailable(format!("cannot start a reader: {error}"))
             })?;
         let pid = libc::pid_t::try_from(child.id()).expect("a process id fits a pid_t");
-        let (stdin, stdout, stderr) =
-            (child.stdin.take(), child.stdout.take(), child.stderr.take());
+        let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
         let watched = Self {
             child,
             pid,
-            stdin,
             stdout,
             stderr,
             reaped: false,
         };
         for fd in [
-            watched.stdin.as_ref().map(AsRawFd::as_raw_fd),
             watched.stdout.as_ref().map(AsRawFd::as_raw_fd),
             watched.stderr.as_ref().map(AsRawFd::as_raw_fd),
         ]
@@ -298,16 +320,8 @@ impl Watched {
         Ok(watched)
     }
 
-    /// Runs until the child ends or has to be ended. The second part of `feed` waits
-    /// for the child's first line, so a child that states its sandbox has not yet
-    /// held a byte of the file.
-    fn run(
-        &mut self,
-        mut feed: [&[u8]; 2],
-        said: &mut Said,
-        max_memory: u64,
-        deadline: Instant,
-    ) -> End {
+    /// Runs until the child ends or has to be ended.
+    fn run(&mut self, said: &mut Said, max_memory: u64, deadline: Instant) -> End {
         let mut next_sample = Instant::now();
         let mut idle = Duration::from_millis(1);
         loop {
@@ -333,12 +347,7 @@ impl Watched {
                 };
             }
 
-            let feeding = !feed[0].is_empty() || said.is_confined();
-            let mut wanted: [Option<(RawFd, libc::c_short)>; 3] = [
-                self.stdin
-                    .as_ref()
-                    .filter(|_| feeding)
-                    .map(|pipe| (pipe.as_raw_fd(), libc::POLLOUT)),
+            let wanted: [Option<(RawFd, libc::c_short)>; 2] = [
                 self.stdout
                     .as_ref()
                     .map(|pipe| (pipe.as_raw_fd(), libc::POLLIN)),
@@ -353,11 +362,8 @@ impl Watched {
                 wait = wait.min(idle);
                 idle = (idle * 2).min(TICK);
             }
-            let ready = wait_for(&mut wanted, wait);
-            if ready[0] {
-                self.write_some(&mut feed, said.is_confined());
-            }
-            if ready[1] || ready[2] {
+            let ready = wait_for(&wanted, wait);
+            if ready[0] || ready[1] {
                 self.drain(said);
                 if matches!(said.first_line, FirstLine::Bad) {
                     return End::BadFrame;
@@ -398,36 +404,6 @@ impl Watched {
                 info.si_code,
                 libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
             )
-    }
-
-    /// Writes what the pipe takes, and closes it once the whole file is through.
-    fn write_some(&mut self, feed: &mut [&[u8]; 2], with_the_file: bool) {
-        let Some(stdin) = self.stdin.as_mut() else {
-            return;
-        };
-        let parts = if with_the_file { 2 } else { 1 };
-        for part in &mut feed[..parts] {
-            while !part.is_empty() {
-                match stdin.write(part) {
-                    Ok(0) => {
-                        self.stdin = None;
-                        return;
-                    }
-                    Ok(written) => *part = &part[written..],
-                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => return,
-                    // A child that closed stdin wants no more. What it does next
-                    // decides the result.
-                    Err(_) => {
-                        self.stdin = None;
-                        return;
-                    }
-                }
-            }
-        }
-        if with_the_file {
-            self.stdin = None;
-        }
     }
 
     /// Reads what is there now, and notes each pipe that has closed.
@@ -507,14 +483,14 @@ fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Waits up to `wait` for any of the pipes, and says which have something to do.
-fn wait_for(wanted: &mut [Option<(RawFd, libc::c_short)>; 3], wait: Duration) -> [bool; 3] {
-    let mut fds: [libc::pollfd; 3] = [libc::pollfd {
+/// Waits up to `wait` for either pipe, and says which has something to do.
+fn wait_for(wanted: &[Option<(RawFd, libc::c_short)>; 2], wait: Duration) -> [bool; 2] {
+    let mut fds: [libc::pollfd; 2] = [libc::pollfd {
         // A negative descriptor is one poll skips.
         fd: -1,
         events: 0,
         revents: 0,
-    }; 3];
+    }; 2];
     for (slot, want) in fds.iter_mut().zip(wanted.iter()) {
         if let Some((fd, events)) = want {
             slot.fd = *fd;
@@ -522,21 +498,17 @@ fn wait_for(wanted: &mut [Option<(RawFd, libc::c_short)>; 3], wait: Duration) ->
         }
     }
     let millis = libc::c_int::try_from(wait.as_micros().div_ceil(1000)).unwrap_or(libc::c_int::MAX);
-    // SAFETY: `fds` holds three initialized entries, and that is the count passed.
-    let count = unsafe { libc::poll(fds.as_mut_ptr(), 3, millis) };
+    // SAFETY: `fds` holds two initialized entries, and that is the count passed.
+    let count = unsafe { libc::poll(fds.as_mut_ptr(), 2, millis) };
     if count <= 0 {
-        return [false; 3];
+        return [false; 2];
     }
-    [
-        fds[0].revents != 0,
-        fds[1].revents != 0,
-        fds[2].revents != 0,
-    ]
+    [fds[0].revents != 0, fds[1].revents != 0]
 }
 
 /// The one result of a reading, from how it ended and what the child said.
 ///
-/// Before its first line a child has not had the file, so whatever ends it is no fault
+/// Before its first line a child has not read the file, so whatever ends it is no fault
 /// of the file. After that the child may be running code the file chose, and everything
 /// it says, its exit code included, is a claim. `ReaderUnavailable` stops a whole run,
 /// so a child that has had the file cannot earn it, and it cannot claim the deadline
@@ -549,7 +521,7 @@ fn conclude(
     options: &Options,
     past_deadline: bool,
 ) -> Result<Reading, Refusal> {
-    // Whatever ended it, a child that never said it was confined was never sent the
+    // Whatever ended it, a child that never said it was confined read nothing of the
     // file, so the file has no part in how it ended.
     let FirstLine::Said(sandbox) = said.first_line else {
         let how = match end {
@@ -663,6 +635,10 @@ mod tests {
         said
     }
 
+    fn confirmed(said: &Said) -> bool {
+        matches!(said.first_line, FirstLine::Said(_))
+    }
+
     fn exited(code: i32) -> Option<ExitStatus> {
         Some(ExitStatus::from_raw(code << 8))
     }
@@ -692,10 +668,10 @@ mod tests {
         let mut said = Said::new(64 * 1024);
         for byte in &line[..line.len() - 1] {
             said.keep_stdout(&[*byte]);
-            assert!(!said.is_confined());
+            assert!(!confirmed(&said));
         }
         said.keep_stdout(b"\n");
-        assert!(said.is_confined());
+        assert!(confirmed(&said));
         said.keep_stdout(ANSWER);
         assert_eq!(
             ended(exited(0), &said, false).unwrap().sandbox,
@@ -847,17 +823,20 @@ mod tests {
         path
     }
 
-    /// Each stands in for a reader that takes all of stdin: the pipe closes only after
-    /// the file, so it ends only if the file reached it.
+    /// A reader that never states its sandbox has read nothing, so it is no verdict on
+    /// the file, whatever it does next.
     #[test]
-    fn the_file_waits_for_the_frame() {
+    fn a_reader_that_states_no_sandbox_is_no_reader() {
         let folder = tempfile::tempdir().unwrap();
         let options = Options {
             time_limit: Duration::from_millis(500),
             ..Options::default()
         };
-        let waits = script(folder.path(), "/bin/cat >/dev/null\nexit 9");
-        let result = read(Some(&waits), b"the file", "text/plain", &options);
+        let path = folder.path().join("file");
+        std::fs::write(&path, b"text").unwrap();
+        let file = File::open(&path).unwrap();
+        let silent = script(folder.path(), "sleep 5\nexit 9");
+        let result = read(Some(&silent), &file, "text/plain", &options);
         assert!(
             matches!(&result, Err(Refusal::ReaderUnavailable(why)) if why.contains("deadline")),
             "{result:?}"
@@ -866,14 +845,34 @@ mod tests {
         let frame = String::from_utf8(Frame::line(Sandbox::Off)).unwrap();
         let states = script(
             folder.path(),
-            &format!(
-                "printf '%s\\n' '{}'\n/bin/cat >/dev/null\nexit 9",
-                frame.trim()
-            ),
+            &format!("printf '%s\\n' '{}'\nexit 9", frame.trim()),
         );
-        let result = read(Some(&states), b"the file", "text/plain", &options);
+        let result = read(Some(&states), &file, "text/plain", &options);
         assert!(
             matches!(&result, Err(Refusal::Crashed(why)) if why.contains("code 9")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_the_reader_could_write_is_refused() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("file");
+        std::fs::write(&path, b"text").unwrap();
+        let writable = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let result = read(None, &writable, "text/plain", &Options::default());
+        assert!(
+            matches!(&result, Err(Refusal::ReaderUnavailable(why)) if why.contains("reading only")),
+            "{result:?}"
+        );
+        let directory = File::open(folder.path()).unwrap();
+        let result = read(None, &directory, "text/plain", &Options::default());
+        assert!(
+            matches!(&result, Err(Refusal::ReaderUnavailable(_))),
             "{result:?}"
         );
     }
