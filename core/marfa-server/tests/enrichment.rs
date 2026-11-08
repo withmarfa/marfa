@@ -64,7 +64,7 @@ impl Instance {
             "label": "writer",
             "source": "writer",
             "permissions": [],
-            "type_permissions": { "core.file": "write" },
+            "type_permissions": { "core.file": "write", "core.file.image": "write" },
         });
         let (status, minted) = instance.local(Method::POST, "/keys", body).await;
         assert_eq!(status, StatusCode::CREATED, "{minted}");
@@ -274,11 +274,12 @@ async fn reads_a_file_again_when_the_text_it_was_given_is_cleared() {
 #[cfg(feature = "native")]
 const SENTENCE: &[u8] = include_bytes!("../../marfa-enrichment/fixtures/sentence.png");
 
-#[cfg(feature = "native")]
-async fn picture_item(one: &Instance, bytes: &[u8]) -> String {
+const JPEG: &[u8] = include_bytes!("../../marfa-enrichment/fixtures/sample.jpg");
+
+async fn picture_item(one: &Instance, bytes: &[u8], mime: &str) -> String {
     let hash = one.upload(bytes).await;
     let made = json!({ "type": "core.file.image", "properties": {
-        "blob_ref": hash, "mime_type": "image/png", "title": "a picture" } });
+        "blob_ref": hash, "mime_type": mime, "title": "a picture" } });
     let request = Request::builder()
         .method(Method::POST)
         .uri("/items")
@@ -294,7 +295,7 @@ async fn picture_item(one: &Instance, bytes: &[u8]) -> String {
 #[cfg(feature = "native")]
 async fn reads_a_picture_for_its_size_and_again_for_its_words_once_ocr_is_on() {
     let one = Instance::start(&[]).await;
-    let id = picture_item(&one, SENTENCE).await;
+    let id = picture_item(&one, SENTENCE, "image/png").await;
     assert_eq!(one.sweep().await, counts(1, 0, 0));
     let item = one.item(&id).await;
     assert!(item["properties"]["width"].as_u64().unwrap() > 0);
@@ -323,8 +324,8 @@ async fn counts_a_damaged_picture_when_ocr_is_on() {
     let one = Instance::start(&[("MARFA_ENRICHMENT_OCR_ENABLED", "true")]).await;
     let mut damaged = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     damaged.extend_from_slice(&[0x5a; 4096]);
-    let broken = picture_item(&one, &damaged).await;
-    let good = picture_item(&one, SENTENCE).await;
+    let broken = picture_item(&one, &damaged, "image/png").await;
+    let good = picture_item(&one, SENTENCE, "image/png").await;
     assert_eq!(one.sweep().await, counts(1, 0, 1));
     assert!(one.item(&broken).await["properties"].get("width").is_none());
     assert!(
@@ -332,6 +333,49 @@ async fn counts_a_damaged_picture_when_ocr_is_on() {
             .get("extracted_text")
             .is_some()
     );
+}
+
+async fn fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared() {
+    let one = Instance::start(&[]).await;
+    let id = picture_item(&one, JPEG, "image/jpeg").await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert!(one.item(&id).await["properties"]["width"].as_u64().unwrap() > 0);
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    one.change(&id, json!({}), &["width"]).await;
+    assert!(one.item(&id).await["properties"].get("width").is_none());
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert!(one.item(&id).await["properties"]["width"].as_u64().unwrap() > 0);
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    let left = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                WHERE i.id = ?1 AND f.state = 'skipped' AND f.reason = 'ocr'";
+    assert_eq!(one.count(left, &id), 1);
+}
+
+async fn reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refusal() {
+    let one = Instance::start(&[("MARFA_ENRICHMENT_MAX_BLOB_BYTES", "10")]).await;
+    let id = one
+        .file(b"more than ten bytes of text", "text/plain", json!({}))
+        .await;
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    one.change(&id, json!({ "extracted_text": "typed by a person" }), &[])
+        .await;
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    one.change(&id, json!({}), &["extracted_text"]).await;
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    let held = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                WHERE i.id = ?1 AND f.state = 'skipped' AND f.reason = 'over_limit' \
+                AND f.capped_by = 'blob' AND f.capped_at = 10";
+    assert_eq!(one.count(held, &id), 1);
+    let (status, body) = one
+        .local(
+            Method::PATCH,
+            "/config",
+            json!({ "enrichment_max_blob_bytes": 1000 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
 }
 
 async fn leaves_a_disabled_sweep_with_its_files_waiting() {
@@ -394,6 +438,20 @@ fn main() {
         trial(
             "reads_a_file_again_when_the_text_it_was_given_is_cleared",
             || Box::pin(reads_a_file_again_when_the_text_it_was_given_is_cleared()),
+        ),
+        trial(
+            "fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared",
+            || {
+                Box::pin(fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared())
+            },
+        ),
+        trial(
+            "reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refusal",
+            || {
+                Box::pin(
+                    reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refusal(),
+                )
+            },
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())

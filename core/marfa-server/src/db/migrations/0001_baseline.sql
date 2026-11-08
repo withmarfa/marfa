@@ -616,8 +616,11 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
     capped_at INTEGER,
+    -- A skipped file offered once more because a field a read fills was cleared; the refusal stays.
+    refill INTEGER NOT NULL DEFAULT 0 CHECK (refill IN (0, 1)),
     updated_at TEXT NOT NULL,
     PRIMARY KEY (item_seq, hash),
+    CHECK (refill = 0 OR state = 'skipped'),
     CHECK ((state = 'skipped') = (reason IS NOT NULL)),
     CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
     CHECK ((capped_by IS NULL) = (capped_at IS NULL))
@@ -638,7 +641,8 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
--- An existing reference alone does not queue changed file properties.
+-- An existing reference alone does not queue changed file properties. A skipped file keeps its
+-- refusal and is read once more.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
@@ -651,9 +655,13 @@ BEGIN
     INSERT INTO enrichment_files (item_seq, hash, updated_at)
     VALUES (NEW.seq, NEW.properties ->> '$.blob_ref', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT (item_seq, hash) DO UPDATE
-    SET state = 'waiting', attempts = 0, reason = NULL, signature = '',
+    SET state = CASE enrichment_files.state WHEN 'read' THEN 'waiting' ELSE enrichment_files.state END,
+        attempts = 0,
+        reason = CASE enrichment_files.state WHEN 'read' THEN NULL ELSE enrichment_files.reason END,
+        signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
+        refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
         updated_at = excluded.updated_at
-    WHERE enrichment_files.state = 'read';
+    WHERE enrichment_files.state IN ('read', 'skipped');
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'

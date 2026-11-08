@@ -82,12 +82,12 @@ const BACK: &str = "state = 'skipped' AND ((reason = 'unsupported' AND signature
          WHEN 'inflated' THEN ?3 WHEN 'memory' THEN ?4 ELSE -1 END) \
      OR (reason = 'ocr' AND signature <> ?5))";
 
-/// Whether a run has anything to do: a file waiting, or a skip the settings now reverse.
+/// Whether a run has anything to do: a file waiting or offered again, or a skip the settings now reverse.
 pub fn due(tx: &Transaction<'_>, max_attempts: i64, signatures: &Signatures) -> Result<bool> {
     Ok(tx
         .prepare_cached(&format!(
             "SELECT EXISTS (SELECT 1 FROM enrichment_files \
-             WHERE (state = 'waiting' AND attempts < ?6) OR ({BACK}))"
+             WHERE ((state = 'waiting' OR refill = 1) AND attempts < ?6) OR ({BACK}))"
         ))?
         .query_row(
             rusqlite::params_from_iter(signatures.bound().into_iter().chain([max_attempts.into()])),
@@ -99,7 +99,7 @@ pub fn due(tx: &Transaction<'_>, max_attempts: i64, signatures: &Signatures) -> 
 pub fn requeue(tx: &Transaction<'_>, signatures: &Signatures) -> Result<()> {
     tx.prepare_cached(&format!(
         "UPDATE enrichment_files SET state = 'waiting', attempts = 0, reason = NULL, \
-         signature = '', capped_by = NULL, capped_at = NULL WHERE {BACK}"
+         signature = '', capped_by = NULL, capped_at = NULL, refill = 0 WHERE {BACK}"
     ))?
     .execute(rusqlite::params_from_iter(signatures.bound()))?;
     Ok(())
@@ -110,7 +110,7 @@ pub fn next(tx: &Transaction<'_>, max_attempts: i64, limit: i64) -> Result<Vec<(
     let mut statement = tx.prepare_cached(
         "SELECT f.item_seq, f.hash FROM enrichment_files f \
          JOIN items i ON i.seq = f.item_seq \
-         WHERE f.state = 'waiting' AND f.attempts < ?1 AND i.state <> 'trashed' \
+         WHERE (f.state = 'waiting' OR f.refill = 1) AND f.attempts < ?1 AND i.state <> 'trashed' \
          ORDER BY f.updated_at, f.item_seq LIMIT ?2",
     )?;
     Ok(statement
@@ -149,7 +149,8 @@ pub fn drop_row(tx: &Transaction<'_>, seq: i64, hash: &str) -> Result<()> {
 pub fn read(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'read', reason = NULL, signature = '', \
-         capped_by = NULL, capped_at = NULL, updated_at = ?3 WHERE item_seq = ?1 AND hash = ?2",
+         capped_by = NULL, capped_at = NULL, refill = 0, updated_at = ?3 \
+         WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![seq, hash, at])?;
     Ok(())
@@ -172,7 +173,8 @@ pub fn skip(
     };
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'skipped', reason = ?3, signature = ?4, \
-         capped_by = ?5, capped_at = ?6, updated_at = ?7 WHERE item_seq = ?1 AND hash = ?2",
+         capped_by = ?5, capped_at = ?6, refill = 0, updated_at = ?7 \
+         WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![
         seq,
