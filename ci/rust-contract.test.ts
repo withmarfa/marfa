@@ -29,6 +29,7 @@ interface Job {
   needs?: string | string[];
   if?: string;
   "runs-on"?: string;
+  env?: Record<string, string>;
   strategy?: { "fail-fast"?: boolean; matrix?: { include?: Entry[] } };
   steps: Step[];
 }
