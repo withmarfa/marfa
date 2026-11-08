@@ -31,6 +31,8 @@ let server: FreshServer;
 let minter: MarfaClient;
 let capacityServer: FreshServer;
 let capacityMinter: MarfaClient;
+let flightServer: FreshServer;
+let flightMinter: MarfaClient;
 let serial = 0;
 
 beforeAll(async () => {
@@ -38,7 +40,6 @@ beforeAll(async () => {
     RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
-    MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
     MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
   });
   minter = new MarfaClient({
@@ -57,12 +58,24 @@ beforeAll(async () => {
     baseUrl: capacityServer.apiUrl,
     apiKey: capacityServer.workingKey,
   });
-}, 4 * FRESH_SERVER_TIMEOUT_MS);
+  // The bytes in flight are held by bodies the fixture holds open, which a
+  // short read timeout would end.
+  flightServer = await bootFreshServer("inbound-check-order-flight", {
+    RATE_LIMIT_ENABLED: "false",
+    MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
+    MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
+  });
+  flightMinter = new MarfaClient({
+    baseUrl: flightServer.apiUrl,
+    apiKey: flightServer.workingKey,
+  });
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server.stop();
   await capacityServer.stop();
-}, 4 * FRESH_SERVER_TIMEOUT_MS);
+  await flightServer.stop();
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 interface Registration {
   client: MarfaClient;
@@ -237,15 +250,16 @@ describe("a receipt that meets two refusals", () => {
   });
 
   it("answers a body read past the limit 413 before the bytes in flight's 503", async () => {
-    const owner = await registration();
+    const on = { server: flightServer, minter: flightMinter };
+    const owner = await registration(on);
     const made = await endpoint(owner);
     const bodies: OpenBody[] = [];
     for (const declared of [1000, 1000, 900, 800]) {
-      const holder = await registration();
+      const holder = await registration(on);
       const held = await endpoint(holder);
       bodies.push(
         await openCounted(
-          server,
+          flightServer,
           held.path,
           declared,
           "h".repeat(declared - 100),
@@ -256,7 +270,7 @@ describe("a receipt that meets two refusals", () => {
     // the room left is less than the limit and than the bodies below.
     // A body one byte over the limit would also fail the bytes in flight,
     // and is told the limit's 413.
-    const over = await sendChunked(server.apiUrl, made.path, [
+    const over = await sendChunked(flightServer.apiUrl, made.path, [
       Buffer.alloc(MAX_BYTES + 1, 0x61),
     ]);
     expect(over.status).toBe(413);
@@ -264,7 +278,7 @@ describe("a receipt that meets two refusals", () => {
 
     // The witness: a body under the limit that does not fit in the rest is
     // refused for the bytes in flight.
-    const flight = await sendChunked(server.apiUrl, made.path, [
+    const flight = await sendChunked(flightServer.apiUrl, made.path, [
       Buffer.alloc(700, 0x61),
     ]);
     expect(flight.status).toBe(503);

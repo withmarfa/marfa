@@ -276,13 +276,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_exempt_groups_are_the_sign_in_grant_and_oauth_doors_and_judge_no_header() {
+    async fn the_exempt_groups_are_the_sign_in_grant_oauth_and_sender_doors_and_judge_no_header() {
         let instance = start().await;
         let (_, exempt) = split(&public_doors(instance.app.clone()));
         let groups = writes(&oauth::grant_doors())
             .into_iter()
             .chain(writes(&crate::http::auth::doors()))
             .chain(writes(&oauth::doors()))
+            .chain(writes(&crate::http::sender_doors()))
             // Served only to answer 405, so the method is refused before any header.
             .chain(["DELETE /mcp".to_string()])
             .collect::<BTreeSet<_>>();
