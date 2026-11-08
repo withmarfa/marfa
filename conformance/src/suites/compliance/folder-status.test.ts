@@ -5,11 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  HOUR_MS,
-  MINUTE_MS,
-  movedClock,
-} from "../../utils/moved-clock.js";
+import { HOUR_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import {
   connect,
   issuerOrigin,
