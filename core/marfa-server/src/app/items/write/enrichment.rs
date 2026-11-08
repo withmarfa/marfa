@@ -100,6 +100,7 @@ pub(crate) fn apply_enrichment(
     let job = Job {
         unit,
         catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+        read_only: unit.read_only()?,
         claim: None,
         server_own: true,
     };
