@@ -93,15 +93,39 @@ fn output_of(command: &mut Command) -> std::process::Output {
     child.wait_with_output().unwrap()
 }
 
-/// A port below the range the system gives to outgoing connections, which
-/// other tests' health checks would otherwise be holding.
+/// Ports this process has reserved, each held as a lock on a file in a folder
+/// every test process shares, until the process exits.
+static RESERVED: Mutex<Vec<fs::File>> = Mutex::new(Vec::new());
+
+/// A port nothing else holds and no other test process will pick. Test
+/// processes run side by side (nextest runs each test in its own), and a
+/// rig's health listener binds its port only once an install starts it, so
+/// looking for a bound socket cannot see the port another test has chosen:
+/// the reservation is the lock. The ports lie below the range the system
+/// gives to outgoing connections, which other tests' health checks would
+/// otherwise be holding.
 fn free_port() -> u16 {
     static NEXT: AtomicU16 = AtomicU16::new(0);
+    let folder = PathBuf::from("/tmp/marfa-cli-test-ports");
+    fs::create_dir_all(&folder).unwrap();
     loop {
         let offset = NEXT.fetch_add(1, Ordering::Relaxed);
-        let port = 20_000 + ((std::process::id() % 400) as u16) * 20 + offset % 20_000;
+        let port = 20_000 + ((std::process::id() % 400) * 20 + u32::from(offset)) % 28_000;
+        let port = u16::try_from(port).unwrap();
+        let Ok(reservation) = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(folder.join(port.to_string()))
+        else {
+            continue;
+        };
+        if reservation.try_lock().is_err() {
+            continue;
+        }
         let _held = SOCKETS.lock().unwrap();
         if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            RESERVED.lock().unwrap().push(reservation);
             return port;
         }
     }
@@ -134,6 +158,12 @@ const FAKE_LAUNCHCTL: &str = r#"#!/bin/sh
 # letting the stand-in health endpoint answer.
 H="$MARFA_AUTOSTART_ROOT"
 S="$FAKE_DOCKER_STATE"
+# A real service manager returns once the process has stopped, so the port is
+# free. The stand-in health endpoint says when it has let go of its port.
+settled() {
+  n=0
+  while [ -n "$(ls "$S" | grep '^listening-')" ] && [ $n -lt 500 ]; do sleep 0.01; n=$((n+1)); done
+}
 echo "$*" >> "$H/launchctl.log"
 label=$(printf '%s' "$*" | sed -n 's/.*so\.marfa\.server\.\([a-z0-9_-]*\).*/\1/p')
 begin() {
@@ -158,7 +188,7 @@ case "$1" in
     label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//')
     touch "$H/loaded-$label"; rm -f "$H/stopped-$label"; begin "$3" ;;
   kickstart) rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
-  bootout) rm -f "$H/loaded-$label" "$S"/go-* ;;
+  bootout) rm -f "$H/loaded-$label" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -167,6 +197,12 @@ const FAKE_SYSTEMCTL: &str = r#"#!/bin/sh
 # server by letting the stand-in health endpoint answer.
 H="$MARFA_AUTOSTART_ROOT"
 S="$FAKE_DOCKER_STATE"
+# A real service manager returns once the process has stopped, so the port is
+# free. The stand-in health endpoint says when it has let go of its port.
+settled() {
+  n=0
+  while [ -n "$(ls "$S" | grep '^listening-')" ] && [ $n -lt 500 ]; do sleep 0.01; n=$((n+1)); done
+}
 echo "systemctl $*" >> "$H/systemctl.log"
 [ "$1" = --user ] && shift
 cmd="$1"; shift
@@ -192,7 +228,7 @@ case "$cmd" in
   is-enabled) [ -e "$H/enabled-$unit" ] ;;
   is-active) [ -e "$H/active-$unit" ] ;;
   start|restart) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
-  stop) rm -f "$H/active-$unit" "$S"/go-* ;;
+  stop) rm -f "$H/active-$unit" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -470,11 +506,14 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
             std::thread::sleep(Duration::from_millis(20));
             continue;
         }
+        let listening = state.join(format!("listening-{port}"));
+        fs::write(&listening, "").unwrap();
         let listener = {
             let _held = SOCKETS.lock().unwrap();
             TcpListener::bind(("127.0.0.1", port))
         };
         let Ok(listener) = listener else {
+            let _ = fs::remove_file(&listening);
             std::thread::sleep(Duration::from_millis(20));
             continue;
         };
@@ -511,6 +550,8 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
                 Err(_) => std::thread::sleep(Duration::from_millis(10)),
             }
         }
+        drop(listener);
+        let _ = fs::remove_file(&listening);
     }
 }
 
