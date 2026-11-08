@@ -73,17 +73,6 @@ impl Catalog {
         builtin::ships(id).unwrap_or(false)
     }
 
-    pub fn retired(&self) -> Vec<&str> {
-        let mut ids: Vec<&str> = self
-            .provenance
-            .iter()
-            .filter(|(id, held)| held.origin == "platform" && !Catalog::ships(id))
-            .map(|(id, _)| id.as_str())
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
     pub fn edge_type(&self, id: &str) -> Option<&Obj> {
         self.edge_types
             .iter()
@@ -254,7 +243,7 @@ pub fn current(
     Ok(loaded)
 }
 
-/// A type this build no longer ships stays, as a retired one, until it is removed.
+/// Installs the shipped types, and brings an installed row up to the shipped definition.
 pub fn reconcile(tx: &Transaction<'_>, at: &str) -> Result<()> {
     let shipped = builtin::shipped_types()
         .map_err(|error| Refusal::internal(&format!("the shipped types do not read: {error}")))?;

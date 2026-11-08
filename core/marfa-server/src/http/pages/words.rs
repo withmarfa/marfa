@@ -60,7 +60,7 @@ const POWERS: [(&str, PowerWords); 12] = [
     (
         "instance.maintain",
         PowerWords {
-            title: "Run housekeeping, remove retired platform types and cancel bulk jobs",
+            title: "Run housekeeping and cancel bulk jobs",
             note: Some("Some jobs permanently delete data that is due to go."),
         },
     ),

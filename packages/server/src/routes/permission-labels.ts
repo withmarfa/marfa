@@ -23,8 +23,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "grants.manage": "See and disconnect other apps",
   "config.manage": "See and change Marfa's settings",
   "instance.read": "See health, metrics, storage and job status",
-  "instance.maintain":
-    "Run housekeeping, remove retired platform types and cancel bulk jobs",
+  "instance.maintain": "Run housekeeping and cancel bulk jobs",
   "schema.write": "Replace or remove type definitions",
   "blobs.manage": "Read and add any file, and manage file storage",
   "webhooks.manage": "Manage webhooks that send events to other services",

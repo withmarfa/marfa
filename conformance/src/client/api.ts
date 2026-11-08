@@ -1548,36 +1548,6 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `GET /platform-types/retired`: requires `instance.read`. */
-  async listRetiredPlatformTypes(): Promise<
-    ApiResponse<
-      PaginatedResult<{
-        id: string;
-        item_count: number;
-        child_types: string[];
-        removable: boolean;
-      }>
-    >
-  > {
-    return this.request("/platform-types/retired");
-  }
-
-  /**
-   * `DELETE /platform-types/{id}`: requires `instance.maintain`.
-   *
-   * Encoded because the identifier is the last segment: a `?` or a `#`
-   * in one would otherwise end the path early and the door would answer a
-   * plausible refusal about a shorter identifier than the fixture sent.
-   */
-  async deleteRetiredPlatformType(
-    id: string,
-  ): Promise<ApiResponse<{ removed: true; id: string }>> {
-    return this.request<{ removed: true; id: string }>(
-      `/platform-types/${encodeURIComponent(id)}`,
-      { method: "DELETE" },
-    );
-  }
-
   /** `POST /auth/oauth2/register`: dynamic client registration; no credential. */
   async registerOAuthClient(
     body: Record<string, unknown>,

@@ -1,13 +1,13 @@
 use marfa_rules::schema::{
-    ChainFault, Obj, canonical, parent_chain_fault, resolve, roles_of, stored_shape_conflicts,
-    validate_type,
+    Obj, canonical, parent_chain_fault, resolve, roles_of, stored_shape_conflicts, validate_type,
 };
 use serde_json::{Value, json};
 
-use super::{chain_refusal, check_id, presented, schema_refusal};
+use super::{chain_refusal, check_id, presented, schema_refusal, unreadable_refusal};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::catalog::{self, Catalog, Snapshot, provenance_json};
+use crate::app::faults::TYPE_DEFINITION;
 use crate::app::items::reading;
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -69,14 +69,12 @@ fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
 
 pub async fn get(app: &App, id: String) -> Result<Value> {
     let cache = app.catalog_handle();
+    let faults = app.faults.clone();
     app.db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            if catalog.is_unreadable(&id) {
-                return Err(chain_refusal(&ChainFault {
-                    type_id: id.clone(),
-                    at: id.clone(),
-                }));
+            if catalog.is_unreadable(&id) || faults.unreadable(TYPE_DEFINITION, &id) {
+                return Err(unreadable_refusal(&id));
             }
             match resolve(&catalog.types, &id, false) {
                 Ok(Some(schema)) => Ok(presented(schema, catalog.provenance.get(&id))),

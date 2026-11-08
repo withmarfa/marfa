@@ -8,11 +8,12 @@
  * recorded before extraction begins, and an item that has used the attempts
  * allowed is left.
  *
- * The server here is stopped with `SIGKILL` while it reads a document that
- * takes it well over a second, with a single attempt allowed. A second item
- * with the same bytes, added after the restart, is the witness: it is read
- * on the same server, so the first item's absence of text is the sweep
- * leaving it and not a document or a server that cannot be read.
+ * The server here is held at its first read of a blob's bytes (`hold:blob-read`),
+ * which the sweep makes after it has recorded its attempt, and stopped there
+ * with `SIGKILL`, with a single attempt allowed. A second item with the same
+ * bytes, added after the restart, is the witness: it is read on the same
+ * server, so the first item's absence of text is the sweep leaving it and not
+ * a document or a server that cannot be read.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -26,8 +27,6 @@ import {
   docx,
   longParagraph,
 } from "../../utils/office-documents.js";
-
-const MIB = 1024 * 1024;
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -49,8 +48,6 @@ beforeAll(async () => {
     MARFA_ENRICHMENT_ENABLED: "true",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
     MARFA_ENRICHMENT_MAX_ATTEMPTS: "1",
-    MARFA_ENRICHMENT_MAX_INFLATED_BYTES: String(512 * MIB),
-    MARFA_ENRICHMENT_MAX_MEMORY_BYTES: String(1024 * MIB),
     // Driven through the housekeeping door rather than the scheduler.
     MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
@@ -78,18 +75,18 @@ async function text(id: string): Promise<unknown> {
 
 describe("an item the server was stopped while reading", () => {
   it("is not offered to the next sweep once its attempts are used, beside an item that reads", async () => {
-    // 100 MiB of text takes the better part of a second to read.
     const upload = await client.uploadBlob(
-      docx(longParagraph(100 * MIB)),
+      docx(longParagraph(64 * 1024)),
       DOCX_MIME,
     );
     expect(upload.status).toBe(201);
     const interrupted = await documentItem(upload.data.hash, "interrupted");
 
+    await server.setFault("hold:blob-read");
     const sweeping = operator
       .runHousekeeping("enrichment-sweep")
       .catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await server.waitForHold("hold:blob-read");
     await server.restart({ signal: "SIGKILL" });
     await sweeping;
     clients();
@@ -101,5 +98,5 @@ describe("an item the server was stopped while reading", () => {
 
     expect(String(await text(witness))).toMatch(/^aaaa/);
     expect(await text(interrupted)).toBeUndefined();
-  }, 240_000);
+  }, 120_000);
 });

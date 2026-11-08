@@ -46,7 +46,6 @@ describe("explicit management permissions", () => {
       for (const path of [
         "/metrics",
         "/housekeeping",
-        "/platform-types/retired",
         "/blobs/stores",
         "/blobs/orphans",
       ]) {
@@ -125,7 +124,6 @@ describe("explicit management permissions", () => {
     for (const path of [
       "/metrics",
       "/housekeeping",
-      "/platform-types/retired",
       "/blobs/stores",
       "/blobs/orphans",
     ]) {

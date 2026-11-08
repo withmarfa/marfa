@@ -6,8 +6,8 @@ use std::io::BufRead;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-use crate::Refusal;
 use crate::package::from_io;
+use crate::{Limit, Refusal};
 
 /// Elements open at once. Reading is by events and takes no stack, so this is
 /// not for the reader's sake: no real document nests near it.
@@ -44,9 +44,10 @@ impl<R: BufRead> Xml<R> {
             Event::Start(_) => {
                 self.depth += 1;
                 if self.depth > MAX_DEPTH {
-                    return Err(Refusal::OverLimit(format!(
-                        "the document nests deeper than {MAX_DEPTH} elements"
-                    )));
+                    return Err(Refusal::OverLimit(
+                        Limit::Fixed,
+                        format!("the document nests deeper than {MAX_DEPTH} elements"),
+                    ));
                 }
             }
             Event::End(_) => self.depth = self.depth.saturating_sub(1),
