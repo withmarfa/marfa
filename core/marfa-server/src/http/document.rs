@@ -177,12 +177,10 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /metrics",
     "GET /occurrences",
     "GET /overview",
-    "GET /owner/picture",
     "GET /webhooks",
     "GET /webhooks/{id}",
     "GET /webhooks/{id}/deliveries",
     "PATCH /folders/{id}",
-    "PATCH /profile",
     "PATCH /webhooks/{id}",
     "POST /connectors",
     "POST /connectors/{id}/agreements",
@@ -202,8 +200,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
     "PUT /connectors/{id}/state",
     "PUT /folders/{id}/status",
-    "PUT /owner/picture",
-    "PUT /profile/picture",
 ];
 
 const METHODS: [&str; 8] = [

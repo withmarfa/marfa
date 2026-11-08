@@ -26,6 +26,7 @@ mod lookup;
 mod oauth;
 pub mod observe;
 pub mod pages;
+mod profile;
 mod query;
 mod root;
 mod sources;
@@ -228,6 +229,13 @@ fn owner_item_doors() -> Routes {
         .route("/trash/empty", post(trash::empty))
 }
 
+fn profile_doors() -> Routes {
+    Doors::new()
+        .route("/owner/picture", get(profile::read).put(profile::put_owner))
+        .route("/profile", patch(profile::update))
+        .route("/profile/picture", put(profile::put_profile))
+}
+
 fn config_doors() -> Routes {
     Doors::new()
         .route(
@@ -255,6 +263,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
+        .merge(profile_doors())
         .merge(oauth::grant_doors())
         .merge(config_doors())
 }

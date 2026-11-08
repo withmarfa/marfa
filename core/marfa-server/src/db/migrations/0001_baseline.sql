@@ -580,3 +580,13 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     last_error TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
+
+-- The owner's one picture: no row, no picture. `sha256` is the hex digest of its
+-- bytes, which `blobs` names as `sha256:` and the hex, and `mime_type` the kind
+-- decided from them. A blob this row names is kept, whatever else names it.
+CREATE TABLE IF NOT EXISTS owner_picture (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+    updated_at TEXT NOT NULL
+) STRICT;
