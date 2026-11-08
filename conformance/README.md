@@ -710,8 +710,10 @@ Setting `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
 `MARFA_SERVER_BUILT`. The backup fixtures boot the server through the
 container's entrypoint, which starts the Node server, so they do not run
-against another program. There is no object store beside the server in this
-setup, so the object-store half of the blob chapters is not asserted.
+against another program. The object-store half of the blob chapters needs an
+object store beside the server: run `pnpm garage:up --state /tmp/garage` and
+source `/tmp/garage/garage.env` before `pnpm marfa:up`, as the Rust contract
+shards in CI do.
 
 ### Read a run
 
