@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -10,12 +12,15 @@ import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * A replay is built from what the log stores, and a stored row the server
- * can no longer read is withheld rather than guessed at.
+ * A stream is built from what the log stores, and a stored row the server can
+ * no longer read ends the stream with catchup_too_old rather than being
+ * skipped or guessed at.
  *
- * No request can write such a row, so the server is told to read one stored
- * row as damaged.
+ * No request can write such a row, so the fixture damages it in the stored
+ * file while the server is stopped.
  */
+
+const runSqlite = promisify(execFile);
 
 let server: FreshServer | undefined;
 let writer: MarfaClient;
@@ -44,15 +49,15 @@ const itemOf = (e: SseEvent): string | undefined =>
 const edgeOf = (e: SseEvent): string | undefined =>
   (e.data as { edge?: { id?: string } }).edge?.id;
 
-describe("a replay over a row the server cannot read", () => {
+describe("a stream that reaches a row the server cannot read", () => {
   it(
-    "does not replay an event it cannot read",
+    "ends with catchup_too_old at an event it cannot read, and does not send it",
     async ({ signal }) => {
       const fresh = server!;
       const before = await note("readable-before");
-      // The three ways a row is unreadable: an item's payload that is not
-      // JSON, an item's payload that is JSON and names no type, and an edge's
-      // payload that is not JSON.
+      // The three ways a row is unreadable: a payload that is not JSON, an
+      // item whose stored row names no type, and an edge whose payload is
+      // not JSON.
       const notJson = await note("payload-not-json");
       const noType = await note("item-without-type");
       const from = await note("edge-source");
@@ -84,63 +89,111 @@ describe("a replay over a row the server cannot read", () => {
         return { events, of: (e) => BigInt(e.id!) };
       };
 
-      const intact = await idsOf(fresh);
-      const rows = intact.events.filter((e) => e.id !== undefined);
-      const rowOf = (match: (e: SseEvent) => boolean): number => {
-        const at = rows.findIndex(match);
-        expect(at, "the event is not in the log").toBeGreaterThanOrEqual(0);
-        return at + 1;
+      const endsAt = async (
+        client: FreshServer,
+        lastEventId: string,
+      ): Promise<{ events: SseEvent[] }> => {
+        const { events } = await withStream(
+          client.apiUrl,
+          client.workingKey,
+          { lastEventId },
+          (stream) =>
+            collectUntil(
+              stream,
+              (seen) => seen.some((e) => e.event === "catchup_too_old"),
+              `catchup_too_old on the replay from cursor ${lastEventId}`,
+              signal,
+            ),
+        );
+        return { events };
       };
-      const damaged = [
-        {
-          name: "item without JSON",
-          fault: "fail:stream-replay-row",
-          row: rowOf((e) => itemOf(e) === notJson),
-        },
-        {
-          name: "item without a type",
-          fault: "fail:stream-replay-untyped",
-          row: rowOf((e) => itemOf(e) === noType),
-        },
-        {
-          name: "edge without JSON",
-          fault: "fail:stream-replay-row",
-          row: rowOf((e) => edgeOf(e) === edge),
-        },
-      ];
 
-      for (const { name, fault, row } of damaged) {
-        await fresh.setFault(`${fault}=${String(row)}`);
-        let replayed: Awaited<ReturnType<typeof idsOf>>;
-        try {
-          replayed = await idsOf(fresh);
-        } finally {
-          await fresh.clearFault(fault);
-        }
-        const sent = replayed.events.filter((e) => e.id !== undefined);
-        const sentIds = sent.map((e) => replayed.of(e));
+      const expectTooOld = (events: SseEvent[], id: bigint): void => {
+        const last = events.at(-1)!;
+        expect(last.event).toBe("catchup_too_old");
+        expect(last.id).toBeUndefined();
+        expect(last.data).toEqual({
+          event_type: "catchup_too_old",
+          min_retained_id: String(id + 1n),
+          requested: String(id - 1n),
+        });
+        expect(
+          events.some((e) => e.event === "stream_live"),
+          "the stream went live over a row it cannot read",
+        ).toBe(false);
+      };
 
-        // The witness: the replay ran across the damaged row. The rows on
-        // either side of it, and the edge's two items, are sent.
-        for (const item of [before, from, to, after]) {
-          expect(
-            sent.some((e) => itemOf(e) === item),
-            `the replay did not send ${item}, a row it can read`,
-          ).toBe(true);
-        }
-        expect(sentIds).toEqual([...sentIds].sort((a, b) => (a < b ? -1 : 1)));
+      const intact = await idsOf(fresh);
+      const eventId = (match: (e: SseEvent) => boolean): bigint => {
+        const frame = intact.events.find(match);
+        expect(frame?.id, "the event is not in the log").toBeDefined();
+        return intact.of(frame!);
+      };
+      const damaged = {
+        notJson: eventId((e) => itemOf(e) === notJson),
+        noType: eventId((e) => itemOf(e) === noType),
+        edge: eventId((e) => edgeOf(e) === edge),
+      };
+
+      await fresh.restart({
+        whileStopped: async () => {
+          await runSqlite("sqlite3", [
+            fresh.sqlitePath,
+            [
+              `UPDATE event_log SET payload = 'not json' WHERE id IN (${String(damaged.notJson)}, ${String(damaged.edge)});`,
+              `UPDATE event_log SET payload = json_remove(payload, '$.item.type') WHERE id = ${String(damaged.noType)};`,
+            ].join(" "),
+          ]);
+        },
+      });
+
+      // From the start: the readable rows before the damage are sent, and the
+      // stream then ends with catchup_too_old, naming the damaged row as the
+      // last one it cannot go past.
+      const first = damaged.notJson;
+      const ended = await endsAt(fresh, "0");
+      const sent = ended.events.filter((e) => e.id !== undefined);
+      for (const item of [before]) {
         expect(
-          sentIds.includes(intact.of(rows[row - 1]!)),
-          `the replay sent event ${String(row)}, whose stored ${name} row cannot be read`,
-        ).toBe(false);
-        expect(
-          replayed.events.some(
-            (e) =>
-              e.event === "stream_incomplete" || e.event === "catchup_too_old",
-          ),
-          "the replay ended instead of passing the row it cannot read",
-        ).toBe(false);
+          sent.some((e) => itemOf(e) === item),
+          `the replay did not send ${item}, a row it can read`,
+        ).toBe(true);
       }
+      expect(sent.every((e) => BigInt(e.id!) < first)).toBe(true);
+      expect(
+        sent.some((e) => itemOf(e) === notJson || itemOf(e) === after),
+        "the replay went past the row it cannot read",
+      ).toBe(false);
+      expectTooOld(ended.events, first);
+
+      // Each kind of damage ends a stream that reaches it the same way, and
+      // never sends the row.
+      for (const [name, id] of Object.entries(damaged)) {
+        const cursor = String(id - 1n);
+        const reached = await endsAt(fresh, cursor);
+        expect(
+          reached.events.some((e) => e.id !== undefined),
+          `the replay sent a frame at or past the ${name} row, which cannot be read`,
+        ).toBe(false);
+        expectTooOld(reached.events, id);
+      }
+
+      // A replay that starts past the damage is not affected by it.
+      const past = await withStream(
+        fresh.apiUrl,
+        fresh.workingKey,
+        { lastEventId: String(damaged.edge) },
+        (stream) =>
+          collectUntil(
+            stream,
+            (seen) => seen.some((e) => itemOf(e) === after),
+            `the replay from past the damage to reach ${after}`,
+            signal,
+          ),
+      );
+      expect(past.events.some((e) => e.event === "catchup_too_old")).toBe(
+        false,
+      );
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

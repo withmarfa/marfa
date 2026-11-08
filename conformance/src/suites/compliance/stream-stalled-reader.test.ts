@@ -9,14 +9,15 @@ import { parseSse } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * A reader that stops reading is ended, not buffered for.
+ * A reader that takes nothing for a ping interval is closed, and the server
+ * holds nothing for it in the meantime.
  *
  * The subscriber here is a raw socket that stops reading as soon as its
  * request is sent, which is what a sleeping laptop or a stuck proxy looks
  * like to the server: nothing a client library could buffer on its behalf
- * sits between the two. Several times the stated bound is then written,
- * enough to pass it and whatever the operating system's socket buffers
- * hold, and only then is the socket read.
+ * sits between the two. Enough is written to fill whatever the operating
+ * system's socket buffers hold, the socket is left unread for longer than a
+ * ping interval, and only then is it read.
  */
 
 let client: MarfaClient;
@@ -27,7 +28,7 @@ let apiKey: string;
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
-    "stream-reader-behind",
+    "stream-stalled-reader",
   ));
 });
 
@@ -35,10 +36,10 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** The bound `events.md` states, in bytes. */
-const BOUND = 4 * 1024 * 1024;
-/** Written while the socket is not read: the bound, and room for buffers. */
-const WRITTEN = 4 * BOUND;
+/** Written while the socket is not read: more than the socket buffers hold. */
+const WRITTEN = 16 * 1024 * 1024;
+/** The ping interval `events.md` states, and room beyond it. */
+const PING_MS = 30_000;
 const BODY = "x".repeat(90_000);
 
 /** Open `GET /events` on a socket of its own and stop reading at once. */
@@ -101,7 +102,7 @@ function dechunk(raw: Buffer): string {
 }
 
 describe("a reader that stops reading", () => {
-  it("is ended with reader_behind once it falls past the bound, and resumes from its cursor", async ({
+  it("is closed once it has taken nothing for a ping interval, and resumes from the last id it took", async ({
     signal,
   }) => {
     const { socket, readAll } = await stalledSubscriber();
@@ -129,19 +130,16 @@ describe("a reader that stops reading", () => {
         }
       }
 
+      // The reader takes nothing for longer than a ping interval.
+      await new Promise((r) => setTimeout(r, PING_MS + 5_000));
+
+      // Reading now reaches the end of the stream: the server closed it, and
+      // would otherwise hold it open for good.
       const text = await readAll();
       const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => m[1]!);
-      // The witness: the stream delivered before it fell behind.
+      // The witness: the stream delivered before the reader stopped.
       expect(ids.length).toBeGreaterThan(0);
-      const terminal = text.slice(text.indexOf("event: stream_incomplete"));
-      expect(terminal.startsWith("event: stream_incomplete")).toBe(true);
-      const data = JSON.parse(/^data: (.*)$/m.exec(terminal)?.[1] ?? "{}") as {
-        reason?: string;
-        cursor?: string | null;
-      };
-      expect(data.reason).toBe("reader_behind");
-      expect(data.cursor).toBe(ids.at(-1));
-      expect(terminal).not.toMatch(/^id:/m);
+      const lastId = ids.at(-1)!;
       // What the server held for the reader stayed bounded: everything
       // written did not reach it.
       expect(text).not.toContain(last);
@@ -168,7 +166,7 @@ describe("a reader that stops reading", () => {
       const resumed = await withStream(
         apiUrl,
         apiKey,
-        { lastEventId: data.cursor! },
+        { lastEventId: lastId },
         async (stream) => {
           const { events } = await collectUntil(
             stream,
@@ -185,12 +183,12 @@ describe("a reader that stops reading", () => {
         .map(itemOf)
         .filter((id): id is string => id !== undefined && mine.has(id));
       expect(delivered).toEqual(unsent);
-      const cursor = BigInt(data.cursor!);
+      const cursor = BigInt(lastId);
       for (const e of resumed.filter((frame) => frame.id !== undefined)) {
         expect(BigInt(e.id!) > cursor).toBe(true);
       }
     } finally {
       socket.destroy();
     }
-  });
+  }, 180_000);
 });
