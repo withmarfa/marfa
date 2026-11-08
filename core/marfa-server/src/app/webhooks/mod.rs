@@ -1,5 +1,4 @@
-//! Outbound webhooks: the subscriptions a key or an app registers, and the deliveries the
-//! sender makes of the events that fan out to them.
+//! Credential-owned subscriptions and outbound deliveries.
 
 mod request;
 mod schedule;
@@ -48,8 +47,7 @@ fn selects(subscription: &Subscription, rules: &Rules, event_type: &str, type_id
                 .is_none_or(|filter| rules.matches(filter, type_id)))
 }
 
-/// The newest log id the sender has queued deliveries through, which the event log keeps
-/// until then. `None` until the sender has taken its place.
+/// Log expiry cannot pass this position; `None` prevents expiry.
 pub fn scheduled_through(tx: &Transaction<'_>) -> Result<Option<i64>> {
     store::position(tx)
 }
@@ -72,8 +70,7 @@ fn not_found() -> Refusal {
     )
 }
 
-/// A name that resolves only to private addresses is refused when it is registered, unless the
-/// instance allows them. A lookup that does not finish says nothing, and the attempt decides.
+/// An inconclusive registration lookup leaves the decision to the send attempt.
 async fn check_address(app: &App, address: &request::Address) -> Result<()> {
     if app.settings.start.webhook_private_addresses {
         return Ok(());

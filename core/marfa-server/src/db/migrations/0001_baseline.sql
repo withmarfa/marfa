@@ -399,9 +399,7 @@ CREATE TABLE IF NOT EXISTS auth_oauth_consent (
     PRIMARY KEY (client_id, user_id)
 ) STRICT, WITHOUT ROWID;
 
--- A subscription belongs to the key or the app grant that registered it and goes
--- with it. It is sent no event at or before `starts_after`, the log's newest id
--- when it was registered.
+-- starts_after excludes events committed before registration.
 CREATE TABLE IF NOT EXISTS webhooks (
     id TEXT PRIMARY KEY NOT NULL,
     url TEXT NOT NULL,
@@ -420,11 +418,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
 CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
 
--- A delivery keeps its event as the log held it, so the log can expire it, and
--- each attempt judges it again for the credential as it stands then. Only a
--- pending or dead_letter delivery keeps it, since only those are sent. `attempt`
--- counts every recorded attempt; `cycle_attempt` only those since the delivery
--- was queued or redelivered. `due_at` is in milliseconds on the server's clock.
+-- Payloads outlive log expiry; cycle_attempt restarts on redelivery.
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     seq INTEGER PRIMARY KEY,
     id TEXT NOT NULL UNIQUE,
@@ -452,8 +446,7 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_newest ON webhook_deliveries (webh
 CREATE INDEX IF NOT EXISTS webhook_deliveries_settled
     ON webhook_deliveries (created_at) WHERE status <> 'pending';
 
--- The newest log id the sender has queued deliveries for. Written once the log
--- is first read empty, so a missing row on a log that holds events is a gap.
+-- A missing position with retained events is a scheduling fault.
 CREATE TABLE IF NOT EXISTS webhook_position (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
     event_id INTEGER NOT NULL

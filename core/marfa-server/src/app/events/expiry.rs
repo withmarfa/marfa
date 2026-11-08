@@ -2,10 +2,7 @@ use rusqlite::{Transaction, params};
 
 use super::super::refusal::Result;
 
-/// A device catching up reads the log as unbroken from its oldest id, so stop at the
-/// first entry not older than `before`: an old entry behind a newer one stays. Nothing past
-/// `scheduled`, the newest id webhooks have been queued for, goes, so no event that fans out
-/// is lost before it is sent.
+/// Retain an unbroken suffix, including every event not yet scheduled for webhooks.
 pub fn expire(
     tx: &Transaction<'_>,
     before: &str,

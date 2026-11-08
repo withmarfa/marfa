@@ -31,8 +31,6 @@ fn within_v6(ip: Ipv6Addr, network: Ipv6Addr, prefix: u8) -> bool {
     Ipv6Net::new(network, prefix).is_ok_and(|net| net.contains(&ip))
 }
 
-/// IPv6 is public only in `2000::/3`, outside the documentation block; an IPv4 address written
-/// as IPv6 is judged as itself.
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => !NOT_PUBLIC_V4.iter().any(|block| within_v4(v4, *block)),

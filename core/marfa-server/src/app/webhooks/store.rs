@@ -344,8 +344,7 @@ pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
     )?)
 }
 
-/// Settles a delivery unsent, keeping the status code and attempts it had. A delivery
-/// already settled stays as it is.
+/// Preserves earlier attempts and leaves settled deliveries unchanged.
 pub fn cancel(tx: &Transaction<'_>, seq: i64, error: &str, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3, \

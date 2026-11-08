@@ -5,8 +5,7 @@ use crate::app::keys;
 use crate::app::oauth;
 use crate::app::refusal::Result;
 
-/// The credential a subscription belongs to. An app's subscriptions belong to its grant, so
-/// every token of the grant reaches them.
+/// App subscriptions belong to the grant, not an individual token.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Maker {
     Key(String),
@@ -24,8 +23,7 @@ impl Caller {
         }
     }
 
-    /// The subscriptions a read or a redelivery reaches: a maker's own, or every one for the
-    /// local command.
+    /// Local authority reaches every maker for reads and redelivery.
     pub fn webhook_reach(&self) -> Result<Option<Maker>> {
         self.require(Permission::WebhooksManage)?;
         match self {
@@ -36,8 +34,7 @@ impl Caller {
     }
 }
 
-/// The credential a subscription's deliveries are judged under as it stands at `at`, or `None`
-/// once it no longer stands or no longer holds `webhooks.manage`.
+/// Requires a live maker that still holds `webhooks.manage`.
 pub fn standing_maker(tx: &Transaction<'_>, maker: &Maker, at: &str) -> Result<Option<Caller>> {
     let caller = match maker {
         Maker::Key(id) => match keys::live_by_id(tx, id, at)? {

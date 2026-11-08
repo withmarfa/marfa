@@ -1,6 +1,4 @@
-//! The one task that queues deliveries as the log grows and sends them as they fall due. It
-//! wakes for a commit, a move of the test clock or the next delivery's due time, and rests
-//! otherwise.
+//! Wakes on commits, clock changes and delivery deadlines.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,8 +22,7 @@ const AT_ONCE: usize = 4;
 const METHOD: &str = "WEBHOOKS";
 const PATH: &str = "schedule";
 const CUT_BEFORE_END: Duration = Duration::from_secs(1);
-/// How long a delivery whose attempt failed inside the server waits before it is tried again,
-/// so a fault that repeats does not turn the sender into a busy loop.
+/// Prevents a persistent internal fault from causing a busy loop.
 const HELD_BACK: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
@@ -50,8 +47,7 @@ impl Webhooks {
         self.stopping.send_replace(true);
     }
 
-    /// An attempt still out a moment before `budget` is dropped unrecorded, so it stays
-    /// pending and is attempted again at the next start.
+    /// Cut attempts stay pending for the next start.
     pub async fn settle(&self, budget: Duration) {
         let mut running = self.running.subscribe();
         let patience = budget.saturating_sub(CUT_BEFORE_END);
@@ -259,8 +255,7 @@ impl Sender {
         }
     }
 
-    /// How long to rest when nothing else wakes the sender. A paused clock moves only when a test
-    /// moves it, which wakes the sender itself.
+    /// A paused test clock wakes the sender directly instead of using a timer.
     fn rest(&self, next: Option<i64>) -> Option<Duration> {
         let held = self
             .held_back

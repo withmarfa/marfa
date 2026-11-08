@@ -1,5 +1,4 @@
-//! One attempt at a delivery: judged again for its credential as it stands, sent once along
-//! the checked path, and recorded unless the delivery was settled while it was out.
+//! Rechecks access for each attempt and preserves concurrent cancellation.
 
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};

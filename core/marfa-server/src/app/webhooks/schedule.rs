@@ -1,5 +1,4 @@
-//! Queues one delivery of each event that fans out for each subscription entitled to it, in the
-//! transaction that moves the sender's place in the log, so a stop at any point queues each once.
+//! Delivery creation and position advancement commit together to prevent duplicates.
 
 use rusqlite::Transaction;
 
@@ -13,8 +12,7 @@ use crate::app::faults::{Faults, HOLD_WEBHOOK_SCHEDULE_QUEUED};
 use crate::app::refusal::Result;
 use crate::db::Pulse;
 
-/// How many entries one pass reads, so a long backlog of events that do not fan out is
-/// crossed in short writes.
+/// Bounds each write transaction when crossing a backlog.
 const PAGE: usize = 2_000;
 
 /// A place the log cannot account for. Nothing past it is queued until it can.
@@ -59,8 +57,7 @@ struct Entitled {
     caller: Caller,
 }
 
-/// Whether the subscription may be told of an event is the credential's to decide, so the
-/// stream's filter is left open and the subscription's own is applied first.
+/// Subscription filters apply separately from the credential's access checks.
 pub(super) const UNFILTERED: Filter = Filter {
     types: Vec::new(),
     edges: true,

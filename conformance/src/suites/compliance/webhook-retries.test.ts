@@ -319,9 +319,7 @@ describe("webhook retry waits", () => {
     // Entitled to none of what is written.
     const c = await subscribe("queued-c", ["item.deleted"]);
     try {
-      // Hold the sender before it schedules, write the events, then hold it
-      // again once it has queued their deliveries and not yet recorded its
-      // place in the event log, so the events are all behind it when it stops.
+      // Stop with delivery creation and position advancement still uncommitted.
       await server.setFault("hold:webhook-schedule");
       for (const body of ["queued-1", "queued-2", "queued-3"]) {
         await write(body);

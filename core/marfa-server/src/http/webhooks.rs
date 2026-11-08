@@ -15,8 +15,7 @@ use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::webhooks::{self, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
 
-/// A subscription belongs to the key or app that registered it, so a browser's session, which
-/// is neither, reaches none.
+/// Browser sessions cannot own subscriptions.
 pub async fn not_a_session(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
     if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Owner(_)))) {

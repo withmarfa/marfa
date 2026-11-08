@@ -1,6 +1,4 @@
-//! The one way the server reaches an address someone else named. A name is looked up once,
-//! every answer is checked, and the socket connects to an address that was checked, so no
-//! second lookup can move it. What goes wrong is told without the address or the port.
+//! Connects directly to checked addresses to prevent DNS rebinding.
 
 pub mod address;
 
@@ -26,8 +24,7 @@ use super::faults::Faults;
 /// How long one lookup may take before the name counts as not found.
 pub const LOOKUP_BOUND: Duration = Duration::from_secs(3);
 
-/// The address a check judged, and the one the socket connects to. They differ only when a
-/// test fault scripts the lookup.
+/// Checked and connected addresses differ only under a test fault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
     pub checked: IpAddr,
@@ -57,8 +54,7 @@ pub struct Outgoing<'a> {
     pub body: String,
 }
 
-/// Every lookup the server makes of a name it is given goes through here, so a `resolve` fault
-/// answers it and counts it.
+/// The resolver fault counts and scripts lookups here.
 pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Target>> {
     if let Some(answer) = faults.scripted_answer(host) {
         return Some(
@@ -130,8 +126,7 @@ static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
     }
 });
 
-/// Posts once to one of `targets`, and takes the answer's status without following it anywhere.
-/// The whole attempt, connecting included, ends at `bound`.
+/// The bound includes connecting; redirects are never followed.
 pub async fn post(
     url: &Url,
     targets: &[Target],
@@ -220,8 +215,7 @@ where
     };
     let mut connection = std::pin::pin!(connection);
     let mut answer = std::pin::pin!(sender.send_request(request));
-    // A receiver that answers and closes ends the connection as the answer arrives, and the
-    // answer still counts.
+    // An answer still counts when its connection closes at the same time.
     let answered = tokio::select! {
         biased;
         answered = &mut answer => answered,
