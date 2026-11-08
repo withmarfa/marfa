@@ -35,8 +35,8 @@
  * unauthenticated, and the value itself would advertise what another
  * build wrote to anyone who asks.
  *
- * **Derived, never stored.** Recomputed at every boot from the rows, for
- * a stored flag would be a second source of truth with nothing keeping it
+ * **Derived, never stored.** Recomputed at every boot from the rows: a
+ * stored flag would be a second source of truth with nothing keeping it
  * honest, and it would go stale in precisely the case that matters.
  */
 import {
@@ -281,8 +281,8 @@ export interface UnrecognizedStoredValue {
  *
  * `scanned` exists because `values` being empty has three meanings and
  * `/health` publishes one number over all of them: nothing recorded yet,
- * nothing found, and looked and could not read. The scenario is the one the feature
- * exists for: a build meets a database another build wrote, the query
+ * nothing found, and looked and could not read. The scenario is the one the
+ * feature exists for: a build meets a database another build wrote, the query
  * fails on a column one of them does not have, the catch fires, and
  * without this flag `/health` serves exactly what a healthy instance
  * serves.

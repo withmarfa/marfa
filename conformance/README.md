@@ -322,7 +322,7 @@ update leaves the database as it was.
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
 A name is `hold:<point>`, `fail:<point>`, `release:<point>`, `deadline:<job>`, `free:<volume>`, `limit:<lane>`,
-`unfold-deadline`, `store-check-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
+`unreadable:<record>`, `unfold-deadline`, `store-check-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
 

@@ -1009,9 +1009,7 @@ export interface ItemStore {
   /**
    * How many items carry this exact type identifier.
    *
-   * The maintenance operation decides whether a retired
-   * shipped type can be removed: a row kept because items of it still exist
-   * is kept for everyone, since the row is what makes those items resolve.
+   * A delete without `force` asks this first: a type with items is kept.
    *
    * `stats` groups by state rather than by type, so it cannot answer this,
    * and a list would page over rows to count them.
