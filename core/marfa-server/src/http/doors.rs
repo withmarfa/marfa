@@ -1,25 +1,25 @@
-//! The one table every router is built from. In a test build a door cannot be
-//! added without being recorded, so `served` is what the router answers.
+//! The one table every router is built from. A door cannot be added without being
+//! recorded, so `served` is what the router answers.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::Request;
 use axum::handler::Handler;
-#[cfg(test)]
 use axum::http::Method;
+use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::routing::{MethodRouter, Route};
 use tower::{Layer, Service};
 
+use super::admission::{Admission, admit};
 use crate::app::App;
 
 type Inner = Router<Arc<App>>;
 
 /// A method and the path pattern it is served at, as the router matches it.
-#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Door {
     pub method: Method,
@@ -28,7 +28,6 @@ pub struct Door {
 
 /// The handlers of one path, each under its method.
 pub struct Handlers {
-    #[cfg(test)]
     methods: Vec<Method>,
     router: MethodRouter<Arc<App>>,
 }
@@ -42,7 +41,6 @@ macro_rules! methods {
                 T: 'static,
             {
                 Handlers {
-                    #[cfg(test)]
                     methods: vec![Method::$method],
                     router: axum::routing::$name(handler),
                 }
@@ -56,7 +54,6 @@ macro_rules! methods {
                     H: Handler<T, Arc<App>>,
                     T: 'static,
                 {
-                    #[cfg(test)]
                     self.methods.push(Method::$method);
                     self.router = self.router.$name(handler);
                     self
@@ -80,7 +77,6 @@ impl Handlers {
         H: Handler<T, Arc<App>>,
         T: 'static,
     {
-        #[cfg(test)]
         self.methods.push(Method::OPTIONS);
         self.router = self.router.options(handler);
         self
@@ -91,7 +87,6 @@ impl Handlers {
         H: Handler<T, Arc<App>>,
         T: 'static,
     {
-        #[cfg(test)]
         self.methods.push(Method::HEAD);
         self.router = self.router.head(handler);
         self
@@ -115,7 +110,7 @@ pub struct Doors {
     router: Inner,
     paths: Vec<&'static str>,
     unjudged: HashSet<&'static str>,
-    #[cfg(test)]
+    admissions: HashMap<&'static str, Admission>,
     served: Vec<Door>,
 }
 
@@ -125,7 +120,6 @@ impl Doors {
     }
 
     pub fn route(mut self, path: &'static str, handlers: Handlers) -> Self {
-        #[cfg(test)]
         self.served.extend(
             handlers
                 .methods
@@ -143,14 +137,40 @@ impl Doors {
         self
     }
 
-    pub(super) fn unjudged_paths(&self) -> HashSet<&'static str> {
-        self.unjudged.clone()
+    /// Applies a group's credential rule to the doors already held, and records it for the
+    /// checks that must know whether a door takes the credential a request presents.
+    pub fn admitting(mut self, app: Arc<App>, rule: Admission) -> Self {
+        self.admissions
+            .extend(self.paths.iter().map(|path| (*path, rule)));
+        self.route_layer(from_fn_with_state((app, rule), admit))
+    }
+
+    /// The write doors the instance header is judged at: each path with the methods it serves
+    /// and the credentials its group takes.
+    pub(super) fn judged_writes(&self) -> HashMap<&'static str, (Vec<Method>, Admission)> {
+        let mut judged: HashMap<&'static str, (Vec<Method>, Admission)> = HashMap::new();
+        for door in &self.served {
+            if self.unjudged.contains(door.path) || !super::named_instance::is_write(&door.method) {
+                continue;
+            }
+            let rule = self
+                .admissions
+                .get(door.path)
+                .copied()
+                .unwrap_or(Admission::Any);
+            judged
+                .entry(door.path)
+                .or_insert_with(|| (Vec::new(), rule))
+                .0
+                .push(door.method.clone());
+        }
+        judged
     }
 
     pub fn merge(mut self, other: Doors) -> Self {
         self.paths.extend(other.paths);
         self.unjudged.extend(other.unjudged);
-        #[cfg(test)]
+        self.admissions.extend(other.admissions);
         self.served.extend(other.served);
         self.router = self.router.merge(other.router);
         self

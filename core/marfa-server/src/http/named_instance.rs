@@ -1,6 +1,6 @@
 //! `X-Marfa-Instance-Id`: a write that names another instance is refused where it lands.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{MatchedPath, Request, State};
@@ -9,16 +9,15 @@ use axum::middleware::Next;
 use axum::response::Response;
 use marfa_rules::validation;
 
+use super::admission::{Admission, on_socket};
 use super::answer::refusal_answer;
 use super::caller::identify;
-use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::Transport;
 
 const HEADER: &str = "x-marfa-instance-id";
 
-fn is_write(method: &Method) -> bool {
+pub(super) fn is_write(method: &Method) -> bool {
     matches!(
         *method,
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
@@ -53,28 +52,28 @@ pub(super) fn judge(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     }
 }
 
-/// What the layer reads: the instance, and the paths whose callers hold no copy of it.
+/// What the layer reads: the instance, and the write doors it judges.
 #[derive(Clone)]
 pub struct Judging {
     pub app: Arc<App>,
-    pub unjudged: Arc<HashSet<&'static str>>,
+    pub writes: Arc<HashMap<&'static str, (Vec<Method>, Admission)>>,
 }
 
-/// A door that takes no credential judges the header itself.
+/// Judges the header of a write to a door that takes the credential presented, on every
+/// listener. A door that takes no credential judges the header itself.
 pub async fn judged(State(judging): State<Judging>, request: Request, next: Next) -> Response {
-    let on_socket = request
-        .extensions()
-        .get::<RequestContext>()
-        .is_some_and(|context| context.transport == Transport::LocalSocket);
-    let exempt = request
+    let rule = request
         .extensions()
         .get::<MatchedPath>()
-        .is_some_and(|path| judging.unjudged.contains(path.as_str()));
-    if !is_write(request.method()) || on_socket || exempt {
+        .and_then(|path| judging.writes.get(path.as_str()))
+        .filter(|(methods, _)| methods.contains(request.method()))
+        .map(|(_, rule)| *rule);
+    let Some(rule) = rule else {
         return next.run(request).await;
-    }
+    };
     let (mut parts, body) = request.into_parts();
-    if matches!(identify(&mut parts, &judging.app).await, Ok(Some(_)))
+    if let Ok(Some(caller)) = identify(&mut parts, &judging.app).await
+        && rule.admits(Some(&caller), &parts.headers, on_socket(&parts.extensions))
         && let Err(refusal) = judge(&judging.app, &parts.headers)
     {
         return refusal_answer(&refusal);
@@ -94,7 +93,8 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::http::{control, oauth, public, public_doors};
+    use crate::http::doors::Doors;
+    use crate::http::{control, control_doors, oauth, public, public_doors};
     use crate::settings::{Environment, Settings};
 
     const OTHER: &str = "019537a0-7b80-7000-8000-0000000000ff";
@@ -105,6 +105,7 @@ mod tests {
         _dir: TempDir,
         app: Arc<App>,
         public: Router,
+        control: Router,
         key: String,
     }
 
@@ -120,7 +121,9 @@ mod tests {
         ]))
         .unwrap();
         let app = App::start(settings).await.unwrap();
-        let minted = control(app.clone())
+        let private = control(app.clone());
+        let minted = private
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -141,6 +144,7 @@ mod tests {
         Instance {
             _dir: dir,
             public: public(app.clone()),
+            control: private,
             app,
             key,
         }
@@ -148,6 +152,16 @@ mod tests {
 
     impl Instance {
         async fn send(&self, route: &str, key: bool, named: &[&str]) -> (StatusCode, String) {
+            self.send_on(&self.public, route, key, named).await
+        }
+
+        async fn send_on(
+            &self,
+            router: &Router,
+            route: &str,
+            key: bool,
+            named: &[&str],
+        ) -> (StatusCode, String) {
             let (method, path) = route.split_once(' ').unwrap();
             let mut at = path.to_owned();
             while let Some(open) = at.find('{') {
@@ -164,8 +178,7 @@ mod tests {
             for value in named {
                 request = request.header(HEADER, *value);
             }
-            let answer = self
-                .public
+            let answer = router
                 .clone()
                 .oneshot(request.body(Body::from("{}")).unwrap())
                 .await
@@ -189,12 +202,14 @@ mod tests {
             .collect()
     }
 
-    /// The public listener's write doors, split into those judged and those not.
-    fn split(app: &Arc<App>) -> (BTreeSet<String>, BTreeSet<String>) {
-        let doors = public_doors(app.clone());
-        let unjudged = doors.unjudged_paths();
-        writes(&doors).into_iter().partition(|route| {
-            !unjudged.contains(route.split_once(' ').map_or("", |(_, path)| path))
+    /// A listener's write doors, split into those judged and those not.
+    fn split(doors: &Doors) -> (BTreeSet<String>, BTreeSet<String>) {
+        let judged = doors.judged_writes();
+        writes(doors).into_iter().partition(|route| {
+            let (method, path) = route.split_once(' ').unwrap();
+            judged
+                .get(path)
+                .is_some_and(|(methods, _)| methods.iter().any(|served| served.as_str() == method))
         })
     }
 
@@ -227,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn every_write_door_but_the_exempt_groups_refuses_another_instance() {
         let instance = start().await;
-        let (covered, _) = split(&instance.app);
+        let (covered, _) = split(&public_doors(instance.app.clone()));
         assert!(
             covered.len() > 40,
             "the witness: the walk found {covered:?}"
@@ -245,9 +260,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_private_socket_refuses_another_instance_at_every_write_door_but_the_grant_doors() {
+        let instance = start().await;
+        let (covered, exempt) = split(&control_doors(&instance.app));
+        assert!(covered.len() > 40, "the witness: {covered:?}");
+        assert_eq!(exempt, writes(&oauth::grant_doors()));
+        let mut missed = Vec::new();
+        for route in &covered {
+            let (status, code) = instance
+                .send_on(&instance.control, route, true, &[OTHER])
+                .await;
+            if (status, code.as_str()) != (StatusCode::CONFLICT, "instance_changed") {
+                missed.push(format!("{route} answered {status} {code}"));
+            }
+        }
+        assert_eq!(missed, Vec::<String>::new());
+    }
+
+    #[tokio::test]
     async fn the_exempt_groups_are_the_sign_in_grant_and_oauth_doors_and_judge_no_header() {
         let instance = start().await;
-        let (_, exempt) = split(&instance.app);
+        let (_, exempt) = split(&public_doors(instance.app.clone()));
         let groups = writes(&oauth::grant_doors())
             .into_iter()
             .chain(writes(&crate::http::auth::doors()))
@@ -265,7 +298,7 @@ mod tests {
     async fn a_write_with_no_credential_is_unauthorized_before_its_header_is_judged() {
         let instance = start().await;
         let mut open = Vec::new();
-        let (covered, _) = split(&instance.app);
+        let (covered, _) = split(&public_doors(instance.app.clone()));
         for route in covered {
             let (status, _) = instance.send(&route, false, &[OTHER]).await;
             if status != StatusCode::UNAUTHORIZED {

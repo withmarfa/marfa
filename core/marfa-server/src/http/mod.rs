@@ -1,5 +1,6 @@
 //! The only place that names axum.
 
+mod admission;
 pub mod answer;
 mod audit;
 mod auth;
@@ -43,18 +44,17 @@ mod views;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::app::App;
-use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::{Declaration, Transport};
+use crate::listener::Declaration;
+use admission::Admission;
 use answer::{panicked, refusal_answer};
-use caller::identify;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
@@ -101,38 +101,16 @@ fn schema_doors() -> Routes {
         .route("/edge-types/{id}", delete(edge_types::delete))
 }
 
-/// The instance's own authority, a browser's or the local command's, holds no
-/// type map, and every content door answers within one.
-async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    if matches!(
-        identify(&mut parts, &app).await,
-        Ok(Some(Caller::Local(_) | Caller::Owner(_)))
-    ) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(Request::from_parts(parts, body)).await
-}
-
-/// Counts admit a browser's session and no local command.
-async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(Request::from_parts(parts, body)).await
-}
-
 fn overview_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/overview", get(overview::read))
-        .route_layer(from_fn_with_state(app, within_a_map))
+        .admitting(app, Admission::Mapped)
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
-        .route_layer(from_fn_with_state(app, not_local))
+        .admitting(app, Admission::Counted)
 }
 
 fn item_doors(app: Arc<App>) -> Routes {
@@ -180,7 +158,7 @@ fn item_doors(app: Arc<App>) -> Routes {
             "/edges/{id}",
             get(edges::read).patch(edges::update).delete(edges::delete),
         )
-        .route_layer(from_fn_with_state(app, within_a_map))
+        .admitting(app, Admission::Mapped)
 }
 
 fn blob_doors() -> Routes {
@@ -224,18 +202,7 @@ fn config_doors() -> Routes {
 }
 
 /// Browser sessions confer no connector authority.
-async fn presented_only(request: Request, next: Next) -> Response {
-    let local = request
-        .extensions()
-        .get::<observe::RequestContext>()
-        .is_some_and(|context| context.transport == Transport::LocalSocket);
-    if !local && !caller::bears_token(request.headers()) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(request).await
-}
-
-fn connector_doors() -> Routes {
+fn connector_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route(
             "/connectors",
@@ -268,7 +235,7 @@ fn connector_doors() -> Routes {
             "/connectors/{id}/agreements/lookup",
             post(connectors::lookup_agreements),
         )
-        .route_layer(from_fn(presented_only))
+        .admitting(app, Admission::Presented)
 }
 
 fn shared(app: Arc<App>) -> Routes {
@@ -285,7 +252,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
         .merge(blob_doors())
-        .merge(connector_doors())
+        .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
@@ -297,7 +264,7 @@ fn shared(app: Arc<App>) -> Routes {
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
     let judging = named_instance::Judging {
         app: app.clone(),
-        unjudged: Arc::new(routes.unjudged_paths()),
+        writes: Arc::new(routes.judged_writes()),
     };
     let observed = Observed {
         app: app.clone(),
@@ -307,8 +274,8 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
-        .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
+        .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))
@@ -345,7 +312,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
 
 fn control_doors(app: &Arc<App>) -> Routes {
     let mut routes = shared(app.clone())
-        .merge(oauth::grant_doors())
+        .merge(oauth::grant_doors().unjudged())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))

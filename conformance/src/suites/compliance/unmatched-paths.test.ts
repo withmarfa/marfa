@@ -26,6 +26,8 @@ afterAll(async () => {
 });
 
 const PROOF = "a".repeat(64);
+/** Well formed, and the id of no instance. */
+const OTHER = "019537a0-7b80-7000-8000-0000000000ff";
 
 interface Answer {
   status: number;
@@ -82,6 +84,33 @@ describe("a request no door serves", () => {
       const answer = await ask(method, path, headers);
       expect(answer.status, `${method} ${path}`).toBe(404);
       expect(answer.code, `${method} ${path}`).toBe("not_found");
+    }
+  });
+
+  it("answers a method no door serves 404 not_found whatever instance it names", async () => {
+    // The witness: a method the path serves is refused for the instance it names.
+    const served = await ask("PUT", `/items/${OTHER}/metadata`, {
+      ...asKey(),
+      "X-Marfa-Instance-Id": OTHER,
+    });
+    expect(served.code).toBe("instance_changed");
+
+    for (const [method, path] of [
+      ["POST", "/health"],
+      ["PATCH", `/items/${OTHER}/metadata`],
+      ["DELETE", "/"],
+    ] as const) {
+      for (const named of [OTHER, "not-an-instance"]) {
+        for (const credential of [asKey(), {}]) {
+          const label = `${method} ${path} naming ${named}`;
+          const answer = await ask(method, path, {
+            ...credential,
+            "X-Marfa-Instance-Id": named,
+          });
+          expect(answer.status, label).toBe(404);
+          expect(answer.code, label).toBe("not_found");
+        }
+      }
     }
   });
 

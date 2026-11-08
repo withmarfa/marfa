@@ -284,7 +284,7 @@ When a request other than `OPTIONS` names a path no operation serves, and is nei
 
 When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`.
 
 ### `errors/unmatched-options`
 
