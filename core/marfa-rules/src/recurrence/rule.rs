@@ -1,5 +1,4 @@
-//! Reading the lines of a `recurrence`: one `RRULE`, and the dates an `RDATE` adds and an
-//! `EXDATE` removes.
+//! Recurrence property lines: one RRULE, RDATE additions, and EXDATE exclusions.
 
 use std::collections::{BTreeSet, HashMap};
 

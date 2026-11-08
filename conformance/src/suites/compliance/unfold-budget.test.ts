@@ -16,8 +16,7 @@ import {
  * file's rules are the whole calendar.
  */
 
-/** The cost of one rule's walk is the series cap, and the request budget is
- *  twenty of them: 2,000,000 candidates. */
+/** Twenty exhausted series spend the request's 2,000,000-candidate budget. */
 const SERIES_BEFORE_THE_BUDGET = 20;
 
 let client: MarfaClient;
