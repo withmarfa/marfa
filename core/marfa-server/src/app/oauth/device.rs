@@ -34,12 +34,12 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         "Too many device codes requested. Try again later.",
     )
     .await?;
+    if let Some(problem) = credential_refused(form) {
+        return Ok(Err(problem));
+    }
     let Some(client_id) = form.get("client_id") else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
     };
-    if form.offers_client_credential() {
-        return Ok(Err(credential_refused()));
-    }
     let client = match clients::resolve(app, client_id, visit).await? {
         Ok(client) => client,
         Err(problem) => return Ok(Err(problem)),

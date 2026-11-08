@@ -1877,11 +1877,11 @@ If a request to `POST /auth/oauth2/token` names a grant type the server does not
 
 ### `keys-and-oauth/client-credential-refused`
 
-If a request to `POST /auth/oauth2/token` or `POST /auth/device/code` carries an `Authorization` header, a `client_secret` or a client assertion, then the server MUST answer `401 invalid_client`.
+If a request to `POST /auth/oauth2/token`, `POST /auth/device/code` or `POST /auth/oauth2/revoke` carries an `Authorization` header, or a `client_secret`, `client_assertion` or `client_assertion_type` field, empty or not, then the server MUST answer `401 invalid_client`, whatever else the request holds or lacks.
 
-**Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds.
+**Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds, and each door refuses it the same way.
 
-**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses a client that presents a credential of its own 401 invalid_client, at the device code and the token doors`.
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses a client that presents a credential of its own 401 invalid_client, at the device code, token and revocation doors`, `› refuses a client credential before it judges what the request lacks, at the device code, token and revocation doors`.
 
 ## Refresh tokens
 

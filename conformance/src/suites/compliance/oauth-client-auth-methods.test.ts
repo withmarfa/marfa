@@ -52,6 +52,45 @@ function assertion(clientId: string, audience: string) {
   }).toString("base64url")}`;
 }
 
+const doors = [
+  "/auth/device/code",
+  "/auth/oauth2/token",
+  "/auth/oauth2/revoke",
+] as const;
+
+async function registered() {
+  const response = await register({ token_endpoint_auth_method: "none" });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { client_id: string }).client_id;
+}
+
+function asked(
+  path: string,
+  fields: [string, string][],
+  headers: Record<string, string> = {},
+) {
+  return fetch(`${server!.apiUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      ...headers,
+    },
+    body: new URLSearchParams(fields),
+  });
+}
+
+function basic(clientId: string) {
+  return `Basic ${Buffer.from(`${clientId}:a-secret`).toString("base64")}`;
+}
+
+async function expectRefused(answer: Promise<Response>, what: string) {
+  const refused = await answer;
+  expect(refused.status, what).toBe(401);
+  expect(((await refused.json()) as { error: string }).error, what).toBe(
+    "invalid_client",
+  );
+}
+
 describe("OAuth client authentication methods", () => {
   it("registers a public client, the method a registration names or leaves out", async () => {
     for (const method of ["none", undefined]) {
@@ -75,65 +114,95 @@ describe("OAuth client authentication methods", () => {
     }
   });
 
-  it("refuses a client that presents a credential of its own 401 invalid_client, at the device code and the token doors", async () => {
-    const response = await register({ token_endpoint_auth_method: "none" });
-    expect(response.status).toBe(201);
-    const { client_id: clientId } = (await response.json()) as {
-      client_id: string;
-    };
-    const asked = (
-      path: string,
-      extra: Record<string, string>,
-      headers: Record<string, string> = {},
-    ) =>
-      fetch(`${server!.apiUrl}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          ...headers,
-        },
-        body: new URLSearchParams({
-          client_id: clientId,
-          ...(path.endsWith("token")
-            ? { grant_type: "refresh_token", refresh_token: "unknown" }
-            : { scope: "core.note:read" }),
-          ...extra,
-        }),
-      });
+  it("refuses a client that presents a credential of its own 401 invalid_client, at the device code, token and revocation doors", async () => {
+    const clientId = await registered();
+    const fields = (path: string): [string, string][] => [
+      ["client_id", clientId],
+      ...(path === "/auth/oauth2/token"
+        ? ([
+            ["grant_type", "refresh_token"],
+            ["refresh_token", "unknown"],
+          ] as [string, string][])
+        : path === "/auth/oauth2/revoke"
+          ? ([["token", "unknown"]] as [string, string][])
+          : ([["scope", "core.note:read"]] as [string, string][])),
+    ];
     // The witness: the same request with no credential is answered on its merits.
-    const code = await asked("/auth/device/code", {});
+    const code = await asked("/auth/device/code", fields("/auth/device/code"));
     expect(code.status).toBe(200);
     await code.body?.cancel();
-    const refresh = await asked("/auth/oauth2/token", {});
+    const refresh = await asked(
+      "/auth/oauth2/token",
+      fields("/auth/oauth2/token"),
+    );
     expect(refresh.status).toBe(400);
     expect(((await refresh.json()) as { error: string }).error).toBe(
       "invalid_grant",
     );
-    for (const path of ["/auth/device/code", "/auth/oauth2/token"]) {
+    const revoke = await asked(
+      "/auth/oauth2/revoke",
+      fields("/auth/oauth2/revoke"),
+    );
+    expect(revoke.status).toBe(200);
+    await revoke.body?.cancel();
+    for (const path of doors) {
       for (const extra of [
-        { client_secret: "a-secret" } as Record<string, string>,
-        {
-          client_assertion_type:
+        [["client_secret", "a-secret"]],
+        [["client_secret", ""]],
+        [
+          ["client_secret", ""],
+          ["client_secret", "a-secret"],
+        ],
+        [["client_assertion_type", ""]],
+        [["client_assertion", ""]],
+        [
+          [
+            "client_assertion_type",
             "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-          client_assertion: assertion(clientId, `${server!.apiUrl}${path}`),
-        },
-      ]) {
-        const refused = await asked(path, extra);
-        expect(refused.status, path).toBe(401);
-        expect(((await refused.json()) as { error: string }).error, path).toBe(
-          "invalid_client",
+          ],
+          ["client_assertion", assertion(clientId, `${server!.apiUrl}${path}`)],
+        ],
+      ] as [string, string][][]) {
+        await expectRefused(
+          asked(path, [...fields(path), ...extra]),
+          `${path} ${JSON.stringify(extra)}`,
         );
       }
-      const basic = await asked(
-        path,
-        {},
-        {
-          authorization: `Basic ${Buffer.from(`${clientId}:a-secret`).toString("base64")}`,
-        },
+      await expectRefused(
+        asked(path, fields(path), { authorization: basic(clientId) }),
+        `${path} Basic`,
       );
-      expect(basic.status, path).toBe(401);
-      expect(((await basic.json()) as { error: string }).error, path).toBe(
-        "invalid_client",
+    }
+  });
+
+  it("refuses a client credential before it judges what the request lacks, at the device code, token and revocation doors", async () => {
+    const clientId = await registered();
+    const lacking: Record<(typeof doors)[number], [string, string][]> = {
+      "/auth/device/code": [["scope", "core.note:read"]],
+      "/auth/oauth2/token": [
+        ["client_id", clientId],
+        ["grant_type", "refresh_token"],
+      ],
+      "/auth/oauth2/revoke": [["client_id", clientId]],
+    };
+    for (const path of doors) {
+      // The witness: with no credential, what the request lacks is refused.
+      const witness = await asked(path, lacking[path]);
+      expect(witness.status, path).toBe(400);
+      expect(((await witness.json()) as { error: string }).error, path).toBe(
+        "invalid_request",
+      );
+      await expectRefused(
+        asked(path, lacking[path], { authorization: basic(clientId) }),
+        `${path} Basic`,
+      );
+      await expectRefused(
+        asked(path, [
+          ...lacking[path],
+          ["client_secret", ""],
+          ["client_secret", "a-secret"],
+        ]),
+        `${path} client_secret`,
       );
     }
   });
