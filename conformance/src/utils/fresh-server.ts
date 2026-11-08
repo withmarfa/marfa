@@ -585,11 +585,6 @@ export interface RefusedBootOptions {
   prepare?: (sqlitePath: string, stateDir: string) => void | Promise<void>;
   extraEnv?: Record<string, string>;
   /**
-   * Text that, once the server's log holds it, has the server killed with
-   * `SIGKILL`: a start stopped partway, which then leaves no exit status.
-   */
-  killWhen?: string;
-  /**
    * The `NODE_ENV` the server is started under, which every other boot
    * leaves unset. Naming one also leaves `MARFA_AUTH_SECRET` and
    * `MARFA_AUTH_BASE_URL` to `extraEnv`, so a rule that holds only in
@@ -651,9 +646,6 @@ export async function bootRefused(
         ...(options.nodeEnv === undefined
           ? []
           : ["--node-env", options.nodeEnv]),
-        ...(options.killWhen === undefined
-          ? []
-          : ["--kill-when", options.killWhen]),
         ...envArgs(options.extraEnv ?? {}),
       ],
       serverEnv(),
@@ -663,7 +655,7 @@ export async function bootRefused(
         `the server booted into ${state} was not refused:\n${refused.output}`,
       );
     }
-    const ended = readExit(state, undefined, options.killWhen !== undefined);
+    const ended = readExit(state, undefined, false);
     return {
       ...ended,
       output: redactSetupProof(serverOutput(state)),
