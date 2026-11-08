@@ -428,6 +428,22 @@ mod tests {
     }
 
     #[test]
+    fn refuses_an_endpoint_that_carries_a_credential_and_never_repeats_it() {
+        for endpoint in [
+            "http://key:secret@127.0.0.1:3900",
+            "https://key@s3.example.com",
+            "https://:secret@s3.example.com",
+        ] {
+            let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", endpoint)]);
+            assert_eq!(lines.len(), 1, "{endpoint}");
+            assert!(lines[0].contains("S3_ACCESS_KEY_ID"), "{}", lines[0]);
+            assert!(lines[0].contains("S3_SECRET_ACCESS_KEY"), "{}", lines[0]);
+            assert!(!lines[0].contains("secret@"), "{}", lines[0]);
+            assert!(!lines[0].contains("key"), "{}", lines[0]);
+        }
+    }
+
+    #[test]
     fn a_blank_value_counts_as_unset() {
         assert_eq!(read(&[("PORT", "   ")]).ok().unwrap().fixed().port, 8600);
     }

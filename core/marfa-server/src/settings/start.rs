@@ -194,7 +194,19 @@ impl Reader<'_> {
 
     fn object_store(&mut self) -> Option<ObjectStoreSettings> {
         let bucket = self.environment.get("S3_BUCKET")?.to_string();
-        let endpoint = self.url_kept_private("S3_ENDPOINT");
+        let endpoint = self.url_kept_private("S3_ENDPOINT").filter(|text| {
+            // The object store's errors, which are logged, carry the whole endpoint.
+            let bare = Url::parse(text)
+                .is_ok_and(|url| url.username().is_empty() && url.password().is_none());
+            if !bare {
+                self.refuse(
+                    "S3_ENDPOINT must not carry a user name or password; set \
+                     S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY instead"
+                        .to_string(),
+                );
+            }
+            bare
+        });
         let path_style = match endpoint {
             Some(_) => self
                 .take("S3_FORCE_PATH_STYLE", rule::boolean)
