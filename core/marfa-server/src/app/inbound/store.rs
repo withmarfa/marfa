@@ -3,7 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::app::auth;
-use crate::app::refusal::{Refusal, Result};
+use crate::app::refusal::Result;
 
 pub struct Endpoint {
     pub id: String,
@@ -60,7 +60,7 @@ pub struct Receipt<'a> {
     pub source: &'a str,
     pub at: &'a str,
     pub query: &'a str,
-    pub headers: &'a [(String, String)],
+    pub headers: &'a str,
     pub size: i64,
     pub sha256: &'a str,
     pub dedupe_key: Option<&'a str>,
@@ -225,17 +225,7 @@ pub fn tally(tx: &Transaction<'_>, source: &str) -> Result<Tally> {
         })?)
 }
 
-pub fn pending(tx: &Transaction<'_>, source: &str) -> Result<i64> {
-    Ok(tx
-        .prepare_cached(
-            "SELECT COUNT(*) FROM inbound_deliveries WHERE source = ?1 AND handled_at IS NULL",
-        )?
-        .query_row([source], |row| row.get(0))?)
-}
-
 pub fn insert_delivery(tx: &Transaction<'_>, receipt: &Receipt<'_>) -> Result<i64> {
-    let headers = serde_json::to_string(receipt.headers)
-        .map_err(|_| Refusal::internal("headers did not print"))?;
     tx.prepare_cached(
         "INSERT INTO inbound_deliveries (id, endpoint_id, source, received_at, method, query, \
          headers, size, sha256, dedupe_key, charge) \
@@ -247,7 +237,7 @@ pub fn insert_delivery(tx: &Transaction<'_>, receipt: &Receipt<'_>) -> Result<i6
         receipt.source,
         receipt.at,
         receipt.query,
-        headers,
+        receipt.headers,
         receipt.size,
         receipt.sha256,
         receipt.dedupe_key,

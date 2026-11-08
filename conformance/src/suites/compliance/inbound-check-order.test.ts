@@ -20,8 +20,8 @@ import {
  * rather than a refusal that never reaches the later check.
  */
 
-const MAX_BYTES = 64;
-const IN_FLIGHT_BYTES = 8;
+const MAX_BYTES = 8192;
+const IN_FLIGHT_BYTES = 4096;
 const BACKLOG_BYTES = 4;
 const RETAINED_DELIVERIES = 2;
 

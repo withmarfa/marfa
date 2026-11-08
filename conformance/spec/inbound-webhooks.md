@@ -474,19 +474,29 @@ If the server refuses a receipt for capacity, then the server MUST NOT remove a 
 
 ### `inbound-webhooks/in-flight-limit`
 
-If a body would take the bytes of all the bodies the instance is receiving past `MARFA_INBOUND_IN_FLIGHT_BYTES`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a request would take the bytes of all the requests the instance is receiving past `MARFA_INBOUND_IN_FLIGHT_BYTES`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
+
+**Reason:** a request holds the bytes of its headers, its query and its body, and a declared `Content-Length` is held whole before the body is read, so the server refuses a request that does not fit without reading it.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses a body that would pass the bytes the instance holds in flight`, `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`.
 
 ### `inbound-webhooks/in-flight-summed`
 
-When several bodies are arriving at once, the server MUST count their bytes together against `MARFA_INBOUND_IN_FLIGHT_BYTES`.
+When several requests are arriving at once, the server MUST count their bytes together against `MARFA_INBOUND_IN_FLIGHT_BYTES`.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`.
 
+### `inbound-webhooks/in-flight-per-source`
+
+If a request would take the bytes that the requests arriving for one source hold past half of `MARFA_INBOUND_IN_FLIGHT_BYTES`, then the server MUST answer `503 inbound_unavailable`.
+
+**Reason:** a leaked token for one source must not refuse every other source's receipts.
+
+**Tests:** `compliance/inbound-bounds.test.ts › refuses a source's receipt that would pass half the bytes in flight, and takes another source's`.
+
 ### `inbound-webhooks/in-flight-returned`
 
-When a body ends, whether it arrived whole, was refused or broke off, the server MUST stop counting its bytes toward the bytes in flight.
+When a request ends, whether its body arrived whole, was refused or broke off, the server MUST stop counting its bytes toward the bytes in flight.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`, `› refuses a body whose endpoint was retired while it arrived, and stores nothing`, `› refuses a body whose key was revoked while it arrived`.
 
@@ -1000,7 +1010,7 @@ If a request declares a `Content-Length` over the limit and its registration alr
 
 If a request declares a `Content-Length` over the limit while its registration's unhandled bodies hold `MARFA_INBOUND_BACKLOG_BYTES` bytes or the registration retains `MARFA_INBOUND_RETAINED_DELIVERIES` deliveries or `MARFA_INBOUND_RETAINED_BYTES` bytes, then the server MUST answer `413 request_too_large`.
 
-**Reason:** of the bounds on what a registration holds, the server checks only the count of unhandled deliveries before it reads a body; the bytes of unhandled bodies and what the registration retains are checked as the body is stored.
+**Reason:** of the bounds on what a registration holds, a declared length over the limit is told its 413 after the count of unhandled deliveries only; the other bounds are judged for a declared length within the limit, and again as the body is stored.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the backlog's bytes and the retained capacity's 503`.
 

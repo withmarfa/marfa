@@ -1,7 +1,7 @@
 //! Address-authorized receipts, checked again in the storage transaction.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use sha2::{Digest, Sha256};
 
@@ -11,52 +11,92 @@ use super::super::faults::FAIL_INBOUND_RECEIPT;
 use super::super::refusal::{Code, Refusal, Result};
 use super::store;
 use crate::db::{Write, io_refusal};
+use crate::settings::Snapshot;
 use crate::settings::registry::{
-    INBOUND_BACKLOG_BYTES, INBOUND_BACKLOG_DELIVERIES, INBOUND_RETAINED_BYTES,
+    INBOUND_BACKLOG_BYTES, INBOUND_BACKLOG_DELIVERIES, INBOUND_MAX_BYTES, INBOUND_RETAINED_BYTES,
     INBOUND_RETAINED_DELIVERIES,
 };
 
 const RETRY_AFTER_SECONDS: i64 = 60;
 
-/// The bytes of the bodies arriving now, across every endpoint.
+#[derive(Debug, Default)]
+struct Held {
+    total: u64,
+    by_source: HashMap<String, u64>,
+}
+
+/// The bytes of the requests arriving now, across every endpoint and by source.
 #[derive(Clone, Debug, Default)]
-pub struct InFlight(Arc<AtomicU64>);
+pub struct InFlight(Arc<Mutex<Held>>);
 
 impl InFlight {
-    pub fn reservation(&self) -> Reservation {
+    pub fn reservation(&self, source: &str) -> Reservation {
         Reservation {
-            total: self.0.clone(),
-            held: 0,
+            held: self.0.clone(),
+            source: source.to_string(),
+            mine: 0,
         }
     }
 }
 
-/// What one body holds of the bytes in flight, given back when it is dropped.
+/// What stopped a request from holding more bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Full {
+    Instance,
+    Source,
+}
+
+impl Full {
+    pub fn refusal(self) -> Refusal {
+        unavailable(match self {
+            Full::Instance => "The instance is holding all it will.",
+            Full::Source => "The connector is holding all it may.",
+        })
+    }
+}
+
+/// What one request holds of the bytes in flight, given back when it is dropped.
 #[derive(Debug)]
 pub struct Reservation {
-    total: Arc<AtomicU64>,
-    held: u64,
+    held: Arc<Mutex<Held>>,
+    source: String,
+    mine: u64,
 }
 
 impl Reservation {
-    /// Takes `more` bytes unless that would pass `limit` across all bodies.
-    pub fn take(&mut self, more: u64, limit: u64) -> bool {
-        let taken = self
+    /// Takes `more` bytes unless that would pass `limit` across all requests, or half of it for this source.
+    pub fn take(&mut self, more: u64, limit: u64) -> std::result::Result<(), Full> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let own = held
+            .by_source
+            .get(&self.source)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(more)
+            .filter(|sum| *sum <= limit / 2)
+            .ok_or(Full::Source)?;
+        let total = held
             .total
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
-                total.checked_add(more).filter(|sum| *sum <= limit)
-            })
-            .is_ok();
-        if taken {
-            self.held += more;
-        }
-        taken
+            .checked_add(more)
+            .filter(|sum| *sum <= limit)
+            .ok_or(Full::Instance)?;
+        held.total = total;
+        held.by_source.insert(self.source.clone(), own);
+        self.mine += more;
+        Ok(())
     }
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        self.total.fetch_sub(self.held, Ordering::AcqRel);
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.total = held.total.saturating_sub(self.mine);
+        if let Some(own) = held.by_source.get_mut(&self.source) {
+            *own = own.saturating_sub(self.mine);
+            if *own == 0 {
+                held.by_source.remove(&self.source);
+            }
+        }
     }
 }
 
@@ -73,14 +113,54 @@ fn not_found() -> Refusal {
 pub struct Place {
     token_hash: String,
     connector_id: String,
+    pub source: String,
 }
 
-/// Checks the address before exposing capacity refusals.
-pub async fn admit(app: &App, token: &str) -> Result<Place> {
+/// What a request has told the server before its body is read.
+pub struct Arrival {
+    /// The body's length, when the sender declared one.
+    pub declared: Option<u64>,
+    /// The charge of its headers and query.
+    pub head: i64,
+}
+
+fn over(held: i64, more: i64, limit: u64) -> bool {
+    u64::try_from(held.saturating_add(more)).unwrap_or(u64::MAX) > limit
+}
+
+fn backlog_room(tally: &store::Tally, live: &Snapshot) -> Result<()> {
+    if over(tally.pending, 1, live.get(INBOUND_BACKLOG_DELIVERIES)) {
+        return Err(unavailable("The connector's backlog is full."));
+    }
+    Ok(())
+}
+
+fn room_for(tally: &store::Tally, size: i64, charge: i64, live: &Snapshot) -> Result<()> {
+    if over(tally.pending_bytes, size, live.get(INBOUND_BACKLOG_BYTES)) {
+        return Err(unavailable("The connector's backlog of bytes is full."));
+    }
+    if over(tally.retained, 1, live.get(INBOUND_RETAINED_DELIVERIES))
+        || over(
+            tally.retained_bytes,
+            charge,
+            live.get(INBOUND_RETAINED_BYTES),
+        )
+    {
+        return Err(unavailable(
+            "The connector holds as many deliveries as it may keep.",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the address, then every bound the store already knows, before exposing capacity refusals.
+///
+/// A declared length over the limit is left to the caller's 413, so only the backlog's count is judged then.
+pub async fn admit(app: &App, token: &str, arrival: Arrival) -> Result<Place> {
     let token_hash = super::hash_token(token);
     let looked = token_hash.clone();
     let clock = app.clock.clone();
-    let backlog = app.settings.live().get(INBOUND_BACKLOG_DELIVERIES);
+    let live = app.settings.live();
     app.db
         .read(move |tx| {
             let at = clock.stamp();
@@ -88,13 +168,21 @@ pub async fn admit(app: &App, token: &str) -> Result<Place> {
             if lapsed(expires_at.as_deref(), &at)? {
                 return Err(not_found());
             }
-            let pending = store::pending(tx, &target.source)?;
-            if u64::try_from(pending).unwrap_or(u64::MAX) >= backlog {
-                return Err(unavailable("The connector's backlog is full."));
+            let tally = store::tally(tx, &target.source)?;
+            backlog_room(&tally, &live)?;
+            if arrival
+                .declared
+                .is_none_or(|declared| declared <= live.get(INBOUND_MAX_BYTES))
+            {
+                let size = arrival
+                    .declared
+                    .map_or(0, |declared| i64::try_from(declared).unwrap_or(i64::MAX));
+                room_for(&tally, size, arrival.head.saturating_add(size), &live)?;
             }
             Ok(Place {
                 token_hash: looked,
                 connector_id: target.connector_id,
+                source: target.source,
             })
         })
         .await
@@ -121,17 +209,11 @@ fn width(text: &str) -> i64 {
     i64::try_from(text.len()).unwrap_or(i64::MAX)
 }
 
-/// What a delivery holds against its registration's retained limits.
-fn charge(sent: &Sent) -> i64 {
-    let headers: i64 = sent
-        .headers
-        .iter()
-        .map(|(name, value)| width(name).saturating_add(width(value)))
-        .fold(0, i64::saturating_add);
-    i64::try_from(sent.body.len())
-        .unwrap_or(i64::MAX)
-        .saturating_add(width(&sent.query))
-        .saturating_add(headers)
+/// What a request's headers and query hold against its registration's limits, without its body.
+pub fn head_charge<'a>(query: &str, headers: impl Iterator<Item = (&'a str, usize)>) -> i64 {
+    headers
+        .map(|(name, value)| width(name).saturating_add(i64::try_from(value).unwrap_or(i64::MAX)))
+        .fold(width(query), i64::saturating_add)
 }
 
 /// Rechecks authority and capacity in the write, which holds the body's reservation until it ends.
@@ -145,6 +227,23 @@ pub async fn receive(
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     let id = uuid::Uuid::now_v7().to_string();
+    let headers = serde_json::to_string(&sent.headers)
+        .map_err(|_| Refusal::internal("headers did not print"))?;
+    let head = head_charge(
+        &sent.query,
+        sent.headers
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.len())),
+    );
+    let size = i64::try_from(sent.body.len()).unwrap_or(i64::MAX);
+    let charge = head.saturating_add(size);
+    let (body, sha256, reservation) = tokio::task::spawn_blocking(move || {
+        let sha256 = hex::encode(Sha256::digest(&sent.body));
+        (sent.body, sha256, reservation)
+    })
+    .await
+    .map_err(|_| Refusal::internal("a body did not hash"))?;
+    let (query, sent_headers) = (sent.query, sent.headers);
     app.db
         .write(Write::caller("inbound.receive"), move |tx| {
             let _held = reservation;
@@ -154,31 +253,11 @@ pub async fn receive(
             if target.connector_id != place.connector_id || lapsed(expires_at.as_deref(), &at)? {
                 return Err(not_found());
             }
-            let size = i64::try_from(sent.body.len()).unwrap_or(i64::MAX);
-            let charge = charge(&sent);
             let tally = store::tally(tx, &target.source)?;
-            let over = |held: i64, more: i64, limit: u64| {
-                u64::try_from(held.saturating_add(more)).unwrap_or(u64::MAX) > limit
-            };
-            if over(tally.pending, 1, live.get(INBOUND_BACKLOG_DELIVERIES)) {
-                return Err(unavailable("The connector's backlog is full."));
-            }
-            if over(tally.pending_bytes, size, live.get(INBOUND_BACKLOG_BYTES)) {
-                return Err(unavailable("The connector's backlog of bytes is full."));
-            }
-            if over(tally.retained, 1, live.get(INBOUND_RETAINED_DELIVERIES))
-                || over(
-                    tally.retained_bytes,
-                    charge,
-                    live.get(INBOUND_RETAINED_BYTES),
-                )
-            {
-                return Err(unavailable(
-                    "The connector holds as many deliveries as it may keep.",
-                ));
-            }
+            backlog_room(&tally, &live)?;
+            room_for(&tally, size, charge, &live)?;
             let dedupe_key = target.duplicate_header.as_deref().and_then(|wanted| {
-                sent.headers
+                sent_headers
                     .iter()
                     .find(|(name, _)| name == wanted)
                     .map(|(_, value)| value.as_str())
@@ -193,10 +272,10 @@ pub async fn receive(
                     endpoint_id: &target.endpoint_id,
                     source: &target.source,
                     at: &at,
-                    query: &sent.query,
-                    headers: &sent.headers,
+                    query: &query,
+                    headers: &headers,
                     size,
-                    sha256: &hex::encode(Sha256::digest(&sent.body)),
+                    sha256: &sha256,
                     dedupe_key,
                     charge,
                 },
@@ -204,7 +283,7 @@ pub async fn receive(
             if faults.fail(FAIL_INBOUND_RECEIPT, None) {
                 return Err(io_refusal());
             }
-            store::insert_body(tx, seq, &sent.body)?;
+            store::insert_body(tx, seq, &body)?;
             Ok(Landed(id))
         })
         .await
@@ -217,25 +296,32 @@ mod tests {
     #[test]
     fn bodies_share_the_bytes_in_flight_and_give_them_back_when_they_end() {
         let flight = InFlight::default();
-        let mut first = flight.reservation();
-        let mut second = flight.reservation();
-        assert!(first.take(6, 8));
-        assert!(!second.take(3, 8));
-        assert!(second.take(2, 8));
-        assert!(!first.take(1, 8));
+        let mut first = flight.reservation("a");
+        let mut second = flight.reservation("b");
+        assert_eq!(first.take(4, 8), Ok(()));
+        assert_eq!(second.take(3, 8), Ok(()));
+        assert_eq!(second.take(2, 8), Err(Full::Source));
+        assert_eq!(flight.reservation("c").take(2, 8), Err(Full::Instance));
         drop(first);
-        assert!(second.take(6, 8));
+        assert_eq!(second.take(1, 8), Ok(()));
         drop(second);
-        assert!(flight.reservation().take(8, 8));
+        assert_eq!(flight.reservation("c").take(4, 8), Ok(()));
+    }
+
+    #[test]
+    fn a_source_holds_at_most_half_the_bytes_in_flight_across_its_requests() {
+        let flight = InFlight::default();
+        let mut first = flight.reservation("a");
+        let mut second = flight.reservation("a");
+        assert_eq!(first.take(3, 8), Ok(()));
+        assert_eq!(second.take(2, 8), Err(Full::Source));
+        assert_eq!(second.take(1, 8), Ok(()));
+        assert_eq!(flight.reservation("b").take(4, 8), Ok(()));
     }
 
     #[test]
     fn a_charge_is_the_stored_bytes_of_body_query_and_headers() {
-        let sent = Sent {
-            query: "a=1".into(),
-            headers: vec![("x-a".into(), "bc".into()), ("x-a".into(), "".into())],
-            body: vec![0; 10],
-        };
-        assert_eq!(charge(&sent), 10 + 3 + (3 + 2) + 3);
+        let headers = [("x-a", 2), ("x-a", 0)];
+        assert_eq!(head_charge("a=1", headers.into_iter()), 3 + (3 + 2) + 3);
     }
 }

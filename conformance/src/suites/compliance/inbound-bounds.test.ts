@@ -26,7 +26,7 @@ import { waitFor } from "../../utils/wait.js";
  */
 
 const MAX_BYTES = 64;
-const IN_FLIGHT_BYTES = 8;
+const IN_FLIGHT_BYTES = 4096;
 
 interface Registration {
   /** On the server's address as it is now, which a restart changes. */
@@ -170,11 +170,18 @@ describe("the bytes in flight, across bodies", () => {
     await server.stop();
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  /** Waits until the bytes of the bodies in progress are counted, which a
-   *  receipt that would pass the count is the one answer to. */
-  async function untilHeld(path: string, probe: number): Promise<void> {
+  /** What a source may hold of the bytes in flight. */
+  const PER_SOURCE = IN_FLIGHT_BYTES / 2;
+  /** More than the headers of any receipt here hold, so that a sum is judged
+   *  against a limit by a margin and not to the byte. */
+  const MARGIN = 150;
+
+  /** Waits until the request a source holds open is counted, which a receipt
+   *  from the same source that would pass its half is the one answer to. */
+  async function untilHeld(path: string, declared: number): Promise<void> {
+    const probe = PER_SOURCE - declared + MARGIN;
     await waitFor(
-      "the bytes of the bodies in progress to be counted",
+      "the bytes of the request in progress to be counted",
       async () =>
         (await send(server.apiUrl, path, "p".repeat(probe))).status === 503
           ? true
@@ -184,93 +191,158 @@ describe("the bytes in flight, across bodies", () => {
     );
   }
 
+  interface Held {
+    owner: Registration;
+    made: Awaited<ReturnType<typeof endpoint>>;
+    body: ReturnType<typeof openBody>;
+    /** Sends the rest of the declared length. */
+    end(): Promise<RawAnswer>;
+  }
+
+  /** A source with a body declared at `declared` bytes, all but a hundred of
+   *  them sent, and its bytes counted. */
+  async function hold(label: string, declared: number): Promise<Held> {
+    const owner = await register(server, label);
+    const made = await endpoint(owner);
+    const body = openBody(
+      server.apiUrl,
+      made.path,
+      declared,
+      "x".repeat(declared - 100),
+    );
+    await untilHeld(made.path, declared);
+    return {
+      owner,
+      made,
+      body,
+      end() {
+        body.finish("y".repeat(100));
+        return body.answer;
+      },
+    };
+  }
+
+  async function sizes(owner: Registration): Promise<number[]> {
+    return (await stored(owner))
+      .map((row) => row.size)
+      .filter((size) => size >= 1000)
+      .sort((a, b) => a - b);
+  }
+
   it("refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off", async () => {
-    const stalled = await register(server, "in-flight-stalled");
     const prober = await register(server, "in-flight-prober");
-    const held = await endpoint(stalled);
     const probe = await endpoint(prober);
 
-    // One body of six, four of them in; another of four, three of them in.
-    const first = openBody(server.apiUrl, held.path, 6, "aaaa");
-    await untilHeld(probe.path, IN_FLIGHT_BYTES - 4 + 1);
-    const second = openBody(server.apiUrl, held.path, 4, "bbb");
-    await untilHeld(probe.path, IN_FLIGHT_BYTES - 7 + 1);
+    // Two sources hold bodies of 1800 and 1500 bytes, with 3300 and the
+    // headers counted of the 4096.
+    const first = await hold("in-flight-first", 1800);
+    const second = await hold("in-flight-second", 1500);
 
-    // Seven held: one more byte fills the instance's eight, and two pass it.
-    idOf(await send(server.apiUrl, probe.path, "p"));
-    const over = await send(server.apiUrl, probe.path, "pp");
+    const over = await send(server.apiUrl, probe.path, "p".repeat(1000));
     expect(over.status).toBe(503);
     expect(codeOf(over)).toBe("inbound_unavailable");
-    expect(Number(over.headers["retry-after"])).toBeGreaterThan(0);
+    expectRetryAfter(over, "bytes in flight");
+    idOf(await send(server.apiUrl, probe.path, "p".repeat(300)));
 
-    // The second body ends, and what it held goes back with it.
-    second.finish("b");
-    idOf(await second.answer);
-    idOf(await send(server.apiUrl, probe.path, "pppp"));
-    expect((await send(server.apiUrl, probe.path, "ppppp")).status).toBe(503);
-    first.finish("aa");
-    idOf(await first.answer);
+    // The second body ends, and what it held goes back with it: 1700 more
+    // pass now and did not while it was held.
+    idOf(await second.end());
+    idOf(await send(server.apiUrl, probe.path, "p".repeat(1700)));
+    idOf(await first.end());
 
     // A body that breaks off gives back what it had read.
-    const broken = openBody(server.apiUrl, held.path, 6, "cccc");
-    await untilHeld(probe.path, IN_FLIGHT_BYTES - 4 + 1);
+    const broken = openBody(
+      server.apiUrl,
+      first.made.path,
+      1800,
+      "c".repeat(1700),
+    );
+    await untilHeld(first.made.path, 1800);
     broken.abandon();
     await waitFor(
       "the bytes of a broken body to be given back",
       async () =>
-        (await send(server.apiUrl, probe.path, "p".repeat(IN_FLIGHT_BYTES)))
-          .status === 202
+        (
+          await send(
+            server.apiUrl,
+            first.made.path,
+            "p".repeat(PER_SOURCE - 1800 + MARGIN),
+          )
+        ).status === 202
           ? true
           : undefined,
       10_000,
       25,
     );
-    expect(
-      (await stored(stalled)).map((row) => row.size).sort((a, b) => a - b),
-    ).toEqual([4, 6]);
+    expect(await sizes(first.owner)).toEqual([1800]);
+    expect(await sizes(second.owner)).toEqual([1500]);
+  });
+
+  it("refuses a source's receipt that would pass half the bytes in flight, and takes another source's", async () => {
+    const held = await hold("in-flight-half", 1900);
+    const other = await register(server, "in-flight-other");
+    const elsewhere = await endpoint(other);
+
+    const refused = await send(
+      server.apiUrl,
+      held.made.path,
+      "n".repeat(PER_SOURCE - 1900 + MARGIN),
+    );
+    expect(refused.status).toBe(503);
+    expect(codeOf(refused)).toBe("inbound_unavailable");
+    expectRetryAfter(refused, "a source's half of the bytes in flight");
+
+    // The instance has room: another source holds as much as this one does.
+    idOf(await send(server.apiUrl, elsewhere.path, "o".repeat(1900)));
+    idOf(await held.end());
+    expect(await sizes(held.owner)).toEqual([1900]);
+    expect(await sizes(other)).toEqual([1900]);
   });
 
   it("refuses a body whose endpoint was retired while it arrived, and stores nothing", async () => {
-    const owner = await register(server, "retired-while-arriving");
     const prober = await register(server, "retired-prober");
-    const made = await endpoint(owner);
     const probe = await endpoint(prober);
+    const owner = await hold("retired-while-arriving", 1800);
+    // Another body fills the rest of what the instance holds, so that the
+    // bytes the retired one gives back are the room for the receipt below.
+    const filler = await hold("retired-filler", 1800);
 
-    const body = openBody(server.apiUrl, made.path, 6, "xxxx");
-    // The request has been admitted and its bytes counted, so a retirement
-    // from here is one the body arrived through.
-    await untilHeld(probe.path, IN_FLIGHT_BYTES - 4 + 1);
     expect(
-      (await owner.client.retireInboundEndpoint(owner.id, made.id)).status,
+      (
+        await owner.owner.client.retireInboundEndpoint(
+          owner.owner.id,
+          owner.made.id,
+        )
+      ).status,
     ).toBe(200);
-    body.finish("yy");
-    const answer = await body.answer;
+    const answer = await owner.end();
     expect(answer.status).toBe(404);
     expect(codeOf(answer)).toBe("not_found");
-    expect(await stored(owner)).toEqual([]);
+    expect(await sizes(owner.owner)).toEqual([]);
 
-    // The bytes it held are given back.
-    idOf(await send(server.apiUrl, probe.path, "p".repeat(IN_FLIGHT_BYTES)));
+    // The bytes it held are given back: with both held, 1000 would not fit.
+    idOf(await send(server.apiUrl, probe.path, "p".repeat(1000)));
+    idOf(await filler.end());
   });
 
   it("refuses a body whose key was revoked while it arrived", async () => {
-    const owner = await register(server, "revoked-while-arriving");
     const prober = await register(server, "revoked-prober");
-    const made = await endpoint(owner);
     const probe = await endpoint(prober);
+    const owner = await hold("revoked-while-arriving", 1800);
+    const filler = await hold("revoked-filler", 1800);
 
-    const body = openBody(server.apiUrl, made.path, 6, "xxxx");
-    await untilHeld(probe.path, IN_FLIGHT_BYTES - 4 + 1);
-    expect((await minterOf(server).revokeKey(owner.keyId)).status).toBe(200);
-    body.finish("yy");
-    const answer = await body.answer;
+    expect((await minterOf(server).revokeKey(owner.owner.keyId)).status).toBe(
+      200,
+    );
+    const answer = await owner.end();
     expect(answer.status).toBe(404);
     expect(codeOf(answer)).toBe("not_found");
 
     // Nothing the revoked body carried is on the instance: the registration
     // survives its key, and a key of the operator's reads no deliveries, so
     // the bytes' return is the observable.
-    idOf(await send(server.apiUrl, probe.path, "p".repeat(IN_FLIGHT_BYTES)));
+    idOf(await send(server.apiUrl, probe.path, "p".repeat(1000)));
+    idOf(await filler.end());
   });
 });
 

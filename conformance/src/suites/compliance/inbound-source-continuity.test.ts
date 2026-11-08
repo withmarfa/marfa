@@ -321,29 +321,35 @@ describe("source-owned inbound continuity", () => {
 
   it("refuses an already arriving body after a takeover", async () => {
     await server.restart({
-      env: { MARFA_INBOUND_MAX_BYTES: "4", MARFA_INBOUND_IN_FLIGHT_BYTES: "4" },
+      env: {
+        MARFA_INBOUND_MAX_BYTES: "2000",
+        MARFA_INBOUND_IN_FLIGHT_BYTES: "4096",
+      },
     });
     const { source, oldKey, old, endpoint } = await fixture();
     expect((await send(server.apiUrl, endpoint.path, "x")).status).toBe(202);
-    const held = openBody(server.apiUrl, endpoint.path, 4, "hel");
-    const probe = await fixture();
+    const held = openBody(server.apiUrl, endpoint.path, 1900, "h".repeat(1800));
+    // The source may hold half of the 4096, which 1900 and 300 pass, so the
+    // probe is refused once the body is counted. A probe sent earlier is taken.
+    let taken = 1;
     let probeStatus = 0;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      probeStatus = (await send(server.apiUrl, probe.endpoint.path, "xx"))
+    for (let attempt = 0; attempt < 40; attempt++) {
+      probeStatus = (await send(server.apiUrl, endpoint.path, "x".repeat(300)))
         .status;
       if (probeStatus === 503) break;
       expect(probeStatus).toBe(202);
+      taken += 1;
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    // Two probe bytes cannot fit while the three held bytes are in flight.
     expect(probeStatus).toBe(503);
     expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
     const successor = await register((await mint(source)).key);
     expect(successor.status).toBe(201);
-    held.finish("d");
+    held.finish("d".repeat(100));
     expect((await held.answer).status).toBe(404);
     expect(
       (await listed(successor.id, successor.key, "deliveries")).data,
-    ).toHaveLength(1);
+    ).toHaveLength(taken);
     expect((await send(server.apiUrl, endpoint.path, "new")).status).toBe(202);
     expect((await listed(old.id, server.managementKey)).data).toEqual([]);
   });

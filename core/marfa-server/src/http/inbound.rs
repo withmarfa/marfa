@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
@@ -15,7 +15,7 @@ use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::connectors::Window;
-use crate::app::inbound::{self, Listing, Mark, NewEndpoint, Sent};
+use crate::app::inbound::{self, Arrival, Listing, Mark, NewEndpoint, Sent};
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::{
     INBOUND_IN_FLIGHT_BYTES, INBOUND_MAX_BYTES, INBOUND_READ_TIMEOUT_MS,
@@ -150,12 +150,33 @@ fn declared_length(request: &Request) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
+fn kept(name: &axum::http::HeaderName) -> bool {
+    !name.as_str().starts_with(PROXY_IDENTITY)
+}
+
+/// What the request's headers and query hold, without copying them.
+fn head_of(request: &Request) -> i64 {
+    inbound::head_charge(
+        request.uri().query().unwrap_or(""),
+        request
+            .headers()
+            .iter()
+            .filter(|(name, _)| kept(name))
+            .map(|(name, value)| {
+                (
+                    name.as_str(),
+                    String::from_utf8_lossy(value.as_bytes()).len(),
+                )
+            }),
+    )
+}
+
 /// Excludes proxy identity headers while preserving each name's repeat order.
 fn headers_of(request: &Request) -> Vec<(String, String)> {
     request
         .headers()
         .iter()
-        .filter(|(name, _)| !name.as_str().starts_with(PROXY_IDENTITY))
+        .filter(|(name, _)| kept(name))
         .map(|(name, value)| {
             (
                 name.as_str().to_string(),
@@ -165,12 +186,61 @@ fn headers_of(request: &Request) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The frames of a body, joined once into one buffer.
+enum Gathered {
+    /// A declared length, whose buffer is made once and filled as the frames come.
+    Sized(Vec<u8>),
+    /// No length declared: the frames are kept and joined at the end.
+    Framed(Vec<Bytes>, usize),
+}
+
+impl Gathered {
+    fn new(declared: Option<u64>) -> Gathered {
+        match declared.and_then(|length| usize::try_from(length).ok()) {
+            Some(length) => Gathered::Sized(Vec::with_capacity(length)),
+            None => Gathered::Framed(Vec::new(), 0),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Gathered::Sized(bytes) => bytes.len(),
+            Gathered::Framed(_, len) => *len,
+        }
+    }
+
+    fn push(&mut self, data: Bytes) {
+        match self {
+            Gathered::Sized(bytes) => bytes.extend_from_slice(&data),
+            Gathered::Framed(frames, len) => {
+                *len += data.len();
+                frames.push(data);
+            }
+        }
+    }
+
+    fn finish(self) -> Vec<u8> {
+        match self {
+            Gathered::Sized(bytes) => bytes,
+            Gathered::Framed(frames, len) => {
+                let mut bytes = Vec::with_capacity(len);
+                for frame in frames {
+                    bytes.extend_from_slice(&frame);
+                }
+                bytes
+            }
+        }
+    }
+}
+
 pub async fn receive(
     State(app): State<Arc<App>>,
     Path(token): Path<String>,
     request: Request,
 ) -> Response {
-    let place = match inbound::admit(&app, &token).await {
+    let declared = declared_length(&request);
+    let head = head_of(&request);
+    let place = match inbound::admit(&app, &token, Arrival { declared, head }).await {
         Ok(place) => place,
         Err(refusal) => return refused(&refusal),
     };
@@ -179,16 +249,23 @@ pub async fn receive(
         live.get(INBOUND_MAX_BYTES),
         live.get(INBOUND_IN_FLIGHT_BYTES),
     );
-    if declared_length(&request) > Some(limit) {
+    if declared > Some(limit) {
         return refused(&too_large(limit));
+    }
+    let mut reservation = app.inbound.reservation(&place.source);
+    // A declared length is held whole before the body is read, as it is the buffer made for it.
+    let held = u64::try_from(head)
+        .unwrap_or(0)
+        .saturating_add(declared.unwrap_or(0));
+    if let Err(full) = reservation.take(held, flight) {
+        return refused(&full.refusal());
     }
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = headers_of(&request);
     let deadline = tokio::time::sleep(Duration::from_millis(live.get(INBOUND_READ_TIMEOUT_MS)));
     tokio::pin!(deadline);
-    let mut reservation = app.inbound.reservation();
     let mut body = request.into_body();
-    let mut bytes: Vec<u8> = Vec::new();
+    let mut bytes = Gathered::new(declared);
     loop {
         let frame = tokio::select! {
             frame = body.frame() => frame,
@@ -213,12 +290,18 @@ pub async fn receive(
         if bytes.len() as u64 + more > limit {
             return refused(&too_large(limit));
         }
-        if !reservation.take(more, flight) {
-            return refused(&inbound::unavailable(
-                "The instance is holding all it will.",
-            ));
+        match declared {
+            Some(declared) if bytes.len() as u64 + more > declared => {
+                return refused(&Refusal::validation("The body did not arrive whole."));
+            }
+            Some(_) => {}
+            None => {
+                if let Err(full) = reservation.take(more, flight) {
+                    return refused(&full.refusal());
+                }
+            }
         }
-        bytes.extend_from_slice(&data);
+        bytes.push(data);
     }
     let landed = inbound::receive(
         &app,
@@ -226,7 +309,7 @@ pub async fn receive(
         Sent {
             query,
             headers,
-            body: bytes,
+            body: bytes.finish(),
         },
         reservation,
     )
@@ -234,5 +317,26 @@ pub async fn receive(
     match landed {
         Ok(inbound::Landed(id)) => json_answer(StatusCode::ACCEPTED, &json!({ "id": id })),
         Err(refusal) => refusal_answer(&refusal),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_declared_length_makes_the_buffer_once_and_frames_are_joined_once() {
+        let mut sized = Gathered::new(Some(6));
+        sized.push(Bytes::from_static(b"abc"));
+        sized.push(Bytes::from_static(b"def"));
+        let joined = sized.finish();
+        assert_eq!((joined.as_slice(), joined.capacity()), (&b"abcdef"[..], 6));
+
+        let mut framed = Gathered::new(None);
+        framed.push(Bytes::from_static(b"abc"));
+        framed.push(Bytes::from_static(b"de"));
+        assert_eq!(framed.len(), 5);
+        let joined = framed.finish();
+        assert_eq!((joined.as_slice(), joined.capacity()), (&b"abcde"[..], 5));
     }
 }

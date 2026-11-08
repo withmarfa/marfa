@@ -665,7 +665,7 @@ describe("the receiving door on an instance that names its limits", () => {
       MARFA_INBOUND_BACKLOG_DELIVERIES: "5",
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
-      MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
+      MARFA_INBOUND_IN_FLIGHT_BYTES: "65536",
       MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -834,20 +834,20 @@ describe("the receiving door on an instance that names its limits", () => {
     async () => {
       const flight = await bootFreshServer("inbound-in-flight", {
         RATE_LIMIT_ENABLED: "false",
-        MARFA_INBOUND_BACKLOG_BYTES: "64",
-        MARFA_INBOUND_MAX_BYTES: "64",
-        MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
+        MARFA_INBOUND_BACKLOG_BYTES: "65536",
+        MARFA_INBOUND_MAX_BYTES: "8192",
+        MARFA_INBOUND_IN_FLIGHT_BYTES: "4096",
       });
       try {
         const owner = await freshConnector("in-flight", flight);
         const made = await endpoint(owner);
-        const held = await send(flight.apiUrl, made.path, "x".repeat(9));
+        const held = await send(flight.apiUrl, made.path, "x".repeat(4097));
         expect(held.status).toBe(503);
         expect(codeOf(held)).toBe("inbound_unavailable");
         expectRetryAfter(held, "bytes in flight");
         expect(await pending(owner)).toEqual([]);
-        idOf(await send(flight.apiUrl, made.path, "x".repeat(8)));
-        expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
+        idOf(await send(flight.apiUrl, made.path, "x".repeat(1900)));
+        expect((await pending(owner)).map((d) => d.size)).toEqual([1900]);
       } finally {
         await flight.stop();
       }
