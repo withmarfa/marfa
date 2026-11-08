@@ -26,6 +26,8 @@ afterAll(async () => {
 });
 
 const PROOF = "a".repeat(64);
+/** Well formed, and the id of no instance. */
+const OTHER = "019537a0-7b80-7000-8000-0000000000ff";
 
 interface Answer {
   status: number;
@@ -85,6 +87,33 @@ describe("a request no door serves", () => {
     }
   });
 
+  it("answers a method no door serves 404 not_found whatever instance it names", async () => {
+    // The witness: a method the path serves is refused for the instance it names.
+    const served = await ask("PUT", `/items/${OTHER}/metadata`, {
+      ...asKey(),
+      "X-Marfa-Instance-Id": OTHER,
+    });
+    expect(served.code).toBe("instance_changed");
+
+    for (const [method, path] of [
+      ["POST", "/health"],
+      ["PATCH", `/items/${OTHER}/metadata`],
+      ["DELETE", "/"],
+    ] as const) {
+      for (const named of [OTHER, "not-an-instance"]) {
+        for (const credential of [asKey(), {}]) {
+          const label = `${method} ${path} naming ${named}`;
+          const answer = await ask(method, path, {
+            ...credential,
+            "X-Marfa-Instance-Id": named,
+          });
+          expect(answer.status, label).toBe(404);
+          expect(answer.code, label).toBe("not_found");
+        }
+      }
+    }
+  });
+
   it("answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing", async () => {
     const created = await client.createItem({
       type: "core.note",
@@ -128,6 +157,35 @@ describe("a request no door serves", () => {
     expect(added.status).toBe(200);
     const answer = (await added.json()) as { metadata: { tags: string[] } };
     expect([...answer.metadata.tags].sort()).toEqual(["added", "kept"]);
+  });
+
+  it("answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none", async () => {
+    // The witness: a served door answers the same caller.
+    expect((await ask("GET", "/items", asKey())).status).toBe(200);
+
+    const preflight = {
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization",
+    };
+    for (const [path, headers] of [
+      ["/items", {}],
+      ["/items", { Origin: "https://nobody-approved.example" }],
+      ["/items", { Origin: "https://nobody-approved.example", ...preflight }],
+      [
+        "/no-such-door",
+        { Origin: "https://nobody-approved.example", ...preflight },
+      ],
+    ] as const) {
+      const res = await fetch(`${apiUrl}${path}`, {
+        method: "OPTIONS",
+        headers,
+      });
+      const body = (await res.json()) as { error?: { code?: string } };
+      const label = `${path} ${JSON.stringify(headers)}`;
+      expect(res.status, label).toBe(404);
+      expect(body.error?.code, label).toBe("not_found");
+      expect(res.headers.get("Access-Control-Allow-Origin"), label).toBeNull();
+    }
   });
 
   it("answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Reach, to a caller with a credential and to one without", async () => {

@@ -3,7 +3,6 @@
 use marfa_rules::catalog::Catalog as Rules;
 use serde_json::{Map, Value};
 
-use super::page::Entry;
 use crate::app::access::Caller;
 use crate::app::connectors::ReadOnly;
 use crate::app::refusal::{Refusal, Result};
@@ -19,9 +18,18 @@ pub struct Filter {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kind {
+pub enum Kind {
     Item,
     Edge,
+}
+
+/// The columns of a logged event, which decide whether its payload is read.
+#[derive(Clone, Copy)]
+pub struct Head<'a> {
+    pub id: i64,
+    pub event_type: &'a str,
+    pub type_id: &'a str,
+    pub source: &'a str,
 }
 
 pub(super) enum Verdict {
@@ -30,7 +38,14 @@ pub(super) enum Verdict {
     Unreadable,
 }
 
-pub(super) struct Judge<'a> {
+/// The payload as the credential may read it, after `event_type`.
+pub enum Judged {
+    Shown(Map<String, Value>),
+    Withheld,
+    Unreadable,
+}
+
+pub struct Judge<'a> {
     pub caller: &'a Caller,
     pub rules: &'a Rules,
     pub read_only: &'a ReadOnly,
@@ -39,7 +54,7 @@ pub(super) struct Judge<'a> {
 
 impl Judge<'_> {
     /// Decides from the columns alone, so a payload a stream does not send is not read.
-    pub fn wants(&self, entry: &Entry<'_, '_>) -> Option<Kind> {
+    pub fn wants(&self, entry: &Head<'_>) -> Option<Kind> {
         let kind = if entry.event_type.starts_with("edge.") {
             if !self.filter.edges {
                 return None;
@@ -51,23 +66,34 @@ impl Judge<'_> {
                     .filter
                     .types
                     .iter()
-                    .any(|declared| self.rules.matches(declared, &entry.type_id))
+                    .any(|declared| self.rules.matches(declared, entry.type_id))
             {
                 return None;
             }
             Kind::Item
         };
-        (self.caller.may_read_type(&entry.type_id) && (self.filter.copy || self.listed(entry)))
+        (self.caller.may_read_type(entry.type_id) && (self.filter.copy || self.listed(entry)))
             .then_some(kind)
     }
 
-    fn listed(&self, entry: &Entry<'_, '_>) -> bool {
-        self.caller.lists(self.rules, &entry.type_id, &entry.source)
+    fn listed(&self, entry: &Head<'_>) -> bool {
+        self.caller.lists(self.rules, entry.type_id, entry.source)
     }
 
-    pub fn render(&self, entry: &Entry<'_, '_>, kind: Kind, payload: &str) -> Result<Verdict> {
+    pub(super) fn render(&self, entry: &Head<'_>, kind: Kind, payload: &str) -> Result<Verdict> {
+        Ok(match self.judged(entry, kind, payload)? {
+            Judged::Shown(data) => match marfa_rules::number::to_vec(&Value::Object(data)) {
+                Ok(json) => Verdict::Send(event_text(entry.id, entry.event_type, &json)),
+                Err(_) => Verdict::Unreadable,
+            },
+            Judged::Withheld => Verdict::Withhold,
+            Judged::Unreadable => Verdict::Unreadable,
+        })
+    }
+
+    pub fn judged(&self, entry: &Head<'_>, kind: Kind, payload: &str) -> Result<Judged> {
         let Ok(Value::Object(mut body)) = serde_json::from_str(payload) else {
-            return Ok(Verdict::Unreadable);
+            return Ok(Judged::Unreadable);
         };
         let shown = match kind {
             Kind::Item => self.item(entry, &mut body)?,
@@ -76,25 +102,22 @@ impl Judge<'_> {
         Ok(match shown {
             Some(true) => {
                 let mut data = Map::new();
-                data.insert("event_type".into(), entry.event_type.clone().into());
+                data.insert("event_type".into(), entry.event_type.into());
                 data.extend(body);
-                match marfa_rules::number::to_vec(&Value::Object(data)) {
-                    Ok(json) => Verdict::Send(event_text(entry.id, &entry.event_type, &json)),
-                    Err(_) => Verdict::Unreadable,
-                }
+                Judged::Shown(data)
             }
-            Some(false) => Verdict::Withhold,
-            None => Verdict::Unreadable,
+            Some(false) => Judged::Withheld,
+            None => Judged::Unreadable,
         })
     }
 
-    fn edge(&self, entry: &Entry<'_, '_>, body: &Map<String, Value>) -> Option<bool> {
+    fn edge(&self, entry: &Head<'_>, body: &Map<String, Value>) -> Option<bool> {
         let edge_type = body.get("edge")?.get("edge_type")?.as_str()?;
         body.get("source_type")?.as_str()?;
-        Some(self.caller.may_read_edge(edge_type, &entry.type_id))
+        Some(self.caller.may_read_edge(edge_type, entry.type_id))
     }
 
-    fn item(&self, entry: &Entry<'_, '_>, body: &mut Map<String, Value>) -> Result<Option<bool>> {
+    fn item(&self, entry: &Head<'_>, body: &mut Map<String, Value>) -> Result<Option<bool>> {
         let Some(Value::Object(item)) = body.get_mut("item") else {
             return Ok(None);
         };
@@ -103,7 +126,7 @@ impl Judge<'_> {
         }
         let with_type = item.remove("trashed_with_type");
         self.named_to_readers(item, "trashed_with", with_type);
-        let read_only = self.read_only.of(&entry.source, &entry.type_id);
+        let read_only = self.read_only.of(entry.source, entry.type_id);
         *item = before_properties(std::mem::take(item), read_only);
         let with_type = body.remove("restored_with_type");
         self.named_to_readers(body, "restored_with", with_type);
