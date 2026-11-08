@@ -28,9 +28,17 @@
  *   keep it, until its busy budget is spent or the fault is cleared.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
  * - `free:<volume>=<bytes>` makes the server read that many bytes of free
- *   space on the volume (`database` or `blobs`), or none for `unknown`, from now until the
- *   fault is cleared or set again. Setting it again while a body streams in is how
- *   a volume fills as the bytes arrive.
+ *   space on the volume (`database` or `blobs`), or none for `unknown`, from
+ *   now until the fault is cleared or set again. Setting it again while a body
+ *   streams in is how a volume fills as the bytes arrive.
+ * - `limit:<lane>=<n>` lowers the attempts a counted lane allows per window
+ *   to `<n>`, from now until the fault is cleared or set again. The count
+ *   stays in the database, so it outlasts a restart that the fault does not.
+ * - `unreadable:<record>=<id>` makes the server read one stored record as
+ *   gone or damaged while everything that names it stands, from now until the
+ *   fault is cleared or set again. `sign-in-record` is the record that lists
+ *   an app's sign-in, by its item ID; `type-definition` is a type's stored
+ *   definition, by its type ID.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
@@ -95,6 +103,7 @@ export const POINTS: {
 } = {
   hold: [
     { name: "webhook:response", arg: "none" },
+    { name: "connector-write", arg: "none" },
     { name: "bulk-job:selected", arg: "none" },
     { name: "bulk-job:claimed", arg: "none" },
     { name: "bulk-job:in-chunk", arg: "none" },
@@ -144,6 +153,10 @@ export const POINTS: {
     { name: "stream-replay-row", arg: "nth" },
     { name: "stream-replay-untyped", arg: "nth" },
     { name: "edge-source-type", arg: "nth" },
+    { name: "session-lookup", arg: "nth" },
+    { name: "session-delete", arg: "nth" },
+    { name: "session-use", arg: "nth" },
+    { name: "housekeeping-read", arg: "nth" },
     { name: "health-write", arg: "nth" },
     { name: "event-stamp", arg: "nth" },
   ],
@@ -249,6 +262,16 @@ function aim(point: Point, arg: string | null): Target | string {
   return { action, nth: count };
 }
 
+/** The counted lanes a `limit` fault may lower. */
+const LIMIT_LANES = ["device-owner-instance"] as const;
+export type LimitLane = (typeof LIMIT_LANES)[number];
+const MAX_LIMIT = 1_000_000;
+
+/** The stored records an `unreadable` fault may name. */
+const UNREADABLE_RECORDS = ["sign-in-record", "type-definition"] as const;
+export type UnreadableRecord = (typeof UNREADABLE_RECORDS)[number];
+const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 /** An address a `resolve` fault may script. */
 function isAddress(text: string): boolean {
   return ipaddr.IPv4.isValidFourPartDecimal(text) || ipaddr.IPv6.isValid(text);
@@ -338,6 +361,21 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "a free fault takes a whole number of bytes, or unknown";
     return undefined;
   }
+  if (kind === "limit") {
+    if (!LIMIT_LANES.includes(rest as LimitLane))
+      return `${rest} is not a limit: ${LIMIT_LANES.join(" or ")}`;
+    const count = arg === null ? Number.NaN : Number(arg);
+    if (!/^[0-9]+$/.test(arg ?? "") || count < 1 || count > MAX_LIMIT)
+      return `a limit fault takes a whole number of attempts from 1 to ${String(MAX_LIMIT)}`;
+    return undefined;
+  }
+  if (kind === "unreadable") {
+    if (!UNREADABLE_RECORDS.includes(rest as UnreadableRecord))
+      return `${rest} is not a record: ${UNREADABLE_RECORDS.join(" or ")}`;
+    return arg !== null && RECORD_ID.test(arg)
+      ? undefined
+      : "an unreadable fault takes the ID of the record";
+  }
   if (name === "unfold-deadline" || name === "store-check-deadline") {
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
@@ -373,7 +411,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, deadline:<job>, free:<volume>, limit:<lane>, unreadable:<record>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -666,6 +704,19 @@ export function refusing(point: string): boolean {
   if (entry === undefined) return false;
   entry.fired += 1;
   return true;
+}
+
+/** The attempts `limit:<lane>` allows a window, if one is armed. */
+export function limitFault(lane: LimitLane): number | undefined {
+  if (faults.size === 0) return undefined;
+  const arg = faults.get(`limit:${lane}`)?.arg;
+  return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** Whether `unreadable:<record>` makes the record with this ID read as gone. */
+export function unreadableFault(record: UnreadableRecord, id: string): boolean {
+  if (faults.size === 0) return false;
+  return faults.get(`unreadable:${record}`)?.arg === id;
 }
 
 /** The time `unfold-deadline` allows one series to unfold, if it is armed. */

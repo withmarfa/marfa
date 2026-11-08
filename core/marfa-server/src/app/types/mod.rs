@@ -1,10 +1,8 @@
 //! Types: judgement of a definition is `marfa_rules::schema`'s; this module reads the catalog and writes.
 
-mod platform;
 mod read;
 mod write;
 
-pub use platform::{remove_retired, retired};
 pub use read::{get, list, normalize};
 pub use write::{clear_icon, delete, register, replace, set_icon};
 
@@ -76,6 +74,14 @@ pub fn check_id(id: &str, field: &str) -> Result<()> {
     Err(Refusal::validation(message.clone())
         .with_detail("field", field)
         .with_detail("errors", json!([{ "path": field, "message": message }])))
+}
+
+fn unreadable_refusal(type_id: &str) -> Refusal {
+    Refusal::new(
+        Code::TypeChainUnresolvable,
+        format!("The stored definition of type \"{type_id}\" does not read."),
+    )
+    .with_detail("type_id", type_id)
 }
 
 fn chain_refusal(fault: &ChainFault) -> Refusal {

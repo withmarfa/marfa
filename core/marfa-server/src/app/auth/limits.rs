@@ -109,7 +109,7 @@ pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     ]
 }
 
-pub fn device_owner_lanes(user_id: &str) -> [Lane; 2] {
+pub fn device_owner_lanes(user_id: &str, instance_limit: Option<i64>) -> [Lane; 2] {
     [
         Lane {
             family: DEVICE_OWNER,
@@ -120,7 +120,7 @@ pub fn device_owner_lanes(user_id: &str) -> [Lane; 2] {
         Lane {
             family: DEVICE_OWNER_INSTANCE,
             key: ALL.to_string(),
-            limit: 100,
+            limit: instance_limit.unwrap_or(100),
             window_ms: 15 * MINUTE_MS,
         },
     ]

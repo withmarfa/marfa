@@ -2160,46 +2160,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/platform-types/retired": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List retired platform types
-         * @description Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires `instance.read`.
-         */
-        get: operations["listRetiredPlatformTypes"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/platform-types/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Delete a retired platform type
-         * @description Deletes one retired platform type: a type this build no longer ships. The type stops resolving at once. Requires `instance.maintain`.
-         */
-        delete: operations["deleteRetiredPlatformType"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/export": {
         parameters: {
             query?: never;
@@ -2840,9 +2800,6 @@ export interface components {
          *           "latency_ms": 0
          *         }
          *       },
-         *       "platform_types": {
-         *         "retired": 0
-         *       },
          *       "unrecognized_stored_values": {
          *         "rows": 0,
          *         "scanned": true
@@ -2905,11 +2862,6 @@ export interface components {
                     /** @description What went wrong. Present only for a caller that holds `instance.read`. */
                     error?: string;
                 };
-            };
-            /** @description The platform types this build no longer ships. */
-            platform_types: {
-                /** @description How many platform types the instance holds that this build no longer ships. */
-                retired: number;
             };
             /** @description Stored values this build does not recognize. */
             unrecognized_stored_values: {
@@ -4689,7 +4641,7 @@ export interface components {
             };
         };
         /**
-         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, removes retired platform types and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob.
          * @enum {string}
          */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "keys.manage";
@@ -5765,41 +5717,6 @@ export interface components {
                 };
             };
         };
-        /** @description A page holding every retired type. */
-        RetiredPlatformTypePage: {
-            /** @description Every retired type. */
-            data: components["schemas"]["RetiredPlatformType"][];
-            /** @description Always `null`: Marfa returns every retired type in one page. */
-            next_cursor: string | null;
-        };
-        /** @description A platform type that this build no longer ships. */
-        RetiredPlatformType: {
-            /** @description The identifier of the retired type. */
-            id: string;
-            /** @description How many items carry this type, counted when you ask. */
-            item_count: number;
-            /** @description The types that name this one as their `parent`. */
-            child_types: string[];
-            /** @description `true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it or names it in `compatible_with`. */
-            removable: boolean;
-        };
-        /** @description An error response. */
-        NotFoundOrTypeNotFoundRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "not_found" | "type_not_found";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         /** @description The single owner of the instance. */
         Owner: {
             /** @description Unique identifier for the owner. */
@@ -6482,7 +6399,7 @@ export interface components {
              */
             event_type: "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed";
             item: components["schemas"]["Item"] & unknown;
-            /** @description The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`. */
+            /** @description The item's tags and extensions after the change, or before it on `item.purged`, with only the namespaces you can read. A webhook sends `null`. */
             metadata?: components["schemas"]["Metadata"] | null;
             /** @description On `item.restored` of an item another item's restore brought back: the ID of that item, if you can read its type. */
             restored_with?: string;
@@ -15805,7 +15722,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description `type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it. */
+            /** @description `type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16575,7 +16492,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it. */
+            /** @description `type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -31356,323 +31273,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    listRetiredPlatformTypes: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the retired types. A type you delete drops out of the list at once. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RetiredPlatformTypePage"];
-                };
-            };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description `forbidden`: you lack the required management permission. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    deleteRetiredPlatformType: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The identifier of the retired type to delete. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns `removed: true` and the type's `id`. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        removed: true;
-                        id: string;
-                    };
-                };
-            };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description `forbidden`: you lack the required management permission. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /**
-             * @description - `type_not_found`: no platform type has this identifier, including one you already deleted.
-             *     - `not_found`: another request deleted the type first.
-             */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NotFoundOrTypeNotFoundRefusal"];
-                };
-            };
-            /** @description `conflict`: the type isn't one this build stopped shipping, items still carry it, another type inherits from it (`details.child_types`), or another type declares compatibility with it (`details.dependent_type_ids`). */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */

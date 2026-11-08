@@ -14,6 +14,8 @@ use marfa_rules::{js, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+mod enrichment;
+
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
@@ -258,6 +260,8 @@ pub fn apply(
     job.run(change)
 }
 
+pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
+
 /// A change the server makes to an item it keeps for itself. No door that
 /// takes a caller's item may lead here.
 pub(crate) fn apply_server_own(
@@ -480,13 +484,33 @@ struct Settled {
 }
 
 pub(super) fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Item) -> Result<()> {
+    announce_held(
+        unit,
+        event_type,
+        item,
+        &metadata_text(unit.tx(), item, |_| true)?,
+    )
+}
+
+fn announce_held(
+    unit: &Unit<'_, '_>,
+    event_type: &'static str,
+    item: &Item,
+    metadata: &str,
+) -> Result<()> {
     unit.announce(&Event {
         event_type,
         item_id: &item.id,
         type_id: &item.type_id,
         source: &item.source,
-        payload: format!("{{\"item\":{}}}", item.logged()?),
+        payload: format!("{{\"item\":{},\"metadata\":{metadata}}}", item.logged()?),
     })
+}
+
+pub(super) fn purge(unit: &Unit<'_, '_>, item: &Item) -> Result<()> {
+    let metadata = metadata_text(unit.tx(), item, |_| true)?;
+    rows::purge(unit.tx(), item, &unit.at)?;
+    announce_held(unit, "item.purged", item, &metadata)
 }
 
 pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec<Item>> {
@@ -749,18 +773,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn announce_metadata(&self, item: &Item) -> Result<()> {
-        let tx = self.unit.tx();
-        self.unit.announce(&Event {
-            event_type: "metadata.changed",
-            item_id: &item.id,
-            type_id: &item.type_id,
-            source: &item.source,
-            payload: format!(
-                "{{\"item\":{},\"metadata\":{}}}",
-                item.logged()?,
-                metadata_text(tx, item, |_| true)?
-            ),
-        })
+        announce(self.unit, "metadata.changed", item)
     }
 
     /// Item doors fence `system.*` off from every key, so view doors ask write on `system.view`.
@@ -818,9 +831,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                     for (edge, source) in &purging.edges {
                         edges::purge_edge(self.unit, edge, source, &item.id)?;
                     }
-                    rows::purge(self.unit.tx(), item, &self.unit.at)?;
+                    purge(self.unit, item)?;
                     self.unit.audit("item", &item.id, None)?;
-                    self.announce("item.purged", item)?;
                 }
                 Ok(done_ok())
             }
@@ -1835,9 +1847,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 type_id: &item.type_id,
                 source: &item.source,
                 payload: format!(
-                    "{{\"item\":{},\"restored_with\":{},\
+                    "{{\"item\":{},\"metadata\":{},\"restored_with\":{},\
                      \"restored_with_type\":{}}}",
                     item.logged()?,
+                    metadata_text(self.unit.tx(), &item, |_| true)?,
                     Value::from(back.with),
                     Value::from(back.with_type)
                 ),
@@ -1953,9 +1966,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             for (edge, source) in &purging.edges {
                 edges::purge_edge(self.unit, edge, source, &item.id)?;
             }
-            rows::purge(self.unit.tx(), item, &self.unit.at)?;
+            purge(self.unit, item)?;
             self.unit.audit("item", &item.id, None)?;
-            self.announce("item.purged", item)?;
         }
         Ok(done_ok())
     }

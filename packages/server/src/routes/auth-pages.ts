@@ -55,6 +55,7 @@ import {
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { webOriginsOf } from "../auth/web-origins.js";
+import { limitFault } from "../control/faults.js";
 import { metadataDocumentHost } from "../auth/client-metadata-discovery.js";
 import {
   listActiveAppGrants,
@@ -261,7 +262,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
   });
   const deviceCodeOwnerInstance = new KeyedThrottle(storage, {
     family: "device-user-code-owner-instance",
-    limit: DEVICE_CODE_INSTANCE_LIMIT,
+    limit: () =>
+      limitFault("device-owner-instance") ?? DEVICE_CODE_INSTANCE_LIMIT,
     windowMs: DEVICE_CODE_WINDOW_MS,
   });
 

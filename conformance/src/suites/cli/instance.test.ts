@@ -1114,26 +1114,10 @@ describe("the instance from the terminal", () => {
   });
 
   it("reaches management operations with named permissions and refuses a content key", async () => {
-    const retired = await c.operator.json<{
-      data: Array<{ id: string; item_count: number; removable: boolean }>;
-    }>(["types", "retired"]);
-    // **What this asserts is that the door answers and who it answers to**,
-    // and nothing about how many rows it holds. A retired platform type is a
-    // row an older build seeded and this one no longer ships, computed once at
-    // boot: no door on a running server can make one, so a report read here
-    // is empty on every server this suite could be pointed at and an
-    // assertion that it is empty would pass against a handler that reports
-    // nothing. `compliance/retired-platform-types.test.ts` asserts the
-    // populated report, on a server whose stored file it arranges.
-    expect(Array.isArray(retired.data)).toBe(true);
-    const refused = await c.cli.refused(["types", "retired"]);
-    expect(refused.code).toBe(1);
-    expect(refused.envelope.error.server?.status).toBe(403);
-
     // The stores, the orphan report and the housekeeping table are the
-    // operator's too; a housekeeping job run by name answers what it did,
-    // and a name the server does not run is a refusal the envelope carries
-    // whole.
+    // operator's, and a content key is refused them; a housekeeping job run
+    // by name answers what it did, and a name the server does not run is a
+    // refusal the envelope carries whole.
     const stores = await c.operator.json<{
       data: { id: string; kind: string }[];
       min_copies: number;
