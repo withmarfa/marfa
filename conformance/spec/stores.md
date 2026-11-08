@@ -206,11 +206,27 @@ When the server writes a blob's bytes to an object store, the server MUST write 
 
 **Tests:** `compliance/blob-store-bounds.test.ts › writes each object-store copy of a blob to an object of its own`.
 
+### `stores/object-names-its-store`
+
+When the server writes a blob's bytes to an object store, the server MUST write the object with the object metadata `marfa-store` set to the store's id.
+
+**Reason:** an object then says which store wrote it, so an answer for it can show that it comes from the store that wrote the copy (`stores/object-answer-names-store`).
+
+**Tests:** `compliance/blob-store-bounds.test.ts › names the store in each object and takes no answer for an object that does not name it`.
+
+### `stores/object-answer-names-store`
+
+If an object store answers for a copy's object with an object whose `marfa-store` metadata does not hold that store's id, then the server MUST NOT count that answer as the store holding the copy.
+
+**Reason:** each object's name belongs to one write, so only the store that made that write holds an object at that name that names it. The same bytes put there by something else, or an answer from another bucket that this store never wrote that object to, are no evidence of the copy the store wrote.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › names the store in each object and takes no answer for an object that does not name it`.
+
 ### `stores/object-store-itself`
 
 While an attached object store does not answer with the `.marfa-store` marker of the store the server attached, the server MUST NOT change the copy record on that store's answers.
 
-**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone, and a copy stamped on its answer would claim a check that never reached the store. The server asks for the marker after the store's answer and before it changes the copy record, and counts a store that answers with another marker as one it cannot reach.
+**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone, and a copy stamped on its answer would claim a check that never reached the store. The server reads the marker after an answer it records a copy, confirms a drop or strikes a copy on, and also before a run of `blob-integrity` takes the store's first answer, and counts a store that answers with another marker as one it cannot reach.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 
@@ -378,7 +394,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`).
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`).
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
@@ -458,11 +474,11 @@ When a run of `blob-integrity` checks a disk copy whose bytes are as long as the
 
 ### `stores/integrity-asks-object-store`
 
-When a run of `blob-integrity` checks an object-store copy whose object is missing or not as long as the blob, the server MUST strike the copy.
+When a run of `blob-integrity` checks an object-store copy whose object is missing, is not as long as the blob or does not name the store in its `marfa-store` metadata, the server MUST strike the copy.
 
-**Reason:** the check asks the store for the object's size and fetches no bytes, so an object altered at the same length is not found.
+**Reason:** the check asks the store for the object's size and metadata and fetches no bytes, so an object altered at the same length that still names the store is not found.
 
-**Tests:** `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
+**Tests:** `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`, `› names the store in each object and takes no answer for an object that does not name it`.
 
 ### `stores/integrity-strikes`
 

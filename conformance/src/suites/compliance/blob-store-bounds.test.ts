@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -40,7 +41,8 @@ import { getManagementClient } from "../../utils/setup.js";
  *
  * The same servers show what each run does with a copy that is not the
  * blob's bytes: a replication that will not record one, and an integrity
- * check that asks the object store for name and size only.
+ * check that asks the object store for an object's size and the store it
+ * names, and reads no bytes.
  *
  * The integrity job's first run on its own clock comes a minute after boot,
  * and these tests finish well inside it.
@@ -469,7 +471,8 @@ describe("an integrity run over the object store's copies", () => {
       await whenCopied(operator, Object.values(hashes));
       await replicationIdle(operator);
 
-      // The object store's copies, changed where the server cannot see.
+      // The object store's copies, changed where the server cannot see, each
+      // still naming the store that wrote it.
       await objects.send(
         new DeleteObjectCommand({
           Bucket: process.env.S3_BUCKET!,
@@ -486,6 +489,7 @@ describe("an integrity run over the object store's copies", () => {
             Bucket: process.env.S3_BUCKET!,
             Key: await keyOf(hashes[name]),
             Body: bytes,
+            Metadata: { "marfa-store": s3.id },
           }),
         );
       }
@@ -561,6 +565,57 @@ describe("an object store's copies of one blob", () => {
       expect(second[0]).not.toBe(first[0]);
       const fetched = await operator.downloadBlob(hash);
       expect(fetched.status, JSON.stringify(fetched.error)).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("an object store's answer for an object it did not write", () => {
+  it(
+    "names the store in each object and takes no answer for an object that does not name it",
+    async () => {
+      const { operator, working } = await boot("blob-store-object-writer", {
+        MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+      });
+      const s3 = await objectStoreOf(operator);
+      const bucket = process.env.S3_BUCKET!;
+      const disk = (await operator.listBlobStores()).data.data.find(
+        (store) => store.kind === "disk",
+      )!;
+      const content = bytesOf("rewritten by hand with the same bytes", 100);
+      const upload = await working.uploadBlob(content, "text/plain");
+      expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+      const hash = upload.data.hash;
+      await whenCopied(operator, [hash]);
+      await replicationIdle(operator);
+      const [object] = await s3.keysOf(hash);
+      const head = await s3.objects.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: object }),
+      );
+      expect(head.Metadata).toMatchObject({ "marfa-store": s3.id });
+      const storesOf = async () =>
+        (await operator.listBlobCopies(hash)).data.data
+          .map((row) => row.store_id)
+          .sort();
+
+      // The same bytes at the same name, written by something else.
+      await s3.objects.send(
+        new PutObjectCommand({ Bucket: bucket, Key: object, Body: content }),
+      );
+      const refused = await operator.deleteBlobCopy(hash, disk.id);
+      expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+      expect(refused.error?.error.code).toBe("copies_below_minimum");
+      const checked = await runJob(operator, "blob-integrity");
+      expect(checked.result).toMatchObject({ struck: 1, unreachable: 0 });
+      expect(await storesOf()).toEqual([disk.id]);
+
+      // The witness: the copy the store writes again confirms the same drop.
+      const copied = await runJob(operator, "blob-replicate");
+      expect(copied.result).toMatchObject({ copied: 1, remaining: 0 });
+      expect(await storesOf()).toEqual([disk.id, s3.id].sort());
+      const dropped = await operator.deleteBlobCopy(hash, disk.id);
+      expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+      expect(await storesOf()).toEqual([s3.id]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
