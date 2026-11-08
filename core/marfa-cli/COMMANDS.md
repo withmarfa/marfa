@@ -1673,7 +1673,7 @@ marfa keys [OPTIONS] <COMMAND>
 
 ### marfa keys create
 
-Mint a key. Needs `keys.mint` or direct owner/local authority.
+Mint a key. Needs `keys.mint` or local authority.
 
 The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. With none named, the key takes the caller's whole set.
 
@@ -1701,7 +1701,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 
 ### marfa keys list
 
-List key metadata. Needs `keys.manage`, `keys.mint` (the keys within the caller's reach) or direct owner/local authority.
+List key metadata. Needs `keys.manage`, `keys.mint` (the keys within the caller's reach) or local authority.
 
 ```text
 marfa keys list [OPTIONS]
@@ -1717,7 +1717,7 @@ marfa keys current [OPTIONS]
 
 ### marfa keys update
 
-Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or direct owner/local authority.
+Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or local authority.
 
 ```text
 marfa keys update [OPTIONS] <ID>
@@ -1752,7 +1752,7 @@ marfa keys update [OPTIONS] <ID>
 
 ### marfa keys revoke
 
-Revoke a key; the next request bearing it is refused. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or direct owner/local authority.
+Revoke a key; the next request bearing it is refused. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or local authority.
 
 ```text
 marfa keys revoke [OPTIONS] <ID>
@@ -1914,7 +1914,7 @@ marfa export [OPTIONS]
 
 ## restore
 
-Restore an archive with direct owner or local authority.
+Restore an archive with local authority.
 
 ### marfa restore
 
@@ -2242,7 +2242,7 @@ marfa connectors register [OPTIONS] --name <NAME>
 
 ### marfa connectors list
 
-Registered connectors, newest first: every one with `connectors.manage` or direct owner/local authority, otherwise the key's own.
+Registered connectors, newest first: every one with `connectors.manage` or local authority, otherwise the key's own.
 
 ```text
 marfa connectors list [OPTIONS]

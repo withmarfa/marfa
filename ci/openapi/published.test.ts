@@ -423,7 +423,8 @@ describe("the committed OpenAPI document", () => {
 
   it("declares a credential on every operation but the public ones", () => {
     // A door with no `security` is reachable without a credential, so each is
-    // named here with why.
+    // named here with why. A door only the private socket answers is marked
+    // instead, since no security scheme describes the socket.
     const PUBLIC = new Set([
       "GET /",
       "GET /health",
@@ -431,12 +432,34 @@ describe("the committed OpenAPI document", () => {
       "POST /auth/oauth2/register",
     ]);
     const open = [...published]
-      .filter(([, operation]) => operation.security === undefined)
+      .filter(
+        ([, operation]) =>
+          operation.security === undefined &&
+          operation["x-marfa-local-command"] !== true,
+      )
       .map(([key]) => key)
       .sort();
     expect(open).toEqual([...PUBLIC].sort());
 
-    // The witness: the check reads declarations that exist.
+    // The witnesses: the check reads declarations and marks that exist.
     expect(published.get("GET /items")?.security).toEqual([{ bearerAuth: [] }]);
+    expect(published.get("GET /owner")?.security).toBeUndefined();
+    expect(published.get("GET /owner")?.["x-marfa-local-command"]).toBe(true);
+  });
+
+  it("names no security scheme the server does not accept", () => {
+    const schemes = Object.keys(
+      (document.components as { securitySchemes: Record<string, unknown> })
+        .securitySchemes,
+    ).sort();
+    expect(schemes).toEqual(["bearerAuth", "ownerSession"]);
+    const named = new Set(
+      [...published.values()].flatMap((operation) =>
+        (
+          (operation.security as Record<string, unknown>[] | undefined) ?? []
+        ).flatMap((requirement) => Object.keys(requirement)),
+      ),
+    );
+    expect([...named].sort()).toEqual(schemes);
   });
 });

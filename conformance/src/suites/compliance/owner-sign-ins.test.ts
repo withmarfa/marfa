@@ -567,8 +567,6 @@ describe("every sign-in", () => {
     const id = minted.body.id as string;
     // The witness: the key is listed while it lives.
     expect((await signIns()).map((row) => row.id)).toContain(id);
-    // Short of the five minutes after which the browser's sign-in is no longer
-    // recent enough to end one.
     await pass(2 * MINUTE);
     expect((await signIns()).map((row) => row.id)).not.toContain(id);
     const ended = await end(id);

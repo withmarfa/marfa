@@ -367,7 +367,7 @@ export interface paths {
         put?: never;
         /**
          * Trash an item by summary
-         * @description Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.
+         * @description Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.
          */
         post: operations["trashItemSummary"];
         delete?: never;
@@ -387,7 +387,7 @@ export interface paths {
         put?: never;
         /**
          * Restore an item by summary
-         * @description Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.
+         * @description Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.
          */
         post: operations["restoreItemSummary"];
         delete?: never;
@@ -407,7 +407,7 @@ export interface paths {
         put?: never;
         /**
          * Purge an item by summary
-         * @description Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.
+         * @description Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary. Only the private local command can call this operation.
          */
         post: operations["purgeItemSummary"];
         delete?: never;
@@ -427,7 +427,7 @@ export interface paths {
         put?: never;
         /**
          * Empty the trash
-         * @description Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.
+         * @description Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Only the private local command can call this operation.
          */
         post: operations["emptyTrash"];
         delete?: never;
@@ -1757,7 +1757,7 @@ export interface paths {
         };
         /**
          * List app grants
-         * @description Returns every active app grant in one page. Requires `grants.manage` or direct authority.
+         * @description Returns every active app grant in one page. Requires `grants.manage`.
          */
         get: operations["listAppGrants"];
         put?: never;
@@ -1780,7 +1780,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke an app grant
-         * @description Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage` or local authority.
+         * @description Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage`.
          */
         delete: operations["revokeAppGrant"];
         options?: never;
@@ -5381,10 +5381,10 @@ export interface components {
             /** @description The sign-in that owns these reports. */
             sign_in: {
                 /**
-                 * @description browser: owner browser session; app: signed-in app grant; key: API key.
+                 * @description app: signed-in app grant; key: API key.
                  * @enum {string}
                  */
-                kind: "browser" | "app" | "key";
+                kind: "app" | "key";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
                  * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
@@ -6056,7 +6056,7 @@ export interface components {
                 };
             };
         };
-        /** @description An OAuth client: its app metadata and the grants it uses. */
+        /** @description An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer. */
         OAuthClientRegistration: {
             /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
@@ -6093,7 +6093,7 @@ export interface components {
              * @enum {string}
              */
             application_type?: "web" | "native";
-            /** @description Resource identifiers to register the client for. Leave it out for the instance's default resources. */
+            /** @description Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`. */
             resources?: string[];
         };
         /** @description An error response. */
@@ -26958,8 +26958,6 @@ export interface operations {
                          * @enum {string}
                          */
                         application_type?: "web" | "native";
-                        /** @description Final resource identifiers linked to the registered client */
-                        resources?: string[];
                         /** @description Unique identifier for the client. */
                         client_id: string;
                         /** @description The ID of the user who registered the client. Absent for anonymous registration. */

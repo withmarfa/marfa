@@ -112,6 +112,15 @@ async function seedEdge(): Promise<{ id: string; version: number }> {
   return { id: r.data.edge.id, version: r.data.edge.version };
 }
 
+/** A credential, or the private local command, which no security scheme describes. */
+function takesAuthority(operation: object): boolean {
+  const { security } = operation as { security?: unknown[] };
+  return (
+    (security !== undefined && security.length > 0) ||
+    (operation as Record<string, unknown>)["x-marfa-local-command"] === true
+  );
+}
+
 const MALFORMED = "not-an-id";
 const UNKNOWN = uuidv7();
 
@@ -1176,12 +1185,8 @@ describe("the write contention a door can meet", () => {
         if (!["get", "post", "put", "patch", "delete"].includes(method)) {
           continue;
         }
-        const takes = (operation as { security?: unknown[] }).security;
         const door = `${method.toUpperCase()} ${path}`;
-        if (
-          (takes === undefined || takes.length === 0) &&
-          path !== "/auth/oauth2/register"
-        ) {
+        if (!takesAuthority(operation) && path !== "/auth/oauth2/register") {
           continue;
         }
         takingACredential.push(door);
@@ -1225,8 +1230,7 @@ describe("the full volume a door can meet", () => {
         if (!["get", "post", "put", "patch", "delete"].includes(method)) {
           continue;
         }
-        const takes = (operation as { security?: unknown[] }).security;
-        if (takes === undefined || takes.length === 0) continue;
+        if (!takesAuthority(operation)) continue;
         const door = `${method.toUpperCase()} ${path}`;
         takingACredential.push(door);
         const declared = operation.responses?.["507"];

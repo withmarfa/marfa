@@ -256,7 +256,7 @@ enum Command {
     /// stays in a hidden partial file beside the path, and the message names
     /// it. Without `--output`, the archive goes to standard output.
     Export(export::ExportArgs),
-    /// Restore an archive with direct owner or local authority.
+    /// Restore an archive with local authority.
     ///
     /// Preserves item and edge IDs, created_at and updated_at dates, current
     /// versions, tags, extensions, and the item's earlier versions carried in

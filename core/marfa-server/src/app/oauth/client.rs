@@ -144,6 +144,7 @@ pub enum ErrorCode {
     InvalidClientMetadata,
     InvalidRedirectUri,
     InvalidScope,
+    InvalidTarget,
     InvalidToken,
 }
 
@@ -153,6 +154,7 @@ impl ErrorCode {
             ErrorCode::InvalidClientMetadata => "invalid_client_metadata",
             ErrorCode::InvalidRedirectUri => "invalid_redirect_uri",
             ErrorCode::InvalidScope => "invalid_scope",
+            ErrorCode::InvalidTarget => "invalid_target",
             ErrorCode::InvalidToken => "invalid_token",
         }
     }
@@ -410,14 +412,34 @@ fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
     Ok(Some(uri.to_string()))
 }
 
-/// Backchannel logout fields are never read, so they are neither stored nor answered; nor is
-/// anything else not named here.
+/// A token's audience comes from its own request, so `resources` is checked for form (RFC 8707
+/// section 2) and never kept.
+fn check_resources(object: &Map<String, Value>) -> Reading<()> {
+    for resource in texts(object, "resources")?.unwrap_or_default() {
+        let absolute = redirect::is_plain(resource)
+            && Url::parse(resource).is_ok_and(|url| url.fragment().is_none());
+        if !absolute {
+            return Err(RegistrationError {
+                error: ErrorCode::InvalidTarget,
+                description: "Each resource must be an absolute URI without a fragment."
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Metadata not named here is ignored (RFC 7591 section 2), so it is neither stored nor
+/// answered.
 pub(super) fn read(
     object: &Map<String, Value>,
     source: Source,
     allowed: &ScopeSet,
 ) -> Reading<Registration> {
     let token_endpoint_auth_method = auth_method(object)?;
+    if source == Source::Registration {
+        check_resources(object)?;
+    }
     let grants = grant_types(object, source)?;
     let response_types = response_types(object, source, &grants)?;
     let uris = redirect_uris(object)?;
@@ -550,6 +572,44 @@ mod tests {
             assert_eq!(error.error, ErrorCode::InvalidClientMetadata, "{method}");
             assert!(error.description.contains(named), "{method}");
         }
+    }
+
+    #[test]
+    fn unsupported_metadata_registers_and_is_not_answered() {
+        let mut body = device();
+        for (name, value) in [
+            ("dpop_bound_access_tokens", json!(true)),
+            ("subject_type", json!("pairwise")),
+            ("software_statement", json!("a.b.c")),
+            ("resources", json!(["https://resource.example/"])),
+        ] {
+            body = with(body, name, value);
+        }
+        let answer = register(body).expect("registered").to_json();
+        for name in [
+            "dpop_bound_access_tokens",
+            "subject_type",
+            "software_statement",
+            "resources",
+        ] {
+            assert!(!answer.contains_key(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_resource_is_an_absolute_uri_without_a_fragment() {
+        for resource in [
+            "not-a-uri",
+            "/relative",
+            "https://a.example/#part",
+            " https://a.example/",
+            "",
+        ] {
+            let error = refused(with(device(), "resources", json!([resource])));
+            assert_eq!(error.error, ErrorCode::InvalidTarget, "{resource:?}");
+        }
+        let error = refused(with(device(), "resources", json!("https://a.example/")));
+        assert_eq!(error.error, ErrorCode::InvalidClientMetadata);
     }
 
     #[test]

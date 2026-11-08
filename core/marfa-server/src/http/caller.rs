@@ -129,8 +129,7 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     Ok(caller)
 }
 
-/// For a page door a form posts to, which judges the form's origin itself. A request presenting
-/// a credential is not a browser's, whatever cookie it also carries.
+/// The form's door checks its origin; a presented credential takes precedence over the cookie.
 pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     if !matches!(presented(&parts.headers), Presented::Nothing) {
         return Ok(None);
@@ -139,8 +138,7 @@ pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Calle
     owner_by_cookie(parts, app, context, Origin::LeftToTheDoor).await
 }
 
-/// The caller of a sign-in page's own route, the one place the owner's session cookie counts:
-/// read as any door reads a request, and as the owner's session where it presents nothing else.
+/// Only sign-in page routes may accept the owner's session cookie.
 pub struct OnPage(pub Option<Caller>);
 
 impl FromRequestParts<Arc<App>> for OnPage {

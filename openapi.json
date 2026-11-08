@@ -3,7 +3,7 @@
   "info": {
     "title": "Marfa API",
     "version": "0",
-    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /auth/oauth2/register` takes JSON too, but answers a request that isn't JSON with its own error, not this one.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /auth/oauth2/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response outside `/auth/` and `/.well-known/`, and every response to `POST /auth/oauth2/register`, also carries `X-Request-ID`, which identifies the request if you report a problem."
+    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Local command\n\nAn operation marked `x-marfa-local-command` also answers the private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential, and no security scheme here describes it. The `marfa` command line reaches it with `--socket`. A marked operation with no `security` answers only there.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /auth/oauth2/register` takes JSON too, but answers a request that isn't JSON with its own error, not this one.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /auth/oauth2/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response outside `/auth/` and `/.well-known/`, and every response to `POST /auth/oauth2/register`, also carries `X-Request-ID`, which identifies the request if you report a problem."
   },
   "components": {
     "securitySchemes": {
@@ -18,10 +18,6 @@
         "scheme": "bearer",
         "bearerFormat": "API Key or OAuth Token",
         "description": "Authenticate with an API key (`marfa_k1_…`) or an OAuth access token (`marfa_at_…`)."
-      },
-      "localCommand": {
-        "type": "mutualTLS",
-        "description": "The private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential. The `marfa` command line reaches it with `--socket`."
       }
     },
     "schemas": {
@@ -7924,11 +7920,10 @@
               "kind": {
                 "type": "string",
                 "enum": [
-                  "browser",
                   "app",
                   "key"
                 ],
-                "description": "browser: owner browser session; app: signed-in app grant; key: API key."
+                "description": "app: signed-in app grant; key: API key."
               },
               "id": {
                 "type": "string",
@@ -9610,10 +9605,10 @@
             "items": {
               "type": "string"
             },
-            "description": "Resource identifiers to register the client for. Leave it out for the instance's default resources."
+            "description": "Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`."
           }
         },
-        "description": "An OAuth client: its app metadata and the grants it uses."
+        "description": "An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer."
       },
       "StreamCapacityExhaustedOrWriteContentionRefusal": {
         "type": "object",
@@ -17278,9 +17273,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -17687,11 +17679,6 @@
         ],
         "summary": "List item summaries",
         "description": "Returns item names, types, versions, sources and creation times, newest first. Only the private local command can use this operation. Trashed and system items are excluded.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "parameters": [
           {
             "schema": {
@@ -17992,7 +17979,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/occurrences": {
@@ -18670,11 +18658,6 @@
         ],
         "summary": "List the trash",
         "description": "Returns a page of trash summaries, newest creation first, without item content. Only the private local command can use this operation.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "parameters": [
           {
             "schema": {
@@ -18962,7 +18945,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/summaries/{id}/trash": {
@@ -18972,12 +18956,7 @@
           "Trash"
         ],
         "summary": "Trash an item by summary",
-        "description": "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
+        "description": "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.",
         "parameters": [
           {
             "schema": {
@@ -19341,7 +19320,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/summaries/{id}/restore": {
@@ -19351,12 +19331,7 @@
           "Trash"
         ],
         "summary": "Restore an item by summary",
-        "description": "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
+        "description": "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.",
         "parameters": [
           {
             "schema": {
@@ -19720,7 +19695,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/summaries/{id}/purge": {
@@ -19730,12 +19706,7 @@
           "Trash"
         ],
         "summary": "Purge an item by summary",
-        "description": "Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
+        "description": "Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary. Only the private local command can call this operation.",
         "parameters": [
           {
             "schema": {
@@ -20099,7 +20070,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/trash/empty": {
@@ -20109,12 +20081,7 @@
           "Trash"
         ],
         "summary": "Empty the trash",
-        "description": "Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
+        "description": "Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Only the private local command can call this operation.",
         "parameters": [
           {
             "schema": {
@@ -20490,7 +20457,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/bulk-actions": {
@@ -21446,7 +21414,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/bulk-actions/jobs/{id}/cancel": {
@@ -21806,7 +21775,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/items/{id}/metadata": {
@@ -30356,9 +30326,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -30756,7 +30723,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/types/{id}/move": {
@@ -31530,9 +31498,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -31889,7 +31854,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "clearTypeIcon",
@@ -31901,9 +31867,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -32250,7 +32213,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/edge-types": {
@@ -33657,7 +33621,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/blobs/{hash}": {
@@ -34075,7 +34040,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs/{hash}/url": {
@@ -34400,7 +34366,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs/{hash}/copies": {
@@ -34699,7 +34666,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs/{hash}/copies/{store}": {
@@ -35055,7 +35023,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs/stores": {
@@ -35312,7 +35281,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs/orphans": {
@@ -35569,7 +35539,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/events": {
@@ -36547,7 +36518,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/webhooks/{id}": {
@@ -36846,7 +36818,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateWebhook",
@@ -37932,7 +37905,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/webhooks/{id}/deliveries/{delivery_id}/redeliver": {
@@ -38309,7 +38283,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/folders": {
@@ -38320,11 +38295,6 @@
         ],
         "summary": "List folders",
         "description": "Returns active folder summaries, newest first, for the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "parameters": [
           {
             "schema": {
@@ -38591,7 +38561,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "post": {
         "operationId": "createFolder",
@@ -43012,7 +42983,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}": {
@@ -43281,7 +43253,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "deleteConnector",
@@ -43639,7 +43612,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}/heartbeat": {
@@ -44702,7 +44676,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}/hold": {
@@ -46566,7 +46541,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}/agreements": {
@@ -48141,7 +48117,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "get": {
         "operationId": "listInboundEndpoints",
@@ -48438,7 +48415,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}/endpoints/{endpoint_id}": {
@@ -48808,7 +48786,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/connectors/{id}/deliveries": {
@@ -49887,9 +49866,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "responses": {
@@ -50103,7 +50079,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/source": {
@@ -50117,9 +50094,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -50376,7 +50350,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateSource",
@@ -50388,9 +50363,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -50739,7 +50711,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/keys": {
@@ -50753,9 +50726,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "requestBody": {
@@ -51176,7 +51146,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "get": {
         "operationId": "listKeys",
@@ -51188,9 +51159,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "responses": {
@@ -51434,7 +51402,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/keys/current": {
@@ -51755,9 +51724,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -52104,7 +52070,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateKey",
@@ -52116,9 +52083,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -52574,7 +52538,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/auth/oauth2/register": {
@@ -52681,14 +52646,6 @@
                         "web",
                         "native"
                       ]
-                    },
-                    "resources": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "Final resource identifiers linked to the registered client"
                     },
                     "client_id": {
                       "type": "string",
@@ -52970,13 +52927,10 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "summary": "List app grants",
-        "description": "Returns every active app grant in one page. Requires `grants.manage` or direct authority.",
+        "description": "Returns every active app grant in one page. Requires `grants.manage`.",
         "responses": {
           "200": {
             "description": "Returns every active app grant.",
@@ -53226,11 +53180,6 @@
         "operationId": "narrowAppGrant",
         "tags": [
           "Apps"
-        ],
-        "security": [
-          {
-            "localCommand": []
-          }
         ],
         "summary": "Narrow an app grant",
         "description": "Narrows standing access. Requires the private local command. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.",
@@ -53602,7 +53551,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "revokeAppGrant",
@@ -53612,13 +53562,10 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "summary": "Revoke an app grant",
-        "description": "Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage` or local authority.",
+        "description": "Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage`.",
         "parameters": [
           {
             "schema": {
@@ -53926,11 +53873,6 @@
           "Owner"
         ],
         "summary": "Get the owner",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Returns the owner of the claimed instance. Requires the private local command.",
         "responses": {
           "200": {
@@ -54203,7 +54145,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateOwner",
@@ -54211,11 +54154,6 @@
           "Owner"
         ],
         "summary": "Update the owner",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Updates the owner's email or name, or removes the picture. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
         "requestBody": {
           "required": true,
@@ -54580,7 +54518,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "post": {
         "operationId": "createOwner",
@@ -55472,11 +55411,6 @@
           "Owner"
         ],
         "summary": "Replace the owner's picture",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Stores the request body as the owner's picture and returns the owner. Requires the private local command.",
         "requestBody": {
           "required": true,
@@ -55824,7 +55758,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "get": {
         "operationId": "getOwnerPicture",
@@ -55835,9 +55770,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "description": "Returns the owner's picture as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.",
@@ -56157,7 +56089,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/profile/picture": {
@@ -56529,11 +56462,6 @@
           "Sign-ins and passkeys"
         ],
         "summary": "List sign-ins",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Returns every browser, app and key that can reach Marfa. Requires the private local command.",
         "responses": {
           "200": {
@@ -56776,7 +56704,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/owner/sign-ins/{id}": {
@@ -56786,11 +56715,6 @@
           "Sign-ins and passkeys"
         ],
         "summary": "Rename a sign-in",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the private local command.",
         "parameters": [
           {
@@ -57159,7 +57083,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "endSignIn",
@@ -57167,11 +57092,6 @@
           "Sign-ins and passkeys"
         ],
         "summary": "End a sign-in",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "description": "Ends a sign-in at once: it can't refresh or make another request. Ending an app also revokes every key it minted and every key those keys minted. Needs the private local command.",
         "parameters": [
           {
@@ -57517,7 +57437,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/owner/passkeys": {
@@ -57530,9 +57451,6 @@
         "security": [
           {
             "ownerSession": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "description": "Returns every registered owner passkey, oldest first. Requires the owner's browser session or private local authority.",
@@ -57777,7 +57695,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/owner/passkeys/{id}": {
@@ -57790,9 +57709,6 @@
         "security": [
           {
             "ownerSession": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "description": "Renames the passkey and returns its public details. Requires the owner's browser session authenticated within five minutes or private local authority.",
@@ -58162,7 +58078,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "deleteOwnerPasskey",
@@ -58173,9 +58090,6 @@
         "security": [
           {
             "ownerSession": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "description": "Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
@@ -58523,7 +58437,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/": {
@@ -59534,7 +59449,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateConfig",
@@ -60141,11 +60057,6 @@
         ],
         "summary": "List attention items",
         "description": "Returns current concerns for the private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Returns concerns and any checks whose state is unknown.",
@@ -60387,7 +60298,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/metrics": {
@@ -61485,7 +61397,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/housekeeping/{name}/run": {
@@ -61853,7 +61766,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/export": {
@@ -61867,9 +61781,6 @@
         "security": [
           {
             "bearerAuth": []
-          },
-          {
-            "localCommand": []
           }
         ],
         "parameters": [
@@ -62240,11 +62151,6 @@
         ],
         "summary": "Restore from an archive",
         "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.",
-        "security": [
-          {
-            "localCommand": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it.",
@@ -62699,7 +62605,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     }
   },
