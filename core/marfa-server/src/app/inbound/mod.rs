@@ -102,7 +102,7 @@ pub async fn create_endpoint(
         if !standing {
             return Err(Refusal::new(
                 Code::Conflict,
-                "The registration's key is revoked or has expired.",
+                "The registration's key is revoked or has expired, or a newer registration holds its source.",
             )
             .with_detail("key_id", registration.key_id.as_str()));
         }

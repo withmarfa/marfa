@@ -134,8 +134,7 @@ fn charge(sent: &Sent) -> i64 {
         .saturating_add(headers)
 }
 
-/// Rechecks authority and capacity in the receipt's transaction. The reservation lives in the
-/// write with the body, so a cancelled request gives back no bytes its body still holds.
+/// Rechecks authority and capacity in the write, which holds the body's reservation until it ends.
 pub async fn receive(
     app: &App,
     place: Place,
