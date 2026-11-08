@@ -10364,7 +10364,7 @@
                 "type": "null"
               }
             ],
-            "description": "The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`."
+            "description": "The item's tags and extensions after the change, or before it on `item.purged`, with only the namespaces you can read. A webhook sends `null`."
           },
           "restored_with": {
             "type": "string",
