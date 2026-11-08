@@ -22,7 +22,6 @@ import {
   readRequestLog,
   reportStatuses,
   SIGN_IN_ROUTE_STATUSES,
-  UNPUBLISHED_ROUTES,
   unreachedDebt,
 } from "./status-declarations.js";
 import { FRESH_SERVER_LOGS } from "./fresh-server.js";
@@ -273,7 +272,6 @@ describe("the status checker", () => {
       "GET /openapi.json",
       "GET /unlisted",
     ]);
-    expect(report.unexplained).toEqual(["GET /unlisted"]);
   });
 
   it("counts a published owner refusal reached through local authority", () => {
@@ -335,7 +333,7 @@ describe("the status checker", () => {
     ]);
   });
 
-  it("does not exempt an unexplained local route outside the private control namespace", () => {
+  it("does not exempt a local route outside the private control namespace", () => {
     const report = reportStatuses(
       parseRequestLines(
         logLine({
@@ -348,7 +346,8 @@ describe("the status checker", () => {
       ),
       documentDeclaring([200]),
     );
-    expect(report.unexplained).toEqual(["GET /unlisted"]);
+    expect(report.local.size).toBe(0);
+    expect([...report.unpublished.keys()]).toEqual(["GET /unlisted"]);
   });
 
   it("separates real startup socket log shapes from public HTTP operations", () => {
@@ -408,7 +407,6 @@ describe("the status checker", () => {
       "GET /items/{id}",
     ]);
     expect(report.unpublished.size).toBe(0);
-    expect(report.unexplained).toEqual([]);
     expect(report.lines).toBe(5);
   });
 
@@ -426,7 +424,7 @@ describe("the status checker", () => {
       documentDeclaring([200]),
     );
     expect(report.local.size).toBe(0);
-    expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
+    expect(report.exposedControl).toEqual(["POST /_control/setup/claim"]);
   });
 
   it.each([undefined, "unrecognized"])(
@@ -467,7 +465,8 @@ describe("the status checker", () => {
       documentDeclaring([200]),
     );
     expect(report.local.size).toBe(0);
-    expect(report.unexplained).toEqual(["GET /unlisted"]);
+    expect([...report.unpublished.keys()]).toEqual(["GET /unlisted"]);
+    expect(report.exposedControl).toEqual([]);
     expect(report.undeclared).toMatchObject([
       { operation: "GET /items/{id}", status: 404 },
     ]);
@@ -799,12 +798,6 @@ describe("the status checker", () => {
         });
         child.on("close", (status) => done({ status, stderr }));
       });
-    const UNLISTED_ROUTE = logLine({
-      method: "GET",
-      path: "/unlisted",
-      route: "/unlisted",
-      status: 200,
-    });
     try {
       const clean = await run(stateWith([OBSERVED_200, OBSERVED_403]));
       expect(clean.stderr).toBe("");
@@ -856,10 +849,6 @@ describe("the status checker", () => {
       expect(inFresh.status).toBe(1);
 
       statuses = [200, 401, 403];
-      const unlisted = await run(stateWith([OBSERVED_200, UNLISTED_ROUTE]));
-      expect(unlisted.stderr).toContain("GET /unlisted");
-      expect(unlisted.status).toBe(1);
-
       const undrawn = await run(stateWith([OBSERVED_200]), "--complete");
       expect(undrawn.stderr).toContain("GET /items/{id} 403");
       expect(undrawn.status).toBe(1);
@@ -904,7 +893,6 @@ describe("the sign-in routes", () => {
       documentDeclaring([200]),
     );
     expect(report.undeclared.map(({ status }) => status)).toEqual([418]);
-    expect(report.unexplained).toEqual([]);
     expect([...report.unpublished.get("GET /auth/oauth2/authorize")!]).toEqual([
       200, 302, 400, 418,
     ]);
@@ -923,7 +911,6 @@ describe("the sign-in routes", () => {
         declared: [...SIGN_IN_ROUTE_STATUSES["POST /auth/oauth2/token"]!],
       },
     ]);
-    expect(caught.unexplained).toEqual([]);
 
     // The witness: a declared status passes, and so do the limiter's and the
     // write lock's, which no route answers on its own account.
@@ -959,7 +946,6 @@ describe("the sign-in routes", () => {
       documentDeclaring([200]),
     );
     expect([...report.unpublished.keys()]).toEqual(["POST /auth/oauth2/token"]);
-    expect(report.unexplained).toEqual([]);
     expect(report.undeclared.map((u) => u.operation)).toEqual([
       "POST /auth/oauth2/token",
     ]);
@@ -992,7 +978,7 @@ describe("the sign-in routes", () => {
       ),
       documentDeclaring([200]),
     );
-    expect(report.unexplained).toEqual([
+    expect([...report.unpublished.keys()].sort()).toEqual([
       "POST /auth/bare",
       "POST /auth/not-a-route",
     ]);
@@ -1028,7 +1014,6 @@ describe("the sign-in routes", () => {
       parseRequestLines(JSON.stringify({ ...line, status })),
       documentDeclaring([200]),
     );
-    expect(report.unexplained).toEqual([]);
     expect(report.undeclared).toEqual([]);
     const invalid = reportStatuses(
       parseRequestLines(JSON.stringify({ ...line, status: 418 })),
@@ -1051,7 +1036,6 @@ describe("the sign-in routes", () => {
       parseRequestLines(JSON.stringify({ ...line, path, status })),
       documentDeclaring([200]),
     );
-    expect(report.unexplained).toEqual([]);
     expect(report.undeclared).toEqual([]);
     // Witness: a status the template does not declare is reported under the template.
     const invalid = reportStatuses(
@@ -1061,25 +1045,13 @@ describe("the sign-in routes", () => {
     expect(invalid.undeclared.map((entry) => entry.operation)).toEqual([
       template,
     ]);
-    // A path with no template stays named by its path and is unexplained.
+    // A path with no template stays named by its path.
     const other = reportStatuses(
       parseRequestLines(
         JSON.stringify({ ...line, path: "/auth/owner/other/1", status }),
       ),
       documentDeclaring([200]),
     );
-    expect(other.unexplained).toEqual(["GET /auth/owner/other/1"]);
-  });
-
-  it("are each named with why, and every unpublished sign-in route declares its statuses", () => {
-    for (const route of Object.keys(SIGN_IN_ROUTE_STATUSES)) {
-      expect(UNPUBLISHED_ROUTES[route], route).toBeDefined();
-    }
-    const signInRoutes = Object.keys(UNPUBLISHED_ROUTES).filter((route) =>
-      / \/(?:auth|\.well-known)\//.test(route),
-    );
-    for (const route of signInRoutes) {
-      expect(SIGN_IN_ROUTE_STATUSES[route], route).toBeDefined();
-    }
+    expect([...other.unpublished.keys()]).toEqual(["GET /auth/owner/other/1"]);
   });
 });

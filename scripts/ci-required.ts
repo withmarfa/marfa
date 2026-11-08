@@ -84,7 +84,6 @@ export const JOBS = [
   // The shipped image, built and booted through its entrypoint.
   "image",
   "types-freshness",
-  "openapi-freshness",
   "version-fields",
   "clients-freshness",
   // `core-live.yml`, on macOS, which `ci.yml` calls for a pull request. It
@@ -159,7 +158,6 @@ const SERVER: readonly Job[] = [
   "cli-scenarios",
   "restore-drill",
   "image",
-  "openapi-freshness",
 ];
 
 /**
@@ -232,7 +230,6 @@ const WORKSPACE: readonly Job[] = [
   "restore-drill",
   "image",
   "types-freshness",
-  "openapi-freshness",
   "version-fields",
   "clients-freshness",
 ];
@@ -673,8 +670,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // lints and tests the rest of the core's Rust, but not the live tests.
   [/^core\//, RUST_LINUX],
 
-  // The server's tests, the clients, the core's tests and the offline lane
-  // all read the committed document.
+  // The document's own tests (`ci/openapi/`), the Rust server's route test,
+  // the server's contract fixtures, the clients and the offline lane all
+  // read the committed document.
   [
     /^openapi\.json$/,
     [
@@ -682,7 +680,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-checks-linux",
       ...CONTRACT,
       "cli-scenarios",
-      "openapi-freshness",
       "clients-freshness",
     ],
   ],

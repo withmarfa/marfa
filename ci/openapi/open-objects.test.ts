@@ -5,17 +5,14 @@
  * An open object is a position whose `additionalProperties` takes any value.
  * A generated client types it as a bag of unknowns, so a position with a real
  * shape published this way leaves every client to guess what the server
- * answers. Each one is either given its shape at the route or named below with
+ * answers. Each one is either given its shape in the document or named below with
  * the reason it stays open, and a new one fails here until it is one or the
  * other.
- *
- * Read from the committed file, which `openapi-committed-spec.test.ts` holds
- * to what the routes produce.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const COMMITTED = new URL("../../../openapi.json", import.meta.url);
+const COMMITTED = new URL("../../openapi.json", import.meta.url);
 
 /**
  * Each entry matches positions by a pattern over the path `openPositions`

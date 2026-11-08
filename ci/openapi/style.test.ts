@@ -1,5 +1,5 @@
 /**
- * The API description follows `packages/server/API-STYLE.md`.
+ * The API description follows `API-STYLE.md`.
  *
  * Every rule the guide marks **(checked)** is asserted here outright, against
  * the committed `openapi.json`. A failure lists each operation, parameter,
@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const COMMITTED = new URL("../../../openapi.json", import.meta.url);
+const COMMITTED = new URL("../../openapi.json", import.meta.url);
 
 type Json = Record<string, unknown>;
 

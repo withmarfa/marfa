@@ -175,10 +175,10 @@ if (report.undeclaredCodes.length > 0) {
   process.exitCode = 1;
 }
 
-if (report.unexplained.length > 0) {
+if (report.exposedControl.length > 0) {
   console.error(
-    "\nServed routes the document does not publish, with no reason in UNPUBLISHED_ROUTES:\n" +
-      report.unexplained.join("\n"),
+    "\nControl routes the public listener answered:\n" +
+      report.exposedControl.join("\n"),
   );
   process.exitCode = 1;
 }
