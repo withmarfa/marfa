@@ -127,6 +127,18 @@ impl Instance {
         send(&self.public, request(method, path, Some(token), Some(body))).await
     }
 
+    async fn keyed(&self, token: &str, key: &str, body: Value) -> Reply {
+        let mut sent = request(
+            Method::POST,
+            "/items",
+            Some(token),
+            Some(Body::from(body.to_string())),
+        );
+        sent.headers_mut()
+            .insert("idempotency-key", key.parse().unwrap());
+        send(&self.public, sent).await
+    }
+
     async fn upload(&self, token: &str, bytes: &[u8]) -> String {
         let sent = Request::builder()
             .method(Method::POST)
@@ -794,4 +806,23 @@ async fn a_reference_takes_its_blob_off_the_orphan_report() {
     assert_eq!(marfa.count("SELECT count(*) FROM blob_orphans"), 1);
     marfa.note(&owner, &hash).await;
     assert_eq!(marfa.count("SELECT count(*) FROM blob_orphans"), 0);
+}
+
+#[tokio::test]
+async fn a_file_refused_for_its_bytes_keeps_no_answer_under_its_idempotency_key() {
+    let marfa = Instance::start().await;
+    let uploader = marfa.token("up", json!({ "core.file": "write" })).await;
+    let writer = marfa.token("files", json!({ "core.file": "write" })).await;
+    let hash = marfa
+        .upload(&uploader, b"bytes the writer sends later")
+        .await;
+
+    let refused = marfa.keyed(&writer, "once", file(&hash)).await;
+    assert_eq!(refused.code(), "blob_not_found", "{}", refused.text);
+    marfa.upload(&writer, b"bytes the writer sends later").await;
+    let taken = marfa.keyed(&writer, "once", file(&hash)).await;
+    assert_eq!(taken.status, StatusCode::CREATED, "{}", taken.text);
+    let replayed = marfa.keyed(&writer, "once", file(&hash)).await;
+    assert_eq!(replayed.text, taken.text);
+    assert_eq!(marfa.items(), 1);
 }
