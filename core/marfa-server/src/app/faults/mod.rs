@@ -14,6 +14,9 @@ macro_rules! point_list {
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
         HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+        HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
+        HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
+        HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
         HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
         FAIL_STREAM_HEAD = Fail "stream-head" Nth;
         FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;

@@ -81,6 +81,8 @@ pub struct Fixed {
     pub heartbeat_url: Option<String>,
     /// Judged by the presence of the settings that name it, not by reachability.
     pub error_receiver: bool,
+    /// Never stored: a key that may change the configuration must not reach the owner's network.
+    pub webhook_private_addresses: bool,
 }
 
 pub struct Start {
@@ -226,6 +228,7 @@ impl Fixed {
         let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
+        let webhook_private_addresses = reader.flag("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES");
         #[cfg(feature = "test-hooks")]
         let clock_offset_ms = reader
             .whole("MARFA_TEST_CLOCK_OFFSET_MS", 0, MAX_CLOCK_OFFSET_MS)
@@ -277,6 +280,7 @@ impl Fixed {
             error_receiver: environment.get("MARFA_ERROR_WEBHOOK_URL").is_some()
                 || (environment.get("MARFA_POSTHOG_HOST").is_some()
                     && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some()),
+            webhook_private_addresses,
         };
         (!failed).then_some((fixed, given))
     }

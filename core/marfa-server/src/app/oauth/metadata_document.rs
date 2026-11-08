@@ -5,8 +5,9 @@
 //!
 //! Blocking: the door runs it off the async threads.
 
+use crate::app::outbound::address::is_public;
 use std::io::{self, Read};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -104,46 +105,19 @@ fn host_may_be_public(url: &Url) -> bool {
     }
 }
 
-/// IPv4 refuses each range of RFC 6890 and its successors that is not global.
-fn is_public_v4(address: Ipv4Addr) -> bool {
-    let [a, b, c, _] = address.octets();
-    !matches!(
-        (a, b, c),
-        (0 | 10 | 127, _, _)
-            | (100, 64..=127, _)
-            | (169, 254, _)
-            | (172, 16..=31, _)
-            | (192, 0, 0 | 2)
-            | (192, 88, 99)
-            | (192, 168, _)
-            | (198, 18..=19, _)
-            | (198, 51, 100)
-            | (203, 0, 113)
-            | (224..=255, _, _)
-    )
-}
-
-/// Global unicast is the one IPv6 block with public hosts, so this lists what is allowed:
-/// anything IANA assigns later stays out, as do IPv4-compatible, NAT64, link-local, unique-local
-/// and multicast addresses. Teredo, ORCHID, the 6to4 relay and both documentation blocks sit
-/// inside it.
-fn is_public_v6(address: Ipv6Addr) -> bool {
-    let [first, second, ..] = address.segments();
-    let global_unicast = first & 0xe000 == 0x2000;
-    let special = (first == 0x2001 && second < 0x0200)
-        || (first == 0x2001 && second == 0x0db8)
-        || first == 0x2002
-        || (first == 0x3fff && second < 0x1000);
-    global_unicast && !special
-}
-
-pub fn is_public(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_public_v4(v4),
-            None => is_public_v6(v6),
-        },
+#[test]
+fn metadata_uses_the_shared_public_address_policy() {
+    for address in ["64:ff9b::808:808", "::8.8.8.8", "2001:1::1", "192.0.0.9"] {
+        let address: IpAddr = address.parse().unwrap();
+        let authority = match address {
+            IpAddr::V4(ip) => ip.to_string(),
+            IpAddr::V6(ip) => format!("[{ip}]"),
+        };
+        assert_eq!(
+            check_url(&format!("https://{authority}/client.json")).is_ok(),
+            crate::app::outbound::address::is_public(address),
+            "{address}"
+        );
     }
 }
 
@@ -917,97 +891,6 @@ mod tests {
     }
 
     #[test]
-    fn every_special_ipv4_range_is_refused_at_both_of_its_ends() {
-        for (first, last) in [
-            ("0.0.0.0", "0.255.255.255"),
-            ("10.0.0.0", "10.255.255.255"),
-            ("100.64.0.0", "100.127.255.255"),
-            ("127.0.0.0", "127.255.255.255"),
-            ("169.254.0.0", "169.254.255.255"),
-            ("172.16.0.0", "172.31.255.255"),
-            ("192.0.0.0", "192.0.0.255"),
-            ("192.0.2.0", "192.0.2.255"),
-            ("192.88.99.0", "192.88.99.255"),
-            ("192.168.0.0", "192.168.255.255"),
-            ("198.18.0.0", "198.19.255.255"),
-            ("198.51.100.0", "198.51.100.255"),
-            ("203.0.113.0", "203.0.113.255"),
-            ("224.0.0.0", "239.255.255.255"),
-            ("240.0.0.0", "255.255.255.255"),
-        ] {
-            for text in [first, last] {
-                let address: IpAddr = text.parse().expect("an address");
-                assert!(!is_public(address), "{text}");
-            }
-        }
-        for text in [
-            "1.1.1.1",
-            "8.8.8.8",
-            "9.255.255.255",
-            "11.0.0.0",
-            "100.63.255.255",
-            "100.128.0.0",
-            "126.255.255.255",
-            "128.0.0.0",
-            "169.253.255.255",
-            "169.255.0.0",
-            "172.15.255.255",
-            "172.32.0.0",
-            "192.0.1.0",
-            "192.167.255.255",
-            "192.169.0.0",
-            "198.17.255.255",
-            "198.20.0.0",
-            "223.255.255.255",
-        ] {
-            let address: IpAddr = text.parse().expect("an address");
-            assert!(is_public(address), "{text}");
-        }
-    }
-
-    #[test]
-    fn ipv6_is_public_only_in_global_unicast() {
-        for text in [
-            "::",
-            "::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-            "::ffff:169.254.169.254",
-            "::127.0.0.1",
-            "::10.0.0.1",
-            "::8.8.8.8",
-            "64:ff9b::7f00:1",
-            "100::1",
-            "2001::1",
-            "2001:0:4136:e378::1",
-            "2001:1ff:ffff::1",
-            "2001:db8::1",
-            "2002:7f00:1::1",
-            "3fff::1",
-            "3fff:fff:ffff::1",
-            "fc00::1",
-            "fd00::1",
-            "fe80::1",
-            "fec0::1",
-            "ff02::1",
-        ] {
-            let address: IpAddr = text.parse().expect("an address");
-            assert!(!is_public(address), "{text}");
-        }
-        for text in [
-            "::ffff:8.8.8.8",
-            "2001:200::1",
-            "2001:4860:4860::8888",
-            "2606:4700:4700::1111",
-            "2a00:1450:4009::1",
-            "3ffe::1",
-        ] {
-            let address: IpAddr = text.parse().expect("an address");
-            assert!(is_public(address), "{text}");
-        }
-    }
-
-    #[test]
     fn a_document_registers_as_a_client_of_its_url() {
         let registered = parse(&document()).expect("registered");
         assert_eq!(registered.client_name.as_deref(), Some("An app"));
@@ -1162,7 +1045,7 @@ mod tests {
 
     fn address_text() -> impl Strategy<Value = (IpAddr, Vec<String>)> {
         any::<[u8; 4]>().prop_map(|octets| {
-            let v4 = Ipv4Addr::from(octets);
+            let v4 = std::net::Ipv4Addr::from(octets);
             let number = u32::from(v4);
             let [a, b, c, d] = octets;
             let spellings = vec![
@@ -1193,27 +1076,6 @@ mod tests {
         ) {
             for spelling in spellings {
                 prop_assert!(check_url(&spelling).is_err(), "{}", spelling);
-            }
-        }
-
-        #[test]
-        fn a_mapped_address_is_judged_as_the_ipv4_address_it_holds(octets in any::<[u8; 4]>()) {
-            let v4 = Ipv4Addr::from(octets);
-            let mapped = IpAddr::V6(v4.to_ipv6_mapped());
-            prop_assert_eq!(is_public(mapped), is_public(IpAddr::V4(v4)));
-        }
-
-        #[test]
-        fn an_ipv4_compatible_address_is_never_public(octets in any::<[u8; 4]>()) {
-            prop_assert!(!is_public(IpAddr::V6(Ipv4Addr::from(octets).to_ipv6_compatible())));
-        }
-
-        #[test]
-        fn what_is_public_in_ipv6_is_global_unicast(segments in any::<[u16; 8]>()) {
-            let address = Ipv6Addr::from(segments);
-            if is_public(IpAddr::V6(address)) && address.to_ipv4_mapped().is_none() {
-                prop_assert_eq!(segments[0] & 0xe000, 0x2000);
-                prop_assert!(!address.is_loopback() && !address.is_multicast());
             }
         }
 

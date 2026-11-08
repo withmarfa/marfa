@@ -82,7 +82,6 @@ const version = "0.0.9";
 const releaseArtifacts = [
   `marfa-${version}-checksums.txt`,
   `marfa-${version}-darwin-arm64.tar.gz`,
-  `marfa-${version}-darwin-x86_64.tar.gz`,
   `marfa-${version}-linux-aarch64.tar.gz`,
   `marfa-${version}-linux-x86_64.tar.gz`,
   `withmarfa-client-${version}.tgz`,
@@ -112,12 +111,12 @@ function holdArtifacts(names: string[]): void {
   }
 }
 
-describe("a release carries the command line archives, their checksums and two npm packages", () => {
+describe("a release carries the three archives, their checksums and two npm packages", () => {
   it("publishes only on a tag push, so a dispatch builds without publishing", () => {
     expect(release.jobs?.publish?.if).toBe("github.event_name == 'push'");
   });
 
-  it("accepts exactly the seven product artifacts", () => {
+  it("accepts exactly the six product artifacts", () => {
     expect(() => {
       holdArtifacts(releaseArtifacts);
     }).not.toThrow();
@@ -132,6 +131,15 @@ describe("a release carries the command line archives, their checksums and two n
   it("refuses a missing product artifact", () => {
     expect(() => {
       holdArtifacts(releaseArtifacts.slice(1));
+    }).toThrow();
+  });
+
+  it("refuses an Intel Mac archive, which a release no longer carries", () => {
+    expect(() => {
+      holdArtifacts([
+        ...releaseArtifacts,
+        `marfa-${version}-darwin-x86_64.tar.gz`,
+      ]);
     }).toThrow();
   });
 

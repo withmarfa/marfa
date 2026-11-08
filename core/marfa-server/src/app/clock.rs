@@ -5,6 +5,7 @@
 use std::sync::Mutex;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use tokio::sync::watch;
 
 #[cfg(feature = "test-hooks")]
 pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
@@ -23,6 +24,7 @@ struct State {
 pub struct Clock {
     #[cfg(feature = "test-hooks")]
     state: Mutex<State>,
+    moved: watch::Sender<u64>,
 }
 
 #[cfg(feature = "test-hooks")]
@@ -46,6 +48,7 @@ impl Clock {
                 offset_ms,
                 paused_at_ms: None,
             }),
+            moved: watch::Sender::new(0),
         }
     }
 
@@ -88,6 +91,26 @@ impl Clock {
     }
 
     #[cfg(feature = "test-hooks")]
+    pub fn is_paused(&self) -> bool {
+        self.state().paused_at_ms.is_some()
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn is_paused(&self) -> bool {
+        false
+    }
+
+    /// Changes each time the clock is moved or paused, so a wait on it can be measured again.
+    pub fn moves(&self) -> watch::Receiver<u64> {
+        self.moved.subscribe()
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn tell_moved(&self) {
+        self.moved.send_modify(|count| *count += 1);
+    }
+
+    #[cfg(feature = "test-hooks")]
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
         let mut state = self.state();
         let offset = state
@@ -100,6 +123,8 @@ impl Clock {
             return Err(Refused::PastLastInstant);
         }
         state.offset_ms = offset;
+        drop(state);
+        self.tell_moved();
         Ok(offset)
     }
 
@@ -112,6 +137,8 @@ impl Clock {
         } else {
             None
         };
+        drop(state);
+        self.tell_moved();
     }
 }
 

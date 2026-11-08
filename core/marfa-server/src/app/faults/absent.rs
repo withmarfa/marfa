@@ -53,6 +53,14 @@ impl Faults {
         None
     }
 
+    pub fn hides_position(&self) -> bool {
+        false
+    }
+
+    pub fn hidden_events(&self) -> Option<(i64, i64)> {
+        None
+    }
+
     pub fn unreadable(&self, _stored: &str, _id: &str) -> bool {
         false
     }

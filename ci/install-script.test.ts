@@ -1,8 +1,8 @@
 /**
- * `scripts/install.sh` installs the `marfa` command line from a release. It
- * installs nothing it has not checked: the archive must match its line in the
- * release's checksum file, and the binary in it must run and report the
- * release asked for.
+ * `scripts/install.sh` installs the `marfa` command line and `marfa-server`
+ * from a release. It installs nothing it has not checked: the archive must
+ * match its line in the release's checksum file, and both programs in it must
+ * run and report the release asked for.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -24,12 +24,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = join(ROOT, "scripts", "install.sh");
 
-const NAMES = [
-  "darwin-arm64",
-  "darwin-x86_64",
-  "linux-x86_64",
-  "linux-aarch64",
-];
+const NAMES = ["darwin-arm64", "linux-x86_64", "linux-aarch64"];
+const PROGRAMS = ["marfa", "marfa-server"];
 
 const cleanup: string[] = [];
 afterEach(() => {
@@ -44,21 +40,34 @@ function folder(): string {
   return directory;
 }
 
-/** A release folder with all four archives, each holding a `marfa` that says `reports`. */
-function release(version: string, reports = `marfa ${version}`) {
+/**
+ * A release folder with all three archives, each holding both programs.
+ * Each says `<program> <version>`, unless `says` gives another answer for one,
+ * or `programs` leaves one out.
+ */
+function release(
+  version: string,
+  options: { says?: Record<string, string>; programs?: string[] } = {},
+) {
+  const programs = options.programs ?? PROGRAMS;
   const base = folder();
   const lines: string[] = [];
   for (const name of NAMES) {
     const work = folder();
-    writeFileSync(join(work, "marfa"), `#!/bin/sh\necho "${reports}"\n`);
-    chmodSync(join(work, "marfa"), 0o755);
+    for (const program of programs) {
+      const says = options.says?.[program] ?? `${program} ${version}`;
+      writeFileSync(join(work, program), `#!/bin/sh\necho "${says}"\n`);
+      chmodSync(join(work, program), 0o755);
+    }
+    writeFileSync(join(work, "NOTICES.txt"), "licences\n");
     const archive = `marfa-${version}-${name}.tar.gz`;
     const made = spawnSync("tar", [
       "-czf",
       join(base, archive),
       "-C",
       work,
-      "marfa",
+      ...programs,
+      "NOTICES.txt",
     ]);
     expect(made.status).toBe(0);
     const hash = createHash("sha256")
@@ -97,15 +106,19 @@ function install(
 }
 
 describe("a release is installed after it is checked", () => {
-  it("puts a runnable marfa in the folder and says what to do next", () => {
+  it("puts both programs in the folder, runnable, and says what to do next", () => {
     const done = install(release("0.0.23"));
     expect(done.status, done.err).toBe(0);
-    const installed = join(done.dir, "marfa");
-    expect(statSync(installed).mode & 0o111).not.toBe(0);
-    expect(
-      spawnSync(installed, ["--version"], { encoding: "utf8" }).stdout.trim(),
-    ).toBe("marfa 0.0.23");
-    expect(done.out).toContain("Installed marfa 0.0.23");
+    for (const program of PROGRAMS) {
+      const installed = join(done.dir, program);
+      expect(statSync(installed).mode & 0o111).not.toBe(0);
+      expect(
+        spawnSync(installed, ["--version"], { encoding: "utf8" }).stdout.trim(),
+      ).toBe(`${program} 0.0.23`);
+    }
+    expect(done.out).toContain(
+      "Installed marfa 0.0.23 and marfa-server 0.0.23",
+    );
     expect(done.out).toContain("marfa server install");
     expect(done.out).toContain("is not on your PATH");
   });
@@ -128,14 +141,16 @@ describe("a release is installed after it is checked", () => {
     );
     const done = install(release("0.0.23"), { dir });
     expect(done.status, done.err).toBe(0);
-    expect(
-      spawnSync(join(dir, "marfa"), ["--version"], {
-        encoding: "utf8",
-      }).stdout.trim(),
-    ).toBe("marfa 0.0.23");
+    for (const program of PROGRAMS) {
+      expect(
+        spawnSync(join(dir, program), ["--version"], {
+          encoding: "utf8",
+        }).stdout.trim(),
+      ).toBe(`${program} 0.0.23`);
+    }
     expect(
       spawnSync("ls", ["-A", dir], { encoding: "utf8" }).stdout.trim(),
-    ).toBe("marfa");
+    ).toBe("marfa\nmarfa-server");
   });
 });
 
@@ -143,7 +158,9 @@ describe("it installs nothing it cannot vouch for", () => {
   const refused = (done: ReturnType<typeof install>, said: string) => {
     expect(done.status, done.out).not.toBe(0);
     expect(done.err).toContain(said);
-    expect(existsSync(join(done.dir, "marfa"))).toBe(false);
+    for (const program of PROGRAMS) {
+      expect(existsSync(join(done.dir, program))).toBe(false);
+    }
   };
 
   it("refuses an archive that does not match its checksum", () => {
@@ -174,8 +191,24 @@ describe("it installs nothing it cannot vouch for", () => {
 
   it("refuses a binary that reports another release", () => {
     refused(
-      install(release("0.0.23", "marfa 0.0.99")),
+      install(release("0.0.23", { says: { marfa: "marfa 0.0.99" } })),
       "reports 'marfa 0.0.99'",
+    );
+  });
+
+  it("refuses an archive that lacks marfa-server", () => {
+    refused(
+      install(release("0.0.23", { programs: ["marfa"] })),
+      "holds no marfa-server",
+    );
+  });
+
+  it("refuses a marfa-server that reports another release", () => {
+    refused(
+      install(
+        release("0.0.23", { says: { "marfa-server": "marfa-server 0.0.99" } }),
+      ),
+      "reports 'marfa-server 0.0.99'",
     );
   });
 
@@ -202,6 +235,39 @@ describe("it installs nothing it cannot vouch for", () => {
       }),
       "FreeBSD is not supported",
     );
+  });
+
+  /** A machine that answers `uname -s` and `uname -m` as given, and `sysctl` as an Intel or Apple silicon Mac does. */
+  function machine(kernel: string, cpu: string, appleSilicon = false) {
+    const fake = folder();
+    writeFileSync(
+      join(fake, "uname"),
+      `#!/bin/sh\ncase "$1" in -s) echo ${kernel} ;; -m) echo ${cpu} ;; esac\n`,
+    );
+    writeFileSync(
+      join(fake, "sysctl"),
+      `#!/bin/sh\necho ${appleSilicon ? "1" : "0"}\n`,
+    );
+    chmodSync(join(fake, "uname"), 0o755);
+    chmodSync(join(fake, "sysctl"), 0o755);
+    return { PATH: `${fake}:${process.env.PATH ?? ""}` };
+  }
+
+  it("refuses an Intel Mac before it downloads anything, and says why", () => {
+    const done = install(release("0.0.23"), {
+      env: machine("Darwin", "x86_64"),
+      version: "0.0.99",
+    });
+    expect(done.status).not.toBe(0);
+    expect(done.err).toContain("Intel Mac");
+    expect(done.out).not.toContain("Downloading");
+  });
+
+  it("picks the Apple silicon archive in a Rosetta shell on an Apple silicon Mac", () => {
+    const done = install(release("0.0.23"), {
+      env: machine("Darwin", "x86_64", true),
+    });
+    expect(done.out).toContain("for darwin arm64");
   });
 
   it("names the folder to change when it cannot write to the one chosen", () => {

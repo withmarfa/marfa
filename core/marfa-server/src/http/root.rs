@@ -27,6 +27,7 @@ const FEATURES: &[(&str, &str)] = &[
     ("audit", "GET /audit"),
     ("edges", "POST /edges"),
     ("connectors", "GET /connectors"),
+    ("webhooks", "GET /webhooks"),
 ];
 
 pub(super) const DOCUMENT: &str = include_str!("../../../../openapi.json");
