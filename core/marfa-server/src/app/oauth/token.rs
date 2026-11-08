@@ -41,6 +41,14 @@ impl Form {
             .filter(|value| !value.is_empty())
     }
 
+    /// Every client is public, so nothing here is a client's own credential.
+    pub fn offers_client_credential(&self) -> bool {
+        self.authorization
+            || ["client_secret", "client_assertion", "client_assertion_type"]
+                .iter()
+                .any(|field| self.get(field).is_some())
+    }
+
     fn resources(&self) -> Vec<String> {
         self.pairs
             .iter()
@@ -54,7 +62,14 @@ fn invalid_grant(description: &str) -> Problem {
     Problem::new("invalid_grant", description)
 }
 
-/// A public client proves nothing, so it may present no secret.
+pub(super) fn credential_refused() -> Problem {
+    Problem::new(
+        "invalid_client",
+        "Clients here are public and present no credential of their own.",
+    )
+    .with_status(401)
+}
+
 pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Client>> {
     let Some(id) = form.get("client_id").map(str::to_string) else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
@@ -65,13 +80,7 @@ pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Cl
         return Ok(Err(unknown()));
     };
     match client.registration.token_endpoint_auth_method {
-        AuthMethod::None if form.authorization || form.get("client_secret").is_some() => {
-            Ok(Err(Problem::new(
-                "invalid_client",
-                "This client is public and presents no secret.",
-            )
-            .with_status(401)))
-        }
+        AuthMethod::None if form.offers_client_credential() => Ok(Err(credential_refused())),
         AuthMethod::None => Ok(Ok(client)),
     }
 }

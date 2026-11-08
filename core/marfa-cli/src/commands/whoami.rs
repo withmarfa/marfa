@@ -1,7 +1,6 @@
 use serde_json::{Value, json};
 
 use crate::access;
-use crate::auth;
 use crate::commands::status;
 use crate::error::CliError;
 use crate::output::Printer;
@@ -31,22 +30,13 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 record["expires_at"] = json!(expires_at);
             }
             if kind == "token" {
-                // A scope that does not reach the identity claims is refused
-                // 401 or 403 and reported without a person. A server on
-                // another contract is described, not refused, and the token
-                // is not sent on to it.
-                if !held {
-                    record["person"] = json!(null);
-                } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
-                    let door = Remote::keyed(&endpoint, &bearer)?;
-                    match door.json(&Request::get(&[])) {
-                        Ok(person) => record["person"] = person,
-                        Err(CliError::Refused {
-                            status: 401 | 403, ..
-                        }) => {}
-                        Err(error) => return Err(error),
-                    }
-                }
+                // A server on another contract is described, not asked, and
+                // the token is not sent to it. A dead token is refused 401.
+                record["person"] = if held {
+                    remote.json(&Request::get(&["profile"]))?
+                } else {
+                    json!(null)
+                };
             }
             record
         }
@@ -85,13 +75,14 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     .get("person")
                     .map(|person| {
                         let email = field(person, "email");
-                        let name = if email.is_empty() {
-                            field(person, "sub")
+                        if email.is_empty() {
+                            field(person, "name")
                         } else {
                             email
-                        };
-                        format!(" as {name}")
+                        }
                     })
+                    .filter(|name| !name.is_empty())
+                    .map(|name| format!(" as {name}"))
                     .unwrap_or_default();
                 let from = match source {
                     CredentialSource::Flag => "--key",

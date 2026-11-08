@@ -43,7 +43,6 @@ export async function signIn(
 
 export interface App {
   clientId: string;
-  clientSecret?: string;
 }
 
 /** Registers a public native app for the code flow with no credential. */
@@ -71,11 +70,8 @@ export async function registerApp(
       `registration answered ${String(response.status)}: ${await response.text()}`,
     );
   }
-  const body = (await response.json()) as {
-    client_id: string;
-    client_secret?: string;
-  };
-  return { clientId: body.client_id, clientSecret: body.client_secret };
+  const body = (await response.json()) as { client_id: string };
+  return { clientId: body.client_id };
 }
 
 export interface Pkce {
@@ -208,14 +204,10 @@ export async function decide(
 export async function token(
   server: FreshServer,
   form: Record<string, string>,
-  app?: App,
 ): Promise<{ status: number; body: TokenAnswer }> {
   const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      ...(app === undefined ? {} : basicAuthorization(app)),
-    },
+    headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(form),
   });
   return {
@@ -227,21 +219,10 @@ export async function token(
 export interface TokenAnswer {
   access_token?: string;
   refresh_token?: string;
-  id_token?: string;
   token_type?: string;
   scope?: string;
   expires_in?: number;
   error?: string;
-}
-
-/** HTTP Basic for an app registered with a secret, as RFC 6749 encodes it. */
-export function basicAuthorization(app: App): Record<string, string> {
-  if (app.clientSecret === undefined) return {};
-  return {
-    authorization: `Basic ${Buffer.from(
-      `${encodeURIComponent(app.clientId)}:${encodeURIComponent(app.clientSecret)}`,
-    ).toString("base64")}`,
-  };
 }
 
 /**
@@ -283,17 +264,13 @@ export async function connect(
   scope: string,
 ): Promise<TokenAnswer> {
   const { code, verifier } = await codeFor(server, origin, cookie, app, scope);
-  const answer = await token(
-    server,
-    {
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: CALLBACK,
-      code_verifier: verifier,
-      client_id: app.clientId,
-    },
-    app,
-  );
+  const answer = await token(server, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: CALLBACK,
+    code_verifier: verifier,
+    client_id: app.clientId,
+  });
   if (answer.status !== 200) {
     throw new Error(
       `the code exchange answered ${String(answer.status)}: ${JSON.stringify(answer.body)}`,

@@ -47,11 +47,7 @@ function profile(body: unknown, key = server.workingKey) {
 describe("owner and delegated profile changes", () => {
   it("updates the existing owner and preserves credentials and sessions", async () => {
     const previous = await controlRequest(server.controlSocket, "/owner");
-    const app = await approvedApp(server, [
-      "openid",
-      "profile:write",
-      "offline_access",
-    ]);
+    const app = await approvedApp(server, ["profile:write", "offline_access"]);
 
     const updated = await owner({
       email: "Changed.Owner@Example.test",
@@ -66,15 +62,14 @@ describe("owner and delegated profile changes", () => {
       created_at: previous.body.created_at,
     });
     await expectMatchesSchema("PATCH", "/owner", 200, value);
-    const identity = await fetch(server.apiUrl + "/auth/oauth2/userinfo", {
+    const identity = await fetch(server.apiUrl + "/profile", {
       headers: { authorization: `Bearer ${app.token}` },
     });
     expect(identity.status).toBe(200);
-    expect(await identity.json()).toMatchObject({
-      sub: previous.body.id,
+    expect(await identity.json()).toEqual({
       name: "New owner",
       email: "changed.owner@example.test",
-      email_verified: false,
+      avatar: null,
     });
 
     const signin = (email: string) =>

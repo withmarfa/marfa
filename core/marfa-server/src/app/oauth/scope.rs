@@ -461,8 +461,6 @@ pub struct Narrowed {
     pub dropped: Vec<String>,
 }
 
-/// OpenID's `openid`, `profile` and `email` are not in `allowed`, so they go here like any
-/// other unknown literal.
 pub fn narrow(asked: &ScopeSet, allowed: &ScopeSet) -> Narrowed {
     let (kept, dropped): (Vec<&String>, Vec<&String>) = asked
         .literals()
@@ -746,9 +744,8 @@ mod tests {
             "edge.A:read",
             "edge.1a:read",
             "edge.a..b:read",
-            "openid",
+            "notes",
             "profile",
-            "email",
             "core.*:read core.*:write",
             "core.note:read\n",
             " core.note:read",
@@ -842,17 +839,14 @@ mod tests {
     }
 
     #[test]
-    fn openid_literals_are_narrowed_away_beside_what_can_be_granted() {
+    fn unknown_literals_are_narrowed_away_beside_what_can_be_granted() {
         let narrowed = narrow(
-            &set("openid profile email core.note:read no.such:read"),
+            &set("notes profile core.note:read no.such:read"),
             &registries().allowed(),
         );
         assert_eq!(narrowed.kept.literals(), ["core.note:read"]);
-        assert_eq!(
-            narrowed.dropped,
-            ["openid", "profile", "email", "no.such:read"]
-        );
-        assert!(!registries().allowed().contains("openid"));
+        assert_eq!(narrowed.dropped, ["notes", "profile", "no.such:read"]);
+        assert!(!registries().allowed().contains("profile"));
     }
 
     #[test]
@@ -1201,7 +1195,7 @@ mod tests {
                 Just("content.*:read"),
                 Just("schema.*:read"),
                 Just("profile.email:write"),
-                Just("openid"),
+                Just("notes"),
                 Just("space.*:write"),
             ],
             spelling in 0usize..5,

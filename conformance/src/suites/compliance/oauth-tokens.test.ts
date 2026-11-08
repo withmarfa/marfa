@@ -7,7 +7,6 @@ import {
 import {
   authorize,
   authorizeQuery,
-  basicAuthorization,
   CALLBACK,
   codeFor,
   connect,
@@ -24,10 +23,9 @@ import {
 } from "../../utils/signed-in.js";
 
 /**
- * What an app does with the tokens a person's approval gave it: refresh,
- * revoke, introspect and read the person's claims. A token needs a person's
- * approval, and an instance has one owner, so this file boots a server of its
- * own.
+ * What an app does with the tokens a person's approval gave it: refresh and
+ * revoke. A token needs a person's approval, and an instance has one owner, so
+ * this file boots a server of its own.
  */
 let server: FreshServer;
 let origin: string;
@@ -47,15 +45,11 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 function refresh(app: App, refreshToken: string) {
-  return token(
-    server,
-    {
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: app.clientId,
-    },
-    app,
-  );
+  return token(server, {
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: app.clientId,
+  });
 }
 
 async function post(
@@ -593,102 +587,5 @@ describe("revocation", () => {
       ),
     );
     expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
-  });
-});
-
-describe("introspection", () => {
-  it("answers a client its own live access token as active, with its scope, and a revoked one as inactive", async () => {
-    const app = await registerApp(server, NOTES, {
-      token_endpoint_auth_method: "client_secret_basic",
-    });
-    expect(app.clientSecret).toBeTruthy();
-    const issued = await connect(server, origin, cookie, app, NOTES);
-    const live = await post(
-      "/auth/oauth2/introspect",
-      { token: issued.access_token!, token_type_hint: "access_token" },
-      basicAuthorization(app),
-    );
-    expect(live.status, JSON.stringify(live.body)).toBe(200);
-    expect(live.body?.active).toBe(true);
-    expect(live.body?.client_id).toBe(app.clientId);
-    expect(String(live.body?.scope).split(" ")).toContain(NOTES);
-
-    const revoked = await post(
-      "/auth/oauth2/revoke",
-      { token: issued.access_token!, token_type_hint: "access_token" },
-      basicAuthorization(app),
-    );
-    expect(revoked.status).toBe(200);
-    const dead = await post(
-      "/auth/oauth2/introspect",
-      { token: issued.access_token!, token_type_hint: "access_token" },
-      basicAuthorization(app),
-    );
-    expect(dead.status).toBe(200);
-    expect(dead.body).toEqual({ active: false });
-  });
-
-  it("refuses a client that sends no secret 401 invalid_client", async () => {
-    const app = await registerApp(server, NOTES);
-    const issued = await connect(server, origin, cookie, app, NOTES);
-    const refused = await post("/auth/oauth2/introspect", {
-      token: issued.access_token!,
-      client_id: app.clientId,
-    });
-    expect(refused.status).toBe(401);
-    expect(refused.body?.error).toBe("invalid_client");
-    expect(refused.body?.active).toBeUndefined();
-  });
-});
-
-describe("userinfo", () => {
-  async function userinfo(accessToken?: string) {
-    const response = await fetch(`${server.apiUrl}/auth/oauth2/userinfo`, {
-      headers:
-        accessToken === undefined
-          ? {}
-          : { authorization: `Bearer ${accessToken}` },
-    });
-    return {
-      status: response.status,
-      body: (await response.json()) as Record<string, unknown>,
-    };
-  }
-
-  it("answers the person's subject, and the email only to a token holding email", async () => {
-    const app = await registerApp(server, `${NOTES} openid email`);
-    const withEmail = await connect(
-      server,
-      origin,
-      cookie,
-      app,
-      `${NOTES} openid email`,
-    );
-    const read = await userinfo(withEmail.access_token);
-    expect(read.status, JSON.stringify(read.body)).toBe(200);
-    expect(read.body.sub).toBeTruthy();
-    expect(read.body.email).toBe("owner@example.test");
-
-    const bare = await registerApp(server, `${NOTES} openid`);
-    const without = await connect(
-      server,
-      origin,
-      cookie,
-      bare,
-      `${NOTES} openid`,
-    );
-    const narrow = await userinfo(without.access_token);
-    expect(narrow.status).toBe(200);
-    expect(narrow.body.sub).toBe(read.body.sub);
-    expect(narrow.body.email).toBeUndefined();
-  });
-
-  it("refuses a token without openid 400 invalid_scope, and a request with no token 401", async () => {
-    const app = await registerApp(server, NOTES);
-    const issued = await connect(server, origin, cookie, app, NOTES);
-    const refused = await userinfo(issued.access_token);
-    expect(refused.status).toBe(400);
-    expect(refused.body.error).toBe("invalid_scope");
-    expect((await userinfo()).status).toBe(401);
   });
 });

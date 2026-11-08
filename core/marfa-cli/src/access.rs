@@ -226,9 +226,9 @@ pub fn lines_for_key(key: &Value) -> Vec<String> {
 }
 
 /// What an OAuth scope string holds, as the lines the CLI prints under it.
-/// A write literal is the level to edit, which includes reading; the
-/// OpenID literals and `offline_access` are how the sign-in works and are
-/// not access, so they are not printed.
+/// A write literal is the level to edit, which includes reading;
+/// `offline_access` is how the sign-in works and is not access, so it is not
+/// printed.
 pub fn lines_for_scope(scope: &str) -> Vec<String> {
     let mut held = Held::default();
     for literal in scope.split_whitespace() {
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn an_app_scope_for_all_data_reads_as_one_row() {
         assert_eq!(
-            lines_for_scope("openid offline_access *:read"),
+            lines_for_scope("offline_access *:read"),
             ["All your data  Read only"]
         );
     }
@@ -344,10 +344,7 @@ mod tests {
 
     #[test]
     fn mechanisms_alone_hold_no_access() {
-        assert_eq!(
-            lines_for_scope("openid profile email offline_access"),
-            ["No access"]
-        );
+        assert_eq!(lines_for_scope("offline_access"), ["No access"]);
         assert_eq!(lines_for_scope(""), ["No access"]);
     }
 

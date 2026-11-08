@@ -274,15 +274,11 @@ async function versionsOf(id: string): Promise<unknown> {
 async function refresh(
   signedIn: SignedInApp,
 ): Promise<{ status: number; error?: string; access?: string }> {
-  const answer = await token(
-    server,
-    {
-      grant_type: "refresh_token",
-      refresh_token: signedIn.refreshToken,
-      client_id: signedIn.clientId,
-    },
-    signedIn.app,
-  );
+  const answer = await token(server, {
+    grant_type: "refresh_token",
+    refresh_token: signedIn.refreshToken,
+    client_id: signedIn.clientId,
+  });
   return {
     status: answer.status,
     error: answer.body.error,
@@ -1232,15 +1228,11 @@ describe("a browser session's idle week", () => {
 
     // The app's access token has lapsed in the week, and its refresh token
     // has not.
-    const renewed = await token(
-      server,
-      {
-        grant_type: "refresh_token",
-        refresh_token: tokens.refresh_token!,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const renewed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token!,
+      client_id: app.clientId,
+    });
     expect(renewed.status).toBe(200);
     expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
   });

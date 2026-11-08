@@ -240,16 +240,9 @@ fn texts<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<Vec<&
 fn auth_method(object: &Map<String, Value>) -> Reading<AuthMethod> {
     match text(object, "token_endpoint_auth_method")? {
         None | Some("none") => Ok(AuthMethod::None),
-        Some("private_key_jwt") => Err(RegistrationError::metadata(
-            "This server does not support private_key_jwt.",
-        )),
-        Some(method @ ("client_secret_basic" | "client_secret_post")) => {
-            Err(RegistrationError::metadata(format!(
-                "This server registers public clients only, so {method} is not available."
-            )))
-        }
         Some(method) => Err(RegistrationError::metadata(format!(
-            "token_endpoint_auth_method {method} is not one this server supports."
+            "token_endpoint_auth_method {method} is not available: this server registers public \
+             clients only, with none."
         ))),
     }
 }
@@ -687,11 +680,11 @@ mod tests {
         let body = with(
             web(),
             "scope",
-            json!("core.note:write core.note:read core.note:write  openid"),
+            json!("core.note:write core.note:read core.note:write  notes"),
         );
         assert_eq!(
             register(body).expect("registered").scope.to_text(),
-            "core.note:write core.note:read openid"
+            "core.note:write core.note:read notes"
         );
     }
 

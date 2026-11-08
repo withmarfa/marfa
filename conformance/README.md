@@ -278,18 +278,14 @@ fixture moves the clock and then runs the job it tests with
 The model is "time passed": the target and every party the harness controls
 use the stated clock. A fixture's process keeps its real clock, so clients
 apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
-when creating or checking protocol timestamps. `MarfaClient` and `DpopClient`
-accept `serverClockOffsetMs` as a number or a callback; use the callback when
-a client outlives a clock advance. DPoP proofs and other client assertions,
-explicit HTTP `Date` headers and signed timestamps must use that stated time.
-The server's DPoP proof-age checks remain unchanged: a real-time proof is stale
-after the stated time advances beyond its validity window.
+when creating or checking protocol timestamps. `MarfaClient` accepts
+`serverClockOffsetMs` as a number or a callback; use the callback when a client
+outlives a clock advance. Client assertions, explicit HTTP `Date` headers and
+signed timestamps must use that stated time.
 
-Webhook receivers and OAuth relying parties in the harness also use the
-stated clock. Webhook signature timestamps, event-body timestamps, absolute
-`Retry-After` dates and retry scheduling follow it. OAuth ID-token `iat`,
-`exp`, `nbf` (when present) and `auth_time` claims follow it, just as opaque
-tokens and sessions do.
+Webhook receivers in the harness also use the stated clock. Webhook signature
+timestamps, event-body timestamps, absolute `Retry-After` dates and retry
+scheduling follow it, just as opaque tokens and sessions do.
 
 Packed-attestation certificate validity follows the stated clock. A fixture
 that moves the clock must issue any certificates it presents on that clock,

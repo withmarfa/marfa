@@ -238,8 +238,7 @@ mod tests {
             "device_authorization_endpoint": format!("{origin}/auth/device/code"),
             "registration_endpoint": format!("{origin}/auth/oauth2/register"),
             "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
-            "userinfo_endpoint": format!("{origin}/auth/oauth2/userinfo"),
-            "scopes_supported": ["openid", "offline_access", "*:read", "keys.mint"]
+            "scopes_supported": ["offline_access", "*:read", "keys.mint"]
         })
         .to_string()
     }
@@ -325,7 +324,7 @@ mod tests {
         assert_eq!(
             signed_in_text(
                 "https://marfa.example",
-                Some("openid offline_access core.note:write keys.mint")
+                Some("offline_access core.note:write keys.mint")
             ),
             "signed in to https://marfa.example; the token is in the keychain\n  core.note  Read and edit\n  Powers: Make, see, edit and revoke keys"
         );
@@ -379,7 +378,7 @@ mod tests {
         assert!(
             sent[1]
                 .body
-                .contains("scope=openid+offline_access+*%3Aread+keys.mint"),
+                .contains("scope=offline_access+*%3Aread+keys.mint"),
             "{}",
             sent[1].body
         );

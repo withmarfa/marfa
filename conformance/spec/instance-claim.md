@@ -458,17 +458,13 @@ While the owner has a picture, the server MUST answer `avatar` in the owner as t
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› removes the picture through either PATCH door and leaves the other fields as they were`.
 
-### `instance-claim/picture-claim`
+### `instance-claim/profile-read`
 
-While the owner has a picture, the server MUST give the OIDC `picture` claim of an app that may read the avatar, in its ID token and at userinfo, as the address of `instance-claim/owner-avatar-address`.
+When a credential sends `GET /profile`, the server MUST answer `200` with the owner's `name`, `email` and `avatar`, each only where the credential holds profile read permission for that field.
 
-**Tests:** `compliance/owner-picture.test.ts › gives an app that may read the avatar the picture's address, and no claim when there is none`.
+**Reason:** An app learns whom it acts for from the profile the owner let it read. `avatar` is the address `instance-claim/owner-avatar-address` names.
 
-### `instance-claim/picture-claim-none`
-
-While the owner has no picture, the server MUST NOT give the OIDC `picture` claim in an ID token or at userinfo.
-
-**Tests:** `compliance/owner-picture.test.ts › gives an app that may read the avatar the picture's address, and no claim when there is none`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-picture.test.ts › gives an app that may read the avatar the picture's address at its profile, and null when there is none`.
 
 ### `instance-claim/picture-served`
 
@@ -521,12 +517,6 @@ When a credential holds wildcard or stored explicit profile write permission, th
 If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, or requests write on `email`, then the server MUST refuse the grant.
 
 **Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
-
-### `instance-claim/owner-update-email-unverified`
-
-When `PATCH /owner` changes the stored email address, the server MUST clear email verification for that address.
-
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 
 ### `instance-claim/owner-update-password-identity`
 

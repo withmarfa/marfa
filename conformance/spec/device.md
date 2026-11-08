@@ -3092,6 +3092,20 @@ When `whoami` reads a server on another contract, the CLI MUST report the contra
 
 **Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
 
+### `device/whoami-person`
+
+When `whoami` runs with an access token on a server on its own contract, the CLI MUST report the server's answer to `GET /profile` as the credential's `person`.
+
+**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
+
+### `device/whoami-ended-token`
+
+If the server answers `whoami`'s `GET /profile` with `401`, then the CLI MUST exit 5 and print nothing on standard output.
+
+**Reason:** A token that has ended names no one, and a script that checks who it is signed in as must not read a success.
+
+**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
+
 ### `device/status-counts-not-permitted`
 
 If the server refuses `status` the item counts `403 type_not_permitted`, then the CLI MUST still describe the server, say the counts need a working key and exit 0.

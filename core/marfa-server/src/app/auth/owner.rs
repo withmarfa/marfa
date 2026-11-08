@@ -253,6 +253,20 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
     .await
 }
 
+/// The owner's profile as far as `caller` may read it: a field it may not read is left out.
+pub async fn read_profile(app: &App, caller: &Caller) -> Result<Value> {
+    let owner = find(app).await?.ok_or_else(not_found)?;
+    let origin = app.addresses().sign_in().origin().to_string();
+    let whole = owner.to_json(&origin);
+    let mut shown = Map::new();
+    for field in ["name", "email", "avatar"] {
+        if caller.reads_profile(field) {
+            shown.insert(field.to_string(), whole[field].clone());
+        }
+    }
+    Ok(Value::Object(shown))
+}
+
 #[derive(Debug)]
 pub struct ProfileUpdate {
     name: Option<String>,
