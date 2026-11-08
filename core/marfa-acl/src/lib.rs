@@ -8,8 +8,7 @@ fn c_path(path: &Path) -> std::io::Result<CString> {
         .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))
 }
 
-/// Whether an entry of the path's ACL allows anything. Deny entries narrow
-/// access, so they stand.
+/// Deny entries only restrict access; any allow entry counts as a grant.
 #[cfg(target_os = "macos")]
 pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     use std::ffi::{c_char, c_int, c_void};
@@ -30,9 +29,7 @@ pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     }
 
     let name = c_path(path)?;
-    // SAFETY: `name` is NUL-terminated and outlives the call. A non-null
-    // answer is owned here and freed below, and each entry is read only while
-    // it is held.
+    // SAFETY: `name` is a live C string; entries borrow the ACL, freed below.
     unsafe {
         let acl = acl_get_link_np(name.as_ptr(), ACL_TYPE_EXTENDED);
         if acl.is_null() {
@@ -58,8 +55,7 @@ pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Whether the path's POSIX ACL names an account or group beyond its owner,
-/// or holds a default ACL for what is made inside it.
+/// Named entries and default ACLs count as grants, regardless of their mask.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     if read_xattr(path, c"system.posix_acl_default")?.is_some_and(|value| value.len() > 4) {
@@ -72,8 +68,7 @@ pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
 fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<u8>>> {
     let file = c_path(path)?;
     loop {
-        // SAFETY: both names are NUL-terminated and outlive the calls, and
-        // the buffer passed is as long as the size given with it.
+        // SAFETY: both C strings are live; the buffer has the supplied size.
         let size =
             unsafe { libc::lgetxattr(file.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) };
         if size < 0 {
@@ -105,8 +100,7 @@ fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<
     }
 }
 
-/// Whether an ACL in the kernel's extended attribute form names a user or a
-/// group: a four-byte version, then eight bytes for each entry, its tag first.
+// The kernel format has a four-byte header and eight-byte entries, tag first.
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 fn names_others(value: &[u8]) -> bool {
     const NAMED_USER: u16 = 0x02;

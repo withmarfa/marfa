@@ -455,7 +455,6 @@ mod tests {
         assert!(Remote::local(Path::new("/no-such-marfa-control/control.sock")).is_err());
     }
 
-    /// A private folder holding a bound socket, as the server leaves it.
     fn socket_folder(label: &str) -> (PathBuf, PathBuf, UnixListener) {
         let root = std::env::temp_dir()
             .canonicalize()
@@ -470,8 +469,7 @@ mod tests {
         (root, path, listener)
     }
 
-    /// Gives a folder an ACL that lets another account in, or reports that
-    /// this file system keeps none.
+    // Returns false when the file system cannot store the test ACL.
     fn let_another_account_in(folder: &Path) -> bool {
         #[cfg(target_os = "macos")]
         {
