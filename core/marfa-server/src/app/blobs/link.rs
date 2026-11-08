@@ -82,9 +82,13 @@ mod tests {
         Hash::parse(&"a".repeat(64)).unwrap()
     }
 
+    fn secret(name: &str) -> String {
+        format!("{name}-{}", std::process::id())
+    }
+
     #[test]
     fn a_signature_holds_for_its_hash_and_expiry_only() {
-        let signer = Signer::derive("a secret of the instance").unwrap();
+        let signer = Signer::derive(&secret("instance")).unwrap();
         let signature = signer.sign(&hash(), 1_000).unwrap();
         assert!(signer.verifies(&hash(), 1_000, &signature));
         assert!(!signer.verifies(&hash(), 1_001, &signature));
@@ -97,8 +101,8 @@ mod tests {
 
     #[test]
     fn another_instances_secret_signs_differently() {
-        let one = Signer::derive("the first secret").unwrap();
-        let other = Signer::derive("the second secret").unwrap();
+        let one = Signer::derive(&secret("first")).unwrap();
+        let other = Signer::derive(&secret("second")).unwrap();
         let signature = one.sign(&hash(), 5).unwrap();
         assert!(!other.verifies(&hash(), 5, &signature));
     }

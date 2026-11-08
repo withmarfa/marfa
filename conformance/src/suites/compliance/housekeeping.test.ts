@@ -8,7 +8,6 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { bootFreshServer } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -61,28 +60,36 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("runs a housekeeping job on demand and the listing records the run", async () => {
-    const server = await bootFreshServer("housekeeping-cleanup");
+    const server = await bootFreshServer("housekeeping-cleanup", {
+      TRASH_PURGE_INTERVAL_MS: "3153600000000",
+    });
     try {
       const operator = new MarfaClient({
         baseUrl: server.apiUrl,
         apiKey: server.managementKey,
       });
-      const windowKey = "housekeeping-expired-window";
-      const readWindow = () =>
-        withInstanceDatabase(server.sqlitePath, (db) =>
-          db
-            .prepare(
-              "SELECT count FROM rate_limit_windows WHERE family = ? AND window_key = ?",
-            )
-            .get("rate", windowKey),
-        );
-      withInstanceDatabase(server.sqlitePath, (db) => {
-        db.prepare(
-          "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) VALUES (?, ?, ?, ?)",
-        ).run("rate", windowKey, 1, "2000-01-01T00:00:00.000Z");
+      const writer = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: server.workingKey,
       });
-      expect(readWindow()).toMatchObject({ count: 1 });
-      const run = await operator.runHousekeeping("rate-limit-cleanup");
+      const config = (await writer.getConfig()).data as Record<string, unknown>;
+      expect(
+        (await writer.updateConfig({ ...config, trash_retention_days: 1 }))
+          .status,
+      ).toBe(200);
+      const binned = await writer.createItem({
+        type: "core.note",
+        properties: { body: "housekeeping-expired-bin" },
+      });
+      expect(binned.ok, JSON.stringify(binned.error)).toBe(true);
+      expect((await writer.deleteItem(binned.data.item.id)).ok).toBe(true);
+      const inBin = async () =>
+        (await writer.listItems({ state: "trashed" })).data.data.some(
+          (item) => item.id === binned.data.item.id,
+        );
+      expect(await inBin()).toBe(true);
+      await server.advanceClock(2 * 24 * 60 * 60 * 1000);
+      const run = await operator.runHousekeeping("trash-purge");
       expect(run.status, JSON.stringify(run.error)).toBe(200);
       await expectMatchesSchema(
         "POST",
@@ -90,17 +97,17 @@ describe("the housekeeping the server runs on itself", () => {
         200,
         run.data,
       );
-      expect(run.data.name).toBe("rate-limit-cleanup");
+      expect(run.data.name).toBe("trash-purge");
       expect(run.data.outcome).toBe("ok");
       expect(Date.parse(run.data.started_at)).not.toBeNaN();
       expect(Date.parse(run.data.finished_at)).toBeGreaterThanOrEqual(
         Date.parse(run.data.started_at),
       );
-      expect(readWindow()).toBeUndefined();
+      expect(await inBin()).toBe(false);
 
       const listed = await operator.listHousekeeping();
       const row = listed.data.data.find(
-        (candidate) => candidate.name === "rate-limit-cleanup",
+        (candidate) => candidate.name === "trash-purge",
       );
       expect(row).toMatchObject({
         running_since: null,

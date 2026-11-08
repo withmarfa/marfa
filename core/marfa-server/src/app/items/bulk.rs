@@ -1,6 +1,8 @@
 //! An atomic page is one transaction, so a refused last entry undoes the first; a best-effort
 //! page is one transaction per entry.
 
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -8,6 +10,7 @@ use uuid::Uuid;
 use super::write::{self, Change, Put};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::faults::{Faults, HOLD_BULK_PAGE};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Pulse;
 
@@ -36,6 +39,7 @@ pub struct Page {
     pub retype: bool,
     pub operation: String,
     pub pulse: Pulse,
+    pub faults: Arc<Faults>,
 }
 
 impl std::fmt::Debug for Page {
@@ -193,6 +197,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             retype,
             operation,
             pulse: app.db.pulse(),
+            faults: app.faults.clone(),
         };
         let done = write::run(app, caller, None, Change::Page(Box::new(page))).await?;
         return Ok(done.body);
@@ -202,6 +207,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     let mut results = Vec::with_capacity(total);
     let mut landed = false;
     for (index, entry) in entries.into_iter().enumerate() {
+        app.faults.hold(HOLD_BULK_PAGE, None).await;
         let result = match entry {
             Err(refusal) => refused_entry(index, &refusal, landed)?,
             Ok(entry) => {

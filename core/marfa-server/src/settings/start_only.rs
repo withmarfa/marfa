@@ -145,14 +145,6 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_TEST_CONTRACT_VERSION",
         "Sets the contract version the server reports.",
     ),
-    hook(
-        "MARFA_TEST_MIGRATION_FAULT",
-        "Makes the next migration fail in a chosen way.",
-    ),
-    hook(
-        "MARFA_TEST_FREE_DISK_BYTES",
-        "Sets the free disk space the server sees.",
-    ),
 ];
 
 /// One declared setting and whether the environment sets it.

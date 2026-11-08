@@ -71,8 +71,6 @@ pub struct Fixed {
     pub test_hooks: bool,
     pub clock_offset_ms: u64,
     pub contract_version: Option<u32>,
-    pub migration_fault: Option<MigrationFault>,
-    pub free_disk_bytes: Option<u64>,
     pub busy_budget: Duration,
     pub blob_path: PathBuf,
     /// Never stored and never logged: its address can hold a credential.
@@ -140,13 +138,6 @@ impl Deref for Start {
     fn deref(&self) -> &Fixed {
         &self.fixed
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MigrationFault {
-    Hold,
-    LoseRow,
-    ChangeShape,
 }
 
 struct Reader<'a> {
@@ -285,14 +276,6 @@ impl Fixed {
         let contract_version = reader
             .whole("MARFA_TEST_CONTRACT_VERSION", 0, MAX_I32)
             .map(|version| version as u32);
-        let migration_fault = reader.take("MARFA_TEST_MIGRATION_FAULT", |text| {
-            rule::one_of(text, &["hold", "lose-row", "change-shape"]).map(|name| match name {
-                "hold" => MigrationFault::Hold,
-                "lose-row" => MigrationFault::LoseRow,
-                _ => MigrationFault::ChangeShape,
-            })
-        });
-        let free_disk_bytes = reader.whole("MARFA_TEST_FREE_DISK_BYTES", 0, u64::MAX);
         let busy_budget = reader
             .whole("SQLITE_BUSY_BUDGET_MS", 0, MAX_I32)
             .unwrap_or(5_000);
@@ -320,8 +303,6 @@ impl Fixed {
             test_hooks,
             clock_offset_ms,
             contract_version,
-            migration_fault,
-            free_disk_bytes,
             busy_budget: Duration::from_millis(busy_budget),
             blob_path: PathBuf::from(environment.get("BLOB_PATH").unwrap_or("./data/blobs")),
             heartbeat_url,
@@ -337,15 +318,8 @@ impl Fixed {
         if !self.test_hooks {
             let hooked = |name: &'static str| environment.get(name).map(|value| (name, value));
             let offset = hooked("MARFA_TEST_CLOCK_OFFSET_MS").filter(|_| self.clock_offset_ms > 0);
-            let others = [
-                "MARFA_TEST_CONTRACT_VERSION",
-                "MARFA_TEST_MIGRATION_FAULT",
-                "MARFA_TEST_FREE_DISK_BYTES",
-            ];
-            for (name, value) in offset
-                .into_iter()
-                .chain(others.into_iter().filter_map(hooked))
-            {
+            let contract = hooked("MARFA_TEST_CONTRACT_VERSION");
+            for (name, value) in offset.into_iter().chain(contract) {
                 problems.push(rule::line(name, "needs MARFA_TEST_HOOKS to be true", value));
             }
         }

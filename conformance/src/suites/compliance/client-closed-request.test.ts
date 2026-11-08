@@ -1,11 +1,9 @@
-import { dirname } from "node:path";
 import { connect } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
-  serverOutput,
 } from "../../utils/fresh-server.js";
 import {
   COLLECTOR_BUDGET_MS,
@@ -14,7 +12,6 @@ import {
   until,
   type FaultSinks,
 } from "../../utils/fault-sinks.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * A client that closes its connection while it is still sending a request
@@ -43,15 +40,15 @@ afterAll(async () => {
   await sinks?.close();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-function serverLog(): Record<string, unknown>[] {
-  return serverOutput(dirname(server!.sqlitePath))
+async function serverLog(): Promise<Record<string, unknown>[]> {
+  return (await server!.output())
     .split("\n")
     .filter((text) => text.startsWith("{"))
     .map((text) => JSON.parse(text) as Record<string, unknown>);
 }
 
 /**
- * Starts a `POST /blobs` that promises far more bytes than it sends, holds the
+ * Starts a `POST /items` that promises far more bytes than it sends, holds the
  * connection open for `holdMs` after the send, then resets it, and settles
  * once the connection is closed.
  */
@@ -60,9 +57,9 @@ function dropUpload(requestId: string, holdMs: number): Promise<void> {
   return new Promise((resolve) => {
     const socket = connect(Number(port), hostname, () => {
       socket.write(
-        `POST /blobs HTTP/1.1\r\nHost: ${hostname}\r\nConnection: close\r\n` +
+        `POST /items HTTP/1.1\r\nHost: ${hostname}\r\nConnection: close\r\n` +
           `Authorization: Bearer ${server!.workingKey}\r\nX-Request-ID: ${requestId}\r\n` +
-          `Content-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\n`,
+          `Content-Type: application/json\r\nContent-Length: 100000\r\n\r\n`,
       );
       socket.write(Buffer.alloc(1000, 1), () => {
         setTimeout(() => socket.resetAndDestroy(), holdMs);
@@ -89,25 +86,33 @@ async function dropUntilLogged(base: string): Promise<string[]> {
     await dropUpload(id, attempt * 150);
     const deadline = Date.now() + 2_000;
     while (Date.now() < deadline) {
-      if (logLine(id)) return attempts;
+      if (await logLine(id)) return attempts;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
   throw new Error("the server never logged a dropped upload");
 }
 
-function logLine(requestId: string): Record<string, unknown> | undefined {
-  return serverLog().find(
+async function logLine(
+  requestId: string,
+): Promise<Record<string, unknown> | undefined> {
+  return (await serverLog()).find(
     (entry) => entry.request_id === requestId && entry.transport === "http",
   );
 }
 
-function audit(requestId: string): Promise<Response> {
-  return fetch(`${server!.apiUrl}/audit`, {
+function create(requestId: string): Promise<Response> {
+  return fetch(`${server!.apiUrl}/items`, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${server!.workingKey}`,
+      "Content-Type": "application/json",
       "X-Request-ID": requestId,
     },
+    body: JSON.stringify({
+      type: "core.note",
+      properties: { body: "faulted" },
+    }),
   });
 }
 
@@ -118,23 +123,19 @@ describe("a request whose client closed the connection before the server answere
       const attempts = await dropUntilLogged("client-closed-request-dropped");
       const dropped = new Set(attempts);
       // The drop took the abort path: the server logged it as one the client left.
-      expect(logLine(attempts[attempts.length - 1]!)?.status).toBe(499);
+      expect((await logLine(attempts[attempts.length - 1]!))?.status).toBe(499);
 
       // The witness: a real fault on the same server is reported on every
       // channel the drop's report would have used.
       const faulted = "client-closed-request-faulted";
-      withInstanceDatabase(server!.sqlitePath, (db) => {
-        db.exec("ALTER TABLE audit_log RENAME TO audit_log_gone");
-      });
+      await server!.setFault("fail:audit=item.create");
       try {
-        expect((await audit(faulted)).status).toBe(500);
+        expect((await create(faulted)).status).toBe(500);
       } finally {
-        withInstanceDatabase(server!.sqlitePath, (db) => {
-          db.exec("ALTER TABLE audit_log_gone RENAME TO audit_log");
-        });
+        await server!.clearFault("fail:audit");
       }
-      await until("the fault's log line", () =>
-        serverLog().find(
+      await until("the fault's log line", async () =>
+        (await serverLog()).find(
           (entry) =>
             entry.message === "Unhandled error" && entry.request_id === faulted,
         ),
@@ -152,7 +153,7 @@ describe("a request whose client closed the connection before the server answere
       );
 
       expect(
-        serverLog().filter(
+        (await serverLog()).filter(
           (entry) =>
             entry.message === "Unhandled error" &&
             dropped.has(entry.request_id as string),

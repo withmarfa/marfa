@@ -4,7 +4,6 @@ import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
-  serverOutput,
 } from "../../utils/fresh-server.js";
 import { expectFixedFailure, until } from "../../utils/fault-sinks.js";
 import { movedClock, DAY_MS } from "../../utils/moved-clock.js";
@@ -42,13 +41,13 @@ const CODE = "SQLITE_IOERR";
 /** What the failed statement and the driver would have put in a report. */
 const FORBIDDEN = ["Failed query", "params", "disk I/O error"];
 
-function serverLog(): string {
-  return serverOutput(server!.stateDir);
+function serverLog(): Promise<string> {
+  return server!.output();
 }
 
 /** The log's JSON lines. */
-function logged(): Record<string, unknown>[] {
-  return serverLog()
+async function logged(): Promise<Record<string, unknown>[]> {
+  return (await serverLog())
     .split("\n")
     .filter((text) => text.startsWith("{"))
     .map((text) => JSON.parse(text) as Record<string, unknown>);
@@ -69,7 +68,7 @@ describe("a fault that ends a response body after the response began", () => {
     expect(served.status).toBe(200);
     await served.text();
     expect(
-      logged().some((line) => line.message === "Export stream failed"),
+      (await logged()).some((line) => line.message === "Export stream failed"),
     ).toBe(false);
 
     await server!.setFault("fail:export-read");
@@ -82,14 +81,17 @@ describe("a fault that ends a response body after the response began", () => {
     );
     expect(acted?.fired).toBe(1);
 
-    const line = await until("the export's log line", () =>
-      logged().find((entry) => entry.message === "Export stream failed"),
+    const line = await until("the export's log line", async () =>
+      (await logged()).find(
+        (entry) => entry.message === "Export stream failed",
+      ),
     );
     expect(line.level).toBe("error");
     expectFixedFailure(String(line.error), CODE, FORBIDDEN);
     expectFixedFailure(JSON.stringify(line), CODE, FORBIDDEN);
-    expect(serverLog()).not.toContain(sentinel);
-    for (const text of FORBIDDEN) expect(serverLog()).not.toContain(text);
+    const log = await serverLog();
+    expect(log).not.toContain(sentinel);
+    for (const text of FORBIDDEN) expect(log).not.toContain(text);
   });
 });
 
@@ -102,8 +104,10 @@ describe("a fault in work no request waits on", () => {
     await movedClock(server!).advance(DAY_MS);
     const line = await until(
       `the ${job} run's log line`,
-      () =>
-        logged().find((entry) => entry.message === `Housekeeping ${job} error`),
+      async () =>
+        (await logged()).find(
+          (entry) => entry.message === `Housekeeping ${job} error`,
+        ),
       30_000,
     );
     const acted = (await server!.faults()).find(
@@ -114,6 +118,7 @@ describe("a fault in work no request waits on", () => {
     expect(line.level).toBe("error");
     expectFixedFailure(String(line.error), CODE, FORBIDDEN);
     expectFixedFailure(JSON.stringify(line), CODE, FORBIDDEN);
-    for (const text of FORBIDDEN) expect(serverLog()).not.toContain(text);
+    const log = await serverLog();
+    for (const text of FORBIDDEN) expect(log).not.toContain(text);
   });
 });

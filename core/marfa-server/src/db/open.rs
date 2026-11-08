@@ -6,10 +6,9 @@ use std::time::Duration;
 
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
-use super::migrate::{self, Migration, Standing, Update};
+use super::migrate::{self, Migration, Standing};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
-use crate::settings::start::MigrationFault;
 
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
 
@@ -19,8 +18,6 @@ pub struct Options {
     pub busy_budget: Duration,
     pub readers: usize,
     pub migrations: &'static [Migration],
-    pub migration_fault: Option<MigrationFault>,
-    pub free_disk_bytes: Option<u64>,
 }
 
 pub struct Opened {
@@ -175,23 +172,6 @@ pub fn open(options: &Options) -> Result<Opened, Failure> {
         Standing::Current => {}
         Standing::Unfinished => {
             migrate::complete(&mut writer, options.migrations).map_err(refused)?;
-        }
-        Standing::Behind(from) => {
-            let file = match &target {
-                Target::File(path) => Some(path.as_path()),
-                _ => None,
-            };
-            migrate::update(
-                &mut writer,
-                from,
-                &Update {
-                    migrations: options.migrations,
-                    file,
-                    label: &label,
-                    fault: options.migration_fault,
-                    free_disk_bytes: options.free_disk_bytes,
-                },
-            )?;
         }
     }
 

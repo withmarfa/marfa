@@ -84,7 +84,7 @@ import {
   WrittenPropertiesSchema,
 } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
-import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { holdBulkEntry, yieldBulkWork } from "../bulk-actions/yield.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
 import { authorizeReplay } from "../middleware/replay-authorization.js";
 import { refuseEmptyNarrowingFilter } from "../middleware/empty-narrowing-values.js";
@@ -765,6 +765,7 @@ export function bulkRoutes(storage: Storage) {
       const out: ProcessedBulkItem[] = [];
       let anyMayHaveCommitted = false;
       for (const [i, raw] of items.entries()) {
+        await holdBulkEntry();
         if (i > 0) await yieldBulkWork({ writing: true });
         const work = () =>
           processBulkItem(storage, raw, i, {

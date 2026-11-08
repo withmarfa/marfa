@@ -1,13 +1,10 @@
-import { dirname } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
-  serverOutput,
 } from "../../utils/fresh-server.js";
 import { startFaultSinks, type FaultSinks } from "../../utils/fault-sinks.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What turns the server's exception reports on and off. They are a pipeline
@@ -17,9 +14,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  *
  * **A server of its own for each case, with a receiver the fixture runs.** The
  * receiver is the OTLP collector and the PostHog host at once. A fault is made
- * as `fault-reports.test.ts` makes one, by renaming a table the write reaches
- * in the stored file, and a stop flushes what the server holds, so each case
- * reads what arrived once the server has stopped.
+ * as `fault-reports.test.ts` makes one, by failing the audit entry of a
+ * write, and a stop flushes what the server holds, so each case reads what
+ * arrived once the server has stopped.
  */
 let sinks: FaultSinks | undefined;
 let server: FreshServer | undefined;
@@ -57,9 +54,7 @@ async function boot(
  * Resolves with the server's log, read before the stop takes its directory.
  */
 async function faultAndStop(booted: FreshServer): Promise<string> {
-  withInstanceDatabase(booted.sqlitePath, (db) => {
-    db.exec("ALTER TABLE event_log RENAME TO event_log_gone");
-  });
+  await booted.setFault("fail:audit=item.create");
   const refused = await fetch(`${booted.apiUrl}/items`, {
     method: "POST",
     headers: {
@@ -69,7 +64,7 @@ async function faultAndStop(booted: FreshServer): Promise<string> {
     body: JSON.stringify({ type: "core.note", properties: { body: "x" } }),
   });
   expect(refused.status).toBe(500);
-  const log = serverOutput(dirname(booted.sqlitePath));
+  const log = await booted.output();
   await booted.stop();
   return log;
 }
