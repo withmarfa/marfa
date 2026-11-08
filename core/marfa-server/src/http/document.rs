@@ -37,6 +37,30 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /mcp", "answers 405: the endpoint opens no stream"),
     ("DELETE /mcp", "answers 405: the endpoint holds no session"),
+    (
+        "POST /mcp/schema",
+        "the Model Context Protocol endpoint of the schema tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/schema",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/schema",
+        "answers 405: the endpoint holds no session",
+    ),
+    (
+        "POST /mcp/admin",
+        "the Model Context Protocol endpoint of the admin tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/admin",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/admin",
+        "answers 405: the endpoint holds no session",
+    ),
     ("GET /auth/sign-in", "the sign-in page"),
     ("POST /auth/sign-in", "its form post"),
     (
