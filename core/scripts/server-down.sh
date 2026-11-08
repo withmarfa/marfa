@@ -30,6 +30,11 @@ if kill -0 "${MARFA_SERVER_PID}" 2>/dev/null; then
     sleep 0.25
   done
   stop KILL
+  # A lock the server held is free only once the process is gone.
+  for _ in $(seq 1 40); do
+    kill -0 "${MARFA_SERVER_PID}" 2>/dev/null || break
+    sleep 0.25
+  done
 fi
 [[ -z "${MARFA_SERVER_CONTROL_DIR:-}" ]] || rm -rf "${MARFA_SERVER_CONTROL_DIR}"
 [[ -n "${MARFA_SERVER_KEPT:-}" ]] || rm -rf "${MARFA_SERVER_STATE}"
