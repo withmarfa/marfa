@@ -202,8 +202,8 @@ pub(super) fn stand(
     })
 }
 
-/// Stops every credential issued under it, withdraws the consent and marks the item. Answers
-/// whether a grant stood.
+/// Stops every credential issued under it, every key the app minted and every key those minted,
+/// withdraws the consent and marks the item. Answers whether a grant stood.
 pub(super) fn end(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -217,6 +217,7 @@ pub(super) fn end(
     };
     store::end_grant_credentials(tx, client_id, user_id, now)?;
     store::withdraw_consent(tx, client_id, user_id, now)?;
+    crate::app::keys::end_all_of_app(unit, client_id)?;
     if let Some(version) = version_of(unit, &consent.grant_id)? {
         update_item(
             unit,

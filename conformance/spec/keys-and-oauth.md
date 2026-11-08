@@ -2005,6 +2005,14 @@ When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server 
 
 **Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`.
 
+### `keys-and-oauth/revoke-refresh-token-keys`
+
+When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST revoke in the same write every key the app minted and every key those keys minted.
+
+**Reason:** A key an app minted is held to the app's grant, however the grant ends.
+
+**Tests:** `compliance/auth-grants.test.ts › ends every key the app minted, a key's descendant included, and no other app's key`.
+
 ### `keys-and-oauth/revoke-unknown-token`
 
 When a revocation names a token the server does not hold, never issued, already revoked or already gone, the server MUST answer `200` as RFC 7009 has it, whatever `token_type_hint` says.
@@ -2093,7 +2101,7 @@ If a caller without `grants.manage` lists or revokes grants, then the server MUS
 
 **Reason:** A key is an app's own credential and a grant is another app's, so a credential trusted to rotate a key is not one that may revoke every other app.
 
-**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`, `› refuses a caller without grants.manage 403 whatever query it sends, at both doors`.
 
 ### `keys-and-oauth/grants-no-credential`
 
@@ -2120,6 +2128,20 @@ When a grant is revoked at `DELETE /auth/grants/{id}`, the server MUST revoke in
 **Reason:** A key an app minted is held to the app's grant, so it ends with the grant, and taking it reaches no further than revoking the grant does. A key that outlived its app would keep the app's access with no approval behind it.
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens, the person's consent and every key the app minted, a key's descendant included`.
+
+### `keys-and-oauth/grant-key-use`
+
+When the server records the use of a key that an app minted, or of a key that such a key minted, the server MUST record the same time as a use of the app's grant.
+
+**Reason:** The inactivity retirement retires a grant by its last use, and an app whose keys are in use is in use.
+
+**Tests:** `compliance/auth-grants.test.ts › counts the use of a key the app minted, or that key's key, and retires an idle app with its keys`.
+
+### `keys-and-oauth/grant-retire-keys`
+
+When the inactivity retirement retires a grant, the server MUST revoke in the same write every key the app minted and every key those keys minted.
+
+**Tests:** `compliance/auth-grants.test.ts › counts the use of a key the app minted, or that key's key, and retires an idle app with its keys`.
 
 ### `keys-and-oauth/grant-revoke-query`
 

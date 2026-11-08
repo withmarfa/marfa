@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -234,15 +235,19 @@ describe("DELETE /auth/grants/{id}", () => {
       type_permissions: { "core.note": "read" },
     });
     const descendant = await mintedBy(key.key, "grant-taken-child");
-    // The witness: a key no app minted, which the revoke leaves alone.
+    // The witnesses: a key no app minted, and another app with a key it
+    // minted, which the revoke leaves alone.
     const unrelated = await keyHolding("grant-unrelated", []);
     const unrelatedClient = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: unrelated,
     });
+    const otherApp = await approved();
+    const otherKey = await mintedBy(otherApp.access, "grant-other-app");
     expect(await itemsStatus(server, access)).toBe(200);
     expect(await itemsStatus(server, key.key)).toBe(200);
     expect(await itemsStatus(server, descendant.key)).toBe(200);
+    expect(await itemsStatus(server, otherKey.key)).toBe(200);
 
     const revoked = await revokeGrant(grant.id, server.managementKey);
     expect(revoked.status).toBe(204);
@@ -250,6 +255,8 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, key.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect((await unrelatedClient.getCurrentKey()).status).toBe(200);
+    expect(await itemsStatus(server, otherApp.access)).toBe(200);
+    expect(await itemsStatus(server, otherKey.key)).toBe(200);
     const listed = (await (await grants(server.managementKey)).json()) as {
       data: Grant[];
     };
@@ -259,6 +266,28 @@ describe("DELETE /auth/grants/{id}", () => {
       await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
     );
     expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
+  });
+
+  it("refuses a caller without grants.manage 403 whatever query it sends, at both doors", async () => {
+    const { access, grant } = await approved();
+    const without = await keyHolding("grants-query-without", ["audit.read"]);
+    const listed = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+      headers: { authorization: `Bearer ${without}` },
+    });
+    expect(listed.status).toBe(403);
+    const revoked = await revokeGrant(grant.id, without, "?stray=1");
+    expect(revoked.status).toBe(403);
+    expect(
+      ((await revoked.json()) as { error: { details?: unknown } }).error
+        .details,
+    ).toEqual({ required_scope: "grants.manage" });
+    expect(await itemsStatus(server, access)).toBe(200);
+    // The witness: the same query from a caller holding it is refused 400.
+    const holder = await keyHolding("grants-query-holder", ["grants.manage"]);
+    const asHolder = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+      headers: { authorization: `Bearer ${holder}` },
+    });
+    expect(asHolder.status).toBe(400);
   });
 
   it("refuses a query parameter 400 and revokes nothing", async () => {
@@ -273,6 +302,39 @@ describe("DELETE /auth/grants/{id}", () => {
       ((await refused.json()) as { error: { code: string } }).error.code,
     ).toBe("validation_error");
     expect(await itemsStatus(server, access)).toBe(200);
+  });
+});
+
+describe("an app's refresh token revoked", () => {
+  it("ends every key the app minted, a key's descendant included, and no other app's key", async () => {
+    const scope = `${SCOPE} offline_access`;
+    const app = await registerApp(server, scope);
+    const issued = await connect(server, origin, cookie, app, scope);
+    const key = await mintedBy(issued.access_token!, "refresh-taken", {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    const descendant = await mintedBy(key.key, "refresh-taken-child");
+    const otherApp = await approved();
+    const otherKey = await mintedBy(otherApp.access, "refresh-other-app");
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+
+    const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: issued.refresh_token!,
+        token_type_hint: "refresh_token",
+        client_id: app.clientId,
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    expect(await itemsStatus(server, key.key)).toBe(401);
+    expect(await itemsStatus(server, descendant.key)).toBe(401);
+    expect(await itemsStatus(server, otherApp.access)).toBe(200);
+    expect(await itemsStatus(server, otherKey.key)).toBe(200);
   });
 });
 
@@ -456,5 +518,66 @@ describe("PATCH /auth/grants/{id}", () => {
         Date.parse(app.last_used_at ?? app.created_at) + 365 * 86_400_000,
       ).toISOString(),
     );
+  });
+});
+
+/**
+ * Last in the file, because moving the server's clock past the inactivity
+ * retirement ends every token and grant made before it.
+ */
+describe("the inactivity retirement", () => {
+  interface Row {
+    id: string;
+    last_used_at: string | null;
+  }
+  const signIns = async (): Promise<Row[]> => {
+    const listed = await controlRequest(
+      server.controlSocket,
+      "/owner/sign-ins",
+    );
+    expect(listed.status).toBe(200);
+    return (listed.body as unknown as { data: Row[] }).data;
+  };
+
+  it("counts the use of a key the app minted, or that key's key, and retires an idle app with its keys", async () => {
+    const kept = await approved();
+    const key = await mintedBy(kept.access, "idle-kept", {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    const descendant = await mintedBy(key.key, "idle-kept-child");
+    const idle = await approved();
+    const idleKey = await mintedBy(idle.access, "idle-retired");
+    expect(await itemsStatus(server, idleKey.key)).toBe(200);
+
+    const clock = movedClock(server);
+    await clock.advance(200 * DAY_MS);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    let used: string | null = null;
+    const deadline = Date.now() + 10_000;
+    while (used === null && Date.now() < deadline) {
+      used =
+        (await signIns()).find((row) => row.id === descendant.id)
+          ?.last_used_at ?? null;
+      if (used === null) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(used, "the key's use was not recorded").not.toBeNull();
+    expect(
+      (await signIns()).find((row) => row.id === kept.grant.id)?.last_used_at,
+    ).toBe(used);
+
+    await clock.advance(200 * DAY_MS);
+    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+      "ok",
+    );
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    const ids = listed.data.map((g) => g.id);
+    expect(ids).toContain(kept.grant.id);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    expect(ids).not.toContain(idle.grant.id);
+    expect(await itemsStatus(server, idleKey.key)).toBe(401);
   });
 });

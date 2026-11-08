@@ -15,7 +15,7 @@ use crate::app::auth::names;
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
-use crate::app::{App, instance, keys};
+use crate::app::{App, instance};
 
 const COMMAND_LINE_SOFTWARE_ID: &str = "so.marfa.cli";
 const APP_SOURCE_PREFIX: &str = "oauth:";
@@ -209,7 +209,6 @@ pub async fn narrow(
     .await
 }
 
-/// Ends the grant and, in the same write, every key the app minted and every key those minted.
 pub(crate) fn withdraw(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -225,8 +224,7 @@ pub(crate) fn withdraw(
             "user_id": consent.user_id,
             "grant_item_id": consent.grant_id,
         })),
-    )?;
-    keys::end_all_of_app(unit, &consent.client_id)
+    )
 }
 
 pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String) -> Result<()> {

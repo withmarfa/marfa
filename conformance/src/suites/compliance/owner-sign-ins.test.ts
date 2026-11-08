@@ -794,9 +794,12 @@ describe("the keys an app minted", () => {
     ]);
     const descendant = await mintFrom(minted.key, "key its key minted");
     const other = await mintKey("key of the owner's own");
+    const otherApp = await approveApp(browser, "app beside the ended one");
+    const otherAppKey = await mintAsApp(otherApp, "key of the app beside", []);
     // The witness: the minted keys work before the end.
     expect(await itemsStatus(server, minted.key)).toBe(200);
     expect(await itemsStatus(server, descendant.key)).toBe(200);
+    expect(await itemsStatus(server, otherAppKey.key)).toBe(200);
     const response = await end(await appId("app ended with its keys"));
     expect(response.status).toBe(200);
     await expectMatchesSchema(
@@ -809,6 +812,8 @@ describe("the keys an app minted", () => {
     expect(await itemsStatus(server, minted.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect(await itemsStatus(server, other.key)).toBe(200);
+    expect(await itemsStatus(server, otherApp.accessToken)).toBe(200);
+    expect(await itemsStatus(server, otherAppKey.key)).toBe(200);
     const listed = (await signIns()).map((r) => r.id);
     expect(listed).not.toContain(minted.id);
     expect(listed).not.toContain(descendant.id);

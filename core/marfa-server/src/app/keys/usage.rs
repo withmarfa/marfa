@@ -9,6 +9,7 @@ use rusqlite::{Transaction, params};
 
 use super::Key;
 use crate::app::App;
+use crate::app::oauth::store::{self, stamp_of};
 use crate::app::refusal::Result;
 use crate::db::Write;
 
@@ -46,13 +47,17 @@ pub fn note(app: &Arc<App>, key: &Key) {
         return;
     }
     let row = key.id.clone();
-    let at = app.clock.stamp();
+    let client = key.oauth_client_id.clone();
+    let now = app.clock.now_ms();
     queue(app, &key.id, move |tx| {
-        tx.execute(
+        let noted = tx.execute(
             "UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1 AND revoked_at IS NULL",
-            params![row, at],
+            params![row, stamp_of(now)],
         )?;
-        Ok(())
+        match client {
+            Some(client) if noted > 0 => store::note_app_used(tx, &client, now),
+            _ => Ok(()),
+        }
     });
 }
 
