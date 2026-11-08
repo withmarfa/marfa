@@ -61,6 +61,8 @@ jobs:
       core-checks: ${{ steps.classify.outputs.core-checks }}
       swift-package: ${{ steps.classify.outputs.swift-package }}
       core-checks-linux: ${{ steps.classify.outputs.core-checks-linux }}
+      core-native: ${{ steps.classify.outputs.core-native }}
+      core-fault-injection: ${{ steps.classify.outputs.core-fault-injection }}
       conformance-offline: ${{ steps.classify.outputs.conformance-offline }}
       conformance-correctness-sync: ${{ steps.classify.outputs.conformance-correctness-sync }}
       conformance-compliance: ${{ steps.classify.outputs.conformance-compliance }}
@@ -275,6 +277,13 @@ jobs:
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
           scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace
+          # The next run writes its report over this one's.
+          scripts/report-flaky.py target/nextest/ci/junit.xml
+          # The faults `marfa-enrichment` makes a reader suffer are proved here
+          # too: macOS confines and measures a reader with other code than
+          # Linux does (`sandbox_init`, the physical footprint).
+          cargo clippy --locked -p marfa-enrichment --all-targets --features fault-injection --no-deps -- -D warnings
+          scripts/login-keychain-unchanged.sh cargo nextest run --locked -p marfa-enrichment --features fault-injection
       - name: Check the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
@@ -360,6 +369,173 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: core
         run: scripts/report-flaky.py target/nextest/ci/junit.xml
+
+  # `marfa-enrichment`'s tests with the `fault-injection` feature, which makes a
+  # reader crash, hang, spin, run out of memory and say what a file that took it
+  # over could say, to prove the process that called it survives each. Linux
+  # builds and tests the crate without the feature in `Core checks (Linux)`;
+  # `Core checks` runs these on macOS, where the sandbox is other code.
+  core-fault-injection:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-fault-injection != 'false') }}
+    name: Core fault injection (Linux)
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    # A failing test is run once more, and one that then passes is named in
+    # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
+    env:
+      NEXTEST_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # nextest kills a test past the budget in `core/.config/nextest.toml`.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check and test the reader with faults injected
+        working-directory: core
+        run: |
+          cargo clippy --locked -p marfa-enrichment --all-targets --features fault-injection --no-deps -- -D warnings
+          cargo nextest run --locked -p marfa-enrichment --features fault-injection
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: scripts/report-flaky.py target/nextest/ci/junit.xml
+
+  # `marfa-enrichment`'s PDF and OCR readers, built on x86_64 from the sources
+  # `native/manifest.txt` pins and checked on the machine they are built for.
+  # `native/release.sh --full` builds PDFium, Leptonica and Tesseract, links
+  # and checks the programs, gathers the licences into `NOTICES.txt`, and runs
+  # `native/verify.sh`: every format, the refusals, the injected faults, a
+  # reader that has been taken over, and the memory limit, with every counted
+  # read held to `sandbox: Full`. The fuzz then reads mutated files through the
+  # real reader. A hosted x86_64 Linux runner is what the Landlock and seccomp
+  # of an x86_64 kernel can be proved on at all: an Apple silicon Mac runs the
+  # program under emulation, which reports the sandbox as `Off`.
+  #
+  # PDFium's finished library (`archives/`) and the pinned downloads are cached
+  # by what pins and builds them, saved only from `main` so that a pull request
+  # restores but never fills the cache.
+  core-native:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-native != 'false') }}
+    name: Core native (x86_64 Linux)
+    timeout-minutes: 50
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+      # The first build of a target asks for 40 GB of free disk, and the
+      # runner starts with less. These are the toolchains it does not use.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      # Pillow draws the scanned page and the large picture the checks read.
+      - name: Install what the checks need beside Docker
+        run: sudo apt-get update && sudo apt-get install -y python3-pil
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
+      - name: Build and check the programs
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --full
+      # `verify.sh` holds each read to this already. Counting again here makes
+      # the claim this job stands for plain, and fails a run whose reads left
+      # no state to count instead of passing it.
+      - name: Check that every counted read reported sandbox Full
+        run: |
+          results="$MARFA_NATIVE_ROOT/out/$TARGET/verify/results"
+          states=$(grep -h '^sandbox:' "$results"/*/*.stderr || true)
+          total=$(printf '%s\n' "$states" | grep -c '^sandbox:' || true)
+          full=$(printf '%s\n' "$states" | grep -c '^sandbox: Full$' || true)
+          echo "Reads that reported a sandbox: $total, of which Full: $full"
+          printf '%s\n' "$states" | sort | uniq -c
+          if [ "$total" -lt 20 ]; then
+            echo "::error::Only $total reads reported a sandbox state; the checks did not run as they should"
+            exit 1
+          fi
+          if [ "$full" -ne "$total" ]; then
+            echo "::error::$((total - full)) of $total reads reported a sandbox other than Full"
+            exit 1
+          fi
+      # The licences ship beside the program, so the job says whether the build
+      # made them, and leaves the file as it is.
+      - name: Check that the build made the licences
+        run: |
+          notices="$MARFA_NATIVE_ROOT/out/$TARGET/NOTICES.txt"
+          test -s "$notices" || { echo "::error::The build made no NOTICES.txt"; exit 1; }
+          for part in PDFium Tesseract Leptonica; do
+            grep -q "$part" "$notices" || { echo "::error::NOTICES.txt does not name $part"; exit 1; }
+          done
+          wc -c "$notices"
+      # `release.sh --full` does not fuzz. Every run uses the same seed and job
+      # count, so it reads the files of the run before it, up to where that run
+      # stopped.
+      - name: Fuzz the reader
+        run: core/marfa-enrichment/native/fuzz.sh "$TARGET" 300 --jobs 2 --seed 1
+      - name: Save the downloads and the PDFium library
+        if: ${{ github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
+      # The checks name what failed in their own report; this puts it where the
+      # run's summary is read, and hands the report, the licences and anything
+      # the fuzz found to whoever has to look further.
+      - name: Say what failed
+        if: ${{ failure() }}
+        run: |
+          out="$MARFA_NATIVE_ROOT/out/$TARGET"
+          sudo chown -R "$(id -u):$(id -g)" "$MARFA_NATIVE_ROOT/out" || true
+          {
+            echo "### Core native (x86_64 Linux): what failed"
+            echo
+            if [ -f "$out/verify/report.txt" ]; then
+              grep '^FAIL' "$out/verify/report.txt" || echo "No check failed in the report: the run stopped before or after the checks, so read the step that failed."
+            else
+              echo "The run stopped before the checks ran, so read the step that failed."
+            fi
+            if [ -f "$out/fuzz/run.log" ]; then
+              echo
+              echo "Fuzz, last lines:"
+              tail -n 15 "$out/fuzz/run.log"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -f "$out/verify/report.txt" ]; then
+            grep '^FAIL' "$out/verify/report.txt" | while read -r line; do echo "::error::$line"; done
+          fi
+      - name: Keep the report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marfa-native-report
+          path: |
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/verify/report.txt
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/verify/results/
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/fuzz/run.log
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/fuzz/findings/
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/NOTICES.txt
+            ${{ runner.temp }}/marfa-native/out/x86_64-unknown-linux-musl/SHA256SUMS
+          if-no-files-found: ignore
 
   # The contract, run against the server in this same checkout.
   #
@@ -1515,6 +1691,8 @@ jobs:
         ci-sqlite-tests,
         core-checks,
         core-checks-linux,
+        core-native,
+        core-fault-injection,
         conformance-shards,
         conformance-offline,
         conformance-statuses,
@@ -1563,6 +1741,8 @@ jobs:
         ci-sqlite-tests,
         core-checks,
         core-checks-linux,
+        core-native,
+        core-fault-injection,
         conformance-shards,
         conformance-offline,
         conformance-statuses,

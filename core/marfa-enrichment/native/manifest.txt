@@ -1,0 +1,88 @@
+# Every source the native build uses, pinned. The scripts in this folder and
+# build.rs read it; nothing else says what is built.
+#
+# Each line is whitespace-separated fields. A line starting with # is a comment.
+#
+#   archive <name> <version> <url> <sha256>      a source archive, verified before it is unpacked
+#   model   <language> <url> <sha256>            a tessdata_fast model, carried inside the program
+#   git     <name> <url> <ref> <commit>          a git checkout that must resolve to exactly <commit>
+#   tool    <name> <url> <sha256> [<url>...]     a build tool fetched as an archive, from the first URL that serves it
+#   image   <name> <reference>                   a container image, by digest
+#   apt-snapshot <name> <timestamp>              the date of the Ubuntu package archive the image installs from
+#   toolchain <name> <version>                   a compiler version the builder must have
+#   kernel  <name> <url> <sha256>               a Linux kernel package that native/vm.sh boots to run the x86_64 program
+#   licence <name> <url> <sha256>                a licence text that ships with a program and that no source archive holds
+#
+# To move a pin, change the URL and the hash together: the build stops at the
+# first hash that does not match.
+
+# Leptonica and Tesseract, by commit: a GitHub archive of a commit does not move
+# with a tag.
+archive leptonica 1.87.0 https://github.com/DanBloomberg/leptonica/archive/13275a278eb55b5746e33f95fbf5a2c8f604b3ab.tar.gz e72242133adf678e8584081a506ca3a665c8f6f6de8c3fe7b47d1d5fcf9a4ce4
+archive tesseract 5.5.4 https://github.com/tesseract-ocr/tesseract/archive/7e548e6eff172f38f97664afe7f7ce40db36c8d6.tar.gz 445603ab1d0a63df552e193a600d9d5c4021aff36e144f3091af149e5efb381a
+
+# bblanchon/pdfium-binaries at the commit that tagged release chromium/8138.
+# Its build.sh builds PDFium; pdfium-render's `pdfium_8125` feature is the newest
+# API its bindings carry, and the 8138 library links against it.
+archive pdfium-binaries chromium/8138 https://github.com/bblanchon/pdfium-binaries/archive/0eb94b28c2252d2baae3dfe15dc6b237131d8cd8.tar.gz 112d87a6e1e2204ad2aa01a24465f45ce967299c541c07543d613b9b0a5dee9f
+
+# What build.sh checks out: depot_tools, and the PDFium branch of that release.
+# The script stops before it builds if the branch no longer resolves to this
+# commit.
+git depot_tools https://chromium.googlesource.com/chromium/tools/depot_tools.git main 80c090262c7a53632a4a0a5c551732d197068e40
+git pdfium https://pdfium.googlesource.com/pdfium chromium/8138 5f092b52993bfd98f94f04deff391918fe0fdcfd
+
+# The musl cross compilers bblanchon's build.sh would otherwise fetch unchecked.
+# They run on x86_64 Linux and build for both Linux targets. PDFium, Leptonica,
+# Tesseract, the C++ shim and the program are all built with the compiler of the
+# target's cross compiler (GCC 11.2.1) and linked with its libstdc++ and musl, so
+# the program holds one C++ library.
+#
+# musl.cc is not reachable from GitHub's hosted runners, so each line also names
+# mirrors that serve the same bytes: the Owncast project's public build bucket, which
+# its own CI downloads from, and the Internet Archive's copy of musl.cc
+# (the raw capture, `id_`). A mirror is trusted for nothing: the hash decides.
+tool x86_64-linux-musl-cross https://musl.cc/x86_64-linux-musl-cross.tgz c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea https://owncast-infra.nyc3.cdn.digitaloceanspaces.com/build/x86_64-linux-musl-cross.tgz https://web.archive.org/web/20260925231843id_/https://musl.cc/x86_64-linux-musl-cross.tgz
+tool aarch64-linux-musl-cross https://musl.cc/aarch64-linux-musl-cross.tgz c909817856d6ceda86aa510894fa3527eac7989f0ef6e87b5721c58737a06c38 https://owncast-infra.nyc3.cdn.digitaloceanspaces.com/build/aarch64-linux-musl-cross.tgz https://web.archive.org/web/20260815151442id_/https://musl.cc/aarch64-linux-musl-cross.tgz
+
+# The six models, from tesseract-ocr/tessdata_fast at one commit
+# (87416418657359cb625c412a48b6e1d6d41c29bd). The first four are the default
+# languages. Adding or removing a line changes what the program carries.
+model eng https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/eng.traineddata 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+model deu https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/deu.traineddata 19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d
+model fra https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/fra.traineddata ced037562e8c80c13122dece28dd477d399af80911a28791a66a63ac1e3445ca
+model spa https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/spa.traineddata 6f2e04d02774a18f01bed44b1111f2cd7f3ba7ac9dc4373cd3f898a40ea6b464
+model jpn https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/jpn.traineddata 1f5de9236d2e85f5fdf4b3c500f2d4926f8d9449f28f5394472d9e8d83b91b4d
+model chi_sim https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/chi_sim.traineddata a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730
+
+# The Linux build image: Ubuntu 24.04 (the multi-architecture index; the image is
+# built for linux/amd64, since Google's build tools and the cross compilers are
+# x86_64 programs), its packages from the Ubuntu archive as it stood at the
+# snapshot, and Rust installed from the standalone installers below.
+image build ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+apt-snapshot ubuntu 20261101T000000Z
+tool rust-1.98.1-x86_64-unknown-linux-gnu https://static.rust-lang.org/dist/rust-1.98.1-x86_64-unknown-linux-gnu.tar.xz 5326b36c53de11d148c8f8dab6553a3d1006c2cfd32123683073fad3c302605b
+tool rust-std-1.98.1-aarch64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-aarch64-unknown-linux-musl.tar.xz 7e0ad2e67817f224b7a6331e48d6397303fc050edaccf81784ed786ffddc884a
+tool rust-std-1.98.1-x86_64-unknown-linux-musl https://static.rust-lang.org/dist/rust-std-1.98.1-x86_64-unknown-linux-musl.tar.xz bd9f35880de21dab0e387e84009c00001ae7836a4ba565cb16823f13f75f325f
+
+# The Rust compiler a release is built with. The Linux image installs exactly
+# this; a Mac needs it on PATH (rustup toolchain install 1.98.1).
+toolchain rust 1.98.1
+
+# Licence texts for what a Linux program holds that no source archive of ours
+# carries: the models, and the C library and C++ runtime of the musl.cc toolchain
+# (musl 1.2.2-git-50-gb76f37fd and GCC 11.2.1, as its libc.a and libgcc.a say).
+# licenses.sh adds these to the licences PDFium, Leptonica, Tesseract and the Rust
+# crates bring with them.
+licence tessdata_fast https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+licence musl https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?id=b76f37fd f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af
+licence gcc-copying3 https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING3 8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903
+licence gcc-runtime-exception https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-11.2.0/COPYING.RUNTIME 9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74
+
+# The x86_64 program is also run on a real Linux kernel (native/vm.sh), in a full-system
+# QEMU. The kernel is Debian's cloud kernel, a file of snapshot.debian.org, which never
+# changes: Landlock and seccomp are built in, and so are the serial console and everything
+# else it needs, so the machine has no modules and no disk. QEMU comes from the Alpine
+# package of the image below, which also runs verify/peak-memory.sh.
+kernel debian-6.1.0-28-cloud-amd64 https://snapshot.debian.org/file/961bd3c01a6f9bf88db09af672b5510ca9510c4b 859a19374f886463145d2743b243007f60054d3ff2d1e55cd6d6a72a623e2ece
+image alpine alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc

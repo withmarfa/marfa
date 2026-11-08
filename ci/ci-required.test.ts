@@ -75,6 +75,8 @@ const RUST_LINUX: Job[] = [
 /** The two jobs that run on a Mac, which a pull request runs only for what a Mac alone can break. */
 const MACOS: Job[] = ["core-checks", "core"];
 const RUST: Job[] = [...RUST_LINUX, ...MACOS];
+/** The two jobs that read `marfa-enrichment`: its fault-injection tests and its native build. */
+const ENRICHMENT: Job[] = ["core-native", "core-fault-injection"];
 /** The chapters of the contract a server fixture reads while it runs. */
 const READ_AT_RUN_TIME = ["errors.md", "coverage.md"];
 
@@ -292,7 +294,51 @@ describe("what a change runs", () => {
     [
       "the core's lockfile, since a dependency bump can break an Apple build",
       ["core/Cargo.lock"],
-      [...RUST, "ci-sqlite", "version-fields"],
+      [...RUST, ...ENRICHMENT, "ci-sqlite", "version-fields"],
+    ],
+    [
+      "the native readers' scripts, pins and patches, which only the native build runs",
+      [
+        "core/marfa-enrichment/native/release.sh",
+        "core/marfa-enrichment/native/manifest.txt",
+        "core/marfa-enrichment/native/patches/pdfium-steps.patch",
+        "core/marfa-enrichment/native/shim.cc",
+        "core/marfa-enrichment/native/linux/Dockerfile",
+      ],
+      ["ci-sqlite", "core-native"],
+    ],
+    [
+      "the reader's parsers, which are pure Rust and read the same on a Mac",
+      [
+        "core/marfa-enrichment/src/ooxml.rs",
+        "core/marfa-enrichment/src/lib.rs",
+        "core/marfa-enrichment/fixtures/sample.docx",
+      ],
+      ["ci-sqlite", ...RUST_LINUX, ...ENRICHMENT],
+    ],
+    [
+      "the reader's isolation, which is Landlock and seccomp on Linux and sandbox_init on a Mac",
+      [
+        "core/marfa-enrichment/src/isolated/confine.rs",
+        "core/marfa-enrichment/src/isolated/footprint.rs",
+        "core/marfa-enrichment/src/isolated/parent.rs",
+        "core/marfa-enrichment/build.rs",
+        "core/marfa-enrichment/Cargo.toml",
+        "core/marfa-enrichment/tests/isolation.rs",
+      ],
+      ["ci-sqlite", "version-fields", ...RUST, ...ENRICHMENT],
+    ],
+    [
+      "nextest's budget and the runner that caps a test, which the fault-injection tests run under",
+      ["core/.config/nextest.toml", "core/scripts/test-limits.sh"],
+      [
+        "ci-sqlite",
+        "workspace",
+        "core-checks",
+        "core-checks-linux",
+        "core-fault-injection",
+        "core",
+      ],
     ],
     [
       "a Rust test, which is not in the binary",
