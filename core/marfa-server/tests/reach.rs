@@ -146,7 +146,9 @@ impl Instance {
             .local(
                 Method::POST,
                 "/edges",
-                Some(json!({ "source_id": source, "target_id": target, "edge_type": "acme.pairs" })),
+                Some(
+                    json!({ "source_id": source, "target_id": target, "edge_type": "acme.pairs" }),
+                ),
             )
             .await;
         made.body["edge"].clone()
@@ -172,7 +174,11 @@ async fn a_reach_is_sixty_four_lowercase_hexadecimal_characters_that_one_instanc
     let instance = Instance::start().await;
     let reach = instance.reach().await;
     assert_eq!(reach.len(), 64);
-    assert!(reach.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')));
+    assert!(
+        reach
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    );
     assert_eq!(reach, instance.reach().await);
     let other = Instance::start().await;
     assert_ne!(reach, other.reach().await);
@@ -350,14 +356,20 @@ async fn a_type_registered_given_another_parent_or_deleted_moves_the_reach() {
         .local(Method::POST, "/types", Some(simple("acme.other", None)))
         .await;
     instance
-        .local(Method::POST, "/types", Some(simple("acme.leaf", Some("acme.top"))))
+        .local(
+            Method::POST,
+            "/types",
+            Some(simple("acme.leaf", Some("acme.top"))),
+        )
         .await;
     assert!(
         !instance
             .moves(async {
                 let mut kept = simple("acme.leaf", Some("acme.top"));
                 kept["label"] = json!("Leaf");
-                instance.local(Method::PUT, "/types/acme.leaf", Some(kept)).await;
+                instance
+                    .local(Method::PUT, "/types/acme.leaf", Some(kept))
+                    .await;
             })
             .await,
         "a replacement that keeps the parent"
@@ -379,7 +391,9 @@ async fn a_type_registered_given_another_parent_or_deleted_moves_the_reach() {
     assert!(
         instance
             .moves(async {
-                instance.local(Method::DELETE, "/types/acme.leaf", None).await;
+                instance
+                    .local(Method::DELETE, "/types/acme.leaf", None)
+                    .await;
             })
             .await,
         "a deletion"
@@ -400,7 +414,9 @@ async fn an_edge_type_registered_or_deleted_moves_the_reach_and_one_widened_does
     assert!(
         instance
             .moves(async {
-                instance.local(Method::POST, "/edge-types", Some(body.clone())).await;
+                instance
+                    .local(Method::POST, "/edge-types", Some(body.clone()))
+                    .await;
             })
             .await
     );
@@ -410,14 +426,18 @@ async fn an_edge_type_registered_or_deleted_moves_the_reach_and_one_widened_does
     assert!(
         !instance
             .moves(async {
-                instance.local(Method::POST, "/edge-types", Some(widened)).await;
+                instance
+                    .local(Method::POST, "/edge-types", Some(widened))
+                    .await;
             })
             .await
     );
     assert!(
         instance
             .moves(async {
-                instance.local(Method::DELETE, "/edge-types/acme.cites", None).await;
+                instance
+                    .local(Method::DELETE, "/edge-types/acme.cites", None)
+                    .await;
             })
             .await
     );
