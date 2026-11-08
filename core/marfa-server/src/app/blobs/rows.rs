@@ -27,6 +27,14 @@ pub enum Lender {
     },
 }
 
+/// A recorded copy: the store, and the object it is kept in there, which is empty for the
+/// disk store, whose file the hash names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Held {
+    pub store_id: String,
+    pub object: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct CopyRecord {
     pub store_id: String,
@@ -47,6 +55,26 @@ pub struct StoreRecord {
 
 fn unread(what: &str) -> Refusal {
     Refusal::internal(&format!("a stored {what} does not read"))
+}
+
+/// A stored object name, which must be empty for the disk store and, for an object store,
+/// the blob's own hex and a name of one write, so that it can never name another blob.
+fn object_of(hash: &Hash, kind: &str, object: String) -> Result<String> {
+    let fits = match kind {
+        "disk" => object.is_empty(),
+        "s3" => object
+            .strip_prefix(hash.hex())
+            .and_then(|rest| rest.strip_prefix('/'))
+            .is_some_and(|write| {
+                !write.is_empty() && write.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }),
+        _ => false,
+    };
+    if fits {
+        Ok(object)
+    } else {
+        Err(unread("blob object"))
+    }
 }
 
 pub fn find(tx: &Transaction<'_>, hash: &Hash) -> Result<Option<Blob>> {
@@ -388,38 +416,72 @@ pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     )?)
 }
 
-/// The attached stores the copy record says hold the blob.
-pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<String>> {
+/// The copies the copy record names in attached stores.
+pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     let mut statement = tx.prepare_cached(
-        "SELECT c.store_id FROM blob_copies c JOIN stores s ON s.id = c.store_id \
+        "SELECT c.store_id, s.kind, c.object FROM blob_copies c JOIN stores s ON s.id = c.store_id \
          WHERE c.hash = ?1 AND s.detached_at IS NULL ORDER BY c.store_id",
     )?;
-    let rows = statement.query_map([hash.as_str()], |row| row.get(0))?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+    let rows = statement.query_map([hash.as_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut found = Vec::new();
+    for row in rows {
+        let (store_id, kind, object) = row?;
+        let object = object_of(hash, &kind, object)?;
+        found.push(Held { store_id, object });
+    }
+    Ok(found)
 }
 
-/// Whether a deletion of the store's copy is queued, and whether a copy is recorded there.
-pub fn deletion(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<(bool, bool)> {
-    Ok(tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2), \
-                EXISTS (SELECT 1 FROM blob_copies WHERE hash = ?1 AND store_id = ?2)",
-        params![hash.as_str(), store_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?)
+/// The objects whose deletion is queued in the store, each with whether a copy recorded there
+/// names it.
+pub fn deletion(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<Vec<(String, bool)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT s.kind, p.object, EXISTS (SELECT 1 FROM blob_copies c \
+                WHERE c.hash = p.hash AND c.store_id = p.store_id AND c.object = p.object) \
+         FROM blob_pending_deletions p JOIN stores s ON s.id = p.store_id \
+         WHERE p.hash = ?1 AND p.store_id = ?2 ORDER BY p.object",
+    )?;
+    let rows = statement.query_map(params![hash.as_str(), store_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, bool>(2)?,
+        ))
+    })?;
+    let mut found = Vec::new();
+    for row in rows {
+        let (kind, object, recorded) = row?;
+        found.push((object_of(hash, &kind, object)?, recorded));
+    }
+    Ok(found)
 }
 
-pub fn queue_deletion(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<()> {
+pub fn queue_deletion(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+    object: &str,
+    at: &str,
+) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO blob_pending_deletions (hash, store_id, queued_at) VALUES (?1, ?2, ?3) \
-         ON CONFLICT (hash, store_id) DO NOTHING",
+        "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
+         VALUES (?1, ?2, ?3, ?4) ON CONFLICT (hash, store_id, object) DO NOTHING",
     )?
-    .execute(params![hash.as_str(), store_id, at])?;
+    .execute(params![hash.as_str(), store_id, object, at])?;
     Ok(())
 }
 
-pub fn deleted(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<()> {
-    tx.prepare_cached("DELETE FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2")?
-        .execute(params![hash.as_str(), store_id])?;
+pub fn deleted(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -> Result<()> {
+    tx.prepare_cached(
+        "DELETE FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+    )?
+    .execute(params![hash.as_str(), store_id, object])?;
     Ok(())
 }
 
@@ -427,13 +489,14 @@ pub fn deletion_failed(
     tx: &Transaction<'_>,
     hash: &Hash,
     store_id: &str,
+    object: &str,
     error: &str,
 ) -> Result<()> {
     tx.prepare_cached(
-        "UPDATE blob_pending_deletions SET attempts = attempts + 1, last_error = ?3 \
-         WHERE hash = ?1 AND store_id = ?2",
+        "UPDATE blob_pending_deletions SET attempts = attempts + 1, last_error = ?4 \
+         WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
     )?
-    .execute(params![hash.as_str(), store_id, error])?;
+    .execute(params![hash.as_str(), store_id, object, error])?;
     Ok(())
 }
 
@@ -448,31 +511,45 @@ pub fn copy_failed(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<
     Ok(())
 }
 
-/// Records a copy a store now holds, unless the blob has left the registry since.
-pub fn record_copy(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<bool> {
+/// Records a copy a store now holds in `object`, unless the blob has left the registry since.
+/// An object that a copy recorded meanwhile makes surplus stays queued for deletion.
+pub fn record_copy(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+    object: &str,
+    at: &str,
+) -> Result<bool> {
     if find(tx, hash)?.is_none() {
         return Ok(false);
     }
-    tx.prepare_cached(
-        "INSERT INTO blob_copies (hash, store_id, recorded_at) VALUES (?1, ?2, ?3) \
-         ON CONFLICT (hash, store_id) DO NOTHING",
-    )?
-    .execute(params![hash.as_str(), store_id, at])?;
+    let recorded = tx
+        .prepare_cached(
+            "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4) ON CONFLICT (hash, store_id) DO NOTHING",
+        )?
+        .execute(params![hash.as_str(), store_id, object, at])?;
     tx.prepare_cached("DELETE FROM blob_copy_failures WHERE hash = ?1 AND store_id = ?2")?
         .execute(params![hash.as_str(), store_id])?;
-    deleted(tx, hash, store_id)?;
+    if recorded > 0 {
+        deleted(tx, hash, store_id, object)?;
+    }
     Ok(true)
 }
 
 /// Takes a copy out of the copy record and queues the deletion of its bytes, in one step.
 pub fn remove_copy(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<bool> {
-    let removed = tx
-        .prepare_cached("DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2")?
-        .execute(params![hash.as_str(), store_id])?;
-    if removed > 0 {
-        queue_deletion(tx, hash, store_id, at)?;
-    }
-    Ok(removed > 0)
+    let removed: Option<String> = tx
+        .prepare_cached(
+            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 RETURNING object",
+        )?
+        .query_row(params![hash.as_str(), store_id], |row| row.get(0))
+        .optional()?;
+    let Some(object) = removed else {
+        return Ok(false);
+    };
+    queue_deletion(tx, hash, store_id, &object, at)?;
+    Ok(true)
 }
 
 /// A blob an attached store lacks while another attached store holds it.
@@ -552,6 +629,7 @@ pub struct ToCheck {
     pub hash: Hash,
     pub size: u64,
     pub store_id: String,
+    pub object: String,
 }
 
 /// Copies in attached stores, never checked first and then the least recently checked, across
@@ -559,7 +637,7 @@ pub struct ToCheck {
 pub fn to_check(tx: &Transaction<'_>, left_out: &[String], limit: u64) -> Result<Vec<ToCheck>> {
     let left_out = serde_json::to_string(left_out).map_err(|_| unread("store id"))?;
     let mut statement = tx.prepare_cached(
-        "SELECT c.hash, b.size_bytes, c.store_id FROM blob_copies c \
+        "SELECT c.hash, b.size_bytes, c.store_id, s.kind, c.object FROM blob_copies c \
          JOIN blobs b ON b.hash = c.hash JOIN stores s ON s.id = c.store_id \
          WHERE s.detached_at IS NULL AND c.store_id NOT IN (SELECT value FROM json_each(?1)) \
          ORDER BY c.verified_at IS NOT NULL, c.verified_at, c.hash, c.store_id LIMIT ?2",
@@ -571,16 +649,21 @@ pub fn to_check(tx: &Transaction<'_>, left_out: &[String], limit: u64) -> Result
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
             ))
         },
     )?;
     let mut found = Vec::new();
     for row in rows {
-        let (hash, size, store_id) = row?;
+        let (hash, size, store_id, kind, object) = row?;
+        let hash = hash_of(&hash)?;
+        let object = object_of(&hash, &kind, object)?;
         found.push(ToCheck {
-            hash: hash_of(&hash)?,
+            hash,
             size: size_of(size)?,
             store_id,
+            object,
         });
     }
     Ok(found)
@@ -725,8 +808,23 @@ fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
 }
 
 /// Takes a blob out of the registry with its copies, proofs and report, and queues the
-/// deletion of its bytes in each store.
-pub fn purge(tx: &Transaction<'_>, hash: &Hash, stores: &[String], at: &str) -> Result<()> {
+/// deletion of its bytes in each attached store: every object recorded in an object store, and
+/// the file the hash names in a disk store, which a write the server gave up on may have left.
+pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
+         SELECT c.hash, c.store_id, c.object, ?2 FROM blob_copies c \
+         JOIN stores s ON s.id = c.store_id \
+         WHERE c.hash = ?1 AND s.kind = 's3' AND s.detached_at IS NULL \
+         ON CONFLICT (hash, store_id, object) DO NOTHING",
+    )?
+    .execute(params![hash.as_str(), at])?;
+    tx.prepare_cached(
+        "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
+         SELECT ?1, id, '', ?2 FROM stores WHERE kind = 'disk' AND detached_at IS NULL \
+         ON CONFLICT (hash, store_id, object) DO NOTHING",
+    )?
+    .execute(params![hash.as_str(), at])?;
     for table in [
         "blob_copies",
         "blob_copy_failures",
@@ -738,9 +836,6 @@ pub fn purge(tx: &Transaction<'_>, hash: &Hash, stores: &[String], at: &str) -> 
     }
     tx.prepare_cached("DELETE FROM blobs WHERE hash = ?1")?
         .execute([hash.as_str()])?;
-    for store_id in stores {
-        queue_deletion(tx, hash, store_id, at)?;
-    }
     Ok(())
 }
 

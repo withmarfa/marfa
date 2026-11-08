@@ -1,5 +1,6 @@
 //! An S3-compatible object store in the test process, path style, that keeps objects in
-//! memory and can be told to answer every request `404` or to send a body slowly.
+//! memory and can be told to answer every request `404`, to send a body slowly, or to carry out
+//! a deletion late.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -12,6 +13,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::Response;
 use futures_util::stream;
 use tokio::net::TcpListener;
+use tokio::sync::{Notify, oneshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -28,6 +30,9 @@ struct Held {
     mode: Option<Mode>,
     refused: Vec<String>,
     requests: Vec<(Method, String)>,
+    /// The next deletion waits for this, and lands even if its request is given up.
+    late_delete: Option<Arc<Notify>>,
+    landed: usize,
 }
 
 #[derive(Clone)]
@@ -56,16 +61,44 @@ fn range_of(headers: &HeaderMap, size: usize) -> Option<(usize, usize)> {
     Some((first, last))
 }
 
+/// The keys a bulk `POST /<bucket>?delete` names, as the paths their objects are kept at.
+fn named_for_deletion(bucket: &str, body: &[u8]) -> Vec<(String, String)> {
+    String::from_utf8_lossy(body)
+        .split("<Key>")
+        .skip(1)
+        .filter_map(|part| part.split_once("</Key>"))
+        .map(|(key, _)| (key.to_string(), format!("{bucket}/{key}")))
+        .collect()
+}
+
+fn deletion_answer(named: &[(String, String)]) -> Response {
+    let deleted: String = named
+        .iter()
+        .map(|(key, _)| format!("<Deleted><Key>{key}</Key></Deleted>"))
+        .collect();
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(Body::from(format!(
+            "<DeleteResult>{deleted}</DeleteResult>"
+        )))
+        .unwrap()
+}
+
 async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Response {
     let key = request.uri().path().to_string();
     let (method, headers) = (request.method().clone(), request.headers().clone());
+    if method == Method::POST && request.uri().query() == Some("delete") {
+        let body = axum::body::to_bytes(request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        return delete(held, named_for_deletion(&key, &body)).await;
+    }
     let (mode, refused) = {
         let mut held = held.lock().unwrap();
         held.requests.push((method.clone(), key.clone()));
-        (
-            held.mode.unwrap_or(Mode::Normal),
-            held.refused.contains(&key),
-        )
+        let mode = held.mode.unwrap_or(Mode::Normal);
+        let refused = held.refused.iter().any(|prefix| key.starts_with(prefix));
+        (mode, refused)
     };
     if mode == Mode::AllNotFound {
         return not_found();
@@ -84,13 +117,6 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
             held.lock().unwrap().objects.insert(key, body.to_vec());
             Response::builder()
                 .header(header::ETAG, "\"e\"")
-                .body(Body::empty())
-                .unwrap()
-        }
-        Method::DELETE => {
-            held.lock().unwrap().objects.remove(&key);
-            Response::builder()
-                .status(StatusCode::NO_CONTENT)
                 .body(Body::empty())
                 .unwrap()
         }
@@ -147,6 +173,41 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
     }
 }
 
+/// Removes the named objects, or, with a late deletion armed, leaves that to a task of its own
+/// that carries it out once released, whether or not this request is still waiting.
+async fn delete(held: Arc<Mutex<Held>>, named: Vec<(String, String)>) -> Response {
+    let (mode, late) = {
+        let mut held = held.lock().unwrap();
+        for (_, path) in &named {
+            held.requests.push((Method::DELETE, path.clone()));
+        }
+        (held.mode.unwrap_or(Mode::Normal), held.late_delete.take())
+    };
+    if mode == Mode::AllNotFound {
+        return not_found();
+    }
+    let Some(release) = late else {
+        let mut held = held.lock().unwrap();
+        for (_, path) in &named {
+            held.objects.remove(path);
+        }
+        return deletion_answer(&named);
+    };
+    let (landed, answered) = oneshot::channel();
+    let paths: Vec<String> = named.iter().map(|(_, path)| path.clone()).collect();
+    tokio::spawn(async move {
+        release.notified().await;
+        let mut held = held.lock().unwrap();
+        for path in &paths {
+            held.objects.remove(path);
+        }
+        held.landed += 1;
+        let _ = landed.send(());
+    });
+    let _ = answered.await;
+    deletion_answer(&named)
+}
+
 impl FakeS3 {
     pub async fn start() -> FakeS3 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -184,9 +245,9 @@ impl FakeS3 {
         held.objects.insert(key.to_string(), bytes.to_vec());
     }
 
-    /// Refuses every write of the object at `key` with `403`.
-    pub fn refuse_writes(&self, key: &str) {
-        self.held.lock().unwrap().refused.push(key.to_string());
+    /// Refuses with `403` every write of an object whose key starts with `prefix`.
+    pub fn refuse_writes(&self, prefix: &str) {
+        self.held.lock().unwrap().refused.push(prefix.to_string());
     }
 
     /// How many requests of `method` reached the object at `key`.
@@ -200,5 +261,31 @@ impl FakeS3 {
 
     pub fn remove_object(&self, key: &str) {
         self.held.lock().unwrap().objects.remove(key);
+    }
+
+    /// The keys of the objects whose key starts with `prefix`.
+    pub fn objects_under(&self, prefix: &str) -> Vec<String> {
+        let held = self.held.lock().unwrap();
+        let mut keys: Vec<String> = held
+            .objects
+            .keys()
+            .filter(|key| key.starts_with(prefix))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Holds the next deletion until the answer is released, and carries it out then whether
+    /// or not its request is still waiting.
+    pub fn delay_next_delete(&self) -> Arc<Notify> {
+        let release = Arc::new(Notify::new());
+        self.held.lock().unwrap().late_delete = Some(release.clone());
+        release
+    }
+
+    /// How many deletions held by `delay_next_delete` have been carried out.
+    pub fn late_deletes_landed(&self) -> usize {
+        self.held.lock().unwrap().landed
     }
 }

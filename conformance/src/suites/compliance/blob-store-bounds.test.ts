@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   DeleteObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -67,6 +68,39 @@ afterAll(async () => {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** The server's object store, reached directly, beside the server's own id
+ *  for it. */
+async function objectStoreOf(operator: MarfaClient): Promise<{
+  id: string;
+  objects: S3Client;
+  /** The keys of the objects the store holds for `hash`. */
+  keysOf: (hash: string) => Promise<string[]>;
+}> {
+  const s3 = (await operator.listBlobStores()).data.data.find(
+    (store) => store.kind === "s3",
+  )!;
+  const prefix = s3.locator.slice(`s3://${process.env.S3_BUCKET!}/`.length);
+  const objects = new S3Client({
+    region: process.env.S3_REGION!,
+    endpoint: process.env.S3_ENDPOINT!,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+    },
+  });
+  const keysOf = async (hash: string) => {
+    const listed = await objects.send(
+      new ListObjectsV2Command({
+        Bucket: process.env.S3_BUCKET!,
+        Prefix: `${prefix}/${hash.slice("sha256:".length)}`,
+      }),
+    );
+    return (listed.Contents ?? []).map((object) => object.Key!).sort();
+  };
+  return { id: s3.id, objects, keysOf };
 }
 
 describe("a replication run that is bounded by count", () => {
@@ -408,21 +442,13 @@ describe("an integrity run over the object store's copies", () => {
     "strikes an object-store copy that is missing or not as long as the blob",
     async () => {
       const { operator, working } = await boot("blob-store-integrity-s3", {});
-      const s3 = (await operator.listBlobStores()).data.data.find(
-        (store) => store.kind === "s3",
-      )!;
-      const prefix = s3.locator.slice(`s3://${process.env.S3_BUCKET!}/`.length);
-      const objects = new S3Client({
-        region: process.env.S3_REGION!,
-        endpoint: process.env.S3_ENDPOINT!,
-        forcePathStyle: true,
-        credentials: {
-          accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-          secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
-        },
-      });
-      const keyOf = (hash: string) =>
-        `${prefix}/${hash.slice("sha256:".length)}`;
+      const s3 = await objectStoreOf(operator);
+      const { objects } = s3;
+      const keyOf = async (hash: string) => {
+        const keys = await s3.keysOf(hash);
+        expect(keys).toHaveLength(1);
+        return keys[0]!;
+      };
       const size = 100;
       const blobs = {
         missing: bytesOf("an object that goes missing", size),
@@ -444,7 +470,7 @@ describe("an integrity run over the object store's copies", () => {
       await objects.send(
         new DeleteObjectCommand({
           Bucket: process.env.S3_BUCKET!,
-          Key: keyOf(hashes.missing),
+          Key: await keyOf(hashes.missing),
         }),
       );
       for (const [name, bytes] of [
@@ -455,7 +481,7 @@ describe("an integrity run over the object store's copies", () => {
         await objects.send(
           new PutObjectCommand({
             Bucket: process.env.S3_BUCKET!,
-            Key: keyOf(hashes[name]),
+            Key: await keyOf(hashes[name]),
             Body: bytes,
           }),
         );
@@ -496,6 +522,42 @@ describe("an integrity run over the object store's copies", () => {
           .at(0);
         expect(copy?.verified_at, name).not.toBeNull();
       }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("an object store's copies of one blob", () => {
+  it(
+    "writes each object-store copy of a blob to an object of its own",
+    async () => {
+      const { operator, working } = await boot("blob-store-object-per-write", {
+        MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+      });
+      const s3 = await objectStoreOf(operator);
+      const upload = await working.uploadBlob(
+        bytesOf("written to the object store twice", 100),
+        "text/plain",
+      );
+      expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+      const hash = upload.data.hash;
+      await whenCopied(operator, [hash]);
+      await replicationIdle(operator);
+      const first = await s3.keysOf(hash);
+      expect(first).toHaveLength(1);
+
+      // The drop deletes the first object, and the run writes the copy again.
+      const dropped = await operator.deleteBlobCopy(hash, s3.id);
+      expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+      expect(await s3.keysOf(hash)).toEqual([]);
+      const run = await runJob(operator, "blob-replicate");
+      expect(run.result).toMatchObject({ copied: 1, remaining: 0 });
+
+      const second = await s3.keysOf(hash);
+      expect(second).toHaveLength(1);
+      expect(second[0]).not.toBe(first[0]);
+      const fetched = await operator.downloadBlob(hash);
+      expect(fetched.status, JSON.stringify(fetched.error)).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

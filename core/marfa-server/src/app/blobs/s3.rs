@@ -1,5 +1,5 @@
-//! The object store: one object per blob under `<prefix>/<hex>`, and a marker object that
-//! holds the store's id.
+//! The object store: one object per write of a blob, under `<prefix>/<hex>/<write>`, and a
+//! marker object that holds the store's id.
 
 use std::io;
 use std::time::Duration;
@@ -86,7 +86,8 @@ impl S3 {
             .with_bucket_name(&settings.bucket)
             .with_region(&settings.region)
             .with_retry(retry)
-            // Store deadlines allow large transfers to outlast a single request timeout.
+            // Every call is bounded where it is made, credentials included, so a large transfer
+            // can outlast any one request timeout.
             .with_client_options(
                 ClientOptions::new()
                     .with_timeout_disabled()
@@ -170,21 +171,47 @@ impl S3 {
         &self.locator
     }
 
-    fn path_of(&self, hash: &Hash) -> Path {
-        Path::from(format!("{}/{}", self.prefix, hash.hex()))
+    fn path_of(&self, key: &str) -> Path {
+        Path::from(format!("{}/{key}", self.prefix))
     }
 
-    pub async fn size_of(&self, hash: &Hash) -> io::Result<Option<u64>> {
-        match self.client.head(&self.path_of(hash)).await {
+    /// The name, under the prefix, of a new object for the blob's bytes. No two writes share one,
+    /// so a request that lands late can only touch the object it names.
+    pub fn new_key(hash: &Hash) -> String {
+        format!("{}/{}", hash.hex(), Uuid::now_v7().simple())
+    }
+
+    pub async fn size_of(&self, key: &str) -> io::Result<Option<u64>> {
+        match self.client.head(&self.path_of(key)).await {
             Ok(meta) => Ok(Some(meta.size)),
             Err(error) if is_missing(&error) => Ok(None),
             Err(error) => Err(failed(error)),
         }
     }
 
+    /// Every object the store holds for the blob, by name under the prefix, with its size.
+    pub async fn objects_of(&self, hash: &Hash) -> io::Result<Vec<(String, u64)>> {
+        let root = Path::from(self.prefix.as_str());
+        let under = Path::from(format!("{}/{}", self.prefix, hash.hex()));
+        self.client
+            .list(Some(&under))
+            .map_ok(move |meta| {
+                let name = meta
+                    .location
+                    .prefix_match(&root)
+                    .map(|parts| parts.map(|part| part.as_ref().to_string()))
+                    .map(|parts| parts.collect::<Vec<_>>().join("/"))
+                    .unwrap_or_default();
+                (name, meta.size)
+            })
+            .try_collect()
+            .await
+            .map_err(failed)
+    }
+
     pub async fn read(
         &self,
-        hash: &Hash,
+        key: &str,
         first: u64,
         length: u64,
     ) -> io::Result<BoxStream<'static, io::Result<Bytes>>> {
@@ -194,7 +221,7 @@ impl S3 {
         };
         let found = self
             .client
-            .get_opts(&self.path_of(hash), options)
+            .get_opts(&self.path_of(key), options)
             .await
             .map_err(failed)?;
         Ok(found.into_stream().map_err(failed).boxed())
@@ -204,13 +231,14 @@ impl S3 {
     /// whole, so nothing is placed before it is checked.
     pub async fn write(
         &self,
+        key: &str,
         hash: &Hash,
         mime_type: &str,
         size: u64,
         mut bytes: BoxStream<'static, io::Result<Bytes>>,
     ) -> io::Result<()> {
         let mut hasher = super::store::Hasher::default();
-        let location = self.path_of(hash);
+        let location = self.path_of(key);
         if size <= PART as u64 {
             let mut whole = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
             while let Some(chunk) = bytes.next().await {
@@ -261,8 +289,8 @@ impl S3 {
         }
     }
 
-    pub async fn delete(&self, hash: &Hash) -> io::Result<()> {
-        match self.client.delete(&self.path_of(hash)).await {
+    pub async fn delete(&self, key: &str) -> io::Result<()> {
+        match self.client.delete(&self.path_of(key)).await {
             Ok(()) => Ok(()),
             Err(error) if is_missing(&error) => Ok(()),
             Err(error) => Err(failed(error)),
@@ -270,9 +298,9 @@ impl S3 {
     }
 
     /// A link the store serves itself, signed with the store's own clock.
-    pub async fn link(&self, hash: &Hash, ttl: Duration) -> io::Result<String> {
+    pub async fn link(&self, key: &str, ttl: Duration) -> io::Result<String> {
         self.client
-            .signed_url(axum::http::Method::GET, &self.path_of(hash), ttl)
+            .signed_url(axum::http::Method::GET, &self.path_of(key), ttl)
             .await
             .map(|url| url.to_string())
             .map_err(failed)

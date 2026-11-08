@@ -198,6 +198,14 @@ While the copy record records copies of a registered blob only in stores the con
 
 **Tests:** `compliance/blob-store-folders.test.ts › answers GET and HEAD 503 for a blob whose every copy is in a detached store`.
 
+### `stores/object-per-write`
+
+When the server writes a blob's bytes to an object store, the server MUST write them to an object that no other write has named.
+
+**Reason:** a write or a deletion that the server gave up on can still reach the store later. No two writes share an object, and the server deletes only objects that no recorded copy names, so such a request changes no copy that the copy record names.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › writes each object-store copy of a blob to an object of its own`.
+
 ## Links
 
 A link to a blob's bytes names the instance or the object store as its host, and the lifetime and the signature are `blobs.md`'s.
@@ -300,23 +308,23 @@ If an attached store leaves a write of a blob's bytes from a run of `blob-replic
 
 ### `stores/replicate-skips-unfinished`
 
-While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST count the blob's copy in `remaining` on each run of `blob-replicate` without asking any store to write or delete the blob.
+While a write or a deletion of a blob's bytes that the server stopped waiting for has neither been answered by its store nor given up by the server, the server MUST count the blob's copy in `remaining` on each run of `blob-replicate` without asking any store to write or delete the blob.
 
-**Reason:** the store can still carry out the write or the deletion after the server stops waiting. A copy made meanwhile could be removed by the late deletion with the copy record still naming it, and a run that waited on the store would hang as the first did.
+**Reason:** a run that asked the store again would hang on it as the first did. On the disk a blob's bytes have one file, so a late deletion there could remove a copy made meanwhile, and the server never gives up a request to the disk. The server gives up a request to an object store at four times the time it allowed, and one that lands after that names an object that no recorded copy uses (`stores/object-per-write`).
 
 **Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
 
 ### `stores/replicate-after-unfinished`
 
-When an attached store finishes a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST make the copy the blob lacks on a later run of `blob-replicate`.
+When a write or a deletion of a blob's bytes that the server stopped waiting for is answered by its store or given up by the server, the server MUST make the copy the blob lacks on a later run of `blob-replicate`.
 
 **Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
 
 ### `stores/upload-unfinished`
 
-While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST answer `POST /blobs` with those bytes with `503 blob_store_unavailable` and store nothing.
+While a write or a deletion of a blob's bytes that the server stopped waiting for has neither been answered by its store nor given up by the server, the server MUST answer `POST /blobs` with those bytes with `503 blob_store_unavailable` and store nothing.
 
-**Reason:** a late deletion could remove the bytes the upload would register, and waiting would hang the request on a store that may never answer. The caller still holds the bytes and can send them again.
+**Reason:** on the disk, where an upload lands, a late deletion could remove the bytes the upload would register. The answer is the same while the request is to the object store, so one rule covers a blob whichever store is slow, and waiting would hang the request on a store that may never answer. The caller still holds the bytes and can send them again.
 
 **Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `› answers 503 blob_store_unavailable, and stores the bytes once the disk answers`.
 
@@ -362,7 +370,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
@@ -398,17 +406,17 @@ When a caller authorized by `blobs.manage` or direct owner or local authority se
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a write or a deletion of the blob's bytes that is still out (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
-**Reason:** the copy record is read before any store is asked, so a drop that the copy record alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the copy record's answers because it can still change what the copy record says, so a store that is not attached is also answered `503` while one is out.
+**Reason:** the copy record is read before any store is asked, so a drop that the copy record alone refuses is answered without waiting on a store. A write or a deletion still out comes before the copy record's answers because the store can still be changing the blob's bytes, so a store that is not attached is also answered `503` while one is out.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
 ### `stores/drop-unfinished`
 
-While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
+While a write or a deletion of a blob's bytes that the server stopped waiting for has neither been answered by its store nor given up by the server, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
 
-**Reason:** the late write or deletion can still change which copies the blob has, so neither the copy record nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the store answers.
+**Reason:** until the request is answered or given up, the store can still be changing the blob's bytes, so neither the copy record nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the request is done.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 

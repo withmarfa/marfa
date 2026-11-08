@@ -1,4 +1,4 @@
-//! Blobs: bytes kept under the hash of what they hold, in every attached store, and who may
+//! Blobs: bytes named by the hash of what they hold, kept in every attached store, and who may
 //! read them.
 
 mod digests;
@@ -42,6 +42,7 @@ use crate::settings::start::ObjectStoreSettings;
 pub use disk::MARKER;
 use disk::{Disk, Staged};
 pub use hash::Hash;
+use rows::Held;
 pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
 use s3::{Marker, S3};
 pub use store::ByteStream;
@@ -57,13 +58,23 @@ pub struct Blob {
     pub size_bytes: u64,
 }
 
-/// A blob a caller may read, the attached stores the copy record says hold it, and whether
+/// A blob a caller may read, the copies the copy record names in attached stores, and whether
 /// it records a copy anywhere.
 #[derive(Debug)]
 pub struct Found {
     pub blob: Blob,
-    held: Vec<String>,
+    held: Vec<Held>,
     recorded: bool,
+}
+
+impl Found {
+    /// The object a store holds the blob in, where the copy record names a copy there.
+    fn object_in(&self, store: &Store) -> Option<&str> {
+        self.held
+            .iter()
+            .find(|held| held.store_id == store.id())
+            .map(|held| held.object.as_str())
+    }
 }
 
 pub struct Link {
@@ -244,11 +255,13 @@ impl Blobs {
         self.attached().into_iter().find(|store| store.id() == id)
     }
 
-    /// Whether the store holds the blob, and at what size, within the time a store is given.
+    /// Whether the store holds the blob in `object`, and at what size, within the time a store
+    /// is given.
     async fn size_of(
         &self,
         store: &Store,
         hash: &Hash,
+        object: &str,
     ) -> std::result::Result<Option<u64>, Failed> {
         let asked = async {
             self.faults.hold(HOLD_BLOB_HAS, None).await;
@@ -264,7 +277,7 @@ impl Blobs {
                         .await
                         .map_err(io::Error::other)?
                 }
-                Store::S3(s3) => s3.size_of(hash).await,
+                Store::S3(s3) => s3.size_of(object).await,
             }
         };
         match tokio::time::timeout(self.check(), asked).await {
@@ -278,6 +291,7 @@ impl Blobs {
         &self,
         store: &Store,
         hash: &Hash,
+        object: &str,
         first: u64,
         length: u64,
     ) -> std::result::Result<ByteStream, Failed> {
@@ -304,7 +318,7 @@ impl Blobs {
                     }
                     Ok(bytes)
                 }
-                Store::S3(s3) => s3.read(hash, first, length).await,
+                Store::S3(s3) => s3.read(object, first, length).await,
             }
         };
         match tokio::time::timeout(self.check(), opened).await {
@@ -315,7 +329,12 @@ impl Blobs {
 
     /// Whether the store answers in time that it holds bytes under the blob's name, failing
     /// as a read of them would but reading none.
-    async fn answers_for(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
+    async fn answers_for(
+        &self,
+        store: &Store,
+        hash: &Hash,
+        object: &str,
+    ) -> std::result::Result<(), Failed> {
         let asked = async {
             self.faults.hold(HOLD_BLOB_READ, None).await;
             if self.faults.fail(FAIL_BLOB_READ, None) {
@@ -333,7 +352,7 @@ impl Blobs {
                         .await
                         .map_err(io::Error::other)??
                 }
-                Store::S3(s3) => s3.size_of(hash).await?,
+                Store::S3(s3) => s3.size_of(object).await?,
             };
             size.map(|_| ())
                 .ok_or_else(|| io::ErrorKind::NotFound.into())
@@ -344,8 +363,8 @@ impl Blobs {
         }
     }
 
-    /// Whether the store has bytes under the blob's name, and whether they hash to it, asked
-    /// of the store itself.
+    /// Whether the store has bytes of the blob, recorded or not, and whether any of them hash to
+    /// it, asked of the store itself.
     async fn holding(&self, store: &Store, hash: &Hash) -> (bool, bool) {
         let asked = async {
             match store {
@@ -358,15 +377,21 @@ impl Blobs {
                     read.await.map_err(io::Error::other)?
                 }
                 Store::S3(s3) => {
-                    let Some(size) = s3.size_of(hash).await? else {
+                    let objects = s3.objects_of(hash).await?;
+                    if objects.is_empty() {
                         return Ok(None);
-                    };
-                    let mut bytes = s3.read(hash, 0, size).await?;
-                    let mut hasher = store::Hasher::default();
-                    while let Some(chunk) = bytes.next().await {
-                        hasher.update(&chunk?);
                     }
-                    Ok(Some(hasher.matches(hash, size).is_ok()))
+                    for (object, size) in objects {
+                        let mut bytes = s3.read(&object, 0, size).await?;
+                        let mut hasher = store::Hasher::default();
+                        while let Some(chunk) = bytes.next().await {
+                            hasher.update(&chunk?);
+                        }
+                        if hasher.matches(hash, size).is_ok() {
+                            return Ok(Some(true));
+                        }
+                    }
+                    Ok(Some(false))
                 }
             }
         };
@@ -423,9 +448,16 @@ impl Blobs {
             .await
     }
 
-    /// Deletes a blob's bytes from a store on a task that outlasts the wait for it.
-    async fn delete(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
+    /// Deletes a blob's bytes, the disk's file or one object, from a store on a task that
+    /// outlasts the wait for it.
+    async fn delete(
+        &self,
+        store: &Store,
+        hash: &Hash,
+        object: &str,
+    ) -> std::result::Result<(), Failed> {
         let (faults, store, blob) = (self.faults.clone(), store.clone(), hash.clone());
+        let object = object.to_string();
         let deadline = self.check();
         self.gate
             .outlast(hash, deadline, async move {
@@ -443,7 +475,7 @@ impl Blobs {
                         Ok(())
                     }
                     Store::S3(s3) => {
-                        store::within(store::stall_limit(deadline), s3.delete(&blob)).await
+                        store::within(store::stall_limit(deadline), s3.delete(&object)).await
                     }
                 }
             })
@@ -661,7 +693,7 @@ impl App {
                 let holder = unit.caller.credential_handle();
                 let recorded =
                     rows::record_upload(unit.tx(), &blob, &store_id, Some(&holder), &unit.at)?;
-                rows::deleted(unit.tx(), &blob.hash, &store_id)?;
+                rows::deleted(unit.tx(), &blob.hash, &store_id, "")?;
                 if replicates {
                     housekeeping::bring_forward(unit.tx(), REPLICATE, &unit.at)?;
                 }
@@ -675,37 +707,39 @@ impl App {
         Ok(recorded)
     }
 
-    /// Carries out a queued deletion of a store's bytes of a blob, where the copy record no
-    /// longer names a copy there. The caller holds the blob's lock.
+    /// Carries out the queued deletions of a store's bytes of a blob, each of an object no copy
+    /// records. The caller holds the blob's lock.
     async fn finish_deletion(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
         let (blob, id) = (hash.clone(), store.id().to_string());
-        let (queued, recorded) = self
+        let queued = self
             .db
             .read(move |tx| rows::deletion(tx, &blob, &id))
             .await
             .map_err(failed)?;
-        if !queued {
-            return Ok(());
+        for (object, recorded) in queued {
+            let outcome = if recorded {
+                Ok(())
+            } else {
+                self.blobs.delete(store, hash, &object).await
+            };
+            let (blob, id, gone) = (hash.clone(), store.id().to_string(), object.clone());
+            let error = match &outcome {
+                Ok(()) => None,
+                Err(Failed::Late) => {
+                    Some("the store did not finish the delete in time".to_string())
+                }
+                Err(Failed::Io(error)) => Some(error.to_string()),
+            };
+            self.db
+                .write(Write::own(), move |tx| match &error {
+                    None => rows::deleted(tx, &blob, &id, &gone),
+                    Some(error) => rows::deletion_failed(tx, &blob, &id, &gone, error),
+                })
+                .await
+                .map_err(failed)?;
+            outcome?;
         }
-        let outcome = if recorded {
-            Ok(())
-        } else {
-            self.blobs.delete(store, hash).await
-        };
-        let (blob, id) = (hash.clone(), store.id().to_string());
-        let error = match &outcome {
-            Ok(()) => None,
-            Err(Failed::Late) => Some("the store did not finish the delete in time".to_string()),
-            Err(Failed::Io(error)) => Some(error.to_string()),
-        };
-        self.db
-            .write(Write::own(), move |tx| match &error {
-                None => rows::deleted(tx, &blob, &id),
-                Some(error) => rows::deletion_failed(tx, &blob, &id, error),
-            })
-            .await
-            .map_err(failed)?;
-        outcome
+        Ok(())
     }
 
     fn found_in(
@@ -721,13 +755,8 @@ impl App {
         {
             return Err(not_found());
         }
-        let copies = rows::copies(tx, hash)?;
-        let recorded = !copies.is_empty();
-        let held = copies
-            .into_iter()
-            .filter(|copy| !copy.detached)
-            .map(|copy| copy.store_id)
-            .collect();
+        let recorded = !rows::copies(tx, hash)?.is_empty();
+        let held = rows::holders(tx, hash)?;
         Ok(Found {
             blob,
             held,
@@ -785,12 +814,12 @@ impl App {
             return Err(not_found());
         }
         for store in self.blobs.attached() {
-            if !found.held.iter().any(|id| id == store.id()) {
+            let Some(object) = found.object_in(&store) else {
                 continue;
-            }
+            };
             match self
                 .blobs
-                .open_bytes(&store, &found.blob.hash, first, length)
+                .open_bytes(&store, &found.blob.hash, object, first, length)
                 .await
             {
                 Ok(bytes) => return Ok(bytes),
@@ -813,10 +842,14 @@ impl App {
             return Err(not_found());
         }
         for store in self.blobs.attached() {
-            if !found.held.iter().any(|id| id == store.id()) {
+            let Some(object) = found.object_in(&store) else {
                 continue;
-            }
-            match self.blobs.answers_for(&store, &found.blob.hash).await {
+            };
+            match self
+                .blobs
+                .answers_for(&store, &found.blob.hash, object)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(failure) => {
                     tracing::warn!(
@@ -833,9 +866,9 @@ impl App {
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
         if let Some(s3) = &self.blobs.s3
-            && found.held.iter().any(|id| id == s3.id())
+            && let Some(object) = found.object_in(&Store::S3(s3.clone()))
         {
-            match s3.link(&found.blob.hash, Duration::from_secs(ttl)).await {
+            match s3.link(object, Duration::from_secs(ttl)).await {
                 Ok(url) => {
                     return Ok(Link {
                         url,
@@ -917,7 +950,7 @@ impl App {
         let store = self
             .blobs
             .store(store_id)
-            .filter(|_| holders.iter().any(|id| id == store_id))
+            .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
         if ((holders.len() - 1) as u64) < min_copies {
             return Err(below(holders.len(), min_copies));
@@ -928,18 +961,18 @@ impl App {
         }
         let blob = hash.clone();
         let holders = self.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if !holders.iter().any(|id| id == store_id) {
+        if !holders.iter().any(|held| held.store_id == store_id) {
             return Err(copy_not_found());
         }
-        let others: Vec<Store> = holders
+        let others: Vec<(Store, &str)> = holders
             .iter()
-            .filter(|id| *id != store_id)
-            .filter_map(|id| self.blobs.store(id))
+            .filter(|held| held.store_id != store_id)
+            .filter_map(|held| Some((self.blobs.store(&held.store_id)?, held.object.as_str())))
             .collect();
         let answers = join_all(
             others
                 .iter()
-                .map(|other| self.blobs.size_of(other, &found.hash)),
+                .map(|(other, object)| self.blobs.size_of(other, &found.hash, object)),
         )
         .await;
         let confirmed = answers
@@ -953,7 +986,7 @@ impl App {
         self.write(caller, "blob.copy_dropped", move |unit| {
             unit.caller.require(Permission::BlobsManage)?;
             let holders = rows::holders(unit.tx(), &blob)?;
-            if !holders.contains(&dropped) {
+            if !holders.iter().any(|held| held.store_id == dropped) {
                 return Err(copy_not_found());
             }
             if ((holders.len() - 1) as u64) < min_copies {

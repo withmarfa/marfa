@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use super::rows::Held;
+use super::s3::S3;
 use super::store::{self, Failed, Store};
 use super::{App, Hash, room, rows};
 use crate::app::access::Caller;
@@ -55,11 +57,15 @@ impl App {
             .db
             .read(move |tx| rows::pending_deletions(tx, limit, unregistered_only))
             .await?;
+        let mut tried = HashSet::new();
         for (hash, store_id) in queued {
             if !run.go_on().await {
                 break;
             }
             if unreachable.contains(&store_id) || self.blobs.gate.unfinished(&hash) {
+                continue;
+            }
+            if !tried.insert((hash.clone(), store_id.clone())) {
                 continue;
             }
             let Some(store) = self.blobs.store(&store_id) else {
@@ -80,27 +86,31 @@ impl App {
 }
 
 enum Copy {
-    Made { from: String },
+    Made { from: String, object: String },
     Skipped,
     TargetSilent,
 }
 
-/// Places one blob in `target`, read from the first other store that holds it and answers.
+/// Places one blob in `target`, read from the first other store that holds it and answers. An
+/// object store's copy goes to a new object, queued for deletion until its copy is recorded.
 async fn copy_to(
     app: &App,
     target: &Store,
-    holders: &[String],
+    holders: &[Held],
     blob: &super::Blob,
     unreachable: &mut BTreeSet<String>,
-) -> Copy {
+) -> Result<Copy> {
     let blobs = &app.blobs;
     for source in blobs.attached() {
         let id = source.id().to_string();
-        if id == target.id() || unreachable.contains(&id) || !holders.contains(&id) {
+        if id == target.id() || unreachable.contains(&id) {
             continue;
         }
+        let Some(held) = holders.iter().find(|held| held.store_id == id) else {
+            continue;
+        };
         let bytes = match blobs
-            .open_bytes(&source, &blob.hash, 0, blob.size_bytes)
+            .open_bytes(&source, &blob.hash, &held.object, 0, blob.size_bytes)
             .await
         {
             Ok(bytes) => bytes,
@@ -115,35 +125,46 @@ async fn copy_to(
         };
         let bytes = store::idle_limited(bytes, blobs.check());
         let (hash, size, mime_type) = (blob.hash.clone(), blob.size_bytes, blob.mime_type.clone());
-        let written = match target {
+        let (written, object) = match target {
             Store::Disk(disk) => {
                 let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
                 if let Err(refused) = room(&app.faults, disk.root(), reserve, size) {
                     tracing::warn!(error = %refused, "The disk has no room for a blob's copy");
-                    return Copy::Skipped;
+                    return Ok(Copy::Skipped);
                 }
                 let (disk, faults) = (disk.clone(), app.faults.clone());
-                blobs
+                let written = blobs
                     .writing(&blob.hash, size, async move {
                         let name = hash.clone();
                         store::place_on_disk(disk, hash, size, bytes).await?;
                         faults.heal(name.as_str(), true);
                         Ok(())
                     })
-                    .await
+                    .await;
+                (written, String::new())
             }
             Store::S3(s3) => {
-                let s3 = s3.clone();
-                let limit = store::stall_limit(store::write_deadline(blobs.check(), size));
-                blobs
-                    .writing(&blob.hash, size, async move {
-                        store::within(limit, s3.write(&hash, &mime_type, size, bytes)).await
+                let object = S3::new_key(&hash);
+                let (queued, at, to) = (hash.clone(), app.clock.stamp(), s3.id().to_string());
+                let named = object.clone();
+                app.db
+                    .write(Write::own(), move |tx| {
+                        rows::queue_deletion(tx, &queued, &to, &named, &at)
                     })
-                    .await
+                    .await?;
+                let (s3, named) = (s3.clone(), object.clone());
+                let limit = store::stall_limit(store::write_deadline(blobs.check(), size));
+                let written = blobs
+                    .writing(&blob.hash, size, async move {
+                        let sent = s3.write(&named, &hash, &mime_type, size, bytes);
+                        store::within(limit, sent).await
+                    })
+                    .await;
+                (written, object)
             }
         };
-        return match written {
-            Ok(()) => Copy::Made { from: id },
+        return Ok(match written {
+            Ok(()) => Copy::Made { from: id, object },
             Err(Failed::Late) => Copy::TargetSilent,
             Err(Failed::Io(error)) => {
                 tracing::warn!(%error, store = target.kind(), "A blob's copy was not written");
@@ -152,9 +173,9 @@ async fn copy_to(
                 }
                 Copy::Skipped
             }
-        };
+        });
     }
-    Copy::Skipped
+    Ok(Copy::Skipped)
 }
 
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
@@ -194,7 +215,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         }
         let blob = hash.clone();
         let holders = app.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if holders.contains(&pair.store_id) {
+        if holders.iter().any(|held| held.store_id == pair.store_id) {
             continue;
         }
         let cleared = match app.finish_deletion(&target, &hash).await {
@@ -209,12 +230,12 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             }
         };
         let made = if cleared {
-            copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await
+            copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await?
         } else {
             Copy::Skipped
         };
-        let from = match made {
-            Copy::Made { from } => from,
+        let (from, object) = match made {
+            Copy::Made { from, object } => (from, object),
             Copy::Skipped | Copy::TargetSilent => {
                 if matches!(made, Copy::TargetSilent) {
                     unreachable.insert(pair.store_id.clone());
@@ -229,7 +250,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let (blob, to) = (hash.clone(), pair.store_id.clone());
         let recorded = app
             .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                if rows::record_copy(unit.tx(), &blob, &to, &unit.at)? {
+                if rows::record_copy(unit.tx(), &blob, &to, &object, &unit.at)? {
                     unit.audit(
                         "blob",
                         blob.as_str(),
@@ -237,7 +258,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
                     )?;
                     return Ok(true);
                 }
-                rows::queue_deletion(unit.tx(), &blob, &to, &unit.at)?;
+                rows::queue_deletion(unit.tx(), &blob, &to, &object, &unit.at)?;
                 Ok(false)
             })
             .await?;
@@ -299,7 +320,7 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
                 Err(_) => Checked::Silent,
             }
         }
-        Store::S3(_) => match blobs.size_of(store, &copy.hash).await {
+        Store::S3(_) => match blobs.size_of(store, &copy.hash, &copy.object).await {
             Ok(Some(size)) if size == copy.size => Checked::Intact,
             Ok(_) => Checked::Damaged,
             Err(failure) => {
@@ -446,12 +467,6 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
             .collect();
         let named = app.db.read(move |tx| rows::named(tx, &hexes)).await?;
         app.faults.hold(HOLD_BLOB_PURGE, None).await;
-        let stores: Vec<String> = app
-            .blobs
-            .attached()
-            .iter()
-            .map(|store| store.id().to_string())
-            .collect();
         let gone = app
             .write(&Caller::Server, "blob.purge", move |unit| {
                 let tx = unit.tx();
@@ -467,7 +482,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                         rows::unreport(tx, &hash)?;
                         continue;
                     }
-                    rows::purge(tx, &hash, &stores, &unit.at)?;
+                    rows::purge(tx, &hash, &unit.at)?;
                     unit.audit("blob", hash.as_str(), Some(json!({})))?;
                     gone.push(hash);
                 }

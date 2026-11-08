@@ -106,8 +106,8 @@ fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// One lock per blob for every change to its bytes, and the blobs a store is still writing
-/// or deleting after the server stopped waiting for it.
+/// One lock per blob for every change to its bytes, and the blobs with a write or a deletion
+/// still running after the server stopped waiting for it.
 #[derive(Debug, Default)]
 pub struct Gate {
     locks: Mutex<HashMap<Hash, Arc<tokio::sync::Mutex<()>>>>,

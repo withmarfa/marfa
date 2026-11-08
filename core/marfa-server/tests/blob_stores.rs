@@ -545,12 +545,19 @@ async fn an_upload_waits_on_a_late_deletion_of_its_bytes_and_answers_503_until_i
 
 const BUCKET: &str = "marfa";
 
-/// The key a blob's object has in the fake store, in `prefix`.
-fn object_key(prefix: &str, hash: &str) -> String {
+/// Where the keys of a blob's objects in the fake store, in `prefix`, start.
+fn objects_of(prefix: &str, hash: &str) -> String {
     format!(
         "/{BUCKET}/{prefix}/{}",
         hash.strip_prefix("sha256:").unwrap()
     )
+}
+
+/// The key of the one object the fake store holds for a blob, in `prefix`.
+fn object_key(s3: &FakeS3, prefix: &str, hash: &str) -> String {
+    let keys = s3.objects_under(&objects_of(prefix, hash));
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    keys[0].clone()
 }
 
 fn marker_key(prefix: &str) -> String {
@@ -562,7 +569,7 @@ impl Instance {
     async fn replicated(&self, s3: &FakeS3, bytes: &[u8]) -> String {
         let hash = self.stored(bytes).await;
         self.run("blob-replicate").await;
-        assert!(s3.object(&object_key("blobs", &hash)).is_some());
+        object_key(s3, "blobs", &hash);
         assert_eq!(self.copies(&hash).await.len(), 2);
         hash
     }
@@ -587,7 +594,7 @@ async fn an_object_store_that_answers_404_everywhere_has_nothing_struck() {
         &marker_key("blobs"),
         uuid::Uuid::now_v7().to_string().as_bytes(),
     );
-    s3.remove_object(&object_key("blobs", &hash));
+    s3.remove_object(&object_key(&s3, "blobs", &hash));
     let result = instance.run("blob-integrity").await;
     assert_eq!(result["struck"], 0, "{result}");
     assert_eq!(result["unreachable"], 1, "{result}");
@@ -703,7 +710,7 @@ async fn a_head_asks_the_object_store_and_reads_no_bytes() {
         .await;
     std::fs::remove_file(instance.file(&hash)).unwrap();
     assert_eq!(instance.run("blob-integrity").await["struck"], 1);
-    let key = object_key("blobs", &hash);
+    let key = object_key(&s3, "blobs", &hash);
     let before = s3.requests(&Method::GET, &key);
 
     let headed = instance
@@ -729,7 +736,7 @@ async fn a_blob_that_never_copies_does_not_hold_back_the_others() {
     env.push(("MARFA_BLOB_REPLICATE_BATCH".to_string(), "1".to_string()));
     let instance = Instance::start(&pairs(&env)).await;
     let stuck = b"refused by the object store";
-    s3.refuse_writes(&object_key("blobs", &hash_of(stuck)));
+    s3.refuse_writes(&objects_of("blobs", &hash_of(stuck)));
     instance.stored(stuck).await;
     instance.app.clock.advance(5).unwrap();
     let other = instance.stored(b"copied all the same").await;
@@ -758,4 +765,61 @@ async fn a_slow_object_store_body_that_outlasts_thirty_seconds_arrives_whole() {
     assert!(began.elapsed() > Duration::from_secs(30));
     assert_eq!(fetched.bytes.len(), bytes.len());
     assert!(fetched.bytes == bytes);
+}
+
+#[tokio::test]
+async fn a_deletion_that_lands_after_the_server_gave_it_up_leaves_the_copy_made_since() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"copied again while an old deletion is out".to_vec();
+    let hash = instance.replicated(&s3, &bytes).await;
+    let store = instance
+        .copies(&hash)
+        .await
+        .iter()
+        .find(|copy| copy["kind"] == "s3")
+        .map(|copy| copy["store_id"].as_str().unwrap().to_string())
+        .unwrap();
+
+    instance.arm("store-check-deadline", Some("200"));
+    let release = s3.delay_next_delete();
+    let dropped = instance
+        .call(
+            Method::DELETE,
+            &format!("/blobs/{hash}/copies/{store}"),
+            None,
+        )
+        .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    let began = Instant::now();
+    loop {
+        let run = instance.run("blob-replicate").await;
+        if run["copied"] == 1 {
+            break;
+        }
+        assert!(began.elapsed() < Duration::from_secs(10), "{run}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+
+    release.notify_one();
+    let began = Instant::now();
+    while s3.late_deletes_landed() == 0 {
+        assert!(
+            began.elapsed() < Duration::from_secs(4),
+            "the deletion never landed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The late deletion took the object it named, and only that one.
+    object_key(&s3, "blobs", &hash);
+    instance.app.faults.clear(Some("store-check-deadline"));
+    let checked = instance.run("blob-integrity").await;
+    assert_eq!(checked["struck"], 0, "{checked}");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+    std::fs::remove_file(instance.file(&hash)).unwrap();
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+    assert_eq!(fetched.bytes, bytes);
 }
