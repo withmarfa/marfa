@@ -7,7 +7,6 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
@@ -43,6 +42,14 @@ afterAll(async () => {
 
 function client(key: string): MarfaClient {
   return new MarfaClient({ baseUrl: server!.apiUrl, apiKey: key });
+}
+
+/** The instance's owner, who reads every maker's subscriptions. */
+function person(): MarfaClient {
+  return new MarfaClient({
+    baseUrl: server!.apiUrl,
+    ownerCookie: server!.ownerCookie,
+  });
 }
 
 async function note(body: string): Promise<string> {
@@ -91,23 +98,12 @@ describe("a subscription whose credential stops standing", () => {
     ]);
     const appClient = client(app.token);
     const id = await subscribe(appClient, "grant-app");
-    const subscriptionsOf = (clientId: string): number =>
-      (
-        withInstanceDatabase(server!.sqlitePath, (db) =>
-          db
-            .prepare(
-              "SELECT count(*) AS n FROM outbound_webhooks WHERE grant_client_id = ?",
-            )
-            .get(clientId),
-        ) as { n: number }
-      ).n;
-
     // The witness: the subscription is the grant's, it is listed to the app,
     // and it delivers while the grant stands.
-    expect(subscriptionsOf(app.clientId)).toBe(1);
     expect((await appClient.listWebhooks()).data.data.map((w) => w.id)).toEqual(
       [id],
     );
+    expect((await person().getWebhook(id)).status).toBe(200);
     const before = await note("grant-before");
     await receiver.waitFor(
       (r) => r.path === "/hook/grant-app" && r.body.includes(before),
@@ -125,7 +121,10 @@ describe("a subscription whose credential stops standing", () => {
     );
     expect(revoked.status).toBe(204);
 
-    expect(subscriptionsOf(app.clientId)).toBe(0);
+    expect((await person().getWebhook(id)).status).toBe(404);
+    expect(
+      (await person().listWebhooks()).data.data.map((w) => w.id),
+    ).not.toContain(id);
     await subscribe(operator, "grant-sentinel");
     const after = await note("grant-after");
     await receiver.waitFor(
@@ -197,11 +196,14 @@ describe("a subscription whose credential stops standing", () => {
       sentTo("expiry-retrying").length,
       "a pending delivery of the expired key was attempted",
     ).toBe(sentBefore);
-    const stored = withInstanceDatabase(server!.sqlitePath, (db) =>
-      db
-        .prepare("SELECT status FROM outbound_webhook_deliveries WHERE id = ?")
-        .get(pending.id),
-    ) as { status: string };
-    expect(stored.status).not.toBe("success");
+    // The owner reads the subscription if it still stands; it is gone, or its
+    // delivery was not made.
+    const stored = await person().listWebhookDeliveries(retrying);
+    if (stored.status !== 404) {
+      expect(stored.status).toBe(200);
+      expect(
+        stored.data.data.find((row) => row.id === pending.id)?.status,
+      ).not.toBe("success");
+    }
   });
 });

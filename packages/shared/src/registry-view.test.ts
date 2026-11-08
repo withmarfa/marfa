@@ -7,7 +7,6 @@ import {
   publishRegistryView,
   registryView,
   setRegistryFrameAccessor,
-  removePlatformRegistryType,
   type RegistryFrame,
 } from "./registry-view.js";
 import {
@@ -200,7 +199,7 @@ describe("selected registry views", () => {
       expect(captured).toBe(map);
     });
     selected = createRegistryFrame();
-    removePlatformRegistryType("system.retired");
+    seedPlatformTypes(shippedPlatformTypes());
     commit(selected);
     expect(map.has("system.retired")).toBe(false);
     expect(set.has("system.retired")).toBe(false);

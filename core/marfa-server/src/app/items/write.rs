@@ -14,6 +14,8 @@ use marfa_rules::{js, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+mod enrichment;
+
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
@@ -275,6 +277,8 @@ pub fn apply(
     };
     job.run(change)
 }
+
+pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
 
 /// A change the server makes to an item it keeps for itself. No door that
 /// takes a caller's item may lead here.

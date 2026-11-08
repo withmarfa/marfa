@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 marfa-core = { path = "marfa-core" }
 marfa-acl = { path = "marfa-acl" }
+marfa-enrichment = { path = "marfa-enrichment" }
 marfa-rules = { path = "marfa-rules" }
 marfa-telemetry = { path = "marfa-telemetry" }
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }

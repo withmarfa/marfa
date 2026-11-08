@@ -118,7 +118,6 @@ impl Report {
                 "disk": self.disk.to_json(with_errors),
                 "blob_storage": self.blob_storage.to_json(with_errors),
             },
-            "platform_types": { "retired": 0 },
             "unrecognized_stored_values": { "rows": 0, "scanned": false },
         })
     }

@@ -11,6 +11,7 @@ pub mod config;
 pub mod consequences;
 pub mod edge_types;
 pub mod edges;
+pub mod enrichment;
 pub mod events;
 pub mod faults;
 pub mod folders;

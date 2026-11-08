@@ -5,8 +5,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { HeldLock } from "../../utils/held-lock.js";
 
 let server: FreshServer;
 let key: string;
@@ -410,7 +408,17 @@ describe("connector interfaces", () => {
           const minted = await call(
             "/keys",
             "POST",
-            { label, source: `fence-${String(number)}${suffix}` },
+            {
+              label,
+              source: `fence-${String(number)}${suffix}`,
+              ...(ending === "expired" && suffix === ""
+                ? {
+                    expires_at: new Date(
+                      Date.now() + server.clockOffsetMs + 60 * 60_000,
+                    ).toISOString(),
+                  }
+                : {}),
+            },
             server.workingKey,
           );
           expect(minted.status, label).toBe(201);
@@ -475,31 +483,27 @@ describe("connector interfaces", () => {
         // The witness: the key's own write is taken while it stands.
         expect((await write("before")).status, label).toBe(200);
 
-        const lock = await HeldLock.take(server.sqlitePath);
+        await server.setFault("hold:connector-write");
+        let pending: Promise<Response>;
         try {
-          const pending = write("in flight");
-          await new Promise((resolve) => setTimeout(resolve, 150));
-          await lock.commit([
-            ending === "revoked"
-              ? `UPDATE api_keys SET revoked_at='2026-01-01T00:00:00.000Z' WHERE id='${owner.id}'`
-              : `UPDATE api_keys SET expires_at='2026-01-01T00:00:00.000Z' WHERE id='${owner.id}'`,
-          ]);
-          expect((await pending).status, label).toBe(401);
+          pending = write("in flight");
+          await server.waitForHold("hold:connector-write");
+          if (ending === "revoked") {
+            const revoked = await call(
+              `/keys/${owner.id}`,
+              "DELETE",
+              undefined,
+              server.workingKey,
+            );
+            expect(revoked.status, label).toBe(200);
+          } else await server.advanceClock(2 * 60 * 60_000);
         } finally {
-          await lock.release();
+          await server.clearFault();
         }
+        expect((await pending).status, label).toBe(401);
 
         // What the source holds is what the key wrote before it ended. A
         // successor under the source reads it through its own registration.
-        if (ending === "expired") {
-          // An expired key still holds its source until it is revoked.
-          withInstanceDatabase(server.sqlitePath, (db) => {
-            db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(
-              "2026-01-02T00:00:00.000Z",
-              owner.id,
-            );
-          });
-        }
         const successor = await mint("");
         const successorRegistration = await call(
           "/connectors",

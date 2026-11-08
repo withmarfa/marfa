@@ -97,8 +97,6 @@ fn schema_doors() -> Routes {
             "/types/{id}/icon",
             put(types::set_icon).delete(types::clear_icon),
         )
-        .route("/platform-types/retired", get(types::retired))
-        .route("/platform-types/{id}", delete(types::remove_retired))
         .route(
             "/edge-types",
             get(edge_types::list).post(edge_types::register),
