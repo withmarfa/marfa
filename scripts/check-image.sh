@@ -10,13 +10,16 @@
 #    the process is not root;
 # 3. what it generated for itself is on the volume, private to its user;
 # 4. `docker stop` ends it with status 0 inside the ten seconds a runtime allows;
-# 5. started again on the same volume it is the same instance.
+# 5. started again on the same volume it is the same instance;
+# 6. on a database a newer build wrote, it stays up and idle under a restart
+#    policy, says why, and is never restarted.
 set -euo pipefail
 
 image=${1:?usage: check-image.sh <image> <version>}
 version=${2:?usage: check-image.sh <image> <version>}
 containers=()
 volume=marfa-check-data-$(openssl rand -hex 8)
+BUSYBOX=busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
 
 cleanup() {
   local name
@@ -79,8 +82,8 @@ esac
   || fail "the image's version label is not $version"
 [ "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.title"}}' "$image")" != "" ] \
   || fail "the image has no title label"
-reported=$(docker run --rm "$image" --version)
-[ "$reported" = "marfa-server $version" ] || fail "the entrypoint reports '$reported', not 'marfa-server $version'"
+reported=$(docker run --rm --entrypoint /usr/local/bin/marfa-server "$image" --version)
+[ "$reported" = "marfa-server $version" ] || fail "the server reports '$reported', not 'marfa-server $version'"
 reported=$(docker run --rm --entrypoint /usr/local/bin/marfa "$image" --version)
 [ "$reported" = "marfa $version" ] || fail "the packaged command line reports '$reported', not 'marfa $version'"
 
@@ -119,5 +122,20 @@ port=$(port_of "$again")
 body=$(curl -fsS "http://127.0.0.1:$port/")
 grep -q "\"instance_id\":\"$instance\"" <<<"$body" || fail "a restart on the volume is another instance: $body"
 stop_and_check "$again"
+
+echo "== a database a newer build wrote"
+# SQLite keeps the schema version at byte 60 of the file, big-endian.
+docker run --rm --user 65532:65532 --mount "type=volume,source=$volume,target=/data" "$BUSYBOX" \
+  sh -c 'printf "\000\000\047\017" | dd of=/data/marfa.db bs=1 seek=60 count=4 conv=notrunc 2>/dev/null'
+refused=marfa-check-refused-$$
+containers+=("$refused")
+docker run -d --name "$refused" --read-only --restart unless-stopped \
+  --mount "type=volume,source=$volume,target=/data" "$image" >/dev/null
+says_refused() { grep -q "will not start on the database" <<<"$(docker logs "$refused" 2>&1)"; }
+until_true "the refusal in the log" 60 says_refused
+sleep 10
+[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' "$refused")" = "true 0" ] \
+  || fail "on a refused database the container did not stay up without restarting"
+stop_and_check "$refused"
 
 echo "the image holds to what it says it is"

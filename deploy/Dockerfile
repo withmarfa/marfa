@@ -43,4 +43,6 @@ EXPOSE 8600
 # Asks `/health` of the server in this container, with no key. It follows `PORT`'s default.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/usr/local/bin/marfa", "--no-keychain", "--url", "http://127.0.0.1:8600", "status"]
-ENTRYPOINT ["/usr/local/bin/marfa-server"]
+# `marfa server run` supervises the server: a database the server refuses leaves the
+# container up and idle, so a restart policy does not start it into the same refusal.
+ENTRYPOINT ["/usr/local/bin/marfa", "server", "run"]

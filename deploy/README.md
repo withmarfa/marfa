@@ -120,7 +120,7 @@ A newer build updates the database in place at its first start. When the databas
 The server stops with status 78 when it refuses the database. It refuses one that a newer build wrote, one whose tables match no build's, and an update that lacks disk space or fails its checks. It changes nothing in a refused database.
 
 - **Native:** the service stays up and does nothing, so that it isn't started again into the same refusal. Read the reason with `marfa server status`. Install the release that wrote the database, then run `marfa server start`.
-- **Docker:** the container exits with status 78, and Docker's restart policy starts it again. Read the reason with `docker logs <name>`, and stop it with `marfa server stop`.
+- **Docker:** the container stays up and does nothing in the same way, so its restart policy does not start it again. Read the reason with `marfa server status` or `docker logs <name>`.
 
 To go back after a successful update, stop the server, delete `marfa.db-wal` and `marfa.db-shm`, replace `marfa.db` with the copy, and start the earlier release. Writes made since the update aren't in the copy. The copy is as large as the database. Delete it once you won't go back.
 
