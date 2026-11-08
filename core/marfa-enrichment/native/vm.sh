@@ -38,7 +38,7 @@ qemu_image="$prefix-qemu"
 
 echo "vm: make the images"
 make_build_image "$build_image"
-docker build --quiet --build-arg "BASE=$(manifest_line image qemu | awk '{ print $3 }')" \
+docker build --quiet --build-arg "BASE=$(manifest_line image alpine | awk '{ print $3 }')" \
   -t "$qemu_image" "$NATIVE_DIR/qemu" >/dev/null || die "could not build $qemu_image"
 
 echo "vm: fetch the kernel"

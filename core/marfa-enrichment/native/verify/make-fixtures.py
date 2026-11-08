@@ -89,7 +89,7 @@ write("truncated-package.docx", b"PK\x03\x04" + bytes(range(200)))
 
 # The picture for the memory test: 64 million pixels, gray, with a few lines of small
 # type. It takes 2.5 seconds on macOS and 600 MB; a page of readable 60 pixel type
-# across the whole width takes 11 seconds and 790 MB (the README's table).
+# across the whole width takes 11 seconds and 790 MB.
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:

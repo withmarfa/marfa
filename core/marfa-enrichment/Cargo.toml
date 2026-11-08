@@ -43,12 +43,18 @@ cc = { version = "1", optional = true }
 [features]
 default = []
 # OCR and PDF: Tesseract, Leptonica and PDFium linked in from the prefix named by
-# MARFA_NATIVE_PREFIX (see the README, "Building the native readers"). Without it nothing native is built,
-# images give their size only and a PDF is refused as unsupported.
+# MARFA_NATIVE_PREFIX (see the README). Without it nothing native is built, images
+# give their size only and a PDF is refused as unsupported.
 native = ["dep:pdfium-render", "dep:cc"]
 # Makes a child crash, hang or misbehave on marked bytes, so tests can prove that the
 # parent survives. build.rs refuses it in a release build unless told otherwise.
 fault-injection = []
+
+# Fuzzing a build with no PDF or OCR reader would exercise little.
+[[bin]]
+name = "marfa-enrichment-fuzz"
+path = "src/bin/marfa-enrichment-fuzz.rs"
+required-features = ["native"]
 
 [[test]]
 name = "isolation"

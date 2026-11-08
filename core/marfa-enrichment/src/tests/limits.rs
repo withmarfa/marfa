@@ -229,7 +229,7 @@ fn damaged_files_are_refused_or_read_and_never_end_the_caller() {
     let files = [
         (fixture("sample.docx"), DOCX),
         (fixture("sample.xlsx"), XLSX),
-        (own_fixture("sample.xls"), "application/vnd.ms-excel"),
+        (fixture("sample.xls"), "application/vnd.ms-excel"),
         (fixture("sample.png"), "image/png"),
         (fixture("sample.webp"), "image/webp"),
         (fixture("sample.jpg"), "image/jpeg"),

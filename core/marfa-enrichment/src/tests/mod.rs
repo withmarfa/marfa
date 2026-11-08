@@ -34,18 +34,8 @@ pub(super) fn options() -> Options {
     }
 }
 
-/// What the fixtures the TypeScript server tests with hold, read where they lie.
+/// A file of this crate's `fixtures` folder.
 pub(super) fn fixture(name: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/../../packages/server/src/enrichment/fixtures/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    std::fs::read(&path).unwrap_or_else(|error| panic!("{path}: {error}"))
-}
-
-/// A fixture of this crate's own: a binary workbook, which nothing else here
-/// can write.
-pub(super) fn own_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read(&path).unwrap_or_else(|error| panic!("{path}: {error}"))
 }

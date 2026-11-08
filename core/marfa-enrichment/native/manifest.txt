@@ -78,6 +78,6 @@ licence gcc-runtime-exception https://raw.githubusercontent.com/gcc-mirror/gcc/r
 # QEMU. The kernel is Debian's cloud kernel, a file of snapshot.debian.org, which never
 # changes: Landlock and seccomp are built in, and so are the serial console and everything
 # else it needs, so the machine has no modules and no disk. QEMU comes from the Alpine
-# package of the image below.
+# package of the image below, which also runs verify/peak-memory.sh.
 kernel debian-6.1.0-28-cloud-amd64 https://snapshot.debian.org/file/961bd3c01a6f9bf88db09af672b5510ca9510c4b 859a19374f886463145d2743b243007f60054d3ff2d1e55cd6d6a72a623e2ece
-image qemu alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+image alpine alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc

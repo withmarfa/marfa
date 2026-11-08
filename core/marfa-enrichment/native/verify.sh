@@ -95,7 +95,6 @@ need python3
 CRATE=$(cd "$NATIVE_DIR/.." && pwd)
 OUT="$ROOT/out/$TARGET"
 V="$OUT/verify"
-SERVER_FIXTURES="$CRATE/../../packages/server/src/enrichment/fixtures"
 [ -x "$OUT/marfa-enrichment-read" ] && [ -x "$OUT/marfa-enrichment-read-proof" ] \
   || die "no programs in $OUT; run native/program.sh $TARGET first"
 
@@ -130,10 +129,6 @@ rm -rf "$V/context" "$V/results" "$V/models"
 FILES_DIR="$V/context/files"
 mkdir -p "$FILES_DIR/faults" "$V/models" "$V/results"
 cp "$CRATE/fixtures/"* "$FILES_DIR/"
-for name in compressed.pdf multipage.pdf sample-extended.webp sample-lossless.webp sample.docx \
-  sample.gif sample.jpg sample.mp3 sample.pdf sample.png sample.txt sample.webp sample.xlsx; do
-  cp "$SERVER_FIXTURES/$name" "$FILES_DIR/"
-done
 if python3 -c 'import PIL' 2>/dev/null; then
   python3 -I "$NATIVE_DIR/verify/make-fixtures.py" "$FILES_DIR" "$CRATE/fixtures"
 elif command -v uv >/dev/null 2>&1; then
@@ -393,7 +388,7 @@ memory_cases() {
     echo "SKIP $RUN_USER memory-dense-page (Pillow is missing)" | tee -a "$REPORT"
   fi
   # What the readers hold against the address-space limit they were given (Linux).
-  if [ "$KIND" = linux ] && [ "$RUN_USER" = 65534:65534 ] && docker image inspect alpine >/dev/null 2>&1; then
+  if [ "$KIND" = linux ] && [ "$RUN_USER" = 65534:65534 ]; then
     local what
     for what in "sample.png" "big-text.png" "corpus/ocrmypdf-multipage.pdf" "corpus/arxiv-resnet.pdf"; do
       [ -e "$FILES_DIR/$what" ] || continue

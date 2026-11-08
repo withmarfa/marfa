@@ -76,5 +76,5 @@ case "$TARGET" in
     ;;
 esac
 echo "fuzz: finished after $(($(date +%s) - started)) seconds; findings are in $findings"
-ls "$findings" | head -20
+ls "$findings" | sed -n 1,20p
 exit "$code"

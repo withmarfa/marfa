@@ -27,12 +27,10 @@ fn read_ocr(bytes: &[u8], mime: &str) -> Reading {
     read_here(bytes, mime, &with_ocr()).unwrap_or_else(|refusal| panic!("refused: {refusal}"))
 }
 
-fn own(name: &str) -> Vec<u8> {
-    own_fixture(name)
-}
-
 fn gray_of(name: &str) -> GrayImage {
-    image::load_from_memory(&own(name)).unwrap().into_luma8()
+    image::load_from_memory(&fixture(name))
+        .unwrap()
+        .into_luma8()
 }
 
 fn encode(image: &DynamicImage, format: ImageFormat) -> Vec<u8> {
@@ -164,14 +162,14 @@ fn a_transparent_picture_is_laid_on_white_before_it_is_read() {
 
 #[test]
 fn several_languages_load_from_the_program_with_no_data_folder() {
-    let text = read_ocr(&own("languages.png"), PNG).text;
+    let text = read_ocr(&fixture("languages.png"), PNG).text;
     for word in ["Straße", "größer", "Käsebrot", "café", "comió", "mañana"] {
         assert!(text.contains(word), "{word} missing from {text:?}");
     }
     // The witness: with English alone the same picture does not read.
     let mut english = with_ocr();
     english.ocr.as_mut().unwrap().languages = "eng".into();
-    let text = read_here(&own("languages.png"), PNG, &english)
+    let text = read_here(&fixture("languages.png"), PNG, &english)
         .unwrap()
         .text;
     assert!(!text.contains("Straße"), "{text:?}");
@@ -209,7 +207,7 @@ fn a_model_in_the_data_folder_adds_a_language_and_takes_precedence() {
     let owners = read_here(&fixture("sample.png"), PNG, &options).unwrap();
     assert_ne!(owners.text, SAMPLE);
     options.ocr.as_mut().unwrap().languages = "klingon".into();
-    let added = read_here(&own("languages.png"), PNG, &options).unwrap();
+    let added = read_here(&fixture("languages.png"), PNG, &options).unwrap();
     assert!(added.text.contains("Straße"), "{:?}", added.text);
 }
 
@@ -371,13 +369,13 @@ fn a_sixteen_bit_gray_picture_a_gray_jpeg_and_a_cmyk_jpeg_are_read() {
     let sixteen = encode(&DynamicImage::ImageLuma16(sixteen), ImageFormat::Png);
     assert_eq!(read_ocr(&sixteen, PNG).text, UPRIGHT);
     assert_eq!(read_ocr(&jpeg_of(&gray), JPEG).text, UPRIGHT);
-    let cmyk = read_ocr(&own("cmyk.jpg"), JPEG);
+    let cmyk = read_ocr(&fixture("cmyk.jpg"), JPEG);
     assert_eq!(cmyk.text, UPRIGHT);
 }
 
 #[test]
 fn the_exif_orientation_of_a_photo_is_applied() {
-    assert_eq!(read_ocr(&own("rotated.jpg"), JPEG).text, UPRIGHT);
+    assert_eq!(read_ocr(&fixture("rotated.jpg"), JPEG).text, UPRIGHT);
 }
 
 #[test]
@@ -407,7 +405,7 @@ fn an_animated_gif_reads_its_first_frame() {
 
 #[test]
 fn a_multi_page_tiff_reads_its_first_page() {
-    assert_eq!(read_ocr(&own("pages.tiff"), "image/tiff").text, UPRIGHT);
+    assert_eq!(read_ocr(&fixture("pages.tiff"), "image/tiff").text, UPRIGHT);
 }
 
 #[test]
@@ -457,7 +455,7 @@ fn a_few_words_over_a_picture_are_read_as_a_picture() {
 #[test]
 fn a_password_protected_pdf_is_encrypted_and_a_damaged_one_is_malformed() {
     assert!(matches!(
-        refusal(&own("encrypted.pdf"), PDF, &options()),
+        refusal(&fixture("encrypted.pdf"), PDF, &options()),
         Refusal::Encrypted
     ));
     assert!(matches!(
@@ -483,9 +481,9 @@ fn the_time_budget_stops_the_reading_of_a_long_scan_and_says_so() {
 fn the_time_budget_also_stops_a_single_picture() {
     let mut hurried = with_ocr();
     hurried.time_budget = Some(Duration::from_millis(1));
-    let cut = read_here(&own("languages.png"), PNG, &hurried).unwrap();
+    let cut = read_here(&fixture("languages.png"), PNG, &hurried).unwrap();
     assert!(cut.cut_short);
-    assert!(cut.text.len() < read_ocr(&own("languages.png"), PNG).text.len());
+    assert!(cut.text.len() < read_ocr(&fixture("languages.png"), PNG).text.len());
 }
 
 #[test]

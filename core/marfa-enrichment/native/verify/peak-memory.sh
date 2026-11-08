@@ -7,12 +7,13 @@
 #
 #   native/verify/peak-memory.sh <image> <platform> <program> <args...>
 #
-# Prints one line: `peak vmpeak_kb=... vmhwm_kb=... rlimit_as=...`. Needs docker and the
-# alpine image. The reader is the program started again from /proc/self/exe, whose name is `exe`.
-set -eu
+# Prints one line: `peak vmpeak_kb=... vmhwm_kb=... rlimit_as=...`. Needs docker. The
+# reader is the program started again from /proc/self/exe, whose name is `exe`.
+source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 image=$1 platform=$2
 shift 2
-watcher=$(docker run -d --rm --pid=host --platform "$platform" alpine sh -c '
+alpine=$(manifest_line image alpine | awk '{ print $3 }')
+watcher=$(docker run -d --rm --pid=host --platform "$platform" "$alpine" sh -c '
   peak=0; hwm=0; limit=unknown
   while :; do
     for p in $(pidof exe 2>/dev/null); do
