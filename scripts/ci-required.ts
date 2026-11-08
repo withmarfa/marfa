@@ -307,6 +307,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   // The core's catalog is written from the shipped types, the registry that
   // lists them and the server's role resolution.
+  // The rules crate embeds the icon sets, so every build of the core, the
+  // command line and the image reads them.
+  [
+    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
+    [...SERVER, "types-freshness", "clients-freshness", ...RUST],
+  ],
   [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
   [/^packages\/shared\//, [...SERVER, "clients-freshness"]],
   [
