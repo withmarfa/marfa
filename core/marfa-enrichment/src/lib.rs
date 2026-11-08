@@ -40,8 +40,9 @@ pub use isolated::{read, serve_child_if_asked};
 /// What one reading may use.
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// The text kept, in UTF-16 code units, as the contract counts it. A reader
-    /// stops once it holds enough, so a file with far more text costs no more.
+    /// The text kept, counted in UTF-16 code units, so a character outside the Basic
+    /// Multilingual Plane counts as two. A reader stops once it holds enough, so a
+    /// file with far more text costs no more.
     pub max_text_chars: usize,
     /// The most bytes a document may inflate to, all of its parts together.
     pub max_inflated_bytes: u64,
@@ -131,8 +132,7 @@ pub struct Reading {
 
 /// How far a reading's process was shut off from the system. The reading is good
 /// either way: a system that cannot confine a process still reads, and this is how its
-/// owner can learn that. The README says what holds in each state, in "What holds on
-/// each platform".
+/// owner can learn that.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sandbox {
@@ -156,8 +156,10 @@ pub struct Dimensions {
     pub height: u32,
 }
 
-/// Why a file was not read. The kinds are told apart because the sweep treats
-/// them differently. The README says how, in "How the sweep treats a refusal".
+/// Why a file was not read. The kinds are told apart because a caller treats them
+/// differently: `Unsupported`, `Encrypted` and `Malformed` are about the file,
+/// `OverLimit` and `TimedOut` about the limits it met, and `OcrUnavailable` and
+/// `ReaderUnavailable` about the system, which says nothing about the file.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Refusal {
     /// No reader takes this type of file.

@@ -93,7 +93,7 @@ impl<'a> Package<'a> {
         let budget = Budget {
             left: Cell::new(max_inflated_bytes),
         };
-        // The parts together, as the contract counts them, whether or not the
+        // The parts together, whether or not the
         // reader goes near all of them. A part cannot inflate past the size it
         // states, since the reader stops it there, so this bounds the package.
         match zip.decompressed_size() {

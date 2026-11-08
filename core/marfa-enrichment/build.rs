@@ -69,7 +69,7 @@ mod native {
             stop(&format!(
                 "the `native` feature needs MARFA_NATIVE_PREFIX, the folder that\n\
                  `native/build.sh {target}` fills with lib/, include/ and tessdata/.\n\
-                 See the README of this crate, section Building the native readers."
+                 See the README of this crate, section Build the native readers."
             ));
         };
         for needed in [

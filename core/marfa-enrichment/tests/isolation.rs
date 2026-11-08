@@ -1,5 +1,5 @@
 //! Each test here is the real thing: this program calls `serve_child_if_asked` as the
-//! first line of `main`, so `read` starts this very program, as it starts the server.
+//! first line of `main`, so `read` starts this very program, as it starts any program that calls `read`.
 //! The tests run one at a time, because they count this process's children and
 //! descriptors.
 

@@ -1,5 +1,5 @@
-//! Reads one file the way the server does, through a process of its own, and prints
-//! what it read. It is the proof that a build of this crate works.
+//! Reads files through a process of its own, as `read` always does, and prints what
+//! it read. It shows that a build of this crate works.
 
 use std::path::{Path, PathBuf};
 

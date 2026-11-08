@@ -26,7 +26,7 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<Dimensions> {
 
 /// Reads the text in an image with OCR, if it is on, into `sink`. Returns whether
 /// the time budget cut the reading short. An image that cannot be decoded is
-/// refused, so that the sweep counts it instead of leaving it unread.
+/// refused, so that the caller counts it instead of leaving it unread.
 #[cfg(feature = "native")]
 pub(crate) fn read_text(
     bytes: &[u8],
