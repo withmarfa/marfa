@@ -8,6 +8,11 @@ import {
   nowMs,
   pauseClock,
 } from "../clock.js";
+import { createHash } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import type { BlobLayer } from "../storage/blob-layer.js";
+import { unfaulted } from "../storage/blob-faults.js";
+import { bareHex } from "../storage/blob-store.js";
 import { activeFaults, clearFaults, faultProblem, setFault } from "./faults.js";
 
 const advanceInput = z.union([
@@ -28,7 +33,10 @@ function body(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
  * the public listener. The target interface in `conformance/README.md` names
  * them as the adapter's means.
  */
-export function testRoutes(jobNames: () => readonly string[]) {
+export function testRoutes(
+  jobNames: () => readonly string[],
+  blobs: BlobLayer,
+) {
   const app = new Hono();
   app.get("/clock", (c) =>
     c.json({ offset_ms: clockOffsetMs(), now: now().toISOString() }),
@@ -53,6 +61,40 @@ export function testRoutes(jobNames: () => readonly string[]) {
       offset_ms: clockOffsetMs(),
       now: new Date(nowMs()).toISOString(),
     });
+  });
+  app.get("/blob-stores", async (c) => {
+    const hash = c.req.query("hash");
+    if (hash !== undefined && !/^sha256:[0-9a-f]{64}$/.test(hash))
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Provide hash as a sha256: blob name",
+      );
+    const stores = await Promise.all(
+      blobs.stores.map(async (store) => {
+        const real = unfaulted(store);
+        const held = hash === undefined ? null : await real.has(hash);
+        let intact = false;
+        if (held !== null && hash !== undefined) {
+          const read = await real.get(hash);
+          if (read !== null) {
+            const sum = createHash("sha256");
+            for await (const chunk of read.stream) sum.update(chunk as Buffer);
+            intact = sum.digest("hex") === bareHex(hash);
+          }
+        }
+        return {
+          id: store.id,
+          kind: store.kind,
+          holds: held !== null,
+          intact,
+        };
+      }),
+    );
+    const spool = await readdir(blobs.disk.spoolDir).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    });
+    return c.json({ stores, spool });
   });
   app.get("/faults", (c) => c.json({ faults: activeFaults() }));
   app.put("/faults", async (c) => {

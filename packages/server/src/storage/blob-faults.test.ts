@@ -122,3 +122,84 @@ describe("a store made to hang", () => {
     expect(await second).not.toBeNull();
   });
 });
+
+describe("a blob made to read as lost or damaged", () => {
+  const OTHER = `sha256:${"b".repeat(64)}`;
+  const bytesOf = async (read: Awaited<ReturnType<typeof store.get>>) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of read!.stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  };
+
+  it("reads a lost blob as absent to a read and a question, and no other blob", async () => {
+    await store.put(HASH, source());
+    setFault("lose:blob", HASH);
+    expect(await store.get(HASH)).toBeNull();
+    expect(await store.has(HASH)).toBeNull();
+    setFault("lose:blob", `${HASH},${OTHER}`);
+    expect(await store.has(OTHER)).toBeNull();
+    clearFaults();
+    expect(await store.has(HASH)).toEqual({ size_bytes: BYTES.length });
+  });
+
+  it("ends the loss when the store places the blob again or deletes it", async () => {
+    await store.put(HASH, source());
+    setFault("lose:blob", HASH);
+    await store.put(HASH, source());
+    expect(await store.has(HASH)).not.toBeNull();
+
+    setFault("lose:blob", HASH);
+    await store.delete(HASH);
+    await store.put(HASH, source());
+    expect(await store.has(HASH)).not.toBeNull();
+  });
+
+  it("reads a damaged blob with its first byte changed and its length kept, until the store deletes it", async () => {
+    await store.put(HASH, source());
+    setFault("damage:blob", HASH);
+    const read = await store.get(HASH);
+    const shown = await bytesOf(read);
+    expect(shown.length).toBe(BYTES.length);
+    expect(shown[0]).toBe(BYTES[0]! ^ 0xff);
+    expect(shown.subarray(1)).toEqual(BYTES.subarray(1));
+    expect(await store.has(HASH)).toEqual({ size_bytes: BYTES.length });
+
+    await store.put(HASH, source());
+    expect((await bytesOf(await store.get(HASH)))[0]).toBe(BYTES[0]! ^ 0xff);
+    await store.delete(HASH);
+    await store.put(HASH, source());
+    expect(await bytesOf(await store.get(HASH))).toEqual(BYTES);
+  });
+
+  it("changes nothing for a read that does not start at the first byte", async () => {
+    await store.put(HASH, source());
+    setFault("damage:blob", HASH);
+    const tail = await store.get(HASH, { start: 1, end: 4 });
+    expect(await bytesOf(tail)).toEqual(BYTES.subarray(1, 5));
+  });
+
+  it("fails a read and a question of presence for an unreadable blob alone, until the store deletes it", async () => {
+    await store.put(HASH, source());
+    setFault("damage:blob-unreadable", HASH);
+    await expect(store.get(HASH)).rejects.toThrow(/i\/o error/);
+    await expect(store.has(HASH)).rejects.toThrow(/i\/o error/);
+    await store.delete(HASH);
+    await store.put(HASH, source());
+    expect(await store.has(HASH)).not.toBeNull();
+  });
+});
+
+describe("a blob lost while it is being read", () => {
+  it("ends the read in the error of a file that has gone, when the loss comes before a chunk is read", async () => {
+    await store.put(HASH, source());
+    const read = await store.get(HASH);
+    setFault("lose:blob", HASH);
+    const chunks: Buffer[] = [];
+    await expect(
+      (async () => {
+        for await (const chunk of read!.stream) chunks.push(chunk as Buffer);
+      })(),
+    ).rejects.toThrow(/ENOENT/);
+    expect(chunks).toEqual([]);
+  });
+});

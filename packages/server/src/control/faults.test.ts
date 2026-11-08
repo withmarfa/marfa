@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   activeFaults,
   atPoint,
+  blobLie,
   clearFaults,
   deadlineFault,
   failAt,
@@ -10,12 +11,14 @@ import {
   faultProblem,
   faultsArmed,
   freeFault,
+  healBlob,
   healthAdmitted,
   holdArmed,
   holdAt,
   POINTS,
   setFault,
   storeCheckDeadlineFault,
+  webhookPositionFault,
 } from "./faults.js";
 
 const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
@@ -495,5 +498,58 @@ describe("a counted hold between bulk chunks", () => {
     expect(activeFaults()[0]?.waiting).toBe(2);
     clearFaults();
     await Promise.all([first, second]);
+  });
+});
+
+describe("a blob fault", () => {
+  const A = `sha256:${"a".repeat(64)}`;
+  const B = `sha256:${"b".repeat(64)}`;
+
+  it("takes a list of blob names and refuses anything else", () => {
+    expect(arm("lose:blob", A)).toBeUndefined();
+    expect(arm("damage:blob", B)).toBeUndefined();
+    for (const arg of [null, "", "sha256:short", `${A},`, `${A},${A}x`]) {
+      expect(arm("lose:blob", arg), String(arg)).not.toBeUndefined();
+    }
+    expect(arm("damage:nothing", A)).not.toBeUndefined();
+    expect(blobLie(A)).toBe("lose");
+    expect(blobLie(B)).toBe("damage");
+    expect(blobLie(`sha256:${"c".repeat(64)}`)).toBeUndefined();
+  });
+
+  it("lets a lost blob be placed again and a damaged blob only be deleted", () => {
+    arm("lose:blob", A);
+    arm("damage:blob", B);
+    healBlob(B, true);
+    expect(blobLie(B)).toBe("damage");
+    healBlob(A, true);
+    expect(blobLie(A)).toBeUndefined();
+    healBlob(B, false);
+    expect(blobLie(B)).toBeUndefined();
+  });
+});
+
+describe("a damage:webhook-position fault", () => {
+  it("takes one of four states and reads it until cleared", () => {
+    for (const state of ["ahead", "behind", "hole", "missing"]) {
+      expect(arm("damage:webhook-position", state), state).toBeUndefined();
+      expect(webhookPositionFault()).toBe(state);
+    }
+    expect(arm("damage:webhook-position", "sideways")).not.toBeUndefined();
+    expect(arm("damage:webhook-position")).not.toBeUndefined();
+    clearFaults();
+    expect(webhookPositionFault()).toBeUndefined();
+  });
+});
+
+describe("a hold on admission", () => {
+  it("holds a request before it reaches the writer, once, and lets later ones pass", async () => {
+    expect(arm("hold:admission", "1")).toBeUndefined();
+    expect(holdArmed("admission")).toBe(true);
+    const held = holdAt("admission");
+    await Promise.resolve();
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    clearFaults();
+    await held;
   });
 });
