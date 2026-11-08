@@ -204,17 +204,22 @@ impl Run {
 
     async fn run(&mut self) -> std::result::Result<(), Ending> {
         self.check_stop()?;
-        self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
-        self.check_stop()?;
         let head = self.opening().await?;
+        self.check_stop()?;
         self.send(frame(marker(
             "stream_cursor",
             vec![("cursor", head.to_string().into())],
         ))?)
         .await?;
-        while self.position < head {
-            self.check_stop()?;
+        // A resumed stream reads one page whatever the head says, so a log the sweep has moved
+        // past the cursor since the head was read ends the stream before `stream_live`.
+        let mut resumed = self.resume.is_some();
+        if resumed {
             self.app.faults.hold(HOLD_STREAM_REPLAY, None).await;
+        }
+        while resumed || self.position < head {
+            resumed = false;
+            self.check_stop()?;
             let faults = self.app.faults.clone();
             if faults.fail(FAIL_STREAM_REPLAY, None) {
                 return Err(self.incomplete("read_failed"));
@@ -265,6 +270,7 @@ impl Run {
             Ok(bounds) => bounds,
             Err(refusal) => return Err(self.failure(&refusal)),
         };
+        self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
         let Some(cursor) = self.resume else {
             self.position = bounds.head;
             return Ok(bounds.head);

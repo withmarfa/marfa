@@ -6,22 +6,35 @@ mod frame;
 mod page;
 mod stream;
 
+use marfa_rules::query::list_entry;
 use rusqlite::{Transaction, params};
+use serde_json::json;
 
 use super::App;
 use super::access::Caller;
 use super::items::reading;
 use super::query::judge_type;
-use super::refusal::Result;
+use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
 pub use frame::Filter;
 pub use stream::{Opening, PING, Viewer, Viewers, open};
 
-/// Refuses a type entry that names no type, or one the caller may not read.
+/// Refuses the first entry of a stream's `type` that is outside the grammar, names no type, or
+/// names one the caller may not read; each entry is judged as it is reached.
 pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Result<()> {
     reading(app, caller, move |read| {
-        entries.iter().try_for_each(|entry| judge_type(read, entry))
+        entries.iter().try_for_each(|entry| {
+            list_entry(entry).map_err(|error| {
+                Refusal::validation(error.message.clone())
+                    .with_detail("field", "type")
+                    .with_detail(
+                        "errors",
+                        json!([{ "path": "type", "message": error.message }]),
+                    )
+            })?;
+            judge_type(read, entry)
+        })
     })
     .await
 }

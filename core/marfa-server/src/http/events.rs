@@ -10,7 +10,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
 use http_body::Frame;
-use marfa_rules::query::{list_entry, type_entries};
+use marfa_rules::query::type_entries;
 use tokio::sync::mpsc;
 
 use super::answer::Answer;
@@ -41,8 +41,8 @@ impl http_body::Body for Feed {
     }
 }
 
+/// The entries of `type`, counted and cleaned; each is judged for its grammar and its type as it is reached.
 fn types_of(uri: &Uri) -> Result<Vec<String>> {
-    let refused = |error: marfa_rules::error::RuleError| invalid_field("type", error.message);
     let mut sent = Vec::new();
     for (name, value) in query::pairs(uri)? {
         if name == "type" {
@@ -53,10 +53,8 @@ fn types_of(uri: &Uri) -> Result<Vec<String>> {
         return Ok(sent);
     }
     type_entries(&sent)
-        .map_err(refused)?
-        .into_iter()
-        .map(|entry| list_entry(entry).map(str::to_string).map_err(refused))
-        .collect()
+        .map(|entries| entries.into_iter().map(str::to_string).collect())
+        .map_err(|error| invalid_field("type", error.message))
 }
 
 fn edges_of(uri: &Uri) -> Result<bool> {
@@ -66,7 +64,7 @@ fn edges_of(uri: &Uri) -> Result<bool> {
     match named.as_ref().map(|(_, value)| value.as_str()) {
         None | Some("all") => Ok(true),
         Some("none") => Ok(false),
-        Some(_) => Err(invalid_field("edges", "edges is all or none.")),
+        Some(_) => Err(Refusal::validation("edges must be all or none.")),
     }
 }
 
