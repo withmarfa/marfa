@@ -1,6 +1,4 @@
-//! The SQL that writes the item tables and reads one row or one walk of them.
-//! Nothing outside `items` reaches this module, so every write to these tables
-//! goes through `write`. `query` compiles what a listing or a search reads.
+//! Nothing outside `items` reaches this module, so every write to these tables goes through `write`.
 
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
 use serde::Serialize;
@@ -13,7 +11,6 @@ const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(p
      capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
      trashed_by_name, trashed_with, trashed_with_type, went_with_hosts FROM items";
 
-/// What the search index reads of a row.
 pub(super) struct Indexed {
     pub type_id: String,
     pub state: String,
@@ -34,7 +31,6 @@ pub(super) fn indexed(tx: &Transaction<'_>, seq: i64) -> Result<Option<Indexed>>
         .optional()?)
 }
 
-/// Up to `limit` rows of one type and state past `after`, by `seq`.
 pub(super) fn seqs_of(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -51,7 +47,7 @@ pub(super) fn seqs_of(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The rows at `seqs`, in that order. A row a snapshot holds is always found.
+/// A row a snapshot holds is always found.
 pub(super) fn by_seqs(tx: &Transaction<'_>, seqs: &[i64]) -> Result<Vec<Item>> {
     let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE seq = ?1"))?;
     seqs.iter()
@@ -133,13 +129,11 @@ pub(super) fn by_natural_key(
         .optional()?)
 }
 
-/// The item of `type_id` holding `link`, in any state.
 pub(super) fn by_link(tx: &Transaction<'_>, type_id: &str, link: &str) -> Result<Option<Item>> {
     let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE type = ?1 AND link = ?2"))?;
     Ok(statement.query_row([type_id, link], item_of).optional()?)
 }
 
-/// The id of the item of `type_id` holding `link`, in any state.
 pub(super) fn link_holder(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -151,7 +145,6 @@ pub(super) fn link_holder(
         .optional()?)
 }
 
-/// What a new row holds.
 pub(super) struct NewRow<'a> {
     pub id: &'a str,
     pub type_id: &'a str,
@@ -172,7 +165,6 @@ pub(super) struct NewRow<'a> {
     pub writer: Option<&'a Writer>,
 }
 
-/// Inserts a row at version 1, and answers it as it was stored.
 pub(super) fn insert(tx: &Transaction<'_>, row: &NewRow<'_>) -> Result<Item> {
     let mut statement = tx.prepare_cached(
         "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
@@ -209,7 +201,6 @@ pub(super) fn insert(tx: &Transaction<'_>, row: &NewRow<'_>) -> Result<Item> {
     stored(tx, row.id)
 }
 
-/// Removes what purges left for the keys a row has come to hold.
 fn clear_tombstones(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -234,7 +225,6 @@ fn stored(tx: &Transaction<'_>, id: &str) -> Result<Item> {
     by_id(tx, id)?.ok_or_else(|| crate::app::refusal::Refusal::internal("a written row is gone"))
 }
 
-/// What a row holds once a write lands on it.
 pub(super) struct Landed<'a> {
     pub type_id: &'a str,
     pub tier: Option<&'a str>,
@@ -248,7 +238,6 @@ pub(super) struct Landed<'a> {
     pub writer: Option<&'a Writer>,
 }
 
-/// Keeps `item` as it stands under its version and moves it to the next.
 pub(super) fn advance(
     tx: &Transaction<'_>,
     item: &Item,
@@ -295,7 +284,6 @@ pub(super) fn advance(
     stored(tx, &item.id)
 }
 
-/// Where a row moves on a change of state.
 pub(super) struct Moved<'a> {
     pub state: &'a str,
     pub trashed_at: Option<&'a str>,
@@ -326,7 +314,6 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
     stored(tx, &item.id)
 }
 
-/// The rows in the bin that a move to the bin marked as gone with `root`.
 pub(super) fn marked_with(tx: &Transaction<'_>, root: &str) -> Result<Vec<Item>> {
     let mut statement = tx.prepare_cached(&format!(
         "{ITEM} WHERE trashed_with = ?1 AND state = 'trashed' ORDER BY seq"
@@ -363,7 +350,6 @@ pub(super) fn purge(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<()> {
     Ok(())
 }
 
-/// A key a purge left, as it stands.
 #[derive(Serialize)]
 pub(super) struct Tombstone {
     pub key: String,
@@ -403,8 +389,7 @@ fn key_tombstone(
         .optional()?)
 }
 
-/// Moves a link's tombstone to `settled_at`, where that is later. Both times
-/// are canonical, so their text orders as they do.
+/// Both times are canonical, so their text orders as they do.
 pub(super) fn settle_link(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -419,7 +404,6 @@ pub(super) fn settle_link(
     Ok(())
 }
 
-/// Moves a natural key's tombstone to `settled_at`, where that is later.
 pub(super) fn settle_key(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -435,7 +419,6 @@ pub(super) fn settle_key(
     Ok(())
 }
 
-/// The tombstones `keys` name under `type_id`, in the order named.
 pub(super) fn tombstones(
     tx: &Transaction<'_>,
     type_id: &str,
@@ -457,13 +440,11 @@ pub(super) fn tombstones(
     Ok(found)
 }
 
-/// Forgets every tombstone of a type's link.
 pub(super) fn drop_link_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
     tx.execute("DELETE FROM link_tombstones WHERE type = ?1", [type_id])?;
     Ok(())
 }
 
-/// Forgets every tombstone recorded under a type.
 pub(super) fn drop_tombstones(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
     drop_link_tombstones(tx, type_id)?;
     tx.execute(
@@ -482,7 +463,6 @@ pub(super) fn clear_links(tx: &Transaction<'_>, type_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Gives a row its link, answering whether another row of the type holds it.
 pub(super) fn set_link(tx: &Transaction<'_>, seq: i64, link: &str) -> Result<bool> {
     let set = tx.execute(
         "UPDATE items SET link = ?2 WHERE seq = ?1",
@@ -499,7 +479,6 @@ pub(super) fn set_link(tx: &Transaction<'_>, seq: i64, link: &str) -> Result<boo
     }
 }
 
-/// Moves `updated_at` alone, for a write beside the item's own fields.
 pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item> {
     tx.execute(
         "UPDATE items SET updated_at = ?2 WHERE seq = ?1",
@@ -508,10 +487,8 @@ pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item>
     stored(tx, &item.id)
 }
 
-/// A place in a listing, newest first.
 pub(super) type Position = (String, String);
 
-/// Up to `limit` rows past `after`, newest first, in the bin or out of it.
 pub(super) fn newest(
     tx: &Transaction<'_>,
     trashed: bool,
@@ -554,7 +531,6 @@ pub(super) fn snapshot_at(
         .optional()?)
 }
 
-/// Up to `limit` snapshots after version `after`, oldest first.
 pub(super) fn snapshots_after(
     tx: &Transaction<'_>,
     seq: i64,
@@ -575,7 +551,6 @@ pub(super) fn tags(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>> {
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Adds the tags the item does not hold, after the ones it does.
 pub(super) fn add_tags(tx: &Transaction<'_>, seq: i64, tags: &[String]) -> Result<()> {
     let mut statement = tx.prepare_cached(
         "INSERT OR IGNORE INTO item_tags (item_seq, tag, position) VALUES (?1, ?2, \
@@ -600,7 +575,6 @@ pub(super) fn remove_tag(tx: &Transaction<'_>, seq: i64, tag: &str) -> Result<()
     Ok(())
 }
 
-/// Every namespace the item holds, by name, each with its data as text.
 pub(super) fn extensions(tx: &Transaction<'_>, seq: i64) -> Result<Vec<(String, String)>> {
     let mut statement = tx.prepare_cached(
         "SELECT namespace, json(data) FROM item_extensions WHERE item_seq = ?1 ORDER BY namespace",
@@ -641,7 +615,6 @@ pub(super) fn remove_extension(tx: &Transaction<'_>, seq: i64, namespace: &str) 
     Ok(())
 }
 
-/// Each tag on an active item, with its count under each type and source.
 pub(super) fn active_tags(tx: &Transaction<'_>) -> Result<Vec<(String, String, String, i64)>> {
     let mut statement = tx.prepare_cached(
         "SELECT t.tag, i.type, i.source, COUNT(*) FROM item_tags t \
@@ -654,7 +627,6 @@ pub(super) fn active_tags(tx: &Transaction<'_>) -> Result<Vec<(String, String, S
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// What a title lookup answers of one item.
 pub(super) struct Titled {
     pub id: String,
     pub type_id: String,
@@ -663,7 +635,6 @@ pub(super) struct Titled {
     pub has_blob: bool,
 }
 
-/// The listed items under `key`, in `id` order, from `after`.
 pub(super) fn titled(
     tx: &Transaction<'_>,
     key: &str,
@@ -696,8 +667,6 @@ pub(super) fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> 
     )?)
 }
 
-/// Which of `names` a stored property of an item of one of `types` holds, in
-/// any state.
 pub(super) fn held_names(
     tx: &Transaction<'_>,
     types: &[String],
@@ -722,7 +691,6 @@ pub(super) fn held_names(
     Ok(held)
 }
 
-/// Each row of `type_id` as `(seq, type, properties)`, for rekeying.
 pub(super) fn of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(i64, String)>> {
     let mut statement = tx.prepare("SELECT seq, json(properties) FROM items WHERE type = ?1")?;
     let found = statement.query_map([type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;

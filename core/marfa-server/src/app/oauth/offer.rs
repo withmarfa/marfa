@@ -1,7 +1,5 @@
-//! What the two approval pages offer, as a value a page draws, and what a
-//! post from one means. A choice is the request narrowed: every value a
-//! control posts is a literal the request named, except the types chosen in
-//! place of all data, which that all-data literal covers.
+//! Approval-page offers and the meaning of a post. Every value a control posts is a literal the
+//! request named, except chosen types, which the all-data literal covers.
 
 use url::Url;
 
@@ -16,9 +14,7 @@ use super::store::Client;
 use crate::app::access::{Level, Permission};
 use crate::app::catalog::Catalog;
 
-/// What the all-data control posts for "choose types".
 pub const CHOOSE_TYPES: &str = "choose-types";
-/// What `access` holds for a person who took the whole request.
 pub const FULL_ACCESS: &str = "full";
 
 const CANNOT_BE_UNDONE: [Permission; 3] = [
@@ -27,18 +23,13 @@ const CANNOT_BE_UNDONE: [Permission; 3] = [
     Permission::ItemsPurge,
 ];
 
-/// A request as the page and the post are both read against it.
 #[derive(Clone, Copy, Debug)]
 pub struct Request<'a> {
-    /// What the request names, narrowed: what the app is allowed to ask for.
     pub named: &'a ScopeSet,
-    /// What the app's standing consent covers now.
     pub held: &'a ScopeSet,
-    /// Every type a person may choose in place of all data.
     pub choosable: &'a [&'a str],
 }
 
-/// What a level control is about.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Reach {
     Type,
@@ -48,95 +39,72 @@ pub enum Reach {
     Profile,
 }
 
-/// One level a control offers. `value` is what the control posts, which is
-/// empty for the level the app holds already.
+/// `value` is empty for the level the app holds already.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Choice {
     pub level: Level,
     pub value: String,
 }
 
-/// One thing a request asks for at up to two levels. A row of `Offer::data`
-/// or `Offer::profile` posts as `scopes`; a row of `LevelRow::types` posts as
-/// `types`.
+/// A row of `Offer::data` or `Offer::profile` posts as `scopes`; a row of `LevelRow::types`
+/// posts as `types`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LevelRow {
     pub reach: Reach,
-    /// The scope's text before its `:read` or `:write`.
     pub pattern: String,
     pub held: Level,
     /// Lowest first.
     pub choices: Vec<Choice>,
-    /// The value the control starts at.
     pub selected: String,
     /// It reaches what is registered later, which a page must say.
     pub open_ended: bool,
-    /// On the all-data row: the types to choose in its place, offered by a
-    /// further choice whose value is [`CHOOSE_TYPES`].
+    /// On the all-data row: types offered in its place by a choice whose value is [`CHOOSE_TYPES`].
     pub types: Vec<LevelRow>,
-    /// What the registry calls an item type or a link type this row is for.
     pub label: Option<String>,
-    /// What the registry says of a link type this row is for.
     pub description: Option<String>,
-    /// For a pattern under a root, such as `user.*`: what it covers today,
-    /// each by its label.
     pub covers: Vec<String>,
 }
 
-/// A permission the request names, offered off.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Power {
     pub literal: String,
     pub cannot_be_undone: bool,
 }
 
-/// What the app holds of one thing, at the level it holds it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Held {
     pub reach: Reach,
     pub pattern: String,
     pub level: Level,
-    /// See [`LevelRow::label`].
     pub label: Option<String>,
 }
 
-/// Who is asking and where the answer goes, each read from a parsed value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppShown {
-    /// Held to what a page may show, or the client ID.
     pub name: String,
     pub client_id: String,
-    /// The host a metadata document was read from.
     pub document_host: Option<String>,
-    /// The host of each redirect URI that leaves this machine, or the scheme
-    /// of a private-use one.
+    /// Or the scheme of a private-use one.
     pub destinations: Vec<String>,
     pub web_origins: Vec<String>,
 }
 
-/// Everything an approval page shows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Offer {
     pub app: AppShown,
-    /// Offer Full access and Choose access, as a field named `access`.
     pub full_access_choice: bool,
     pub data: Vec<LevelRow>,
     pub profile: Vec<LevelRow>,
     pub powers: Vec<Power>,
-    /// What the app holds, to show and not to change.
     pub held: Vec<Held>,
     pub held_powers: Vec<Power>,
-    /// Literals the form carries as hidden `scopes` fields.
     pub mechanisms: Vec<String>,
-    /// The page holds the "Confirm it's you" dialog.
     pub confirm: bool,
-    /// A control offers editing items, which the page must say adds and
-    /// deletes them.
+    /// A control offers editing items, which the page must say adds and deletes them.
     pub offers_edit: bool,
     pub returning: bool,
 }
 
-/// One thing asked for, gathered from its read and write literals.
 struct Ask {
     reach: Reach,
     pattern: String,
@@ -193,9 +161,8 @@ fn level_held(held: &ScopeSet, pattern: &str) -> Level {
     }
 }
 
-/// The control for `ask`, or none where the app holds all of it. The lowest
-/// choice posts nothing: a held read is added from the consent when the
-/// approval commits, so a page left open never brings one back.
+/// The lowest choice posts nothing: a held read is added from the consent when the approval
+/// commits, so a page left open never brings one back.
 fn row_for(ask: &Ask, held: &ScopeSet) -> Option<LevelRow> {
     let floor = level_held(held, &ask.pattern);
     let top = if ask.write.is_some() {
@@ -240,7 +207,6 @@ fn is_all_data(literal: &str) -> bool {
     Scope::parse(literal).is_some_and(|scope| scope.is_all_data())
 }
 
-/// The rows for the types offered in place of the all-data `ask`.
 fn type_rows(ask: &Ask, request: &Request<'_>) -> Vec<LevelRow> {
     request
         .choosable
@@ -257,7 +223,6 @@ fn type_rows(ask: &Ask, request: &Request<'_>) -> Vec<LevelRow> {
         .collect()
 }
 
-/// The types the page offers in place of all data.
 fn offered_types(request: &Request<'_>) -> Vec<String> {
     asks(request.named)
         .iter()
@@ -268,8 +233,6 @@ fn offered_types(request: &Request<'_>) -> Vec<String> {
         .collect()
 }
 
-/// Whether the page carries `literal` without a choice: a mechanism, or
-/// something the app already holds.
 fn carried(literal: &str, held: &ScopeSet) -> bool {
     literal == OFFLINE_ACCESS || covers(held, literal)
 }
@@ -298,8 +261,6 @@ fn app_shown(client: &Client) -> AppShown {
     }
 }
 
-/// What `held` shows: each thing at the highest level the app holds it, and
-/// each permission.
 fn held_shown(held: &ScopeSet) -> (Vec<Held>, Vec<Power>) {
     let mut things: Vec<Held> = Vec::new();
     let mut powers = Vec::new();
@@ -328,8 +289,6 @@ fn held_shown(held: &ScopeSet) -> (Vec<Held>, Vec<Power>) {
     (things, powers)
 }
 
-/// What the catalog calls the thing a pattern names, if it names one type or
-/// one link type.
 fn registry_label(
     catalog: &Catalog,
     reach: Reach,
@@ -359,9 +318,6 @@ fn registry_label(
 }
 
 impl Offer {
-    /// The same offer with what the catalog calls things: the label of each
-    /// type or link type, what a root such as `user.*` covers today, and the
-    /// same for what is held.
     pub fn named(mut self, catalog: &Catalog) -> Offer {
         let registries = Registries::of(catalog);
         let choosable = registries.choosable_types();
@@ -389,7 +345,7 @@ impl Offer {
             for one in &mut row.types {
                 fill(one, catalog, choosable, label_of);
             }
-            // What Marfa ships first, then the rest, each by name.
+            // Shipped types first, then the rest, each by name.
             row.types.sort_by_cached_key(|one| {
                 (
                     !Catalog::ships(&one.pattern),
@@ -408,7 +364,6 @@ impl Offer {
     }
 }
 
-/// What the page offers `client` for `request`.
 pub fn build(client: &Client, request: &Request<'_>) -> Offer {
     let (named, held) = (request.named, request.held);
     let mut data = Vec::new();
@@ -469,7 +424,6 @@ pub fn build(client: &Client, request: &Request<'_>) -> Offer {
     }
 }
 
-/// What a page posted.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Post {
     pub access: Option<String>,
@@ -477,14 +431,11 @@ pub struct Post {
     pub types: Vec<String>,
 }
 
-/// What a post means.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Decision {
-    /// The scopes a token is issued for, before what `grant` holds is added.
     Approved(ScopeSet),
-    /// Nothing the person could choose was chosen.
     Denied,
-    /// The post names what the request did not, so nothing from it counts.
+    /// Names what the request did not, so nothing from the post counts.
     Beyond,
 }
 
@@ -498,11 +449,8 @@ fn distinct(values: &[String]) -> Vec<&str> {
     seen
 }
 
-/// Reads a post against the request it answers and the consent the app holds
-/// as the approval commits. A held scope comes from `held`, never the post,
-/// so a page left open while the app was disconnected gives nothing back.
-/// Scopes are compared by what they reach, never merged as text: `approved`
-/// keeps the request's literals, and `grant` combines them with what is held.
+/// A held scope comes from `held`, never the post, so a page left open while the app was
+/// disconnected gives nothing back. Scopes are compared by what they reach, never merged as text.
 pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     let (named, held) = (request.named, request.held);
     let full = post.access.as_deref() == Some(FULL_ACCESS);
@@ -583,8 +531,7 @@ pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     }
 }
 
-/// The request's order, whatever order the form arrived in, then the types in
-/// the order the page lists them, each read before its write.
+/// The request's order, then the types in the order the page lists them, each read before its write.
 fn in_request_order(scopes: &ScopeSet, named: &ScopeSet, offered: &[&str]) -> ScopeSet {
     let mut extras: Vec<&String> = scopes
         .literals()

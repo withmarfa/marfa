@@ -1,5 +1,3 @@
-//! Which sources the rows a caller may read carry.
-
 use std::collections::BTreeSet;
 
 use super::compile::Sql;
@@ -7,7 +5,6 @@ use super::reach::Reach;
 use crate::app::items::Reader;
 use crate::app::refusal::Result;
 
-/// One step per source held, by the index, however many rows each holds.
 const PRESENT_SOURCES: &str = "WITH RECURSIVE present(name) AS (
         SELECT MIN(source) FROM items
         UNION ALL
@@ -25,13 +22,10 @@ fn any_row(read: &Reader<'_, '_>, reach: &Reach, source: &str) -> Result<bool> {
     Ok(statement.query_row(rusqlite::params_from_iter(&sql.values), |row| row.get(0))?)
 }
 
-/// Whether a row `read`'s caller may read, in any state, carries `source`.
 pub(crate) fn carries(read: &Reader<'_, '_>, source: &str) -> Result<bool> {
     any_row(read, &Reach::held(read)?, source)
 }
 
-/// The sources of the rows `read`'s caller may read, in any state, or of every
-/// row to a caller that manages keys.
 pub(crate) fn carried(read: &Reader<'_, '_>) -> Result<BTreeSet<String>> {
     let reach = Reach::held(read)?;
     let every = read.caller.manages_keys();

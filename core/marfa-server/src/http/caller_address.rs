@@ -14,7 +14,6 @@ const FORWARDED_FOR: &str = "x-forwarded-for";
 /// does at a malformed entry.
 const MAX_HOPS: usize = 32;
 
-/// The address of the caller behind `peer`.
 pub fn caller_address(peer: IpAddr, trust: &Trust, headers: &HeaderMap) -> IpAddr {
     let peer = peer.to_canonical();
     match trust {
@@ -109,7 +108,6 @@ mod tests {
         map
     }
 
-    /// What it shows, the peer, the trust, the headers and the answer.
     type Case<'a> = (&'a str, &'a str, Trust, &'a [(&'a str, &'a str)], &'a str);
 
     #[test]

@@ -675,6 +675,7 @@ impl Folder {
             after.extend(changes.added.iter().map(String::as_str));
             if let Err(error) = marfa_rules::validation::tags(&changes.added)
                 .and_then(|()| marfa_rules::validation::tag_count(kept.len(), after.len()))
+                .map_err(CoreError::from)
             {
                 let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                 flagged.push(Flagged::of(&file.key, &held_for));

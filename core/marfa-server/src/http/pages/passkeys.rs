@@ -3,14 +3,12 @@ use askama::Template;
 use super::{Needs, Page, document, render_body};
 use crate::app::refusal::Result;
 
-/// One of the owner's passkeys as the page shows it.
 #[derive(Debug, Clone)]
 pub struct OwnerPasskey {
     pub id: String,
     pub name: String,
     pub added: String,
     pub last_used: Option<String>,
-    /// The host it was made for, if that is no longer the sign-in address's.
     pub made_for: Option<String>,
 }
 

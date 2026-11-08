@@ -1,6 +1,4 @@
-//! What a passkey ceremony must survive that the contract's fixtures cannot
-//! stage. The fixtures reach the server on `127.0.0.1`, which no browser and
-//! no relying party takes, so this software authenticator works at `localhost`.
+//! The software authenticator works at `localhost`: no browser or relying party takes `127.0.0.1`.
 
 use std::sync::Arc;
 
@@ -41,7 +39,6 @@ fn random<const N: usize>() -> [u8; N] {
     bytes
 }
 
-/// Writes the one CBOR head this file's maps and strings need.
 fn head(major: u8, length: usize) -> Vec<u8> {
     let major = major << 5;
     match length {
@@ -59,13 +56,11 @@ fn text_of(value: &str) -> Vec<u8> {
     [head(3, value.len()), value.as_bytes().to_vec()].concat()
 }
 
-/// A software authenticator holding one ES256 credential.
 struct Device {
     key: SigningKey,
     id: Vec<u8>,
 }
 
-/// What differs from a browser's honest answer.
 #[derive(Clone)]
 struct Saying {
     origin: String,
@@ -235,7 +230,6 @@ async fn boot(dir: &TempDir, address: &str) -> Arc<App> {
     App::start(settings).await.unwrap()
 }
 
-/// A ceremony's first half, as a browser holds it.
 struct Asked {
     challenge: String,
     cookie: String,
@@ -339,7 +333,6 @@ impl Instance {
             .await
     }
 
-    /// Registers `device` and answers its passkey's id.
     async fn add(&self, device: &Device) -> String {
         let asked = self.asked_to_add().await;
         let response = device.registration(&asked.challenge, &self.saying());
@@ -540,7 +533,6 @@ async fn a_challenge_from_before_an_address_change_is_spent() {
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(refused.session_cookie().is_none());
     assert_eq!(instance.count("auth_passkey_challenge").await, 0);
-    // The witness: at the new port the host is the same, so the passkey signs in.
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
@@ -611,7 +603,6 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
             .cookie
             .contains("__Host-marfa.auth.passkey_challenge=")
     );
-    // An authenticator that signs for the new host still has the old key.
     let saying = Saying {
         host: "marfa.example".to_string(),
         ..instance.saying()
@@ -1159,9 +1150,7 @@ fn flip(response: &mut Value, field: &str, at: usize, by: u8) {
     response["response"][field] = json!(text(&bytes));
 }
 
-/// Any flipped byte of a signed assertion is refused. Noise in, or a flipped
-/// byte of, a registration's attestation never reaches a server error; a flip
-/// in its unsigned public key may be accepted, as `none` attestation allows.
+/// A flip in a registration's unsigned public key may be accepted, as `none` attestation allows.
 #[test]
 fn a_flipped_byte_never_passes_or_panics() {
     let runtime = tokio::runtime::Builder::new_multi_thread()

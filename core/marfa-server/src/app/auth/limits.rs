@@ -1,5 +1,5 @@
-//! How many attempts a door takes, held in the database so a restart keeps
-//! them. Each limit is a fixed window opened by its first attempt.
+//! Attempt limits are held in the database so a restart keeps them. Each is a fixed window
+//! opened by its first attempt.
 
 use std::net::IpAddr;
 
@@ -26,12 +26,9 @@ const DOCUMENT_INSTANCE: &str = "client-document-instance";
 const REGISTER_ADDRESS: &str = "client-register-address";
 const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
-/// The key of a count every address or every owner shares.
 const ALL: &str = "all";
-/// An address nothing could name shares this one count.
 const NO_ADDRESS: &str = "unknown";
 
-/// One count an attempt is held to.
 #[derive(Clone, Debug)]
 pub struct Lane {
     family: &'static str,
@@ -40,7 +37,6 @@ pub struct Lane {
     window_ms: i64,
 }
 
-/// What an address is counted as: an IPv6 address by its /64.
 fn bucket(address: Option<IpAddr>) -> String {
     let Some(address) = address else {
         return NO_ADDRESS.to_string();
@@ -54,7 +50,6 @@ fn bucket(address: Option<IpAddr>) -> String {
     }
 }
 
-/// An email as an attempt names it.
 pub(super) fn account_key(email: &str) -> String {
     email
         .trim()
@@ -64,8 +59,6 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-/// The counts every check of a password goes through, wherever it is made. An
-/// address past its own count reaches no account's.
 pub fn password_lanes(email: &str, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
     [
@@ -99,7 +92,6 @@ pub fn setup_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     }]
 }
 
-/// The counts of a device code lookup made without an owner's own session.
 pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
         Lane {
@@ -117,8 +109,6 @@ pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     ]
 }
 
-/// The counts of a lookup made by the claimed owner's live session, whichever
-/// address or session it came from.
 pub fn device_owner_lanes(user_id: &str) -> [Lane; 2] {
     [
         Lane {
@@ -136,7 +126,6 @@ pub fn device_owner_lanes(user_id: &str) -> [Lane; 2] {
     ]
 }
 
-/// The counts of a metadata document fetched for a client not yet stored.
 pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
         Lane {
@@ -154,7 +143,6 @@ pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     ]
 }
 
-/// The count of an app registering itself.
 pub fn register_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     [Lane {
         family: REGISTER_ADDRESS,
@@ -164,7 +152,6 @@ pub fn register_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     }]
 }
 
-/// The count of a passkey sign-in challenge asked for without a session.
 pub fn passkey_challenge_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     [Lane {
         family: PASSKEY_ADDRESS,
@@ -174,7 +161,6 @@ pub fn passkey_challenge_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     }]
 }
 
-/// The count of an app asking for a device code.
 pub fn device_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     [Lane {
         family: DEVICE_CODE_ADDRESS,
@@ -184,8 +170,6 @@ pub fn device_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     }]
 }
 
-/// Spends one attempt at a door that needs no credential, in its own write so
-/// a refused attempt still counts.
 pub async fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()> {
     if !app.settings.live().get(RATE_LIMIT_ENABLED) {
         return Ok(());
@@ -221,7 +205,6 @@ fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i
     }))
 }
 
-/// Removes up to `batch` windows that have ended, of any family.
 pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i64> {
     let count = tx.execute(
         "DELETE FROM rate_limit_windows WHERE (family, window_key) IN ( \
@@ -231,10 +214,8 @@ pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i
     Ok(i64::try_from(count).unwrap_or(i64::MAX))
 }
 
-/// Counts one attempt, and answers how many milliseconds from `now_ms` the
-/// caller must wait if it is refused. An attempt stops at the first lane that
-/// refuses it, so that lane's excess never reaches the next. The wait runs to
-/// the latest end among the lanes the next attempt would meet spent.
+/// An attempt stops at the first lane that refuses it, so that lane's excess never reaches
+/// the next. The wait runs to the latest end among the lanes the next attempt would meet spent.
 pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option<i64>> {
     tx.execute(
         "DELETE FROM rate_limit_windows WHERE expires_at <= ?1 AND family IN \
@@ -284,7 +265,6 @@ pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option
     })
 }
 
-/// The attempts an account has used, from every address.
 pub fn clear_account(tx: &Transaction<'_>, email: &str) -> Result<()> {
     let account = account_key(email);
     tx.execute(
@@ -300,8 +280,6 @@ pub fn clear_account(tx: &Transaction<'_>, email: &str) -> Result<()> {
     Ok(())
 }
 
-/// The refusal of an attempt with `wait_ms` to go, in whole seconds, at least
-/// one.
 pub fn spent(message: &'static str, wait_ms: i64) -> Refusal {
     let seconds = ((wait_ms + 999) / 1000).max(1);
     Refusal::new(Code::RateLimited, message).with_detail("retry_after", seconds)
@@ -318,7 +296,7 @@ mod tests {
 
     fn database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../db/migrations/0003_sign_in.sql"))
+        conn.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
             .unwrap();
         conn
     }

@@ -1,8 +1,4 @@
-//! Edges: what they hold, how they are answered and how they are written.
-//!
-//! Every write goes through [`write::write`], and only `rows` holds the SQL of
-//! the edges table, so no other part of the crate can make or move an edge
-//! without the checks, the version step, the audit entry and the event.
+//! Every write goes through [`write::write`]; only `rows` holds the SQL of the edges table.
 
 pub mod bulk;
 mod read;
@@ -22,7 +18,6 @@ pub(crate) use read::hydrate;
 pub use read::{Blocks, ItemListing, Listing, Reach, get, list, of_item};
 pub(crate) use rows::Store;
 
-/// An edge as stored. `properties` is the stored JSON as text.
 #[derive(Clone, Debug)]
 pub struct Edge {
     seq: i64,
@@ -48,7 +43,6 @@ struct EdgeHead<'a> {
 }
 
 impl Edge {
-    /// The edge as an answer and an event give it.
     pub fn answered(&self) -> Result<String> {
         with_properties(
             &EdgeHead {
@@ -76,15 +70,13 @@ fn not_found(id: &str) -> Refusal {
 
 const EXCERPT_OF: &str = "excerpt-of";
 
-/// The host an item with no title of its own is named after.
 pub struct NamingHost {
     pub label: String,
     pub type_id: String,
     pub properties: String,
 }
 
-/// The item the oldest edge out of `id` that names a part reaches out of the
-/// bin: an edge of a `with-hosts` type, or `excerpt-of`.
+/// The oldest edge out of `id` that names a part: an edge of a `with-hosts` type, or `excerpt-of`.
 pub fn naming_host(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -107,7 +99,6 @@ pub fn naming_host(
     Ok(None)
 }
 
-/// The type of the row the edge `id` now starts from.
 pub fn source_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     match rows::by_id(tx, id)? {
         Some(edge) => super::items::type_of(tx, &edge.source_id),
@@ -115,12 +106,10 @@ pub fn source_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     }
 }
 
-/// How many stored edges hold `edge_type`.
 pub fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64> {
     rows::count_of_type(tx, edge_type)
 }
 
-/// Each type stored edges of `edge_type` have at their targets.
 pub fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
     rows::target_types(tx, edge_type)
 }

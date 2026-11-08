@@ -1,5 +1,3 @@
-//! `GET /views/{id}/items`: what a saved view lists, for whoever reads it.
-
 use marfa_rules::filter;
 use serde_json::{Map, Value as Json, json};
 
@@ -16,7 +14,6 @@ use crate::app::refusal::{Code, Refusal, Result};
 
 pub const VIEW_TYPE: &str = "system.view";
 
-/// A page of a view.
 #[derive(Clone, Debug)]
 pub struct ViewPage {
     pub id: String,
@@ -37,8 +34,7 @@ fn strings(value: Option<&Json>) -> Vec<String> {
         .collect()
 }
 
-/// What a stored view's `query` asks. A type deleted since it was saved stays
-/// named, and selects what rows of it are left.
+/// A type deleted since the view was saved stays named, and selects what rows of it are left.
 fn ask_of(id: &str, settings: &Map<String, Json>) -> Result<Ask> {
     let query = settings.get("query").and_then(Json::as_object);
     let member = |name: &str| query.and_then(|query| query.get(name));
@@ -64,7 +60,6 @@ fn ask_of(id: &str, settings: &Map<String, Json>) -> Result<Ask> {
     })
 }
 
-/// An item's title: what its type's title field holds, or `title`.
 fn title_key(catalog: &Catalog) -> Sql {
     let rules = &catalog.rules;
     let mut by_field: Vec<(String, Vec<&str>)> = Vec::new();
@@ -114,8 +109,7 @@ fn key_of(by: &str, descending: bool, catalog: &Catalog) -> Option<Key> {
     })
 }
 
-/// The newest `occurred_at` first where a view names no key. A tie breaks by
-/// id ascending, or in the key's direction where one time is the only key.
+/// A tie breaks by id ascending, or in the key's direction where one time is the only key.
 fn order_of(id: &str, settings: &Map<String, Json>, catalog: &Catalog) -> Result<Order> {
     let named = settings
         .get("sort")

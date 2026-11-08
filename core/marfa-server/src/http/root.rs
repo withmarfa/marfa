@@ -1,5 +1,3 @@
-//! `GET /`: the instance's description, or a page for a browser.
-
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -16,8 +14,6 @@ use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const DOCUMENT: &str = include_str!("../../../../openapi.json");
 
-/// `GET /openapi.json`: the published document, whole, naming the contract
-/// this server answers to.
 pub async fn document(State(app): State<Arc<App>>) -> Answer {
     if app.settings.start.contract_version.is_none() {
         return Ok(([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response());

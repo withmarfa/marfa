@@ -1,6 +1,3 @@
-//! The enforcement levers, as the instance and a key each set them, and what
-//! the two leave a caller held to.
-
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -16,7 +13,6 @@ const LEVERS: [(&str, &[&str]); 3] = [
     ("source_filter", &["types", "sources"]),
 ];
 
-/// Levers as a request names them and as they are stored and answered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Levers(serde_json::Map<String, Value>);
 
@@ -32,7 +28,6 @@ fn list_of_text(value: &Value) -> bool {
 }
 
 impl Levers {
-    /// The levers a stored row holds, or none where the row does not read.
     pub fn from_row(text: &str) -> Option<Levers> {
         let value: Value = serde_json::from_str(text).ok()?;
         Levers::from_body_at(&value, "enforcement").ok()
@@ -46,8 +41,6 @@ impl Levers {
         Levers::from_body_at(value, "enforcement_override")
     }
 
-    /// Reads the levers a body holds under `at`, which is the path a refusal
-    /// names them by.
     pub fn from_body_at(value: &Value, at: &str) -> Result<Levers> {
         let refused = |path: &str| {
             let message = format!("{path} is not a valid lever setting.");
@@ -76,7 +69,6 @@ impl Levers {
         Ok(Levers(levers))
     }
 
-    /// The paths under `at` that name no lever, or no member of one.
     pub fn unknown_names(value: &Value, at: &str) -> Vec<String> {
         let Some(block) = value.as_object() else {
             return Vec::new();
@@ -97,13 +89,12 @@ impl Levers {
     }
 }
 
-/// A key's own levers, as its row holds them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OwnLevers {
     Unset,
     Set(Levers),
-    /// Stored and not readable, so they hold the key closed. The text stays,
-    /// so a write that does not name the levers leaves the row as it found it.
+    /// Stored and not readable, so they hold the key closed. The text stays, so a write
+    /// that does not name the levers leaves the row as it found it.
     Unread(String),
 }
 
@@ -133,8 +124,6 @@ impl OwnLevers {
         }
     }
 
-    /// Whether a change asking for `levers` would leave these as they are.
-    /// Nothing a body can name is the same as levers that do not read.
     pub fn already(&self, levers: Option<&Levers>) -> bool {
         match self {
             OwnLevers::Unread(_) => false,
@@ -159,7 +148,6 @@ fn list(block: &Value, member: &str) -> Vec<String> {
         .collect()
 }
 
-/// A lever that holds some types to some sources.
 #[derive(Debug)]
 struct Scope {
     types: Vec<String>,
@@ -175,15 +163,11 @@ impl Scope {
     }
 }
 
-/// The levers that hold for one caller at one moment: each one the key sets,
-/// and the instance's where it sets none.
 #[derive(Debug)]
 pub struct Holding {
     strict: Vec<String>,
     allowlist: Option<Scope>,
     filter: Option<Scope>,
-    /// Levers that hold here are stored and do not read, so nothing can say
-    /// what they let through, and nothing is let through.
     closed: bool,
 }
 
@@ -210,7 +194,6 @@ impl Holding {
         }
     }
 
-    /// Whether a listing can pass over rows for their source.
     pub fn filters_sources(&self) -> bool {
         self.closed || self.filter.is_some()
     }
@@ -240,8 +223,6 @@ impl Holding {
     }
 }
 
-/// Each stored row already logged as not reading, by a hash of its holder and
-/// its text. Only damage adds one, so the set stays as small as the damage.
 static REPORTED: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
 
 fn first_report(holder: &str, text: &str) -> bool {
@@ -253,9 +234,6 @@ fn first_report(holder: &str, text: &str) -> bool {
         .insert(hasher.finish())
 }
 
-/// Logs stored levers that do not read. They are read on every request, so a
-/// row is logged once however often it is read. `holder` is `instance`, or the
-/// key whose row it is.
 pub fn report_unread(holder: &str, text: &str) {
     if first_report(holder, text) {
         tracing::error!(
@@ -265,9 +243,7 @@ pub fn report_unread(holder: &str, text: &str) {
     }
 }
 
-/// What a caller is held to, once a transaction has read it. Asking before
-/// that panics: a decision rests on the state its operation runs against, and
-/// an empty answer here would read as no lever at all.
+/// Panics if asked before a transaction has read it: an empty answer would read as no lever at all.
 #[derive(Clone, Debug, Default)]
 pub struct Standing(Option<Arc<Holding>>);
 

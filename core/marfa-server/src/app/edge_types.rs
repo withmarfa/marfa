@@ -1,6 +1,3 @@
-//! The edge types an instance holds: the ones Marfa ships and the ones
-//! registered here.
-
 use marfa_rules::builtin;
 use marfa_rules::schema::{
     EdgeIssues, Issue, Obj, constraint_evolution_changes, edge_id, edge_type_from_request,
@@ -61,7 +58,6 @@ fn refusal_of(issues: EdgeIssues) -> Refusal {
     }
 }
 
-/// An edge type as the doors answer it.
 pub(super) fn presented(mut schema: Obj) -> Value {
     if !schema.contains_key("reverse_label")
         && let Some(label) = schema.get("label").cloned()
@@ -95,7 +91,6 @@ fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()
     })
 }
 
-/// Every edge type, those Marfa ships first.
 pub async fn list(app: &App) -> Result<Vec<Value>> {
     let cache = app.catalog_handle();
     let registered = app
@@ -117,8 +112,8 @@ pub async fn list(app: &App) -> Result<Vec<Value>> {
         .collect())
 }
 
-/// Registers an edge type, or widens the endpoint constraints of one that is
-/// registered. The answer says whether a type was created, and what it is.
+/// Registers an edge type, or widens the endpoint constraints of a registered one. The
+/// answer says whether a type was created.
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Value)> {
     request_shape(&body).map_err(refusal_of)?;
     let id = text_of(&body, "id").unwrap_or_default().to_string();
@@ -224,8 +219,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
     Ok((outcome.0, presented(outcome.1)))
 }
 
-/// Edges stored under `id` take on what `built` says of them, so a type that
-/// cascades asks of each stored target what writing such an edge asks. The
+/// A type that cascades asks of each stored target what writing such an edge asks. The
 /// refusal names no type, since the target can be one the caller cannot read.
 fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
     if text_of(built, "cascade_on_delete") != Some("cascade") {
@@ -244,7 +238,6 @@ fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<
     Ok(())
 }
 
-/// The registered edge type that holds `name` as its id or reverse name.
 fn holder_of(catalog: &Catalog, name: &str) -> Option<String> {
     catalog.edge_types.iter().find_map(|edge| {
         let id = text_of(edge, "id")?;
@@ -252,7 +245,6 @@ fn holder_of(catalog: &Catalog, name: &str) -> Option<String> {
     })
 }
 
-/// Deletes a registered edge type.
 pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, "edge_type.delete", move |unit| {

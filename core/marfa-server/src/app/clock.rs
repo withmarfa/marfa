@@ -56,12 +56,11 @@ impl Clock {
         DateTime::from_timestamp_millis(self.now_ms()).unwrap_or(DateTime::<Utc>::MAX_UTC)
     }
 
-    /// The time as stored and answered: UTC text that sorts as it reads.
+    /// UTC text that sorts as it reads.
     pub fn stamp(&self) -> String {
         self.now().to_rfc3339_opts(SecondsFormat::Millis, true)
     }
 
-    /// The time `ms` ago, as [`Clock::stamp`] writes it.
     pub fn stamp_ago(&self, ms: i64) -> String {
         DateTime::from_timestamp_millis(self.now_ms() - ms)
             .unwrap_or(DateTime::<Utc>::MIN_UTC)

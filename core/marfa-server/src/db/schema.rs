@@ -1,5 +1,3 @@
-//! What a database holds, compared with what this build declares.
-
 use rusqlite::Connection;
 
 use super::migrate::Migration;
@@ -43,7 +41,7 @@ pub fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     )
 }
 
-/// `name` is taken from `sqlite_schema` or a declared list, never from a caller.
+/// `name` comes from `sqlite_schema` or a declared list, never from a caller.
 pub fn holds_rows(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     let quoted = table.replace('"', "\"\"");
     conn.query_row(
@@ -63,8 +61,6 @@ pub fn is_shadow(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     )
 }
 
-/// A database built from the migrations alone, which is this build's
-/// declaration.
 pub fn declared(migrations: &[Migration]) -> rusqlite::Result<Connection> {
     let conn = Connection::open_in_memory()?;
     for migration in migrations {
@@ -73,19 +69,14 @@ pub fn declared(migrations: &[Migration]) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// How a database stands against the declaration.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Differences {
-    /// Declared tables the file does not hold.
     pub missing_tables: Vec<String>,
-    /// Every other way the file differs, as a person would say it.
     pub found: Vec<String>,
-    /// Declared tables the file holds.
     pub present_tables: Vec<String>,
 }
 
-/// A table this build does not declare is someone else's and is ignored,
-/// with whatever hangs from it.
+/// A table this build does not declare is someone else's and is ignored.
 pub fn compare(file: &Connection, declared: &Connection) -> rusqlite::Result<Differences> {
     let held = objects(file)?;
     let wanted = objects(declared)?;

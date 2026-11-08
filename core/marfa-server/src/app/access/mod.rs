@@ -1,7 +1,5 @@
-//! Who is asking and what they may reach. Every decision of reach is made
-//! here; nothing else reads a map or names a permission as text. A decision
-//! takes the state it decides on, so a write can make it inside its own
-//! transaction.
+//! Every decision of reach is made here; nothing else reads a map or names a permission as text.
+//! A decision takes the state it decides on, so a write can make it inside its own transaction.
 
 mod edges;
 mod items;
@@ -66,8 +64,6 @@ permissions! {
     WebhooksManage = "webhooks.manage";
 }
 
-/// What a credential holds: the same whether it is a key, a mint's request or
-/// the ceiling a mint is held to.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Grants {
     pub permissions: Vec<Permission>,
@@ -75,7 +71,6 @@ pub struct Grants {
     pub sources: Vec<String>,
 }
 
-/// What a request asked for that its caller does not hold.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Beyond {
     Scope(String),
@@ -104,7 +99,6 @@ fn source_refused(source: String) -> Refusal {
 }
 
 impl Grants {
-    /// What the owner holds, and so what a direct mint naming nothing gives.
     pub fn everything() -> Grants {
         Grants {
             permissions: Permission::ALL.to_vec(),
@@ -121,9 +115,7 @@ impl Grants {
         self.permissions.contains(&permission)
     }
 
-    /// The first thing `wanted` holds that a holder of these grants, whose
-    /// own source is `own`, does not. The holder may grant its own source
-    /// and its claims.
+    /// The holder may grant its own source and its claims.
     pub fn first_beyond(&self, own: &str, wanted: &Grants) -> Option<Beyond> {
         [
             Axis::Extension,
@@ -156,8 +148,6 @@ impl Grants {
     }
 }
 
-/// Whether a life of `wanted` runs past `limit`. `None` is no end, so it is
-/// the longest life of all.
 fn outlives(wanted: Option<&str>, limit: Option<&str>) -> bool {
     match (wanted, limit) {
         (_, None) => false,
@@ -185,8 +175,6 @@ fn requires(permission: Permission) -> Refusal {
     .with_detail("required_scope", permission.word())
 }
 
-/// What an update would leave a key with: all it will hold, and the life and
-/// levers only if the update names them.
 #[derive(Debug)]
 pub struct Change<'a> {
     pub grants: &'a Grants,
@@ -195,36 +183,25 @@ pub struct Change<'a> {
     pub narrow_only: bool,
 }
 
-/// What is asking.
 #[derive(Clone, Debug)]
 pub enum Caller {
-    /// The private local command, on the control socket with no credential.
-    /// It carries no levers of its own, so the instance's hold for it.
     Local(Standing),
     Key(Box<Key>),
-    /// The owner, in a browser.
     Owner(Box<Session>),
-    /// A signed-in app, by an access token. `key` is what the token holds,
-    /// shaped as a key, so every question of reach is answered as for one.
     App {
         key: Box<Key>,
         grant: Box<oauth::Granted>,
     },
-    /// The server, in the work it does on itself. It outlives any request
-    /// that started the work, so what a job does stands on no credential.
+    /// Outlives any request that started the work, so what a job does stands on no credential.
     Server,
 }
 
 impl Caller {
-    /// The private local command, before a transaction has read it.
     pub fn local() -> Caller {
         Caller::Local(Standing::default())
     }
 
-    /// The caller as `tx` holds it at `at`, for a decision that state must
-    /// bear out, the levers that hold for it among them. Asked of a key that
-    /// has since ended, it refuses as a request bearing that key would be
-    /// refused.
+    /// Asked of a key that has since ended, it refuses as a request bearing that key would.
     pub fn current(&self, tx: &Transaction<'_>, at: &str) -> Result<Caller> {
         match self {
             Caller::Local(_) => Ok(Caller::Local(config::standing(tx, None)?)),
@@ -260,7 +237,6 @@ impl Caller {
         matches!(self, Caller::Local(_) | Caller::Owner(_))
     }
 
-    /// The browser session behind this caller, if there is one.
     pub fn session(&self) -> Option<&Session> {
         match self {
             Caller::Owner(session) => Some(session),
@@ -268,8 +244,6 @@ impl Caller {
         }
     }
 
-    /// Refuses a browser session made more than five minutes before `at`. No
-    /// other caller has a sign-in to go stale.
     pub fn require_recent(&self, at: &str) -> Result<()> {
         match self.session() {
             Some(session) if !session.is_recent(seconds_of(at)?) => {
@@ -301,7 +275,6 @@ impl Caller {
         }
     }
 
-    /// Refuses all but the owner and the local command.
     pub fn require_direct(&self) -> Result<()> {
         if self.is_direct() {
             Ok(())
@@ -310,12 +283,10 @@ impl Caller {
         }
     }
 
-    /// Every key is within reach, whatever it holds.
     pub fn manages_keys(&self) -> bool {
         self.holds(Permission::KeysManage)
     }
 
-    /// Refuses a caller that may not list, change or revoke keys at all.
     pub fn require_key_door(&self) -> Result<()> {
         if self.manages_keys() {
             Ok(())
@@ -324,8 +295,6 @@ impl Caller {
         }
     }
 
-    /// Whether `target` is a key this caller may list, change or revoke. The
-    /// one decision behind every such door.
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => true,
@@ -340,7 +309,6 @@ impl Caller {
         }
     }
 
-    /// What a mint naming no family gives.
     pub fn whole_set(&self) -> Grants {
         match self {
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => Grants::everything(),
@@ -348,7 +316,6 @@ impl Caller {
         }
     }
 
-    /// Holds `wanted` to what this caller could give.
     pub fn check_ceiling(&self, wanted: &Grants) -> Result<()> {
         let Some(key) = self.key() else {
             return Ok(());
@@ -359,7 +326,6 @@ impl Caller {
         }
     }
 
-    /// Holds a key's life to this caller's own.
     pub fn check_life(&self, wanted: Option<&str>) -> Result<()> {
         let limit = self.key().and_then(|key| key.expires_at.as_deref());
         if outlives(wanted, limit) {
@@ -369,7 +335,6 @@ impl Caller {
         }
     }
 
-    /// Whether this caller could give a key `source`.
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => true,
@@ -377,8 +342,6 @@ impl Caller {
         }
     }
 
-    /// Holds a new key's own source, which another key claims, to what this
-    /// caller could grant.
     pub fn check_own_source(&self, source: &str, claimed_elsewhere: bool) -> Result<()> {
         if claimed_elsewhere && !self.may_grant(source) {
             Err(source_refused(source.to_string()))
@@ -387,7 +350,6 @@ impl Caller {
         }
     }
 
-    /// Holds an update of `target` to what this caller may do to it.
     pub fn check_update(&self, target: &Key, change: &Change<'_>) -> Result<()> {
         if change.levers.is_some() {
             self.require(Permission::ConfigManage)?;
@@ -423,12 +385,10 @@ impl Caller {
         Ok(())
     }
 
-    /// Whether this caller may read `source`.
     pub fn sees_source(&self, source: &str) -> bool {
         self.manages_keys() || self.may_grant(source)
     }
 
-    /// Refuses a caller that may not set the name and mark of `source`.
     pub fn require_may_name(&self, source: &str) -> Result<()> {
         if self.sees_source(source) {
             Ok(())
@@ -437,7 +397,6 @@ impl Caller {
         }
     }
 
-    /// The `key_id` of an audit entry this caller's write leaves.
     pub fn audit_id(&self) -> String {
         match self {
             Caller::Local(_) => "local:process".to_string(),
@@ -447,7 +406,6 @@ impl Caller {
         }
     }
 
-    /// The `actor` of an audit entry, as the caller stands when it acts.
     pub fn actor(&self) -> Value {
         match self {
             Caller::Local(_) => json!({ "kind": "local", "id": "local", "name": "Local command" }),

@@ -1,5 +1,4 @@
-//! A field definition: what a registration holds it to, and the form the
-//! registry stores.
+//! A field definition: what a registration holds it to, and the form the registry stores.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -12,13 +11,11 @@ use super::{
 use crate::builtin;
 use crate::catalog::{STATUS_GROUPS, status_word};
 
-/// The formats that annotate a string and become no kind of their own.
 const ANNOTATING_FORMATS: [&str; 4] = ["bcp47", "iso3166", "currency", "phone"];
 
 pub(super) struct Vocabulary {
     pub field_types: Vec<String>,
     pub member_types: Vec<String>,
-    /// A format, and the kind it folds into.
     pub collapses: HashMap<String, String>,
     pub formats: Vec<String>,
 }
@@ -39,8 +36,7 @@ pub(super) fn vocabulary() -> &'static Vocabulary {
     })
 }
 
-/// A field as the registry stores it: the format a kind absorbs is gone, and
-/// only what differs from the default is kept.
+/// The format a kind absorbs is gone, and only what differs from the default is kept.
 pub fn normalize_field(raw: &Obj, required: Option<bool>) -> Obj {
     let vocabulary = vocabulary();
     let declared_format = text(raw, "format").filter(|f| vocabulary.formats.iter().any(|v| v == f));
@@ -139,7 +135,6 @@ pub(super) struct Shape<'a> {
     pub path: Option<&'a str>,
 }
 
-/// Judges one declared field, naming each fault it has.
 pub(super) fn validate_field_shape(
     name: &str,
     definition: &Value,

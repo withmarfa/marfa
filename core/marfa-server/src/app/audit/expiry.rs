@@ -1,10 +1,7 @@
-//! Removing entries past the audit retention.
-
 use rusqlite::{Transaction, params};
 
 use super::super::refusal::Result;
 
-/// Removes up to `limit` of the entries older than `before`.
 pub fn expire(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     let removed = tx.execute(
         "DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE created_at < ?1 \

@@ -1,6 +1,3 @@
-//! The apps a person approved, as the owner and a credential holding
-//! `grants.manage` list, narrow and end them.
-
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -30,7 +27,6 @@ fn no_such_grant() -> Refusal {
     Refusal::new(Code::OauthGrantNotFound, "No live app grant has this ID.")
 }
 
-/// The owner's standing grant `id` names.
 pub(crate) fn of_owner(tx: &Transaction<'_>, id: &str) -> Result<Option<Consent>> {
     match instance::owner_id(tx)? {
         Some(owner) => store::standing_grant(tx, id, &owner),
@@ -38,7 +34,6 @@ pub(crate) fn of_owner(tx: &Transaction<'_>, id: &str) -> Result<Option<Consent>
     }
 }
 
-/// Every standing grant of the owner.
 pub(crate) fn all_of_owner(tx: &Transaction<'_>) -> Result<Vec<Consent>> {
     match instance::owner_id(tx)? {
         Some(owner) => store::standing_consents(tx, &owner),
@@ -46,13 +41,10 @@ pub(crate) fn all_of_owner(tx: &Transaction<'_>) -> Result<Vec<Consent>> {
     }
 }
 
-/// When a grant was last approved, which its inactivity counts from if it has
-/// never been used.
 pub(crate) fn granted_at(consent: &Consent) -> String {
     stamp_of(consent.updated_at)
 }
 
-/// The instant past which the retirement sweep ends a grant, if one does.
 pub(crate) fn boundary(consent: &Consent, inactivity_days: u64) -> Option<String> {
     let days = i64::try_from(inactivity_days)
         .ok()
@@ -61,8 +53,6 @@ pub(crate) fn boundary(consent: &Consent, inactivity_days: u64) -> Option<String
     Some(stamp_of(from + days * MS_PER_DAY))
 }
 
-/// What an owner reads an app as: the name they gave it, then the one it
-/// registered, then its ID.
 pub(crate) fn sign_in_name(tx: &Connection, consent: &Consent) -> Result<String> {
     let client = store::client(tx, &consent.client_id)?;
     let own = grant::own_name(tx, &consent.grant_id)?;
@@ -75,13 +65,11 @@ pub(crate) fn sign_in_name(tx: &Connection, consent: &Consent) -> Result<String>
         .to_string())
 }
 
-/// The source an app writes under for a person.
 pub(crate) fn source_of(client_id: &str, user_id: &str) -> String {
     format!("{APP_SOURCE_PREFIX}{client_id}:{user_id}")
 }
 
-/// The sign-in name of the app signed in under `source`, if one is. A client's
-/// ID can hold a colon, and a person's cannot.
+/// A client's ID can hold a colon; a person's cannot.
 pub(crate) fn name_of_source(tx: &Connection, source: &str) -> Result<Option<String>> {
     let Some((client_id, user_id)) = source
         .strip_prefix(APP_SOURCE_PREFIX)
@@ -152,8 +140,7 @@ fn same(left: &ScopeSet, right: &ScopeSet) -> bool {
     sorted(left) == sorted(right)
 }
 
-/// `keys-and-oauth/grant-narrow-stale`: what the person saw is what stands,
-/// judged at the moment the change commits.
+/// Judged at the moment the change commits, not when the person looked.
 fn require_as_seen(tx: &Connection, consent: &Consent, expected: &ScopeSet) -> Result<()> {
     let shown = grant::shown_scopes(tx, &consent.grant_id)?;
     if same(&consent.scopes, expected) && shown.is_none_or(|shown| same(&shown, expected)) {
@@ -165,8 +152,6 @@ fn require_as_seen(tx: &Connection, consent: &Consent, expected: &ScopeSet) -> R
     ))
 }
 
-/// Ends each token chain that reaches past `scopes`, whose tokens could
-/// otherwise go on using what the grant no longer holds.
 fn end_chains_beyond(
     tx: &Connection,
     consent: &Consent,
@@ -182,8 +167,6 @@ fn end_chains_beyond(
     Ok(())
 }
 
-/// What is asked of a narrowing: the scopes to leave and the ones the person
-/// saw when they chose them.
 #[derive(Debug)]
 pub struct Narrowing {
     pub scopes: ScopeSet,
@@ -227,8 +210,6 @@ pub async fn narrow(
     .await
 }
 
-/// Ends a standing grant in a write whose caller asked for it, who the audit
-/// names. Keys the app minted stay unless `with_keys` says otherwise.
 pub(crate) fn withdraw(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -264,8 +245,6 @@ pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool
     .await
 }
 
-/// Gives a standing grant the owner's own name, in a write that has decided
-/// the caller may.
 pub(crate) fn rename(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

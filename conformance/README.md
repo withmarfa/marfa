@@ -682,8 +682,8 @@ JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
 ### Which files the Rust server judges
 
 `RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
-the contract test files that the Rust server must pass whole. It starts empty
-and a file joins it when the Rust server passes that file. A listed file runs
+the contract test files that the Rust server must pass whole. A file joins it
+once the Rust server passes that file whole. A listed file runs
 in the Rust contract jobs only. `vitest.config.ts` leaves it out of the
 TypeScript server's shards, which run with `MARFA_SERVER_BIN` unset, so one
 file is judged by one server. A test checks that every listed path exists.
@@ -796,7 +796,8 @@ or when the classifier skipped them all.
   when a test failed. `Rust contract score` counts the reports as described
   above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
   waits for it. A change under `core/marfa-server/` runs these jobs and
-  `Core checks (Linux)`, and none of the TypeScript server's.
+  `Core checks (Linux)`, and `Core checks` for the private socket's macOS
+  code, and none of the TypeScript server's.
 
 `scripts/ci-required.ts` says which groups a change reaches and writes the
 matrix. A change to `spec/` alone runs the offline lane, and the compliance

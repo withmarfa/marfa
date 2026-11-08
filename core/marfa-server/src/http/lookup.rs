@@ -1,5 +1,3 @@
-//! The doors a connector finds its rows by, and settles what its purges left.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -30,7 +28,6 @@ fn type_of(sent: &Map<String, Value>) -> Result<String> {
     Ok(type_id)
 }
 
-/// The values under `field`, each once, in the order first named.
 fn values_of(sent: &Map<String, Value>, field: &str) -> Result<Vec<String>> {
     let refused = || invalid_field(field, format!("{field} must be a list of strings."));
     let named = sent

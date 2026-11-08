@@ -1,5 +1,5 @@
-//! Removing a key that ended long enough ago. A key revoked or expired stays a
-//! while, so that a request bearing it is refused as ended rather than unknown.
+//! A key revoked or expired stays a while, so that a request bearing it is refused as ended
+//! rather than unknown.
 
 use rusqlite::{Transaction, params};
 
@@ -17,7 +17,6 @@ pub fn any(tx: &Transaction<'_>, before: &str) -> Result<bool> {
     )?)
 }
 
-/// Removes up to `limit` of the keys that ended before `before`.
 pub fn remove(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     let chosen = format!("SELECT id FROM api_keys WHERE {ENDED} ORDER BY id LIMIT ?2");
     tx.execute(

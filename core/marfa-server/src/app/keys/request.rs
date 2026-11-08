@@ -1,5 +1,3 @@
-//! What a mint or an update asks for, judged apart from who is asking.
-
 use serde_json::{Map as Object, Value, json};
 
 use crate::app::access::{Axis, Grants, Levers, Map, Permission};
@@ -10,7 +8,6 @@ const MAX_CLAIMS: usize = 1000;
 const MAX_SOURCE_UNITS: usize = 200;
 const RESERVED_SOURCES: [&str; 2] = ["oauth:", "restored:"];
 
-/// What a mint's body may name.
 pub const MINT_FIELDS: [&str; 12] = [
     "label",
     "source",
@@ -26,7 +23,6 @@ pub const MINT_FIELDS: [&str; 12] = [
     "expires_at",
 ];
 
-/// What an update's body may name.
 pub const UPDATE_FIELDS: [&str; 12] = [
     "label",
     "default_tier",
@@ -42,7 +38,6 @@ pub const UPDATE_FIELDS: [&str; 12] = [
     "narrow_only",
 ];
 
-/// The families a body names, each replacing what it would otherwise hold.
 #[derive(Debug, Default)]
 pub struct Families {
     permissions: Option<Vec<Permission>>,
@@ -82,7 +77,6 @@ impl Families {
             || self.maps.iter().any(Option::is_some)
     }
 
-    /// `base` with what is named put in place.
     pub fn over(&self, base: &Grants) -> Grants {
         let mut grants = base.clone();
         if let Some(permissions) = &self.permissions {
@@ -100,7 +94,6 @@ impl Families {
     }
 }
 
-/// One refusal for every map a body got wrong.
 fn merged(refusals: Vec<Refusal>) -> Option<Refusal> {
     let mut refusals = refusals.into_iter();
     let first = refusals.next()?;
@@ -143,7 +136,6 @@ fn reserved(source: &str) -> bool {
         .any(|prefix| lowered.starts_with(prefix))
 }
 
-/// The source a key may hold, trimmed, from what a body names.
 fn held_source(text: &str, field: &str) -> Result<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() || sources::units(trimmed) > MAX_SOURCE_UNITS {
@@ -210,7 +202,6 @@ pub fn bad_expiry(value: impl Into<Value>) -> Refusal {
         .with_detail("value", value)
 }
 
-/// A date alone is refused here, though the rule for an instant reads one.
 fn has_a_time(text: &str) -> bool {
     let date_and_hour = text.get(..16).map(str::as_bytes);
     let shape = b"dddd-dd-ddTdd:dd";
@@ -242,8 +233,7 @@ fn levers(value: &Value) -> Result<Option<Levers>> {
     }
 }
 
-/// A mint's body. A field left out is `None`; an end or levers named `null`
-/// are `Some(None)`.
+/// A field left out is `None`; `null` for an end or levers is `Some(None)`.
 #[derive(Debug)]
 pub struct Mint {
     pub label: String,
@@ -273,7 +263,6 @@ impl Mint {
     }
 }
 
-/// An update's body, in the same terms as [`Mint`].
 #[derive(Debug)]
 pub struct Update {
     pub label: Option<String>,

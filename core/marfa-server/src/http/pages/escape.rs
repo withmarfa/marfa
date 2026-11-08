@@ -1,5 +1,4 @@
-//! The escaping every template uses. Named entities, so a page's text reads
-//! the same to any HTML reader.
+//! Named entities, so a page's text reads the same to any HTML reader.
 
 use std::fmt::{self, Write};
 

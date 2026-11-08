@@ -1,5 +1,3 @@
-//! What a view's settings may hold, judged before a view is written.
-
 use marfa_rules::{filter, validation};
 use serde_json::{Map, Value, json};
 
@@ -7,7 +5,6 @@ use super::catalog::Catalog;
 use super::refusal::{Code, Refusal, Result};
 use super::types::check_id;
 
-/// What a change to a view may name beside `version`.
 pub const SETTINGS: [&str; 4] = ["title", "query", "sort", "group"];
 
 const QUERY: [&str; 5] = ["types", "tier", "state", "filter", "beneath"];
@@ -52,7 +49,6 @@ fn undeclared_in(
     );
 }
 
-/// The paths in a settings body that no setting declares.
 pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
     let mut paths = Vec::new();
     undeclared_in(body, allowed, "", &mut paths);
@@ -272,7 +268,6 @@ fn check_group(value: &Value, catalog: &Catalog) -> Result<()> {
     check_scalars(group, "hidden")
 }
 
-/// Refuses a setting `settings` holds that a view may not.
 pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     if let Some(title) = settings.get("title") {
         check_title(title)?;
@@ -289,7 +284,6 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     }
 }
 
-/// Refuses a `null` setting, which only a change's `group` may carry.
 pub fn refuse_null(settings: &Map<String, Value>) -> Result<()> {
     match settings.iter().find(|(_, value)| value.is_null()) {
         Some((name, _)) => Err(at(name, format!("{name} cannot be null."))),

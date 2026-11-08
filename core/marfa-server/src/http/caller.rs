@@ -42,7 +42,6 @@ fn presented(headers: &HeaderMap) -> Presented<'_> {
     }
 }
 
-/// Whether the request presents a bearer token, good or not.
 pub fn bears_token(headers: &HeaderMap) -> bool {
     matches!(presented(headers), Presented::Token(_))
 }
@@ -64,8 +63,6 @@ fn check_browser_request(parts: &Parts, address: &Address) -> Result<()> {
     ))
 }
 
-/// Whether a session's request is held to this instance's origin here, or
-/// the door judges where it came from itself.
 #[derive(Clone, Copy, PartialEq)]
 enum Origin {
     Judged,
@@ -132,9 +129,8 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     Ok(caller)
 }
 
-/// The owner a browser's own session names, for a door a form posts to, which
-/// judges the form's origin itself. A request presenting a credential is not
-/// a browser's, whatever cookie it also carries.
+/// For a door a form posts to, which judges the form's origin itself. A request presenting
+/// a credential is not a browser's, whatever cookie it also carries.
 pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     if !matches!(presented(&parts.headers), Presented::Nothing) {
         return Ok(None);
@@ -143,8 +139,8 @@ pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Calle
     owner_by_cookie(parts, app, context, Origin::LeftToTheDoor).await
 }
 
-/// The request's caller, read once however many layers ask. A credential
-/// that does not verify is nobody, on the control socket too.
+/// Read once however many layers ask. A credential that does not verify is nobody, on the
+/// control socket too.
 pub async fn identify(parts: &mut Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     if let Some(Identified(known)) = parts.extensions.get::<Identified>() {
         return known.clone();

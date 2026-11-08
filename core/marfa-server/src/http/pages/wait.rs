@@ -1,7 +1,5 @@
 use std::fmt;
 
-/// How long until another attempt is allowed, as the redirect that sent the
-/// person to the page named it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Wait {
     seconds: u32,
@@ -10,8 +8,7 @@ pub struct Wait {
 impl Wait {
     pub const LONGEST_SECONDS: u32 = 86_400;
 
-    /// A `retry_after` query value: whole seconds from 1 to 86400. Anything
-    /// else names no wait.
+    /// Whole seconds from 1 to 86400; anything else names no wait.
     pub fn from_query(value: Option<&str>) -> Option<Wait> {
         let value = value?;
         if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -28,7 +25,6 @@ impl Wait {
     }
 }
 
-/// "1 minute" or "15 minutes".
 impl fmt::Display for Wait {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.minutes() {

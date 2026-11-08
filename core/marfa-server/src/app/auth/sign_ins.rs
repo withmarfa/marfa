@@ -1,6 +1,3 @@
-//! The owner's sign-ins: every browser, app and key that reaches this
-//! instance, read and ended in one place.
-
 use std::sync::Arc;
 
 use rusqlite::Transaction;
@@ -19,7 +16,6 @@ use crate::settings::registry::GRANT_INACTIVITY_DAYS;
 
 const MS_PER_SECOND: i64 = 1_000;
 
-/// One line of the listing.
 #[derive(Clone, Debug)]
 pub struct SignIn {
     id: String,
@@ -35,7 +31,6 @@ pub struct SignIn {
 }
 
 impl SignIn {
-    /// `asking` is the browser session the answer goes to, if one does.
     pub fn to_json(&self, asking: Option<&str>) -> Value {
         json!({
             "id": self.id,
@@ -108,7 +103,6 @@ fn inactivity_days(app: &App) -> u64 {
     app.settings.live().get(GRANT_INACTIVITY_DAYS)
 }
 
-/// Every live sign-in of the owner, oldest first.
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
     let caller = caller.clone();
     let days = inactivity_days(app);
@@ -135,7 +129,6 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
         .await
 }
 
-/// What a sign-in's ID names now.
 enum Named {
     Browser(Box<Session>),
     App(Box<Consent>),
@@ -159,8 +152,7 @@ fn no_such_sign_in() -> Refusal {
     Refusal::new(Code::SignInNotFound, "No live sign-in has this ID.")
 }
 
-/// What ending `id` would end, if `caller` may end it. A browser giving up
-/// its own session gives up only authority, so its age does not matter.
+/// A browser giving up its own session gives up only authority, so its age does not matter.
 fn to_end(
     tx: &Transaction<'_>,
     caller: &Caller,
@@ -182,15 +174,12 @@ fn to_end(
     }
 }
 
-/// What an ending did to the browser that asked for it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Ended {
     TheSessionThatAsked,
     Another,
 }
 
-/// Ends the sign-in `id` names, in one write under the action its own kind
-/// records. Nothing else of the owner's is touched.
 pub async fn end(
     app: &Arc<App>,
     caller: &Caller,
@@ -239,8 +228,6 @@ pub async fn end(
     })
 }
 
-/// What renaming `id` would rename, if `caller` may. A browser's name is read
-/// from the browser, so it takes none.
 fn to_rename(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Named> {
     caller.require_recent(at)?;
     match Named::read(tx, id, at)? {
@@ -252,12 +239,10 @@ fn to_rename(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Resul
     }
 }
 
-/// `text` as a sign-in's new name.
 pub fn new_name(text: &str) -> Result<String> {
     checked_name(text)?.ok_or_else(|| Refusal::validation("Give the sign-in a name."))
 }
 
-/// Gives an app or a key the owner's name for it.
 pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -> Result<SignIn> {
     let asking = caller.clone();
     let looked_for = id.clone();

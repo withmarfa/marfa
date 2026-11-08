@@ -1,10 +1,10 @@
-//! The settings as a real process meets them: its log, its files and its
-//! restarts.
+//! The settings as a real process meets them: its log, files and restarts.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -24,6 +24,12 @@ const CHANGE: DbWrite = DbWrite::caller("settings.change");
 const STALE_VALUE: &str = "stale-value-from-a-shell";
 const MINT: &str = r#"{"label":"proof","source":"proof","permissions":["keys.mint"]}"#;
 
+/// The socket's folders must hold no symbolic link, as macOS's temporary
+/// folder does.
+fn control_socket(dir: &Path) -> PathBuf {
+    dir.canonicalize().unwrap().join("control").join("s.sock")
+}
+
 fn program(dir: &Path, hooks: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_marfa-server"));
     command
@@ -33,7 +39,7 @@ fn program(dir: &Path, hooks: &str) -> Command {
         .env("MARFA_TEST_HOOKS", hooks)
         .env("SQLITE_PATH", dir.join("marfa.db"))
         .env("BLOB_PATH", dir.join("blobs"))
-        .env("MARFA_CONTROL_SOCKET", dir.join("control").join("s.sock"))
+        .env("MARFA_CONTROL_SOCKET", control_socket(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -74,7 +80,6 @@ impl Server {
         server
     }
 
-    /// Stops the process and returns all it logged.
     fn stop(mut self) -> String {
         let pid = self.child.id().to_string();
         assert!(Command::new("kill").arg(&pid).status().unwrap().success());
@@ -192,8 +197,10 @@ fn a_refused_start_makes_no_secrets_file() {
 #[test]
 fn a_socket_it_cannot_claim_stops_it_before_any_secret_is_made() {
     let dir = TempDir::new().unwrap();
-    std::fs::create_dir(dir.path().join("control")).unwrap();
-    std::fs::write(dir.path().join("control").join("s.sock"), "not a socket").unwrap();
+    let control = dir.path().join("control");
+    std::fs::create_dir(&control).unwrap();
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(control.join("s.sock"), "not a socket").unwrap();
     let (code, log) = everything_on_stdout(dir.path(), program(dir.path(), "false"));
     assert_eq!(code, Some(1));
     assert!(log.contains("Control socket already exists"), "{log}");

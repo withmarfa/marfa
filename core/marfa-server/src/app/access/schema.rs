@@ -1,11 +1,8 @@
-//! What a caller may do to the registries of types and edge types.
-
 use serde_json::json;
 
 use super::{Axis, Caller, Level, Permission};
 use crate::app::refusal::{Code, Refusal, Result};
 
-/// How a caller means to change a registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Door {
     Register,
@@ -13,7 +10,6 @@ pub enum Door {
     Change,
 }
 
-/// The two registries a map names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SchemaKind {
     Types,
@@ -41,8 +37,6 @@ impl Caller {
         }
     }
 
-    /// Refuses a caller whose metadata map does not reach `registry` at
-    /// `level`.
     pub fn require_metadata(&self, registry: SchemaKind, level: Level) -> Result<()> {
         let subresource = registry.subresource();
         if self.level_on(Axis::Metadata, subresource) >= level {
@@ -56,9 +50,8 @@ impl Caller {
         .with_detail("required", level.word()))
     }
 
-    /// Refuses a caller that may not use `door` on `registry`: registering
-    /// takes the metadata map, replacing a type takes it too where
-    /// `schema.write` is not held, and everything else takes `schema.write`.
+    /// Registering takes the metadata map; replacing a type takes it too where `schema.write`
+    /// is not held; everything else takes `schema.write`.
     pub fn require_door(&self, registry: SchemaKind, door: Door) -> Result<()> {
         let by_map = match door {
             Door::Register => true,
@@ -79,8 +72,6 @@ impl Caller {
         }
     }
 
-    /// Refuses a caller whose type map does not reach `name` at `level`.
-    /// Platform-managed `system.*` types are written by the platform alone.
     pub fn require_type(&self, name: &str, level: Level) -> Result<()> {
         if self.key().is_some() && level == Level::Write && name.split('.').next() == Some("system")
         {
@@ -93,7 +84,6 @@ impl Caller {
         self.require_type_map(name, level)
     }
 
-    /// Refuses a caller whose type map alone does not reach `name` at `level`.
     pub(super) fn require_type_map(&self, name: &str, level: Level) -> Result<()> {
         let held = self.level_on(Axis::Type, name);
         if held >= level {
@@ -108,7 +98,6 @@ impl Caller {
             .with_detail("grant", grant("type", name, level)))
     }
 
-    /// Refuses a caller whose edge map does not reach `name` at `level`.
     pub fn require_edge(&self, name: &str, level: Level) -> Result<()> {
         if self.level_on(Axis::Edge, name) >= level {
             return Ok(());
@@ -122,8 +111,6 @@ impl Caller {
         .with_detail("grant", grant("edge_type", name, level)))
     }
 
-    /// A type a type may name as its parent or as a `compatible_with` target:
-    /// one Marfa ships is open to all, any other takes write on it.
     pub fn require_dependency(&self, name: &str, shipped: bool) -> Result<()> {
         if shipped {
             Ok(())

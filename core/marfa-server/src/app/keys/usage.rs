@@ -37,8 +37,6 @@ impl Usage {
     }
 }
 
-/// Queues the time of this use if the row's is older than the coalescing
-/// window.
 pub fn note(app: &Arc<App>, key: &Key) {
     let due = key
         .last_used_at
@@ -58,7 +56,6 @@ pub fn note(app: &Arc<App>, key: &Key) {
     });
 }
 
-/// Runs `record` beside the answer, unless `id` has a write on its way.
 pub(crate) fn queue<F>(app: &Arc<App>, id: &str, record: F)
 where
     F: FnOnce(&Transaction<'_>) -> Result<()> + Send + 'static,

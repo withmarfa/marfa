@@ -1,4 +1,4 @@
-//! The icon sets a type's icon may come from, as the registry pins them.
+//! The icon sets a type's icon may come from.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -44,7 +44,6 @@ fn sets() -> &'static [Set] {
     })
 }
 
-/// Whether `id` is `<prefix>:<name>` for an icon of an accepted set.
 pub fn is_icon_id(id: &str) -> bool {
     id.split_once(':').is_some_and(|(prefix, name)| {
         sets()
@@ -53,8 +52,7 @@ pub fn is_icon_id(id: &str) -> bool {
     })
 }
 
-/// The Lucide icon a bare `name` stands for: the icon of that name, or the
-/// one it was renamed to. An alias is not itself an accepted id.
+/// The icon a bare Lucide `name` stands for: that name, or the one it was renamed to. An alias is not itself an accepted id.
 fn lucide_icon_id(name: &str) -> Option<String> {
     let lucide = sets().iter().find(|set| set.prefix == "lucide")?;
     if lucide.icons.contains(name) {
@@ -66,7 +64,6 @@ fn lucide_icon_id(name: &str) -> Option<String> {
         .map(|renamed| format!("lucide:{renamed}"))
 }
 
-/// The fault in an icon id, or `None` where it names an icon.
 pub fn icon_issue(value: Option<&Value>, field: &str) -> Option<Issue> {
     if value.and_then(Value::as_str).is_some_and(is_icon_id) {
         return None;

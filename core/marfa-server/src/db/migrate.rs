@@ -16,28 +16,10 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        sql: include_str!("migrations/0001_baseline.sql"),
-    },
-    Migration {
-        version: 2,
-        sql: include_str!("migrations/0002_housekeeping.sql"),
-    },
-    Migration {
-        version: 3,
-        sql: include_str!("migrations/0003_sign_in.sql"),
-    },
-    Migration {
-        version: 4,
-        sql: include_str!("migrations/0004_oauth.sql"),
-    },
-    Migration {
-        version: 5,
-        sql: include_str!("migrations/0005_passkeys.sql"),
-    },
-];
+pub const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    sql: include_str!("migrations/0001_baseline.sql"),
+}];
 
 const RETIRED_TABLES: [&str; 2] = ["custom_types", "custom_edge_types"];
 const RETIRED_SETTING: &str = "space_config";
@@ -45,18 +27,14 @@ const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a
                            restore the archive there. The restore can refuse an archive the \
                            writing build did not write.";
 
-/// What a start must do with the file it found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Standing {
-    /// At this build's schema: nothing to do.
     Current,
     /// New, or left partway through making its tables and holding no rows.
     Unfinished,
-    /// At an earlier schema, to update from.
     Behind(u32),
 }
 
-/// What an update needs beyond the connection.
 pub struct Update<'a> {
     pub migrations: &'a [Migration],
     pub file: Option<&'a Path>,
@@ -84,7 +62,7 @@ fn not_this_builds(label: &str, found: &str) -> Failure {
     ))
 }
 
-/// Reads a file without changing it and says what a start must do.
+/// Reads a file without changing it.
 pub fn judge(
     conn: &Connection,
     migrations: &[Migration],
@@ -168,8 +146,7 @@ fn judge_differences(
     Ok(Standing::Unfinished)
 }
 
-/// Applies every migration to a new or unfinished file. The baseline creates
-/// only what is absent, and there are no rows to keep.
+/// Applies every migration to a new or unfinished file, which holds no rows.
 pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> rusqlite::Result<()> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     for migration in migrations {
@@ -185,7 +162,6 @@ fn wal_of(file: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// A name beside the file that nothing else holds, so no copy is overwritten.
 fn copy_path(file: &Path, from: u32, to: u32) -> PathBuf {
     let stem = format!("{}.schema-{from}-to-{to}", file.display());
     let first = PathBuf::from(format!("{stem}.bak"));
@@ -258,8 +234,8 @@ fn apply_fault(
     Ok(())
 }
 
-/// Takes a file from `from` to this build's schema, in one transaction, after
-/// a complete copy of it is on disk. A refusal leaves the file as it was.
+/// Updates in one transaction, after a complete copy is on disk. A refusal
+/// leaves the file as it was.
 pub fn update(conn: &mut Connection, from: u32, update: &Update<'_>) -> Result<(), Failure> {
     let to = latest(update.migrations);
     let label = update.label;

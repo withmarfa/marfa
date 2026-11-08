@@ -53,10 +53,6 @@ pub const DECLARED: &[Declared] = &[
         "TRUSTED_PROXY_HEADER",
         "The header an edge in front of the server puts the caller's address in.",
     ),
-    plain(
-        "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES",
-        "Whether outbound webhooks may reach private addresses.",
-    ),
     plain("SQLITE_PATH", "Where the database is."),
     plain(
         "SQLITE_BUSY_BUDGET_MS",
@@ -73,23 +69,13 @@ pub const DECLARED: &[Declared] = &[
     ),
     secret("API_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
-    plain("S3_BUCKET", "The bucket the database is restored from."),
-    plain("S3_REGION", "The bucket's region."),
-    secret("S3_ENDPOINT", "The bucket's address."),
-    secret("S3_ACCESS_KEY_ID", "The bucket's access key."),
-    secret("S3_SECRET_ACCESS_KEY", "The bucket's secret key."),
-    plain(
-        "S3_FORCE_PATH_STYLE",
-        "Whether the bucket is reached by path.",
-    ),
-    plain("S3_PREFIX", "The folder in the bucket."),
-    plain(
-        "MARFA_ENRICHMENT_TESSDATA_DIR",
-        "Where the text-recognition language files are.",
-    ),
     secret(
         "ERROR_WEBHOOK_URL",
         "Where a notice of a server error is sent.",
+    ),
+    plain(
+        "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
+        "How long a notice of a server error may take to send, in milliseconds.",
     ),
     secret("MARFA_HEARTBEAT_URL", "Where the heartbeat is sent."),
     plain("MARFA_POSTHOG_HOST", "Where exception reports are sent."),

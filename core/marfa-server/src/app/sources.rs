@@ -1,5 +1,3 @@
-//! What a source is shown by, and which sources a credential can see.
-
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -26,15 +24,12 @@ const ICON_SETS: [(&str, &str); 2] = [
     ),
 ];
 
-/// What `PATCH /source` may name.
 pub const FIELDS: [&str; 2] = ["name", "mark"];
 
-/// Length as the contract counts it, in UTF-16 code units.
 pub fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// Refuses what is no source code at all.
 pub fn check_code(code: &str) -> Result<()> {
     let short = |text: &str| units(text) <= MAX_UNITS;
     if !code.is_empty()
@@ -73,8 +68,6 @@ fn icons() -> &'static HashSet<String> {
     })
 }
 
-/// The change a `PATCH /source` body asks for, each `None` left as it is and
-/// each `Some(None)` cleared.
 #[derive(Debug)]
 pub struct Change {
     name: Option<Option<String>>,
@@ -158,7 +151,6 @@ fn describe(tx: &Transaction<'_>, code: &str, at: &str) -> Result<Value> {
     Ok(Value::Object(out))
 }
 
-/// Every source the instance holds.
 fn held(tx: &Transaction<'_>, at: &str) -> Result<Vec<String>> {
     let mut codes: Vec<String> = tx
         .prepare(

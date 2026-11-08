@@ -1,10 +1,7 @@
-//! Removing records past the event log's retention.
-
 use rusqlite::{Transaction, params};
 
 use super::super::refusal::Result;
 
-/// Removes up to `limit` of the records made before `before`.
 pub fn expire(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     let removed = tx.execute(
         "DELETE FROM idempotency_records WHERE (credential, idempotency_key) IN \

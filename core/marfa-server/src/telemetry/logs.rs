@@ -1,6 +1,5 @@
-//! Log records for the collector. A record carries its message and the fields
-//! listed here and no others: a field that nobody listed could hold what an
-//! owner wrote, a path with a title in it, or a credential.
+//! A record carries its message and the fields listed here and no others: an unlisted
+//! field could hold what an owner wrote, a path with a title in it, or a credential.
 
 use std::fmt::Debug;
 use std::sync::{Arc, OnceLock};
@@ -13,13 +12,12 @@ use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 
-/// The target the request records are logged under. They go to the collector
-/// and not to standard output, which gets the same facts in its own shape.
+/// Request records go to the collector, not standard output, which gets the same facts in
+/// its own shape.
 pub const REQUEST_TARGET: &str = "marfa::request";
 
 const SCOPE: &str = "marfa-server";
 
-/// The fields of an event that leave the process.
 const SENT: [&str; 13] = [
     "request_id",
     "method",
@@ -36,8 +34,6 @@ const SENT: [&str; 13] = [
     "panic_message",
 ];
 
-/// The layer is always in the subscriber and does nothing until a provider is
-/// handed to it.
 #[derive(Clone, Default)]
 pub struct Logs {
     logger: Arc<OnceLock<SdkLogger>>,

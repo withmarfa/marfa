@@ -1,6 +1,4 @@
-//! Faults a test harness sets on a running server. Each is named for where it
-//! acts. A later piece adds a point with one line in `points!` and a call
-//! where it acts.
+//! Faults a test harness sets on a running server, each named for where it acts.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -15,7 +13,6 @@ const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
 const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
-/// What a fault set on a housekeeping job is named beneath.
 const JOB_POINT: &str = "housekeeping:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,13 +30,10 @@ impl Kind {
     }
 }
 
-/// What a point takes as its argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Argument {
     None,
-    /// `<n>`: the nth time the point is reached.
     Nth,
-    /// `<n>`, `<action>` or `<action>@<n>`.
     Write,
 }
 
@@ -73,7 +67,6 @@ points! {
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
 }
 
-/// A disk volume whose free space a fault can state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Volume {
     Database,
@@ -89,14 +82,12 @@ impl Volume {
     }
 }
 
-/// How a `fail:housekeeping:<job>` counts, which every job shares.
 const FAIL_JOB: &Point = &Point {
     kind: Kind::Fail,
     name: "housekeeping:<job>",
     argument: Argument::Nth,
 };
 
-/// Which reach of a point a counted fault acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Aim {
     action: Option<String>,
@@ -116,7 +107,6 @@ struct Armed {
     held_when_answered: Option<Vec<String>>,
 }
 
-/// One fault as the listing shows it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Listed {
     pub name: String,
@@ -127,7 +117,6 @@ pub struct Listed {
     pub held_when_answered: Option<Vec<String>>,
 }
 
-/// What a `GET /health` that released holds owes once it has its answer.
 #[must_use]
 pub struct Released {
     names: Vec<String>,
@@ -196,8 +185,6 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     }
 }
 
-/// Judges a `hold`, `release` or `fail` on a housekeeping job. A target refuses
-/// a job it does not run.
 fn judge_job(
     kind: &str,
     job: &str,
@@ -229,7 +216,6 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
-/// Reads a name and argument into what arming needs, or says why not.
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
@@ -286,8 +272,7 @@ impl Faults {
         self.armed.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Arms a fault, or starts it again if it is armed already. A hold's
-    /// waiters stay held. A refused fault is never armed.
+    /// Re-arming starts a fault again; a hold's waiters stay held. A refused fault is never armed.
     pub fn set(&self, name: &str, arg: Option<&str>) -> Result<(), String> {
         let (aim, number) = judge(name, arg)?;
         let mut armed = self.armed();
@@ -315,7 +300,6 @@ impl Faults {
         Ok(())
     }
 
-    /// Clears one fault, or every fault, and lets its waiters go.
     pub fn clear(&self, name: Option<&str>) {
         self.armed().retain(|fault| {
             let keep = name.is_some_and(|name| fault.name != name);
@@ -339,8 +323,7 @@ impl Faults {
             .collect()
     }
 
-    /// Counts a reach of a hold and answers what to wait on if it selects this
-    /// caller. An uncounted hold selects every caller.
+    /// An uncounted hold selects every caller.
     fn selected(
         &self,
         point: &str,
@@ -366,14 +349,12 @@ impl Faults {
         Some((fault.gate.subscribe(), Waiting(fault.waiting.clone())))
     }
 
-    /// Waits here while a hold selects this caller.
     pub async fn hold(&self, point: &Point, action: Option<&str>) {
         if let Some((mut gate, _waiting)) = self.selected(point.name, action) {
             let _ = gate.wait_for(|open| *open).await;
         }
     }
 
-    /// Waits here while `hold:housekeeping:<job>` stands.
     pub async fn hold_job(&self, job: &str) {
         let point = format!("{JOB_POINT}{job}");
         if let Some((mut gate, _waiting)) = self.selected(&point, None) {
@@ -381,7 +362,6 @@ impl Faults {
         }
     }
 
-    /// As [`Faults::hold`], from a blocking thread inside the runtime.
     pub fn hold_blocking(&self, point: &Point) {
         if let Some((mut gate, _waiting)) = self.selected(point.name, None) {
             let _ = tokio::runtime::Handle::current()
@@ -390,12 +370,10 @@ impl Faults {
         }
     }
 
-    /// Counts a reach of a `fail` point and says whether it acts now.
     pub fn fail(&self, point: &Point, action: Option<&str>) -> bool {
         self.fail_named(point.name, action)
     }
 
-    /// Whether `fail:housekeeping:<job>` acts on this run.
     pub fn fail_job(&self, job: &str) -> bool {
         self.fail_named(&format!("{JOB_POINT}{job}"), None)
     }
@@ -424,7 +402,6 @@ impl Faults {
         true
     }
 
-    /// The deadline `deadline:<job>` gives a run of the job.
     pub fn deadline(&self, job: &str) -> Option<Duration> {
         let name = format!("deadline:{job}");
         self.armed()
@@ -434,7 +411,6 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
-    /// The free space a fault says the volume has.
     pub fn free(&self, volume: Volume) -> Option<u64> {
         self.armed()
             .iter()
@@ -442,7 +418,6 @@ impl Faults {
             .and_then(|fault| fault.number)
     }
 
-    /// Called as a `GET /health` is admitted, before it reads anything.
     pub fn health_admitted(&self) -> Option<Released> {
         let mut armed = self.armed();
         let mut names = Vec::new();
@@ -466,7 +441,6 @@ impl Faults {
         (!names.is_empty()).then_some(Released { names })
     }
 
-    /// Records, on the faults that acted, the holds with a caller waiting now.
     pub fn health_answered(&self, released: Released) {
         let mut armed = self.armed();
         let held: Vec<String> = armed

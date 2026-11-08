@@ -1,6 +1,3 @@
-//! A thumbnail, the small image a field of type `thumbnail` holds as a data
-//! URI.
-
 use crate::error::RuleError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9,12 +6,11 @@ pub struct Thumbnail {
     pub bytes: Vec<u8>,
 }
 
-/// The server's cap on a decoded thumbnail.
+/// Cap on a decoded thumbnail.
 pub const THUMBNAIL_MAX_BYTES: usize = 16 * 1024;
 
 impl Thumbnail {
-    /// Checks what the server checks, because a held value may have been
-    /// written before its type declared the field, when nothing checked it.
+    /// Checked again on read: a held value may predate its field's type.
     pub fn from_data_uri(value: &str) -> Result<Thumbnail, RuleError> {
         use base64::Engine;
         let unreadable =
@@ -31,8 +27,7 @@ impl Thumbnail {
             }
             _ => return Err(unreadable("not a PNG, JPEG or WebP image")),
         };
-        // The standard engine refuses unused bits set and non-canonical
-        // padding, matching the server's canonical rule.
+        // The standard engine refuses unused bits set and non-canonical padding.
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|_| unreadable("not canonical base64"))?;
@@ -127,7 +122,6 @@ mod tests {
                 "{what} was read as a thumbnail"
             );
         }
-        // Witness for the two base64 cases.
         assert_eq!(
             Thumbnail::from_data_uri("data:image/png;base64,iVBORw0KGgo=")
                 .unwrap()

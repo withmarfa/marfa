@@ -1,5 +1,4 @@
-//! Text and numbers read and written as JavaScript does, because the server
-//! is JavaScript and its verdicts and stored text follow.
+//! Whitespace, number printing and key order the wire format depends on.
 
 use std::io;
 
@@ -7,22 +6,16 @@ use serde::Serialize;
 use serde_json::ser::Formatter;
 use serde_json::{Map, Value};
 
-/// A character JavaScript's `\s` matches and `String.prototype.trim` strips,
-/// which is where the server ends an edge reference's word and where it finds
-/// a tag blank. It is not Unicode's White_Space: that holds U+0085 and not
-/// U+FEFF.
+/// Unicode whitespace except U+0085, plus U+FEFF: where an edge reference's word ends and a tag is blank.
 pub fn is_space(ch: char) -> bool {
     (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
 }
 
-/// Fixed notation holds up to 21 digits before the point and down to 6
-/// zeros after it, as ECMAScript's `Number::toString` defines.
+/// Fixed notation holds up to 21 digits before the point and down to 6 zeros after it.
 const LARGEST_FIXED_POINT: i32 = 21;
 const SMALLEST_FIXED_POINT: i32 = -6;
 
-/// The shortest digits that read back as `value`, as Ryū finds them (the even
-/// digit where two are equally near), and the position of the decimal point
-/// relative to the first digit.
+/// The shortest digits that read back as `value` (the even digit at a tie), and the decimal point's position relative to the first digit.
 fn digits_and_point(value: f64) -> (String, i32) {
     let mut buffer = ryu::Buffer::new();
     let text = buffer.format_finite(value);
@@ -36,8 +29,7 @@ fn digits_and_point(value: f64) -> (String, i32) {
     (significant.trim_end_matches('0').to_string(), point)
 }
 
-/// JavaScript's `String()` of a finite number: fixed notation from 1e-6 up to
-/// 1e21, exponent notation with an explicit sign outside it.
+/// Fixed notation from 1e-6 up to 1e21, exponent notation with an explicit sign outside it.
 pub fn number(value: f64) -> String {
     if value == 0.0 {
         return "0".to_string();
@@ -66,15 +58,13 @@ pub fn number(value: f64) -> String {
     format!("{sign}{body}")
 }
 
-/// `JSON.stringify` of a value: a condition on an array or object property
-/// matches this text, so serde's `1e+20` would miss the server's digits.
+/// Numbers print as [`number`] does, because a condition on an array or object property matches this text and serde's `1e+20` would miss.
 pub fn json(value: &Value) -> String {
     let bytes = to_vec(value).expect("a JSON value serializes into memory");
     String::from_utf8(bytes).expect("serde_json writes UTF-8")
 }
 
-/// Writes anything serializable as JSON with every number printed as
-/// [`number`] prints it. Only a value that refuses to serialize can fail.
+/// Every number prints as [`number`] prints it. Only a value that refuses to serialize can fail.
 pub fn to_vec(value: &impl Serialize) -> serde_json::Result<Vec<u8>> {
     let mut out = Vec::with_capacity(256);
     value.serialize(&mut serde_json::Serializer::with_formatter(
@@ -95,9 +85,7 @@ impl Formatter for JsNumbers {
     }
 }
 
-/// A JavaScript object's own key order, which every object the server
-/// answers takes: keys that are array indices first, in numeric order, then
-/// the rest in the order they were added.
+/// Keys that are array indices first, in numeric order, then the rest in insertion order.
 pub fn object_order(object: &Map<String, Value>) -> Map<String, Value> {
     let mut indices: Vec<(u32, &String, &Value)> = object
         .iter()
@@ -119,7 +107,6 @@ pub fn object_order(object: &Map<String, Value>) -> Map<String, Value> {
     ordered
 }
 
-/// `value` with every object in it in [`object_order`].
 fn in_object_order(value: &Value) -> Value {
     match value {
         Value::Object(members) => Value::Object(
@@ -133,15 +120,12 @@ fn in_object_order(value: &Value) -> Value {
     }
 }
 
-/// The text a store holds for `object`: every number in the digits it is
-/// served in and every object in the order it is served in, so reading it
-/// back needs no second pass.
+/// The text a store holds: numbers printed and names ordered as served, so reading it back needs no second pass.
 pub fn canonical(object: &Map<String, Value>) -> String {
     json(&in_object_order(&Value::Object(object.clone())))
 }
 
-/// An array index as ECMAScript defines one: the canonical decimal of an
-/// integer below 2^32 - 1.
+/// The canonical decimal of an integer below 2^32 - 1.
 fn array_index(key: &str) -> Option<u32> {
     let index: u32 = key.parse().ok()?;
     (index != u32::MAX && index.to_string() == key).then_some(index)
@@ -219,8 +203,6 @@ mod tests {
 
     #[test]
     fn an_object_holds_array_index_names_first_as_javascript_does() {
-        // `JSON.stringify(JSON.parse(text))` of this text in Node answers
-        // `2, 10, 4294967294, zz, body, 01, -1, 4294967295, 1.5`.
         let text =
             r#"{"zz":1,"body":2,"10":3,"2":4,"01":5,"-1":6,"4294967295":7,"4294967294":8,"1.5":9}"#;
         let object: Map<String, Value> = serde_json::from_str(text).unwrap();

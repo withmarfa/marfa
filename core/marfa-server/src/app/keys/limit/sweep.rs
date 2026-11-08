@@ -1,12 +1,8 @@
-//! Dropping the windows that have ended.
-
 use std::sync::PoisonError;
 
 use super::Limiter;
 
 impl Limiter {
-    /// Drops every window `window_ms` has passed since the start of, and
-    /// answers how many went.
     pub fn sweep(&self, now_ms: i64, window_ms: u64) -> usize {
         let span = i64::try_from(window_ms).unwrap_or(i64::MAX);
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);

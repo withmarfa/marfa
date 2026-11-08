@@ -1,8 +1,5 @@
-//! The scope grammar, and what a set of scopes reaches.
-//!
-//! A literal that does not parse grants nothing. It is still kept where it
-//! was stored, because a later build may read it, and dropping it would
-//! narrow a grant by a change of grammar.
+//! The scope grammar. A literal that does not parse grants nothing but is kept as stored, since
+//! dropping it would narrow a grant by a change of grammar.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -24,12 +21,10 @@ const PROFILE: &str = "profile";
 const MOST_NAME_BYTES: usize = 128;
 const EMAIL_WRITE: &str = "profile.email:write";
 
-/// The platform's own roots, which the content category never reaches.
 const NOT_CONTENT: [&str; 2] = ["system", "marfa"];
 
-/// The roots a permission lives under, and the one word no publisher may use.
-/// Anything under one of these that is not a permission is no scope, so
-/// `keys.note:read` can never come to mean a type.
+/// The roots a permission lives under, and the one word no publisher may use. Anything under
+/// one of these that is not a permission is no scope, so `keys.note:read` can never mean a type.
 const CLAIMED_ROOTS: [&str; 11] = [
     "audit",
     "blobs",
@@ -88,7 +83,6 @@ impl Verb {
     }
 }
 
-/// One part of the metadata layer a scope can name alone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MetadataPart {
     Types,
@@ -110,7 +104,6 @@ impl MetadataPart {
     }
 }
 
-/// One row of the owner's profile a scope can name alone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProfileRow {
     Name,
@@ -138,7 +131,7 @@ impl ProfileRow {
     }
 }
 
-/// Every scope the grammar states. `pattern` is `*`, `<root>.*` or one id.
+/// `pattern` is `*`, `<root>.*` or one id.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Scope {
     Type {
@@ -228,13 +221,11 @@ impl Scope {
         }
     }
 
-    /// `*:read` or `*:write`.
     pub fn is_all_data(&self) -> bool {
         matches!(self, Scope::Type { pattern, .. } if pattern == ALL)
     }
 
-    /// `keys-and-oauth/consent-older-reads`: what a sign-in of any age may
-    /// approve.
+    /// What a sign-in of any age may approve.
     fn takes_an_older_sign_in(&self) -> bool {
         match self {
             Scope::Type { verb, .. }
@@ -269,7 +260,6 @@ fn edge_pattern(pattern: &str) -> bool {
         && parts.all(tail)
 }
 
-/// Literals, each once, in the order first named.
 #[derive(Clone, Debug, Default)]
 pub struct ScopeSet {
     order: Vec<String>,
@@ -285,8 +275,8 @@ impl PartialEq for ScopeSet {
 impl Eq for ScopeSet {}
 
 impl ScopeSet {
-    /// A `scope` parameter. Only a space separates (RFC 6749 section 3.3), so
-    /// a tab or a newline stays inside a literal, which then parses to nothing.
+    /// Only a space separates (RFC 6749 section 3.3), so a tab or a newline stays inside a
+    /// literal, which then parses to nothing.
     pub fn parse(text: &str) -> ScopeSet {
         text.split(' ').filter(|part| !part.is_empty()).collect()
     }
@@ -299,8 +289,7 @@ impl ScopeSet {
         self.seen.contains(literal)
     }
 
-    /// `instance-claim/profile-email-write-scope`: a request naming this is
-    /// refused whole, where any other scope that cannot be granted is dropped.
+    /// A request naming this is refused whole, where any other scope that cannot be granted is dropped.
     pub fn writes_email(&self) -> bool {
         self.contains(EMAIL_WRITE)
     }
@@ -342,8 +331,7 @@ impl<'a> FromIterator<&'a str> for ScopeSet {
     }
 }
 
-/// The types and edge types an instance holds right now, so a type registered
-/// while it runs is grantable with no restart.
+/// Read at call time, so a type registered while the server runs is grantable with no restart.
 #[derive(Clone, Debug, Default)]
 pub struct Registries {
     types: BTreeSet<String>,
@@ -368,7 +356,6 @@ impl Registries {
         )
     }
 
-    /// Everything a request may be granted on this instance.
     pub fn allowed(&self) -> ScopeSet {
         let mut allowed = ScopeSet::default();
         let mut add = |scope: Scope| allowed.insert(&scope.literal());
@@ -428,9 +415,8 @@ impl Registries {
         allowed
     }
 
-    /// What the instance tells every client it offers. Discovery takes no
-    /// credential, so a type or a root the owner made here stays out of it,
-    /// and is still in `allowed`.
+    /// Discovery takes no credential, so a type or root the owner made here stays out of it, and
+    /// is still in `allowed`.
     pub fn published(&self) -> ScopeSet {
         let shipped_edges: HashSet<&str> = builtin::shipped_edge_types()
             .unwrap_or_default()
@@ -450,8 +436,7 @@ impl Registries {
         .allowed()
     }
 
-    /// The controls `keys-and-oauth/approval-all-data-types` offers in place
-    /// of all data. A type under `system` or `marfa` is never one.
+    /// A type under `system` or `marfa` is never one.
     pub fn choosable_types(&self) -> Vec<&str> {
         self.types
             .iter()
@@ -470,16 +455,14 @@ impl Registries {
     }
 }
 
-/// What a request keeps once narrowed, and what it lost.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Narrowed {
     pub kept: ScopeSet,
     pub dropped: Vec<String>,
 }
 
-/// `keys-and-oauth/authorize-narrowed`: drop what cannot be granted beside
-/// what can. OpenID's `openid`, `profile` and `email` are not in `allowed`,
-/// so they go here like any other unknown literal.
+/// OpenID's `openid`, `profile` and `email` are not in `allowed`, so they go here like any
+/// other unknown literal.
 pub fn narrow(asked: &ScopeSet, allowed: &ScopeSet) -> Narrowed {
     let (kept, dropped): (Vec<&String>, Vec<&String>) = asked
         .literals()
@@ -498,13 +481,9 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
     }
 }
 
-/// A granted set as what `access` judges, so an app's token is held to the
-/// same code as a key.
-///
-/// The content category goes first and every other type scope over it: a
-/// type named beside `content:read` reaches that type, and a `system` or
-/// `marfa` type reached by nothing else stays out. So `*:read content:read` reaches less
-/// than `*:read` alone.
+/// The content category goes first and every other type scope over it: a type named beside
+/// `content:read` reaches that type, and a `system` or `marfa` type reached by nothing else
+/// stays out. So `*:read content:read` reaches less than `*:read` alone.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
     let mut types = Entries::new();
     if let Some(verb) = granted
@@ -555,14 +534,10 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
     grants
 }
 
-/// The first literal of `wanted` that `held` does not cover, or none.
-///
-/// Access is compared as it resolves, not by literal, because removing an
-/// overriding entry can widen a wildcard (`keys-and-oauth/grant-narrow-ceiling`).
-/// `wanted` is judged whole first, so `*:write core.*:read` covers itself
-/// though its `*:write` alone reaches further than the set does. `offline_access`
-/// and a literal that does not parse carry no access to compare, so only
-/// naming them covers them.
+/// Compared as access resolves, not by literal, because removing an overriding entry can widen
+/// a wildcard. `wanted` is judged whole first, so `*:write core.*:read` covers itself though its
+/// `*:write` alone reaches further than the set does. `offline_access` and a literal that does
+/// not parse carry no access, so only naming them covers them.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
     let whole = ceiling.first_beyond("", &to_grants(wanted)).is_none();
@@ -580,15 +555,12 @@ pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     })
 }
 
-/// Whether `held` reaches everything `required` reaches.
 pub fn covers(held: &ScopeSet, required: &str) -> bool {
     first_uncovered(held, &[required].into_iter().collect()).is_none()
 }
 
-/// `held` with `added` as a person approved it, compared by what each reaches.
-/// A union would let `core.*:read` lower a held `*:write`, so a literal that
-/// takes away something held stays out, and a held literal that hides what
-/// `added` reaches goes. The result reaches nothing neither side reached.
+/// A union would let `core.*:read` lower a held `*:write`, so a literal that takes away
+/// something held stays out, and a held literal that hides what `added` reaches goes.
 pub fn combined(held: &ScopeSet, added: &ScopeSet) -> ScopeSet {
     let held_reach = to_grants(held);
     let mut set = held.clone();
@@ -622,8 +594,6 @@ pub fn combined(held: &ScopeSet, added: &ScopeSet) -> ScopeSet {
     }
 }
 
-/// `keys-and-oauth/consent-older-reads`: whether approving `approved` needs a
-/// recent sign-in, given what the app already holds.
 pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
     first_uncovered(held, &approved.without(OFFLINE_ACCESS)).is_some()
         && approved.literals().iter().any(|literal| {
@@ -632,9 +602,7 @@ pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
         })
 }
 
-/// `keys-and-oauth/approval-types-beyond`: whether every literal of `chosen`
-/// is a type the page offered that an all-data scope of `named` covers. Pass
-/// `named` narrowed: what a request named and could not have is not covered.
+/// Pass `named` narrowed: what a request named and could not have is not covered.
 pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> bool {
     let all_data: ScopeSet = named
         .literals()
@@ -651,8 +619,6 @@ pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> b
     })
 }
 
-/// `keys-and-oauth/approval-write-read`: `approved`, with the read of each
-/// level it writes where the request named that read.
 pub fn with_named_reads(approved: &ScopeSet, named: &ScopeSet) -> ScopeSet {
     let mut issued = approved.clone();
     for literal in approved.literals() {
@@ -964,7 +930,6 @@ mod tests {
                 "{id}"
             );
         }
-        // The witness: what `content:read` denies, `*:read` reaches.
         assert_eq!(
             level("*:read", Axis::Type, "marfa.never-shipped"),
             Level::Read

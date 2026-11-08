@@ -1,20 +1,15 @@
-//! The text of a search as the full-text index takes it, and the excerpt it
-//! answers with.
+//! A search's text as the full-text index takes it, and the excerpt it answers with.
 
 use serde_json::{Map, Value};
 
 use crate::catalog::Indexing;
 use crate::js;
 
-// FTS5 puts these private-use characters around each match in place of the
-// tags, so the excerpt is escaped whole before they become `<mark>` and
-// `</mark>`. A row's own text can hold them as well, so each opens only a
-// closed mark and closes only an open one.
+// FTS5 wraps each match in private-use characters; the excerpt is escaped whole before they become `<mark>`. A row's own text can hold them too, so each opens only a closed mark and closes only an open one.
 pub const MARK_OPEN: char = '\u{E000}';
 pub const MARK_CLOSE: char = '\u{E001}';
 
-/// The excerpt FTS5 cut, as HTML whose only markup is `<mark>` around
-/// matches, written as the server writes `snippet_html`.
+/// HTML whose only markup is `<mark>` around matches.
 pub fn snippet_html(excerpt: &str) -> String {
     let mut html = String::with_capacity(excerpt.len());
     let mut open = false;
@@ -46,10 +41,7 @@ pub fn snippet_html(excerpt: &str) -> String {
     html
 }
 
-/// The server's reading of a query, which `search-and-filters.md` states: a
-/// query wholly inside double quotes is one phrase; otherwise each
-/// whitespace-separated word is quoted, so nothing a person types is read as
-/// FTS5 syntax, and the last word also matches as a prefix.
+/// A query wholly inside double quotes is one phrase; otherwise each whitespace-separated word is quoted, so nothing a person types is FTS5 syntax, and the last word also matches as a prefix.
 pub fn fts_expression(query: &str) -> Option<String> {
     let query = query.trim_matches(js::is_space);
     if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
@@ -78,7 +70,6 @@ pub fn fts_expression(query: &str) -> Option<String> {
     )
 }
 
-/// What one row contributes to the index, column by column.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct FtsText {
     pub title: String,
@@ -88,10 +79,7 @@ pub struct FtsText {
     pub extra: String,
 }
 
-/// The server's rule: the four core properties when they hold a string, the
-/// type's other declared string properties joined by a space, and nothing the
-/// type does not declare. A thumbnail is not a string property, so its base64
-/// is never indexed.
+/// The four core properties when they hold a string, the type's other declared string properties joined by a space, and nothing undeclared. A thumbnail is not a string property, so its base64 is never indexed.
 pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> FtsText {
     let core = |name: &str| -> String {
         if indexing.opted_out.iter().any(|opted| opted == name) {
@@ -118,8 +106,7 @@ pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> FtsText
     }
 }
 
-/// A row's tags as the index holds them: in byte order, so the same tags in
-/// another order are the same text.
+/// In byte order, so the same tags in another order are the same text.
 pub fn fts_tags(tags: &[String]) -> String {
     let mut sorted: Vec<&str> = tags.iter().map(String::as_str).collect();
     sorted.sort_unstable();
@@ -166,7 +153,6 @@ mod tests {
             fts_expression("\"exact phrase\""),
             Some("\"exact phrase\"".into())
         );
-        // Not wholly inside quotes, and a lone pair of quotes: words.
         assert_eq!(
             fts_expression("\"exact\" phrase"),
             Some("\"\"\"exact\"\"\" \"phrase\"*".into())

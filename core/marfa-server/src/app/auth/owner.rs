@@ -1,5 +1,3 @@
-//! The person who claimed this instance.
-
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
@@ -21,7 +19,6 @@ pub struct Owner {
 }
 
 impl Owner {
-    /// The owner as every door answers them.
     pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
@@ -42,8 +39,6 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Owner> {
     })
 }
 
-/// The owner's row, which fails to be there if it was removed behind the
-/// claim's back.
 pub fn read(tx: &Transaction<'_>) -> Result<Option<Owner>> {
     let Some(id) = instance::owner_id(tx)? else {
         return Ok(None);
@@ -61,7 +56,6 @@ pub fn not_found() -> Refusal {
     Refusal::new(Code::OwnerNotFound, "This instance has no owner.")
 }
 
-/// The password held for the owner.
 pub(super) fn stored_password(tx: &Transaction<'_>, owner_id: &str) -> Result<Option<String>> {
     Ok(tx
         .query_row(
@@ -85,7 +79,6 @@ pub(super) fn set_password(
     Ok(())
 }
 
-/// What makes someone the owner, once checked.
 #[derive(Clone, Debug)]
 pub struct Details {
     pub email: String,
@@ -93,7 +86,6 @@ pub struct Details {
     pub password: String,
 }
 
-/// The refusal of a claim's body that lacks what a claim takes.
 pub fn incomplete_claim() -> Refusal {
     Refusal::validation("Provide an email and password, and optionally a name")
 }
@@ -111,7 +103,6 @@ fn checked_email(text: &str) -> Result<String> {
     Ok(email)
 }
 
-/// A control character or an invisible formatting one.
 pub(super) fn is_hidden(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{feff}')
@@ -120,8 +111,6 @@ pub(super) fn is_hidden(c: char) -> bool {
         || ('\u{2060}'..='\u{206f}').contains(&c)
 }
 
-/// A name a person can read, of at most 200 characters once trimmed. `None`
-/// if nothing is left.
 pub(super) fn checked_name(text: &str) -> Result<Option<String>> {
     if text.chars().any(is_hidden) {
         return Err(invalid("name", "Use letters, numbers and punctuation."));
@@ -134,8 +123,6 @@ pub(super) fn checked_name(text: &str) -> Result<Option<String>> {
 }
 
 impl Details {
-    /// Judges `email` and `name`. The password is judged later, once the
-    /// caller's proof has been.
     pub fn new(email: &str, name: Option<&str>, password: String) -> Result<Details> {
         let email = checked_email(email)?;
         let name = name.map(checked_name).transpose()?.flatten();
@@ -153,7 +140,6 @@ impl Details {
     }
 }
 
-/// Creates the owner's rows. The claim records who that makes the owner.
 pub(super) fn create(
     tx: &Transaction<'_>,
     details: &Details,
@@ -183,7 +169,6 @@ pub async fn find(app: &App) -> Result<Option<Owner>> {
     app.db.read(read).await
 }
 
-/// A change to the owner, as `PATCH /owner` names one.
 #[derive(Debug)]
 pub struct Update {
     email: Option<String>,
@@ -215,7 +200,6 @@ impl Update {
     }
 }
 
-/// Changes the owner. A browser needs a recent sign-in, and a key may not.
 pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) -> Result<Owner> {
     app.write(caller, "owner.update", move |unit| {
         unit.caller.require_direct()?;
@@ -250,8 +234,6 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
     .await
 }
 
-/// Sets a new password from this machine, for an owner who lost theirs. Every
-/// browser session ends and the account's sign-in lock opens.
 pub async fn recover(app: &App, new_password: String) -> Result<()> {
     password::check_new(&new_password)?;
     if find(app).await?.is_none() {

@@ -1,11 +1,7 @@
-//! What the server tells the outside about itself: traces and log records to
-//! an OTLP collector, an exception report to PostHog's error tracking and a
-//! notice to an error webhook.
-//!
-//! Nothing here is on a request's way. A request hands a finished fact to a
-//! bounded queue that drops when full; a thread of its own sends it, with a
-//! timeout and no retry. A collector that is absent, slow, refusing or hanging
-//! changes nothing for a request.
+//! Traces and log records to OTLP, exceptions to PostHog, notices to an error webhook.
+//! Nothing here is on a request's way: a request hands a finished fact to a bounded
+//! queue that drops when full, and a thread of its own sends it, with a timeout and no
+//! retry.
 
 pub mod config;
 mod fault;
@@ -34,12 +30,10 @@ pub use logs::{Logs, REQUEST_TARGET};
 use lane::Lane;
 use sinks::Report;
 
-/// How long a stop waits for what is queued, unless the caller says less.
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
 
-/// The facts of a finished request that telemetry may carry. A raw path is
-/// here only for the two sinks that name it; a span and a log record carry
-/// the route's template.
+/// A raw path is here only for the two sinks that name it; a span and a log record
+/// carry the route's template.
 pub struct Finished<'a> {
     pub request_id: &'a str,
     pub method: &'a str,
@@ -49,7 +43,6 @@ pub struct Finished<'a> {
     pub status: u16,
     pub error_code: Option<&'a str>,
     pub fault: Option<&'a Arc<Fault>>,
-    /// Whether the effective `error_reporting_enabled` is on.
     pub reporting: bool,
     pub timestamp: &'a str,
 }
@@ -62,25 +55,19 @@ struct Active {
     webhook: Option<Lane<Report>>,
 }
 
-/// The server's telemetry, off until [`Telemetry::start`] turns on what the
-/// settings ask for.
 #[derive(Clone, Default)]
 pub struct Telemetry {
     active: Arc<OnceLock<Active>>,
 }
 
-/// One request's span, to be ended with the answer.
 pub struct RequestSpan(Span);
 
-/// Stops what [`Telemetry::start`] began, sending what is queued, when it is
-/// dropped or [`Guard::stop`] is called.
 pub struct Guard {
     telemetry: Telemetry,
     stopped: bool,
 }
 
 impl Guard {
-    /// Sends what is queued, waiting no longer than `within` in all.
     pub fn stop(mut self, within: Duration) {
         self.stopped = true;
         self.telemetry.flush(within);
@@ -95,8 +82,6 @@ impl Drop for Guard {
     }
 }
 
-/// The attributes everything exported carries: the server's own, each
-/// replaced by the operator's attribute of the same name.
 fn identity(config: &Config, instance_id: &str) -> Vec<(String, String)> {
     let mut pairs = vec![
         ("service.name".to_string(), config.service.clone()),
@@ -116,8 +101,7 @@ fn identity(config: &Config, instance_id: &str) -> Vec<(String, String)> {
 }
 
 impl Telemetry {
-    /// Turns on what `config` asks for. The instance's id is read from the
-    /// database, which opens after the process starts, so this comes after.
+    /// The instance id is read from the database, which opens after the process starts.
     pub fn start(&self, config: &Config, instance_id: &str) -> Guard {
         for notice in &config.notices {
             notice.say();
@@ -166,8 +150,6 @@ impl Telemetry {
         }
     }
 
-    /// Begins the span of a request, a child of the trace its `traceparent`
-    /// header names.
     pub fn begin(&self, headers: &HeaderMap, method: &str) -> Option<RequestSpan> {
         let tracer = self.active.get()?.tracer.as_ref()?;
         catch_unwind(AssertUnwindSafe(|| {
@@ -182,8 +164,7 @@ impl Telemetry {
         .ok()
     }
 
-    /// Ends a request's span and reports its fault, if it had one. Whatever
-    /// goes wrong in here is this function's, never the request's.
+    /// Nothing that fails in here reaches the request.
     pub fn finish(&self, span: Option<RequestSpan>, done: &Finished<'_>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             if let Some(RequestSpan(mut span)) = span {
@@ -211,7 +192,6 @@ impl Telemetry {
         }));
     }
 
-    /// Sends what is queued, waiting no longer than `within` in all.
     pub fn flush(&self, within: Duration) {
         let Some(active) = self.active.get() else {
             return;

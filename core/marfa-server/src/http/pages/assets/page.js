@@ -32,8 +32,7 @@
     }
   }
 
-  // Setup: a link opened from the machine carries a one-time ticket in the
-  // address fragment, which the server never sees.
+  // A setup link carries a one-time ticket in the fragment, which the server never sees.
   function exchangeHandoff() {
     if (location.pathname !== "/setup") return;
     const ticket = new URLSearchParams(location.hash.slice(1)).get("handoff");
@@ -50,8 +49,6 @@
     });
   }
 
-  // Confirming a stale sign-in. The dialog is on the page only when a change
-  // there may need a recent sign-in.
   const dialog = document.getElementById("confirm-dialog");
 
   function showConfirmError(kind, waitSeconds) {
@@ -97,11 +94,8 @@
     return body?.error?.message === RECENT_SIGN_IN_REFUSAL;
   }
 
-  // A form marked data-change is sent with fetch and asks for JSON. A refusal
-  // for an old sign-in opens the dialog, and the change is sent once more
-  // after the owner confirms. A successful answer that names a url sends the
-  // browser there, otherwise to the form's data-then address or back to this
-  // page.
+  // A form marked data-change is sent with fetch; a stale sign-in opens the dialog and the
+  // change is resent after confirming.
   async function sendChange(form, submitter) {
     const body = new URLSearchParams(
       submitter ? new FormData(form, submitter) : new FormData(form),
@@ -149,8 +143,7 @@
     }
   }
 
-  // An answer that is a page, such as the notice a device approval ends on,
-  // takes the place of this page's content. Its own markup is read, never run.
+  // An answer that is a page replaces this page's content; its markup is read, never run.
   function showPage(html) {
     // A template keeps the page's own style and script elements inert, so the
     // content policy has nothing to refuse.
@@ -195,8 +188,7 @@
       .addEventListener("click", () => dialog.close());
   }
 
-  // WebAuthn. The server's JSON carries bytes as base64url, and the browser's
-  // API takes and gives ArrayBuffers.
+  // WebAuthn takes ArrayBuffers; the server's JSON carries base64url.
   function toBytes(text) {
     const padded = text.replace(/-/g, "+").replace(/_/g, "/");
     return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
@@ -439,8 +431,6 @@
     }
   }
 
-  // The approval pages: the choices show only under Choose access, and the
-  // types only under Choose types. Without this script every control shows.
   function watchChoices() {
     const choose = document.querySelector("[data-needs-choice]");
     const radios = document.querySelectorAll("input[name=access]");

@@ -10,8 +10,7 @@ pub const METHOD: &str = "S256";
 const CHALLENGE_LEN: usize = 43;
 const VERIFIER_LEN: std::ops::RangeInclusive<usize> = 43..=128;
 
-/// Whether a request's `code_challenge_method` is the one this server takes.
-/// One left out means `plain` (RFC 7636 section 4.3), which it does not.
+/// A missing method means `plain` (RFC 7636 section 4.3), which is not taken.
 pub fn takes_method(method: Option<&str>) -> bool {
     method == Some(METHOD)
 }
@@ -24,7 +23,7 @@ pub fn is_challenge(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
 }
 
-/// `code-verifier` of RFC 7636 section 4.1.
+/// RFC 7636 section 4.1.
 pub fn is_verifier(text: &str) -> bool {
     VERIFIER_LEN.contains(&text.len())
         && text
@@ -32,7 +31,6 @@ pub fn is_verifier(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
 }
 
-/// Whether `verifier` proves `challenge`.
 pub fn proves(verifier: &str, challenge: &str) -> bool {
     if !is_verifier(verifier) {
         return false;

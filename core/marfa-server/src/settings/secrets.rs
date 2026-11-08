@@ -15,17 +15,15 @@ const AUTH_LINE: &str = "auth_secret";
 const SECRET_BYTES: usize = 32;
 const PRIVATE_FILE: u32 = 0o600;
 const SHARED_BITS: u32 = 0o077;
-/// Fixtures move a database between state folders, and a test instance holds
-/// no real data.
+/// A fixed salt, used only when test hooks are on.
 const TEST_SALT: &str = "marfa-test-salt";
 
-/// What the environment gave. Neither value may reach a log or a refusal.
+/// Neither value may reach a log or a refusal.
 pub(super) struct Given {
     pub api_key_salt: Option<String>,
     pub auth_secret: Option<String>,
 }
 
-/// Both secrets, whatever their source.
 pub(super) struct Filled {
     pub api_key_salt: String,
     pub auth_secret: String,
@@ -107,8 +105,8 @@ fn read(path: &Path) -> Result<Option<Held>, Failure> {
     })
 }
 
-/// A crash at any step leaves no file or a whole one, and the next start
-/// removes a temporary file left behind.
+/// A crash at any step leaves no file or a whole one; the next start removes a leftover
+/// temporary file.
 fn write(path: &Path, held: &Held) -> Result<(), Failure> {
     let refused = |error: io::Error| {
         Failure::start(format!(
@@ -185,8 +183,6 @@ fn from_file(
     })
 }
 
-/// Fills in both secrets. A value from the environment is used as it is and
-/// never written.
 pub(super) fn open(
     given: Given,
     database: &DatabasePath,

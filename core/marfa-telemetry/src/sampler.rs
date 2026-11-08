@@ -1,5 +1,4 @@
-//! Which traces are kept, by the rule of the specification's
-//! `TraceIdRatioBased`, so that a collector deciding the same way agrees.
+//! `TraceIdRatioBased` as OpenTelemetry defines it, so a collector deciding the same way agrees.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Sampler {
@@ -22,10 +21,8 @@ impl Sampler {
         }
     }
 
-    /// `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`. A command has no
-    /// parent trace, so a parent-based sampler decides as the one it wraps. A
-    /// name or an argument that is not understood leaves every trace kept,
-    /// which is the specification's default.
+    /// A command has no parent trace, so a parent-based sampler decides as the one it wraps.
+    /// An unreadable name or argument keeps every trace.
     pub fn named(name: Option<&str>, argument: Option<&str>) -> Sampler {
         let ratio = || {
             argument

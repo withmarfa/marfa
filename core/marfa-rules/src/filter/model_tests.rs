@@ -4,9 +4,6 @@ use serde_json::json;
 use super::*;
 use crate::error::Code;
 
-/// The cases the server's parser is held to in
-/// `packages/server/src/storage/filter-fixtures.test.ts`, so the two cannot
-/// drift.
 const SHARED: &str = include_str!("../../../../conformance/fixtures/filter-expressions.json");
 
 #[derive(Deserialize)]
@@ -302,8 +299,6 @@ fn refuses_with_the_servers_message_a_model_the_server_would_refuse() {
 
 #[test]
 fn takes_text_of_exactly_2048_utf16_units_and_refuses_one_more_as_the_server_does() {
-    // `properties.a eq ""` is 18 units and each emoji 2, so 1,015 emoji make
-    // 2,048 units from 1,033 characters.
     let at = |emoji: usize, extra: &str| {
         condition(
             property("a"),
@@ -321,7 +316,6 @@ fn takes_text_of_exactly_2048_utf16_units_and_refuses_one_more_as_the_server_doe
             "Filter expression too long (2049 characters). Maximum is 2048".to_string()
         )
     );
-    // An escaped quote counts as the two units it is written with.
     let quotes = condition(property("a"), FilterOperator::Eq, text(&"\"".repeat(1015)));
     assert_eq!(quotes.encode().unwrap().encode_utf16().count(), 2048);
     let quotes = condition(property("a"), FilterOperator::Eq, text(&"\"".repeat(1016)));

@@ -1,5 +1,3 @@
-//! Setup doors: the proof that lets a browser claim, and the claim.
-
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -21,7 +19,6 @@ const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const CLAIM_FIELDS: [&str; 4] = ["email", "password", "name", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
 
-/// `POST /setup/exchange`: a handoff ticket or a setup code for a setup session.
 pub async fn exchange(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -64,7 +61,6 @@ pub async fn exchange(
     Ok(with_cookie(answer, cookie))
 }
 
-/// A script comes with neither a browser's signs nor a setup cookie.
 fn is_script(headers: &HeaderMap) -> bool {
     !headers.contains_key("sec-fetch-site") && !cookies::holds_setup(headers)
 }
@@ -125,7 +121,6 @@ pub(super) async fn admit_claim(
     }
 }
 
-/// `POST /setup/claim`, by JSON or by the setup page's form.
 pub async fn claim(
     State(app): State<Arc<App>>,
     headers: HeaderMap,

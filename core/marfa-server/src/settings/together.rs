@@ -1,7 +1,6 @@
-//! The rules that compare settings with one another. Each is judged on what the
-//! settings would be after a change, defaults a clear exposes included, and is
-//! registered here once, so a write through `/config` and the listing of
-//! settings read the same list.
+//! Rules that compare settings with one another. Each is judged on what the settings would
+//! be after a change, defaults a clear exposes included, and is registered once so a write
+//! through `/config` and the listing read the same list.
 
 use super::registry::{
     self, ADDRESSES, ENTRIES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, SIGN_IN_ADDRESS, Seeds,
@@ -11,15 +10,12 @@ use super::registry::{
 use super::rule;
 use super::start::Fixed;
 
-/// One setting a change cannot leave as it is.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Breach {
     pub path: &'static str,
     pub message: String,
 }
 
-/// What a rule judges: the settings as they would be, the keys the change
-/// names, and the machine they run on.
 pub struct Judged<'a> {
     pub after: &'a Snapshot,
     pub touched: &'a [&'a str],
@@ -34,7 +30,6 @@ impl Judged<'_> {
 
 pub struct Together {
     pub name: &'static str,
-    /// The sentence the listing gives for the rule.
     pub description: &'static str,
     pub keys: &'static [&'static str],
     judge: fn(&Judged) -> Vec<Breach>,
@@ -65,12 +60,10 @@ pub const TOGETHER: &[Together] = &[
     },
 ];
 
-/// The rules that name a key.
 pub fn rules_of(key: &str) -> impl Iterator<Item = &'static Together> + '_ {
     TOGETHER.iter().filter(move |rule| rule.keys.contains(&key))
 }
 
-/// Everything the change breaks, among the rules that name a key it touches.
 pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
     let judged = Judged {
         after,
@@ -84,9 +77,8 @@ pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
         .collect()
 }
 
-/// What the rules find in a start's seeds, as the lines its refusal gives, by
-/// the names the environment sets. A write through `/config` is refused, so a
-/// seed is the only way a setting can start outside a rule.
+/// A write through `/config` is refused, so a seed is the only way a setting can start
+/// outside a rule.
 pub fn seed_lines(seeds: &Seeds, start: &Fixed) -> Vec<String> {
     let after = Snapshot::resolve(seeds, &[], 0);
     let touched: Vec<&str> = seeds.keys().copied().collect();

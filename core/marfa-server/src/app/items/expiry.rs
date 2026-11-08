@@ -1,9 +1,6 @@
-//! The `feed-expiry` job: a feed item past its type's `feed_days` goes to the
-//! bin, as a delete would put it there, and only when all a delete would take
-//! has expired too or is in the bin: no window gave up anything else.
-//!
-//! An item brought back from the bin carries `restored_at`, which a trigger sets
-//! however it came back, and the job leaves it alone for good.
+//! A feed item past its type's `feed_days` goes to the bin, but only when all a delete would take
+//! has expired too or is in the bin. An item brought back carries `restored_at`, set by a trigger,
+//! and the job leaves it alone for good.
 
 use std::sync::Arc;
 
@@ -22,18 +19,13 @@ use super::sweep::alone;
 use super::write::{announce, moved_to_bin};
 use super::{Item, is_system};
 
-/// Items one write moves. A run goes on to the last of them.
 const CHUNK: i64 = 100;
 
 const EXPIRABLE: &str = "tier = 'feed' AND state = 'active' AND restored_at IS NULL";
 
-/// Where a run has reached in a type, by `created_at` and `id`. What it held
-/// back stays expired, so the next chunk starts past it.
+/// What a run held back stays expired, so the next chunk starts past it.
 type Position = (String, String);
 
-/// The days a type's feed items are kept, or `None` while nothing expires them:
-/// no window, a zero one, a system type's bounded life, or a type that is not
-/// registered or does not resolve.
 fn window(catalog: &Catalog, type_id: &str) -> Option<i64> {
     if is_system(type_id) || catalog.is_unreadable(type_id) {
         return None;
@@ -87,7 +79,6 @@ fn is_expired(app: &App, tx: &Transaction<'_>, catalog: &Catalog, item: &Item) -
     Ok(statement.query_row(params![item.id, before], |row| row.get(0))?)
 }
 
-/// The types with an item past its window as things stand.
 fn types_due(app: &App, tx: &Transaction<'_>) -> Result<Vec<String>> {
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
     let mut statement = tx.prepare_cached(&format!(
@@ -111,12 +102,9 @@ fn types_due(app: &App, tx: &Transaction<'_>) -> Result<Vec<String>> {
 struct Chunk {
     moved: usize,
     held: usize,
-    /// Where the next chunk starts, while there can be one.
     next: Option<Position>,
 }
 
-/// Moves what binning `id` takes, and answers those rows' ids, or nothing while
-/// any of them may not go.
 fn move_one(
     unit: &Unit<'_, '_>,
     app: &App,
@@ -140,8 +128,7 @@ fn move_one(
     Ok(Some(moved.into_iter().map(|item| item.id).collect()))
 }
 
-/// One chunk, judged inside the write that moves it: the window is the type's
-/// as it stands then, and the rows are as they stand then.
+/// One chunk, judged inside the write that moves it, so the window and rows are as they stand then.
 fn move_chunk(unit: &Unit<'_, '_>, app: &App, type_id: &str, after: &Position) -> Result<Chunk> {
     let tx = unit.tx();
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;

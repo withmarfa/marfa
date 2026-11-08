@@ -1,5 +1,4 @@
-//! The types a registry holds, read by id, with the walks down and up their
-//! chains.
+//! The types a registry holds, read by id, with the walks down and up their chains.
 
 use std::collections::{HashMap, HashSet};
 
@@ -8,14 +7,12 @@ use serde_json::Value;
 use super::{Obj, as_obj, text};
 use crate::catalog::merge_field_definition;
 
-/// A field as the nearest type above declares it, with that type.
 #[derive(Debug, Clone)]
 pub struct Held {
     pub owner: String,
     pub definition: Obj,
 }
 
-/// The fields a parent chain gives, in the order the chain declares them.
 #[derive(Debug, Clone, Default)]
 pub struct Ancestry(Vec<(String, Held)>);
 
@@ -40,7 +37,6 @@ impl Ancestry {
     }
 }
 
-/// Stored type definitions by id.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
     types: HashMap<String, Obj>,
@@ -58,14 +54,11 @@ impl Registry {
         }
     }
 
-    /// This registry with the icons owners chose, by type id.
     pub fn with_icons(mut self, icons: HashMap<String, String>) -> Registry {
         self.icons = icons;
         self
     }
 
-    /// This registry with `icon` as the owner's choice for `id`, or with none
-    /// where `icon` is `None`.
     pub fn with_icon(&self, id: &str, icon: Option<&str>) -> Registry {
         let mut next = self.clone();
         match icon {
@@ -75,7 +68,6 @@ impl Registry {
         next
     }
 
-    /// This registry as its authors wrote it, with no owner's icon.
     pub fn without_icons(&self) -> Registry {
         let mut next = self.clone();
         next.icons.clear();
@@ -86,8 +78,7 @@ impl Registry {
         self.icons.get(id).map(String::as_str)
     }
 
-    /// The type as it reads: its owner's icon, where there is one, in place of
-    /// the icon its author set.
+    /// The owner's icon, where there is one, in place of the author's.
     pub fn owned(&self, id: &str) -> Option<Obj> {
         let mut row = self.get(id)?.clone();
         if let Some(icon) = self.icon_of(id) {
@@ -108,7 +99,6 @@ impl Registry {
         self.types.contains_key(id)
     }
 
-    /// Every id, sorted.
     pub fn ids(&self) -> Vec<&str> {
         let mut ids: Vec<&str> = self.types.keys().map(String::as_str).collect();
         ids.sort_unstable();
@@ -119,7 +109,6 @@ impl Registry {
         &self.types
     }
 
-    /// This registry with `row` held, in place of any type of its id.
     pub fn with(&self, row: Obj) -> Registry {
         let mut next = self.clone();
         if let Some(id) = text(&row, "id").map(str::to_string) {
@@ -139,7 +128,6 @@ impl Registry {
         self.get(id).and_then(|row| text(row, "parent"))
     }
 
-    /// The types that name `id` as their parent, sorted.
     pub fn children_of(&self, id: &str) -> Vec<&str> {
         let mut children: Vec<&str> = self
             .types
@@ -151,7 +139,6 @@ impl Registry {
         children
     }
 
-    /// The types whose parent chain reaches `id`, not `id` itself, by id.
     pub fn descendants(&self, id: &str) -> Vec<&Obj> {
         let mut found: Vec<&Obj> = self
             .types
@@ -178,8 +165,7 @@ impl Registry {
         false
     }
 
-    /// The fields the chain from `parent` up gives, root first. A chain that
-    /// loops or names a type this registry lacks ends there.
+    /// Root first. A chain that loops or names a type this registry lacks ends there.
     pub fn ancestry(&self, parent: &str) -> Ancestry {
         let mut seen = HashSet::new();
         let mut chain: Vec<&Obj> = Vec::new();
@@ -212,8 +198,6 @@ impl Registry {
         held
     }
 
-    /// Whether a declaration of `name` sits between `child` and `top`, the
-    /// two included at the child's end.
     pub fn declared_between(&self, child: &Obj, top: &str, name: &str) -> bool {
         let mut seen = HashSet::new();
         let mut cursor = Some(child);

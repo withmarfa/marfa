@@ -1,9 +1,6 @@
-//! An unhandled fault as the sinks see it: a fixed kind, a message that is safe
-//! to leave the process, and the stack it was made on.
-//!
-//! A message leaves the process at every sink, so a database failure is never
-//! described by what the driver said: that text is the statement, and it can
-//! quote the values the statement was bound to.
+//! An unhandled fault as the sinks see it: a fixed kind, a message safe to leave
+//! the process, and a stack. A database failure is never described by the
+//! driver's text, which can quote the statement's bound values.
 
 use std::cell::RefCell;
 use std::panic::PanicHookInfo;
@@ -13,10 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use backtrace::Backtrace;
 use marfa_telemetry::exception::Frame;
 
-/// The most frames a report carries.
 const MAX_FRAMES: usize = 48;
 const DATABASE_FAILED: &str = "Database operation failed";
-/// What names the driver in a panic message that carries its error.
 const DRIVER_MARKS: [&str; 6] = [
     "sqlite",
     "SqlInputError",
@@ -41,7 +36,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The type error tracking groups by.
     pub fn name(self) -> &'static str {
         match self {
             Kind::Database => "DatabaseFailure",
@@ -55,21 +49,27 @@ impl Kind {
 pub struct Fault {
     pub kind: Kind,
     pub message: String,
+    /// The SQLite result code of a failed statement.
+    database_code: Option<&'static str>,
     stack: Option<Backtrace>,
 }
 
 impl Fault {
-    /// A failed statement. Only the SQLite result code is kept of it.
-    pub fn database(code: &str) -> Fault {
-        Fault::new(Kind::Database, format!("{DATABASE_FAILED} ({code})"), None)
+    pub fn database(code: &'static str) -> Fault {
+        Fault {
+            database_code: Some(code),
+            ..Fault::new(Kind::Database, format!("{DATABASE_FAILED} ({code})"), None)
+        }
     }
 
-    /// A fault nothing foresaw. `context` is fixed text written in the code.
+    pub fn database_code(&self) -> Option<&'static str> {
+        self.database_code
+    }
+
     pub fn internal(context: &str) -> Fault {
         Fault::new(Kind::Internal, context.to_string(), None)
     }
 
-    /// A panic caught on this thread, from what the hook noted of it.
     pub fn panicked(context: &str) -> Fault {
         match NOTED.with(|noted| noted.borrow_mut().take()) {
             Some(noted) => {
@@ -89,13 +89,12 @@ impl Fault {
         Fault {
             kind,
             message,
+            database_code: None,
             stack,
         }
     }
 
-    /// The frames, the fault's own first, with what the machinery of reporting
-    /// and of panicking put above the fault left out. Resolving reads the
-    /// binary's debug information, so this belongs on a thread of its own.
+    /// Resolving reads the binary's debug information: call from a thread of its own.
     pub fn frames(&self) -> Option<Vec<Frame>> {
         let mut stack = self.stack.clone()?;
         stack.resolve();
@@ -141,9 +140,7 @@ impl Fault {
     }
 }
 
-/// A symbol as its function and the path of the module or type that holds it.
-/// Generic arguments, the compiler's crate disambiguators (`[5d97c59e5e5fafcc]`)
-/// and the trailing hash are left out.
+/// Generic arguments, compiler crate disambiguators and the trailing hash are dropped.
 fn split(symbol: &str) -> (String, Option<String>) {
     let mut plain = String::with_capacity(symbol.len());
     let mut rest = symbol;
@@ -203,8 +200,6 @@ fn split(symbol: &str) -> (String, Option<String>) {
     (function, module)
 }
 
-/// A source path without the machine it was built on: a workspace file by its
-/// crate, the standard library by `rustc/`, and a dependency by its crate.
 fn tidy_path(path: &str) -> String {
     if let Some(at) = path.find("/core/marfa-") {
         return path[at + "/core/".len()..].to_string();
@@ -224,7 +219,6 @@ fn tidy_path(path: &str) -> String {
     }
 }
 
-/// A name without the arguments of a generic.
 fn generic_free(name: &str) -> &str {
     if name.starts_with('<') {
         name
@@ -233,7 +227,6 @@ fn generic_free(name: &str) -> &str {
     }
 }
 
-/// The path of a type written `<path::Type as Trait>` or `<path::Type<A>>`.
 fn type_path(module: &str) -> String {
     let inner = module.trim_start_matches('<');
     inner
@@ -243,11 +236,8 @@ fn type_path(module: &str) -> String {
         .to_string()
 }
 
-/// Frames of the operating system that start a thread, which say nothing of
-/// the fault.
 const THREAD_STARTERS: [&str; 4] = ["__pthread_exit", "thread_start", "start_thread", "clone"];
 
-/// A frame of the code that takes the stack.
 fn is_own(frame: &Frame) -> bool {
     frame
         .module
@@ -256,7 +246,6 @@ fn is_own(frame: &Frame) -> bool {
         || frame.filename.as_deref() == Some("marfa-server/src/telemetry/fault.rs")
 }
 
-/// A frame of what takes the stack or panics, which lies above the fault.
 fn is_machinery(frame: &Frame) -> bool {
     let module = frame.module.as_deref().unwrap_or("");
     let file = frame.filename.as_deref().unwrap_or("");
@@ -271,7 +260,6 @@ fn is_machinery(frame: &Frame) -> bool {
         || frame.function == "__rustc::rust_begin_unwind"
 }
 
-/// What the panic hook noted on the thread that panicked.
 struct Noted {
     kind: Kind,
     message: String,
@@ -282,8 +270,7 @@ thread_local! {
     static NOTED: RefCell<Option<Noted>> = const { RefCell::new(None) };
 }
 
-/// A panic's message, made safe to send: one that carries a driver's error
-/// is replaced by the fixed failure and the code its error names.
+/// A message carrying a driver's error is replaced by the fixed failure and its code.
 fn safe_message(message: &str) -> (Kind, String) {
     if !DRIVER_MARKS.iter().any(|mark| message.contains(mark)) {
         return (Kind::Panic, message.to_string());
@@ -329,8 +316,7 @@ fn on_panic(info: &PanicHookInfo<'_>) {
     });
 }
 
-/// Takes the panic hook, which the default one's raw message on standard
-/// error would otherwise bypass every rule above.
+/// Replaces the default hook, whose raw stderr message would bypass the rules above.
 pub fn install_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| std::panic::set_hook(Box::new(on_panic)));
@@ -348,6 +334,8 @@ mod tests {
             fault.message,
             "Database operation failed (SQLITE_CONSTRAINT)"
         );
+        assert_eq!(fault.database_code(), Some("SQLITE_CONSTRAINT"));
+        assert_eq!(Fault::internal("context").database_code(), None);
     }
 
     #[test]

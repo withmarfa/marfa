@@ -1,5 +1,3 @@
-//! Signing in and out, and what a signed-in browser does to its sessions.
-
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
@@ -39,7 +37,6 @@ pub(super) fn signed_in(session: &Session, owner: &owner::Owner) -> Value {
     json!({ "session": session.to_json(), "user": owner.to_json() })
 }
 
-/// `POST /auth/sign-in/email`, a sign-in by script or by a page's own code.
 pub async fn email(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -82,7 +79,7 @@ fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
     }
 }
 
-/// `POST /auth/sign-in`, the sign-in form, which answers only by redirecting.
+/// The sign-in form, which answers only by redirecting.
 pub async fn form(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -202,7 +199,6 @@ fn passkey_or_password(body: &Map<String, Value>) -> Result<Proof, Refusal> {
     }
 }
 
-/// `POST /auth/confirm`.
 pub async fn confirm(
     State(app): State<Arc<App>>,
     headers: HeaderMap,

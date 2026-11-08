@@ -1,6 +1,4 @@
-//! The registries of types and edge types at the doors: what is refused
-//! before anything is stored, what a start does with what it finds stored,
-//! and who may change what. The contract's fixtures hold the rest.
+//! The registries of types and edge types at the doors.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,8 +80,6 @@ impl Instance {
         }
     }
 
-    /// Stops the instance and starts another on the same files, after
-    /// `change` has altered the database while nothing held it.
     async fn restart(self, change: impl FnOnce(&rusqlite::Connection)) -> Instance {
         self.app.db.close().await;
         let Instance { dir, .. } = self;

@@ -22,10 +22,8 @@ use crate::app::faults::{FAIL_LOCK, Faults, HOLD_WRITE};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 
-/// Who a write is for, which decides the faults that can reach it.
 #[derive(Clone, Copy, Debug)]
 pub struct Write {
-    /// The audit action it records. The server's own bookkeeping has none.
     pub action: Option<&'static str>,
     pub for_caller: bool,
 }
@@ -38,7 +36,6 @@ impl Write {
         }
     }
 
-    /// A write the server makes for itself that audits as `action`.
     pub const fn server(action: &'static str) -> Write {
         Write {
             action: Some(action),
@@ -62,8 +59,7 @@ pub struct Db {
 }
 
 impl Db {
-    /// Blocks while it judges and updates the file, so it runs before the
-    /// server takes requests.
+    /// Blocks while it judges and updates the file, so it runs before the server takes requests.
     pub fn open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
         let opened = open::open(options)?;
         let writer = writer::Writer::start(opened.writer, faults.clone())
@@ -84,7 +80,6 @@ impl Db {
         }
     }
 
-    /// Runs `job` inside one read transaction on a pooled connection.
     pub async fn read<T, F>(&self, job: F) -> Result<T>
     where
         T: Send + 'static,
@@ -96,8 +91,7 @@ impl Db {
             .map_err(|refusal| self.with_budget(refusal))
     }
 
-    /// Runs `job` on the writer thread inside a transaction, which commits on
-    /// `Ok` and rolls back on `Err` or a panic.
+    /// Commits on `Ok` and rolls back on `Err` or a panic.
     pub async fn write<T, F>(&self, write: Write, job: F) -> Result<T>
     where
         T: Send + 'static,
@@ -118,13 +112,11 @@ impl Db {
             .map_err(|refusal| self.with_budget(refusal))
     }
 
-    /// What a job that writes for longer than the busy budget beats, so the
-    /// writes queued behind it wait for it rather than give up.
+    /// Beaten by a job that writes longer than the busy budget, so writes queued behind it wait.
     pub fn pulse(&self) -> Pulse {
         self.writer.pulse()
     }
 
-    /// Closes the readers, runs what is queued, checkpoints and closes.
     pub async fn close(&self) {
         self.readers.close().await;
         self.writer.stop().await;

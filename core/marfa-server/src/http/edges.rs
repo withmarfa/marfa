@@ -1,7 +1,3 @@
-//! The doors under `/edges`, and the edge doors of an item. A door judges what
-//! can be judged without the store; what the store decides happens in
-//! `app::edges`.
-
 use std::sync::Arc;
 
 use axum::extract::State;

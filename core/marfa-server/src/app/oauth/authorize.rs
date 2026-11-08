@@ -1,6 +1,3 @@
-//! The authorization request, what its consent screen offers and what a
-//! person's decision does.
-
 use std::sync::Arc;
 
 use rusqlite::{Connection, Transaction};
@@ -32,15 +29,13 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::app::unit::Unit;
 use crate::db::Write;
 
-/// The action of a write that may hand a browser a code.
 const CODE_WRITE: &str = "auth.verification.create";
 const CONSENT_PATH: &str = "/auth/authorize";
 const REQUEST_PATH: &str = "/auth/oauth2/authorize";
 const NO_DESTINATION: &str = "/auth/error?error=invalid_redirect";
 const NO_CLIENT: &str = "/auth/error?error=invalid_client";
 
-/// The way to `/auth/sign-in` that comes back to `path`. `path` is read by the
-/// rule every `return_to` is, since a link's own is outside its signature.
+/// `path` is read by the rule every `return_to` is, since a link's own is outside its signature.
 pub fn sign_in_then(app: &App, path: &str) -> String {
     let origin = app.addresses().sign_in().origin().to_string();
     let back = kept(path, &origin);
@@ -48,15 +43,11 @@ pub fn sign_in_then(app: &App, path: &str) -> String {
     format!("/auth/sign-in?return_to={encoded}")
 }
 
-/// The way to `/auth/sign-in` for the authorization `link` signs, which the
-/// page reads to name the app. `return_to` goes first, so that one riding in
-/// `link` is never the one read.
+/// `return_to` goes first, so one riding in `link` is never the one read.
 fn sign_in_for(app: &App, link: &str, path: &str) -> String {
     format!("{}&{link}", sign_in_then(app, path))
 }
 
-/// A request whose client and redirect URI have passed, so an answer may go
-/// to the app.
 struct Asked {
     client_id: String,
     destination: Destination,
@@ -69,9 +60,8 @@ struct Asked {
 }
 
 impl Asked {
-    /// Where `problem` sends the browser: to the app only if the person's
-    /// consent to it stands, and otherwise to a page that names nothing of
-    /// the request.
+    /// To the app only if the person's consent to it stands, otherwise to a page that names nothing
+    /// of the request.
     fn refused(&self, standing: bool, problem: &Problem) -> String {
         if !standing {
             return format!("/auth/error?error={}", problem.error);
@@ -87,8 +77,7 @@ impl Asked {
         )
     }
 
-    /// What a link signs of this request: only what was read and checked,
-    /// never the query as it came.
+    /// Only what was read and checked, never the query as it came.
     fn link_params(&self, scope: &ScopeSet) -> Vec<(String, String)> {
         let mut params: Vec<(String, String)> = [
             ("client_id", self.client_id.as_str()),
@@ -131,8 +120,6 @@ fn only<'p>(pairs: &'p [(String, String)], name: &str) -> Option<&'p str> {
         .map(|(_, value)| value.as_str())
 }
 
-/// Where an authorization request sends the browser, or the refusal it gets
-/// when nothing it names can be trusted with one.
 pub async fn begin(
     app: &Arc<App>,
     query: &str,
@@ -223,8 +210,7 @@ pub async fn begin(
     answer_signed_in(app, &owner, asked).await.map(Ok)
 }
 
-/// Where a valid-looking request from nobody signed in goes. Without a person
-/// there is no consent to read, so a refusal stays here.
+/// With nobody signed in there is no consent to read, so a refusal stays here.
 fn signed_out(app: &App, client: &Client, asked: &Asked, query: &str) -> Result<String> {
     if asked.prompt.as_deref() == Some("none") {
         return Ok(asked.refused(
@@ -248,8 +234,6 @@ fn grantable(app: &App, client: &Client, asked: &Asked) -> bool {
         .is_empty()
 }
 
-/// The person's consent to `client_id`, if it stands and they approved
-/// `destination`.
 fn standing_consent(
     tx: &Connection,
     client_id: &str,
@@ -393,7 +377,6 @@ fn user_of(unit: &Unit<'_, '_>) -> Result<String> {
         .ok_or_else(|| Refusal::internal("an approval has no browser session"))
 }
 
-/// What a code carries.
 struct Ticket<'t> {
     client_id: &'t str,
     grant_id: &'t str,
@@ -442,7 +425,6 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
     ))
 }
 
-/// A signed link, read back into what it asked.
 struct Linked {
     client_id: String,
     redirect_uri: String,
@@ -467,7 +449,6 @@ impl Linked {
     }
 }
 
-/// What the app a signed link is for calls itself, if it is still registered.
 pub async fn app_named(app: &App, link: &Verified) -> Result<Option<String>> {
     let Some(client_id) = link.get("client_id").map(str::to_string) else {
         return Ok(None);
@@ -477,12 +458,10 @@ pub async fn app_named(app: &App, link: &Verified) -> Result<Option<String>> {
         .await
 }
 
-/// What opening a consent link comes to.
 #[derive(Clone, Debug)]
 pub enum Screen {
     Unverified,
     Expired,
-    /// The browser has nobody signed in, and this is the way there.
     SignIn(String),
     ClientGone,
     Offered(Box<Offer>),
@@ -497,7 +476,6 @@ fn verified(app: &App, query: &str) -> std::result::Result<Linked, Screen> {
     }
 }
 
-/// What the consent screen at `query` shows `owner`.
 pub async fn screen(app: &Arc<App>, query: &str, owner: Option<&Caller>) -> Result<Screen> {
     let linked = match verified(app, query) {
         Ok(linked) => linked,
@@ -535,19 +513,15 @@ pub async fn screen(app: &Arc<App>, query: &str, owner: Option<&Caller>) -> Resu
         .await
 }
 
-/// What a post to the decision door does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Decided {
     Unverified,
     Expired,
-    /// The browser has nobody signed in, and this is the way there.
     SignIn(String),
-    /// Send the browser here: the answer to the app.
     Answered(String),
 }
 
-/// Answers the consent screen `link` showed. The whole of an approval is one
-/// write, so nothing of it stands unless all of it does.
+/// The whole approval is one write, so nothing of it stands unless all of it does.
 pub async fn decide(
     app: &Arc<App>,
     owner: Option<&Caller>,

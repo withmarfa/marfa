@@ -262,8 +262,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `compliance/error-codes.test.ts` holds every refusal's code to the error
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
-  // `ci/ci-required.test.ts` fails when one starts to. The Rust server
-  // embeds `errors.md` to word its refusals, so that chapter also rebuilds it.
+  // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
+  // server holds its refusal codes to `errors.md`, so that chapter reaches it.
   [
     /^conformance\/spec\/errors\.md$/,
     [
@@ -349,26 +349,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
-  // The icon sets the Rust server and the rules crate embed, generated from
-  // the shipped types. They are the only files in `packages/` the Rust
-  // contract jobs read, as build input; no other path there reaches them.
-  [
-    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
-    [
-      ...SERVER,
-      "types-freshness",
-      "clients-freshness",
-      "core-checks-linux",
-      "rust-contract",
-    ],
-  ],
-
   // The control socket's tests and the global setup and test settings they
   // run under.
   [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
   [
     /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
     [...SERVER, "control-socket"],
+  ],
+  // The rules crate embeds the icon sets, so every build of the core, the
+  // command line, the server and the image reads them.
+  [
+    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
+    [...SERVER, "types-freshness", "clients-freshness", ...RUST],
   ],
   // The core's catalog is written from the shipped types, the registry that
   // lists them and the server's role resolution.
@@ -642,10 +634,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The rest of its source, its fixtures and its README are pure Rust, read
   // the same on every system, and so Linux vouches for them.
   [/^core\/marfa-enrichment\//, [...RUST_LINUX, ...ENRICHMENT]],
-  // The Rust server is built and tested on Linux alone, and its contract is
-  // run by the Rust contract jobs. It has no macOS-only code, which
-  // `ci/ci-required.test.ts` searches `core/` for; the binary and the Swift
-  // package do not depend on it, so no Mac job reads it.
+  // The Rust server's private socket checks ACLs with macOS-only code, so a
+  // Mac builds and tests it too.
+  [
+    /^core\/marfa-server\/src\/control_socket\.rs$/,
+    ["core-checks", "core-checks-linux", "rust-contract"],
+  ],
+  // The rest of the server is built and tested on Linux, and its contract is
+  // run by the Rust contract jobs; the binary and the Swift package do not
+  // depend on it.
   [/^core\/marfa-server\//, ["core-checks-linux", "rust-contract"]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac

@@ -1,5 +1,3 @@
-//! The doors under `/types` and `/platform-types`.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

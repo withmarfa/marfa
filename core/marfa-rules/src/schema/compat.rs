@@ -1,5 +1,4 @@
-//! How two declarations of one field compare: a child against what it
-//! inherits, and a type against one it claims to be readable as.
+//! How two declarations of one field compare: a child against what it inherits, and a type against one it claims to be readable as.
 
 use serde_json::Value;
 
@@ -13,7 +12,6 @@ pub(super) struct Conflict {
     pub actual: String,
 }
 
-/// A field a child declares in a shape its ancestor does not allow.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShapeConflict {
     pub field: String,
@@ -32,7 +30,6 @@ const SHAPE_ATTRIBUTES: [&str; 6] = [
     "maxItems",
 ];
 
-/// Two values as JavaScript's `!==` tells them apart.
 fn same(one: Option<&Value>, other: Option<&Value>) -> bool {
     match (one, other) {
         (Some(Value::Number(a)), Some(Value::Number(b))) => a.as_f64() == b.as_f64(),
@@ -165,7 +162,6 @@ pub(super) fn inherited_shape_conflicts<'a>(
         .collect()
 }
 
-/// The conflicts a stored type has with what it inherits.
 pub fn stored_shape_conflicts(schema: &Obj, registry: &Registry) -> Vec<ShapeConflict> {
     let Some(parent) = text(schema, "parent") else {
         return Vec::new();

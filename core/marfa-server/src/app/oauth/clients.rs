@@ -1,6 +1,3 @@
-//! Which client a request names, whether registered or published as a
-//! metadata document, and what it may ask for.
-
 use std::sync::Arc;
 
 use serde_json::json;
@@ -25,7 +22,6 @@ const MOST_FETCHES_AT_ONCE: usize = 4;
 const DOCUMENT_FRESH_MS: i64 = 3_600_000;
 pub(super) const CLIENT_CREATED: &str = "auth.oauthClient.create";
 
-/// The fetches of metadata documents in flight.
 #[derive(Debug)]
 pub struct Documents {
     permits: Arc<Semaphore>,
@@ -54,7 +50,6 @@ fn busy() -> Problem {
     )
 }
 
-/// The client `id` names, by a stored row or by its metadata document.
 pub async fn resolve(app: &Arc<App>, id: &str, visit: &Visit) -> Result<Answered<Client>> {
     let fetcher = Fetcher::default();
     resolve_by(app, id, visit, move |id| fetcher.fetch(id)).await
@@ -132,7 +127,7 @@ fn is_own_origin(app: &App, id: &str) -> bool {
     })
 }
 
-/// Stores what a document said. A ceiling widened since it was read stays.
+/// A ceiling widened since the document was read stays.
 async fn keep_document(
     app: &Arc<App>,
     id: &str,
@@ -173,15 +168,11 @@ async fn keep_document(
         .await
 }
 
-/// What a client's request comes to, against its ceiling.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Judged {
     pub kept: ScopeSet,
-    /// Literals the instance cannot grant to anyone.
     pub unknown: Vec<String>,
-    /// Literals the instance could grant but this client may not ask for.
     pub outside: Vec<String>,
-    /// Kept literals the instance publishes that the ceiling lacks.
     pub widened: ScopeSet,
 }
 
@@ -191,7 +182,6 @@ impl Judged {
     }
 }
 
-/// Narrows `asked` to what `registration` may be granted.
 pub fn judge(registration: &Registration, asked: &ScopeSet, registries: &Registries) -> Judged {
     let narrowed = narrow(asked, &registries.allowed());
     let published = registries.published();
@@ -218,8 +208,7 @@ pub fn judge(registration: &Registration, asked: &ScopeSet, registries: &Registr
     judged
 }
 
-/// The instance's registries as `unit` sees them, so a type registered a
-/// moment ago counts.
+/// So a type registered a moment ago counts.
 pub(super) fn registries_in(
     unit: &Unit<'_, '_>,
     cache: &arc_swap::ArcSwap<catalog::Catalog>,
@@ -231,7 +220,6 @@ pub(super) fn registries_in(
     )?))
 }
 
-/// `keys-and-oauth/catch-up-signed-in`: adds `added` to the client's ceiling.
 pub(super) fn catch_up(
     unit: &Unit<'_, '_>,
     client: &Client,
@@ -259,8 +247,6 @@ pub(super) fn catch_up(
     )
 }
 
-/// The approved literals `client`'s ceiling lacks, each one the instance
-/// publishes, or a refusal where one is neither.
 pub(super) fn ceiling_lacks(
     client: &Client,
     approved: &ScopeSet,
@@ -282,9 +268,7 @@ pub(super) fn ceiling_lacks(
     Ok(lacking)
 }
 
-/// `keys-and-oauth/page-origin-allowed` and `keys-and-oauth/origin-configured`:
-/// whether the `cors_origins` setting or a standing consent names `origin` as
-/// a page a person approved.
+/// Whether the `cors_origins` setting or a standing consent names `origin`.
 pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
     let origin = origin.to_string();
     if configured_origins(app).contains(&origin) {
@@ -295,8 +279,6 @@ pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
         .await
 }
 
-/// What `client`'s registered destinations come to, so an approval can tell
-/// that they are still the ones its screen was asked to show.
 pub(super) fn destinations_digest(app: &App, client: &Client) -> Result<String> {
     digest_of(
         &app.settings.start.api_key_salt,
@@ -450,7 +432,6 @@ mod tests {
         answer.unwrap_err().error
     }
 
-    /// `id`'s client, once its document next read lists `uris`.
     async fn refreshed(app: &Arc<App>, id: &str, uris: &[&str]) -> Client {
         let body = json!({
             "client_id": id,

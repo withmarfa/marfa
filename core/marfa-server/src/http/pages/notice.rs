@@ -10,7 +10,6 @@ pub struct Link {
     pub href: String,
 }
 
-/// A page that says one thing: a request was refused, has expired or ended.
 #[derive(Debug, Clone)]
 pub struct Notice {
     pub instance_name: String,
@@ -31,7 +30,6 @@ impl Notice {
         }
     }
 
-    /// An authorization link whose signature the instance did not make.
     pub fn unverified_request(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -41,7 +39,6 @@ impl Notice {
         )
     }
 
-    /// An authorization link whose window has closed.
     pub fn expired_request(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -51,7 +48,6 @@ impl Notice {
         )
     }
 
-    /// A device code a person approved.
     pub fn device_approved(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -61,7 +57,6 @@ impl Notice {
         )
     }
 
-    /// A device code a person turned down.
     pub fn device_denied(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -91,7 +86,6 @@ impl Notice {
         }
     }
 
-    /// The page a browser is given at the instance's own address.
     pub fn running(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -102,7 +96,6 @@ impl Notice {
         .linked("Sign in", "/auth/sign-in")
     }
 
-    /// Setup, asked of an instance that has an owner.
     pub fn already_claimed(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -113,7 +106,6 @@ impl Notice {
         .linked("Sign in", "/auth/sign-in")
     }
 
-    /// Sign-in, asked of an instance nobody has claimed.
     pub fn no_owner_yet(instance_name: &str) -> Notice {
         Notice::new(
             instance_name,
@@ -124,8 +116,6 @@ impl Notice {
         .linked("Set up this Marfa", "/setup")
     }
 
-    /// A refusal a browser asked for as a page. The message is the refusal's
-    /// own.
     pub fn refusal(instance_name: &str, status: StatusCode, message: &str) -> Notice {
         let heading = match status {
             StatusCode::NOT_FOUND => "Page not found",
@@ -157,7 +147,6 @@ pub fn notice(view: &Notice) -> Result<Page> {
     )
 }
 
-/// What `/auth/error` was sent for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthErrorCode {
     InvalidRedirect,
@@ -173,8 +162,7 @@ pub enum AuthErrorCode {
 }
 
 impl AuthErrorCode {
-    /// The page's `error` query value. A code it does not know is never
-    /// shown.
+    /// A code it does not know is never shown.
     pub fn from_query(error: Option<&str>) -> AuthErrorCode {
         match error {
             Some("invalid_redirect") => AuthErrorCode::InvalidRedirect,

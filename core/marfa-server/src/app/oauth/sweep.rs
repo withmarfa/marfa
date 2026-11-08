@@ -1,6 +1,5 @@
-//! What ages out of the sign-in tables, as the bodies of the housekeeping jobs
-//! that remove it. Each write is bounded and each run stops between two of them
-//! when told to, so no write holds the others up for long.
+//! Bodies of the housekeeping jobs that remove aged-out sign-in rows. Each write is bounded and
+//! each run stops between two of them when told to.
 
 use std::sync::Arc;
 
@@ -30,8 +29,6 @@ const IDLE_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
 const WITHDRAWN_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
                                 WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2";
 
-/// The instant a retention in days keeps records from, as it stands now, or
-/// `None` while it is zero and keeps everything.
 fn cutoff_of(app: &App, retention: Setting<u64>) -> Option<i64> {
     let days = app.settings.live().get(retention);
     (days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY)
@@ -49,8 +46,7 @@ fn consents_in(
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Whether a consent `query` finds stands, so a run with nothing to do takes no
-/// write.
+/// So a run with nothing to do takes no write.
 async fn any_consent(app: &App, query: &'static str, cutoff: i64) -> Result<bool> {
     let found = app
         .db
@@ -88,8 +84,7 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
     .await
 }
 
-/// `dcr-client-cleanup`: removes clients nobody approved, which nothing has
-/// shown or used since the cutoff. Anything a client holds spares it.
+/// Anything a client holds spares it.
 pub async fn remove_idle_clients(app: Arc<App>, run: Run) -> Result<Report> {
     let (deleted, done) = drain(&run, BATCH, || idle_clients(&app)).await?;
     Ok(Report {
@@ -125,9 +120,7 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
     .await
 }
 
-/// `grant-inactivity-retirement`: ends the grants no app has used since the
-/// cutoff, as a person's Disconnect would. Each is a write of its own, since
-/// one ends every credential of the grant and rewrites its item.
+/// Each is a write of its own, since one ends every credential of the grant and rewrites its item.
 pub async fn retire_idle_grants(app: Arc<App>, run: Run) -> Result<Report> {
     let (retired, done) = drain(&run, 1, || retire_one(&app)).await?;
     Ok(Report {
@@ -160,8 +153,7 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
     .await
 }
 
-/// `revoked-grant-purge`: removes the grants withdrawn before the cutoff, so a
-/// client they alone kept can go.
+/// So a client they alone kept can go.
 pub async fn purge_withdrawn_grants(app: Arc<App>, run: Run) -> Result<Report> {
     let (deleted, done) = drain(&run, BATCH, || withdrawn_grants(&app)).await?;
     Ok(Report {
@@ -200,10 +192,9 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
         .await
 }
 
-/// `auth-session-cleanup`: removes browser sessions, codes, tokens and setup
-/// proofs past their end. A rotated refresh token stays until then, since a replay of it
-/// must still be recognized. A device code stays a day longer, so that a device
-/// polling after it expired is told so, and its poll removes it sooner.
+/// A rotated refresh token stays until then, since a replay of it must still be recognized. A
+/// device code stays a day longer, so a device polling after it expired is told so; its poll
+/// removes it sooner.
 pub async fn sweep_expired(app: Arc<App>, run: Run) -> Result<Report> {
     let (mut deleted, mut done) = drain(&run, BATCH, || expired_sessions(&app)).await?;
     for (table, key, kept_ms) in [

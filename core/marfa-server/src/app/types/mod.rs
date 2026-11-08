@@ -1,8 +1,4 @@
-//! The types an instance holds: registered, evolved, removed and read.
-//!
-//! Every judgement of a definition is `marfa_rules::schema`'s. What is here
-//! reads the catalog of the transaction it runs in, asks the caller's reach,
-//! and writes the row, the generation and the audit entry together.
+//! Types: judgement of a definition is `marfa_rules::schema`'s; this module reads the catalog and writes.
 
 mod platform;
 mod read;
@@ -24,8 +20,6 @@ pub(super) fn issues_json(issues: &[Issue]) -> Vec<Value> {
     issues.iter().map(Issue::to_json).collect()
 }
 
-/// The refusal for a definition the rules refuse: the code of the first kind
-/// of fault they name, and every fault.
 fn schema_refusal(issues: Vec<Issue>) -> Refusal {
     let has = |code: &str| issues.iter().any(|issue| issue.code == Some(code));
     let (code, message) = if has("property_shadows_field") {
@@ -49,8 +43,6 @@ fn schema_refusal(issues: Vec<Issue>) -> Refusal {
     Refusal::new(code, message).with_detail("errors", issues_json(&issues))
 }
 
-/// The refusal for a change that breaks the `compatible_with` claims of
-/// other types.
 fn dependents_refusal(broken: Vec<(String, Vec<Issue>)>) -> Refusal {
     let ids: Vec<&str> = broken.iter().map(|(id, _)| id.as_str()).collect();
     let message = format!("Change would break compatible_with for: {}", ids.join(", "));
@@ -74,7 +66,6 @@ pub fn missing_field(field: &str) -> Refusal {
         .with_detail("field", field)
 }
 
-/// Refuses an identifier the grammar does not take, naming `field`.
 pub fn check_id(id: &str, field: &str) -> Result<()> {
     let taken = grammar::type_id(id)
         .map_err(|error| Refusal::internal(&format!("the type grammar did not read: {error}")))?;
@@ -107,9 +98,6 @@ fn names(value: Option<&Value>) -> Vec<&str> {
         .collect()
 }
 
-/// Refuses a caller who names a parent or a `compatible_with` target that
-/// the stored definition did not already name, where its type map does not
-/// grant write on it. A type Marfa ships is open to all.
 fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()> {
     let held = |key: &str| stored.and_then(|stored| stored.get(key));
     if let Some(parent) = next.get("parent").and_then(Value::as_str)
@@ -126,8 +114,6 @@ fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()
     Ok(())
 }
 
-/// A type as the doors answer it: its definition, its plural and where it
-/// came from.
 fn presented(mut schema: Obj, held: Option<&Provenance>) -> Value {
     let plural = plural_of(&schema);
     schema.insert("plural".into(), Value::String(plural));

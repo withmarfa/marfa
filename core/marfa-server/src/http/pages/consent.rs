@@ -8,16 +8,12 @@ use crate::app::oauth::offer::{
 };
 use crate::app::refusal::Result;
 
-/// What a consent page's form answers.
 #[derive(Debug, Clone)]
 pub enum Answering {
-    /// The signed query of an authorization.
     Authorization(String),
-    /// A device's user code, as typed.
     Device(String),
 }
 
-/// A page that asks a person to approve an app.
 #[derive(Debug, Clone)]
 pub struct Consent {
     pub instance_name: String,
@@ -31,7 +27,6 @@ struct Pick {
     selected: bool,
 }
 
-/// The identifier a row shows because another row shares its title.
 struct Ident {
     id: String,
     text: String,
@@ -71,8 +66,7 @@ struct Gives {
     danger: bool,
 }
 
-/// A row's title, and what keeps two rows with one title apart: the page's
-/// own rows have no identifier, and one type is never at odds with itself.
+/// The page's own rows have no identifier, and one type is never at odds with itself.
 struct Titled {
     title: String,
     type_id: Option<String>,
@@ -168,7 +162,6 @@ fn held_row(held: &Held) -> HeldRow {
     }
 }
 
-/// What Full access gives, a line for each level and for the powers.
 fn gives(offer: &Offer, powers: &[PowerRow]) -> Vec<Gives> {
     let mut lines = Vec::new();
     for level in [Level::Write, Level::Read] {
@@ -239,7 +232,6 @@ struct ConsentBody<'a> {
     powers_summary: String,
 }
 
-/// The code as a device shows it: two halves, so the two can be compared.
 fn shown_code(code: &str) -> String {
     let compact: String = code.chars().filter(|c| c.is_alphanumeric()).collect();
     if compact.chars().count() == 8 {

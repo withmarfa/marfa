@@ -1,5 +1,3 @@
-//! `GET /audit`.
-
 use std::sync::Arc;
 
 use axum::extract::State;

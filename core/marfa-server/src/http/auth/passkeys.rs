@@ -1,5 +1,3 @@
-//! The doors of the owner's passkeys.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
@@ -47,13 +45,11 @@ fn response_in(body: &mut Map<String, Value>) -> Result<Value, Refusal> {
     }
 }
 
-/// `GET /auth/passkey/generate-register-options`.
 pub async fn register_options(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     let started = passkeys::begin_adding(app.clone(), &caller).await?;
     begun(&app, started)
 }
 
-/// `POST /auth/passkey/verify-registration`.
 pub async fn verify_registration(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -75,7 +71,6 @@ pub async fn verify_registration(
     Ok(json_answer(StatusCode::OK, &added.to_json()))
 }
 
-/// `GET /auth/passkey/generate-authenticate-options`.
 pub async fn authenticate_options(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -86,7 +81,6 @@ pub async fn authenticate_options(
     begun(&app, started)
 }
 
-/// `POST /auth/passkey/verify-authentication`.
 pub async fn verify_authentication(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -113,7 +107,6 @@ pub async fn verify_authentication(
     ))
 }
 
-/// `GET /owner/passkeys`.
 pub async fn list(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     let data: Vec<Value> = passkeys::list(&app, &caller)
         .await?
@@ -126,7 +119,6 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     ))
 }
 
-/// `PATCH /owner/passkeys/{id}`.
 pub async fn rename(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
@@ -139,14 +131,12 @@ pub async fn rename(
     Ok(json_answer(StatusCode::OK, &renamed.to_json()))
 }
 
-/// `DELETE /owner/passkeys/{id}`.
 pub async fn remove(State(app): State<Arc<App>>, Path(id): Path<String>, caller: Caller) -> Answer {
     passkeys::remove(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 
-/// `GET /_control/owner/passkeys/add-url`: where the owner's browser adds a
-/// passkey. It carries no credential, so the browser signs in there.
+/// It carries no credential, so the browser signs in there.
 pub async fn add_url(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     caller.require_direct()?;
     let origin = app.addresses().sign_in().origin().to_string();
