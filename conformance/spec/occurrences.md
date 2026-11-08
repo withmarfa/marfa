@@ -20,7 +20,7 @@ The server MUST order the occurrences of `GET /occurrences` by `starts_at`, asce
 
 ### `occurrences/answer-keys`
 
-When `GET /occurrences` answers, the server MUST carry `data`, a `next_cursor` of `null`, the `window` it read in UTC, and a `scan` holding `events_read`, `occurrences`, `max_occurrences`, `series_errors`, `max_series_errors`, `unproductive_iterations`, `max_unproductive_iterations` and `series_unexpanded`, and beside them `series_errors`, `series_errors_truncated` and `expansion_incomplete` only where they apply.
+When `GET /occurrences` answers, the server MUST carry `data`, a `next_cursor` of `null`, the `window` it read in UTC, and a `scan` holding `series_errors` and `series_unexpanded`, and beside them `series_errors`, `series_errors_truncated` and `expansion_incomplete` only where they apply.
 
 **Reason:** the operation answers every occurrence of the window in one page, so there is no cursor to follow.
 
@@ -534,13 +534,15 @@ Where no rule above refuses a task's `recurrence`, the server MUST take the task
 
 ### `occurrences/schedule-zone`
 
-If an event's `timezone` is not a named zone that the zone database resolves, then the server MUST refuse the write and name `timezone`.
+If an event's `timezone` is not the name of an IANA time zone, spelled as the IANA database spells it, then the server MUST refuse the write and name `timezone`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
+**Reason:** a name in another case and a numeric offset name no zone, and a series keeps its local hour only in a named zone. The host's own zone never changes an answer.
+
+**Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`, `compliance/occurrences.test.ts › refuses a zone name in another case, naming the field`.
 
 ### `occurrences/schedule-end-zone`
 
-If an event's `end_timezone` is not a named zone that the zone database resolves, then the server MUST refuse the write and name `end_timezone`.
+If an event's `end_timezone` is not the name of an IANA time zone, spelled as the IANA database spells it, then the server MUST refuse the write and name `end_timezone`.
 
 **Tests:** `compliance/recurrence.test.ts › refuses %s, naming the field`.
 
