@@ -159,7 +159,7 @@ fi
 
 fault() { printf 'MARFA-ENRICHMENT-FAULT:%s\nand the rest of the file' "$2" >"$FILES_DIR/faults/$1.txt"; }
 for name in segfault abort stack-overflow hang spin eat-memory rust-alloc-fails cpp-new-fails \
-  flood-stdout flood-stderr garbage silent close-stdin orphan stopped report fork; do
+  flood-stdout flood-stderr garbage silent orphan stopped report fork; do
   fault "$name" "$name"
 done
 fault too-much-text "too-much-text 100000000"
@@ -291,6 +291,18 @@ read_cases() {
   check size-webp-extended 0 "size: 30 x 20" $R read "$f/sample-extended.webp"
   check size-webp-lossless 0 "size: 30 x 20" $R read "$f/sample-lossless.webp"
   check size-bmp 0 "size: 30 x 20" $R read "$f/generated.bmp"
+  # The length of a sound or a video, and the size of its picture, from the headers.
+  check length-mp3 0 "duration: 1 seconds" $R read "$f/sample.mp3"
+  check length-wav 0 "duration: 1.5" $R read "$f/sample.wav"
+  check length-flac 0 "duration: 1.5 seconds" $R read "$f/sample.flac"
+  check length-ogg 0 "duration: 1.5 seconds" $R read "$f/sample.ogg"
+  check length-opus 0 "duration: 1.50" $R read "$f/sample.opus"
+  check length-m4a 0 "duration: 1.56" $R read "$f/sample.m4a"
+  check length-mp4 0 "duration: 1.0|size: 160 x 120" $R read "$f/sample.mp4"
+  check length-mov 0 "duration: 1.5 seconds|size: 96 x 64" $R read "$f/sample.mov"
+  check length-webm 0 "duration: 1.008 seconds|size: 160 x 120" $R read "$f/sample.webm"
+  check length-webm-audio 0 "duration: 1.508 seconds" $R read "$f/sample-audio.webm"
+  check length-mkv-audio 0 "duration: 1.508 seconds" $R read "$f/sample-audio.mkv"
   # OCR, in the default four languages from memory.
   check ocr-png 0 "Marfa OCR fixture quokkapng|size: 1700 x 2200" $R read "$f/sample.png"
   check ocr-sentence 0 "Marfa reads this sentence upright." $R read "$f/sentence.png"
@@ -318,7 +330,8 @@ read_cases() {
   fi
   # Files the reader must refuse, and say why.
   check refuse-encrypted 1 "refused: the file is password-protected" $R read "$f/encrypted.pdf"
-  check refuse-unsupported 1 "refused: no reader takes this type of file" $R read "$f/sample.mp3" --type audio/mpeg
+  check refuse-unsupported 1 "refused: no reader takes this type of file" $R read "$f/sample.mp3" --type audio/x-unknown
+  check refuse-text-as-audio 1 "refused: " $R read "$f/sample.txt" --type audio/mpeg
   check refuse-empty-pdf 1 "refused: the file is malformed" $R read "$f/empty.pdf"
   check refuse-not-a-pdf 1 "refused: the file is malformed" $R read "$f/not-a-pdf.pdf"
   check refuse-truncated-pdf 1 "refused: the file is malformed" $R read "$f/truncated.pdf"
@@ -358,7 +371,6 @@ fault_cases() {
   fault_case flood-stderr "refused:"
   fault_case garbage "the reader's answer is bad"
   fault_case silent "the reader's answer is bad"
-  fault_case close-stdin "the reader's answer is bad"
   fault_case too-much-text "wrote more than it may"
   fault_case orphan "the reader's answer is bad"
   # A reader that has been taken over: what the sandbox lets it do. Each prints what

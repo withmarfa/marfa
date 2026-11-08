@@ -46,7 +46,7 @@ mkdir -p "$F/seeds" "$findings"
 for file in "$OUT/verify/context/files/"* "$OUT/verify/context/files/corpus/"*; do
   [ -f "$file" ] || continue
   case "$(basename "$file")" in
-    big-text.png | deep.xml | empty.pdf | not-a-* | random.png | truncated* | sample.mp3 | good.txt | encrypted.pdf) continue ;;
+    big-text.png | deep.xml | empty.pdf | not-a-* | random.png | truncated* | good.txt | encrypted.pdf) continue ;;
   esac
   cp "$file" "$F/seeds/"
 done
