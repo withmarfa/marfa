@@ -153,9 +153,7 @@ fn room_for(tally: &store::Tally, size: i64, charge: i64, live: &Snapshot) -> Re
     Ok(())
 }
 
-/// Checks the address, then every bound the store already knows, before exposing capacity refusals.
-///
-/// A declared length over the limit is left to the caller's 413, so only the backlog's count is judged then.
+/// Oversized declarations reach the caller's 413 after only the backlog count check.
 pub async fn admit(app: &App, token: &str, arrival: Arrival) -> Result<Place> {
     let token_hash = super::hash_token(token);
     let looked = token_hash.clone();
