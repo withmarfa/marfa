@@ -132,6 +132,9 @@ describe("the Rust contract shards", () => {
     const run = step(shards, "Run the shard").run ?? "";
     // The step fails for a missing report and for nothing Vitest says.
     expect(run).toContain("--reporter=json");
+    // A retry would hide a flaky test: the reporters above replace the one
+    // that records it.
+    expect(run).toContain("--retry=0");
     expect(run).toContain("|| status=$?");
     expect(run).toContain('test -s "$report"');
     const keep = step(shards, "Keep the report");
