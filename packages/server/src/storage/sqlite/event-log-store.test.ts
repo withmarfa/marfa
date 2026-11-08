@@ -214,3 +214,31 @@ describe("SqliteEventLogStore.getNonFanoutEnd", () => {
     }
   });
 });
+
+describe("SqliteEventLogStore reads with events hidden", () => {
+  const hidden = { first: 2n, last: 3n };
+
+  it("leaves the hidden ids out of every read it is given to", async () => {
+    const s = await logAged([0, 0, 0, 0, 0]);
+    expect(await s.eventLog.getMaxId()).toBe(5n);
+    expect(await s.eventLog.getMaxId({ first: 5n, last: 5n })).toBe(4n);
+    expect(await s.eventLog.getMinRetainedId({ first: 1n, last: 2n })).toBe(3n);
+    const ids = async (options: Parameters<typeof s.eventLog.getAfter>[2]) =>
+      (await s.eventLog.getAfter(0n, 100, options)).map((row) => row.id);
+    expect(await ids({ hidden })).toEqual([1n, 4n, 5n]);
+    expect(await ids({ hidden, maxBytes: 1_000_000 })).toEqual([1n, 4n, 5n]);
+    expect(await ids({})).toEqual([1n, 2n, 3n, 4n, 5n]);
+  });
+
+  it("makes a hidden event a hole that the no-fanout check refuses", async () => {
+    const s = await logAged([0, 0, 0]);
+    const raw = s as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun("UPDATE event_log SET enable_fanout=0", []);
+    expect(await s.eventLog.getNonFanoutEnd(0n, 3n)).toBe(3n);
+    await expect(
+      s.eventLog.getNonFanoutEnd(0n, 3n, { first: 2n, last: 2n }),
+    ).rejects.toThrow("inconsistent");
+  });
+});

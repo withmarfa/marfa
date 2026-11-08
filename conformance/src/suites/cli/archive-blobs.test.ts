@@ -6,7 +6,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,19 +17,15 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  bytesOf,
-  clientsFor,
-  diskPath,
-  DISK_ONLY,
-} from "../../utils/own-blob-server.js";
+import { bytesOf, clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
+import { damageBlobs, loseBlobs } from "../../utils/store-faults.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 
 /**
  * An archive the server writes whole but for blobs no store could read, as
  * `marfa export` and `marfa restore` report it.
  *
- * **Why a server of its own.** A blob's file is removed from the server's
+ * **Why a server of its own.** A blob's bytes read as gone from the server's
  * disk, and no object store may hold a second copy, so the server is booted
  * with its disk store alone.
  */
@@ -92,7 +87,7 @@ describe("an archive that lacks a blob it names", () => {
     // An earlier file of the incomplete name is the only file replaced.
     writeFileSync(incomplete, "an earlier incomplete archive");
 
-    unlinkSync(diskPath(server!, lost));
+    await loseBlobs(server!, [lost]);
     const refused = await cli.refused([
       "export",
       "--format",
@@ -197,10 +192,7 @@ describe("an archive that lacks a blob it names", () => {
       properties: { body: `![bytes](${rotten})` },
     });
     expect(note.status, JSON.stringify(note.error)).toBe(201);
-    writeFileSync(
-      diskPath(server!, rotten),
-      new Uint8Array(content.length).fill(0x41),
-    );
+    await damageBlobs(server!, [rotten]);
 
     const cutDir = mkdtempSync(join(dir, "cut-"));
     const path = join(cutDir, "backup.tar.gz");

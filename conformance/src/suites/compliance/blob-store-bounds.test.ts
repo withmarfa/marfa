@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { renameSync, writeFileSync } from "node:fs";
 import {
   DeleteObjectCommand,
   PutObjectCommand,
@@ -13,10 +12,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
-  blobFolder,
   bytesOf,
   clientsFor,
-  diskPath,
   leaveBacklog,
   ownObjectStore,
   pastInstant,
@@ -24,6 +21,7 @@ import {
   runJob,
   whenCopied,
 } from "../../utils/own-blob-server.js";
+import { damageBlobs } from "../../utils/store-faults.js";
 import { getManagementClient } from "../../utils/setup.js";
 
 /**
@@ -328,8 +326,8 @@ describe("an integrity run while the disk store cannot be reached", () => {
 
       // Six copies and three to a run: the disk's, never stamped while it is
       // away, would take every row if the run kept asking for them.
-      const folder = blobFolder(server);
-      renameSync(folder, `${folder}.away`);
+      await server.setFault("store-check-deadline=200");
+      await server.setFault("hold:blob-read");
       try {
         const run = await runJob(operator, "blob-integrity");
         expect(run.result).toEqual({
@@ -339,7 +337,8 @@ describe("an integrity run while the disk store cannot be reached", () => {
           unreachable: 1,
         });
       } finally {
-        renameSync(`${folder}.away`, folder);
+        await server.clearFault("hold:blob-read");
+        await server.clearFault("store-check-deadline");
       }
       for (const hash of hashes) {
         const rows = (await operator.listBlobCopies(hash)).data.data;
@@ -377,9 +376,9 @@ describe("a replication run over a copy that does not hash to its name", () => {
       const disk = stores.find((store) => store.kind === "disk")!;
       expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
 
-      // The disk file, at its own length, now holds other bytes: the object
-      // store would be handed a copy that is not the blob.
-      writeFileSync(diskPath(server, hash), new Uint8Array(120).fill(0x41));
+      // The disk's bytes, at their own length, now read as other bytes: the
+      // object store would be handed a copy that is not the blob.
+      await damageBlobs(server, [hash]);
       const refused = await runJob(operator, "blob-replicate");
       expect(refused.result.copied).toBe(0);
       expect(refused.result.bytes).toBe(0);
@@ -391,7 +390,7 @@ describe("a replication run over a copy that does not hash to its name", () => {
 
       // The witness: the same run with the right bytes on the disk records
       // the object store's copy.
-      writeFileSync(diskPath(server, hash), content);
+      await server.clearFault("damage:blob");
       const placed = await runJob(operator, "blob-replicate");
       expect(placed.result).toEqual({ copied: 1, bytes: 120, remaining: 0 });
       expect(

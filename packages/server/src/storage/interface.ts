@@ -2445,6 +2445,12 @@ export interface PersistedEvent {
   created_at: string;
 }
 
+/** Events a read treats as absent from the log, by id from `first` to `last`. */
+export interface HiddenEventIds {
+  first: bigint;
+  last: bigint;
+}
+
 export interface EventLogStore {
   /** Rows in the event log. */
   count(): Promise<number>;
@@ -2468,13 +2474,17 @@ export interface EventLogStore {
   getAfter(
     afterId: bigint,
     limit: number,
-    options?: { maxBytes?: number },
+    options?: { maxBytes?: number; hidden?: HiddenEventIds },
   ): Promise<PersistedEvent[]>;
 
   /** End of the consecutive no-fanout prefix after `afterId`, no later
    *  than `headId`, without reading payloads. Refuses missing rows.
    *  Scheduling calls this inside the transaction that acknowledges it. */
-  getNonFanoutEnd(afterId: bigint, headId: bigint): Promise<bigint>;
+  getNonFanoutEnd(
+    afterId: bigint,
+    headId: bigint,
+    hidden?: HiddenEventIds,
+  ): Promise<bigint>;
 
   /**
    * Delete a prefix of the log: every event below the oldest one still
@@ -2490,13 +2500,13 @@ export interface EventLogStore {
    *  detect clients whose `Last-Event-ID` predates the retention
    *  window so it can emit a terminal `catchup_too_old` event
    *  instead of silently resuming mid-stream. */
-  getMinRetainedId(): Promise<bigint | null>;
+  getMinRetainedId(hidden?: HiddenEventIds): Promise<bigint | null>;
 
   /** Largest event id. Returns null when there are none. The SSE route announces this on connect so a
    *  client that reads its snapshot afterwards holds a resume point
    *  from the first moment, rather than waiting for an event to arrive
    *  to learn where it is. */
-  getMaxId(): Promise<bigint | null>;
+  getMaxId(hidden?: HiddenEventIds): Promise<bigint | null>;
 }
 
 // ---------------------------------------------------------------------------
