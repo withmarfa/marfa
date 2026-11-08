@@ -427,13 +427,18 @@ gone() {
   ! listening "$port" || fail "Port $port still answers after uninstall."
   case $current in
     docker)
-      [ -z "$(docker ps -a --filter "name=^$name\$" --format '{{.Names}}')" ] || fail "The container $name is left."
-      [ -z "$(docker volume ls --filter "name=^$name-data\$" --format '{{.Name}}')" ] || fail "The volume $name-data is left."
-      [ -z "$(docker network ls --filter "name=^$name-net\$" --format '{{.Name}}')" ] || fail "The network $name-net is left."
+      local left
+      left=$(docker ps -a --filter "name=^$name\$" --format '{{.Names}}') || fail "Docker could not list containers."
+      [ -z "$left" ] || fail "The container $name is left."
+      left=$(docker volume ls --filter "name=^$name-data\$" --format '{{.Name}}') || fail "Docker could not list volumes."
+      [ -z "$left" ] || fail "The volume $name-data is left."
+      left=$(docker network ls --filter "name=^$name-net\$" --format '{{.Name}}') || fail "Docker could not list networks."
+      [ -z "$left" ] || fail "The network $name-net is left."
       ;;
     native-root)
       ! systemctl cat "marfa-$name.service" > /dev/null 2>&1 || fail "The system unit marfa-$name.service is left."
-      [ ! -e /var/lib/marfa-server/data ] || fail "The data folder is left."
+      # The folder is root:marfa 0750, so only root can see whether it is gone.
+      ! sudo test -e /var/lib/marfa-server || fail "The install folder /var/lib/marfa-server is left."
       ;;
     native-user)
       if [ "$os" = Darwin ]; then
