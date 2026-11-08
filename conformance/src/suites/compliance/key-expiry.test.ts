@@ -6,7 +6,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
@@ -97,12 +96,11 @@ async function expiryOf(id: string): Promise<string | null | undefined> {
 /** An instant an hour ahead of the clock on the server that moves. */
 const inAnHour = (): string => new Date(clock.now() + HOUR_MS).toISOString();
 
-/** The expiry a key on the server that moves holds, read from its file. */
-function storedExpiry(id: string): string | null {
-  const row = withInstanceDatabase(moving.sqlitePath, (db) =>
-    db.prepare("SELECT expires_at FROM api_keys WHERE id = ?").get(id),
-  ) as { expires_at: string | null };
-  return row.expires_at;
+/** The actions the audit log holds against a key, oldest first. */
+async function keyActions(id: string): Promise<string[]> {
+  const listed = await mover.listAudit({ resource_id: id });
+  expect(listed.status).toBe(200);
+  return listed.data.data.map((entry) => entry.action);
 }
 
 describe("a key past its expires_at", () => {
@@ -134,15 +132,9 @@ describe("a key past its expires_at", () => {
     const revoked = await mover.revokeKey(expiring.id);
     expect(revoked.status).toBe(404);
     expect(revoked.error?.error.code).toBe("api_key_not_found");
-    // No door lists an expired key, so its file is the only witness that the
+    // No door lists an expired key, so the audit log is the witness that the
     // refused update and revoke changed nothing.
-    const unchanged = withInstanceDatabase(moving.sqlitePath, (db) =>
-      db
-        .prepare("SELECT label, revoked_at FROM api_keys WHERE id = ?")
-        .get(expiring.id),
-    ) as { label: string; revoked_at: string | null };
-    expect(unchanged.revoked_at).toBeNull();
-    expect(unchanged.label).toMatch(/^expiring-/);
+    expect(await keyActions(expiring.id)).toEqual(["key.create"]);
 
     // The witness that the refusals are the expiry's: the other key changes.
     expect(
@@ -209,16 +201,15 @@ describe("a key past its expires_at", () => {
 
   it("answers 404 api_key_not_found to an update that would clear its expiry, and stays past it", async () => {
     const expiring = await mint("expired-clear", inAnHour(), mover);
-    const expiry = expiring.expires_at;
     await clock.advance(2 * HOUR_MS);
     const cleared = await mover.updateKey(expiring.id, {
       expires_at: null,
     });
     expect(cleared.status).toBe(404);
     expect(cleared.error?.error.code).toBe("api_key_not_found");
-    // No door lists an expired key, so its file is the only witness that the
-    // refused update left the expiry where it was.
-    expect(storedExpiry(expiring.id)).toBe(expiry);
+    // No door lists an expired key, so the audit log is the witness that the
+    // refused update changed nothing.
+    expect(await keyActions(expiring.id)).toEqual(["key.create"]);
   });
 });
 

@@ -2339,9 +2339,9 @@ If a client asks `POST /auth/device/code` for a scope the instance does not publ
 
 If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope`.
 
-**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why. This holds for a client registered for `offline_access` as well as one that is not.
+**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why.
 
-**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh`, `› is refused 400 invalid_scope for offline_access when its stored client holds the scope and may not refresh`.
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh`.
 
 ### `keys-and-oauth/device-published-scope`
 
@@ -2623,7 +2623,7 @@ If the owner lane has made a hundred counted device code lookups in fifteen minu
 
 **Reason:** Both lanes have a collective bound, even though one claimed owner reaches the per-owner bound first.
 
-**Tests:** `compliance/device-owner-limits.test.ts › holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ### `keys-and-oauth/device-lookup-owner-proof`
 
@@ -2641,13 +2641,13 @@ When concurrent device code lookups use direct owner browser authority, the serv
 
 When the server restarts within a device code lookup window, the server MUST retain the owner's counted lookups and the owner lane's counted lookups for the rest of that window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ### `keys-and-oauth/device-lookup-owner-window`
 
 When an owner's device code lookup window or the owner lane's collective window reaches fifteen minutes, the server MUST count its next lookup in a fresh window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ## The sign-in library's routes
 
