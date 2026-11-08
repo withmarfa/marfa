@@ -6,16 +6,23 @@
  *
  * Reads every `vitest.json` under `--reports`, prints the score as Markdown
  * and appends it to `--markdown` when given (CI passes the job summary).
- * Exits non-zero when a file listed in `src/utils/rust-judged.ts` did not
- * pass whole or no report names it, and when there is no report at all.
+ * Lists the tests of the five contract projects first, to count a file that
+ * no report lists. Exits non-zero when a file listed in
+ * `src/utils/rust-judged.ts` did not pass whole or no report names it, and
+ * when there is no report at all.
  * `conformance/README.md` says how the score is counted.
  */
+import { spawnSync } from "node:child_process";
 import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RUST_JUDGED } from "../src/utils/rust-judged.js";
 import {
+  CONTRACT_PROJECTS,
+  collectionNotes,
   contractFiles,
+  countCollected,
+  filesNamedIn,
   renderScore,
   scoreRun,
   type VitestReport,
@@ -39,6 +46,54 @@ function parseArgs(argv: string[]): { reports: string; markdown?: string } {
   return { reports: out.reports, markdown: out.markdown };
 }
 
+/**
+ * What `vitest list` finds in the contract projects, by file. A judged file is
+ * left out of a run with no `MARFA_SERVER_BIN`, so one is set; nothing starts
+ * it. When a file fails to load Vitest prints no list at all. Then only the
+ * files it names get a count, from reading them without running them (a test
+ * written for several inputs counts once, so a read count can differ from a
+ * run count), and every other file keeps the count its report lists. The
+ * summary says so.
+ */
+function collect(): { counts: Map<string, number>; notes: string[] } {
+  const run = (...extra: string[]) =>
+    spawnSync(
+      "pnpm",
+      [
+        "exec",
+        "vitest",
+        "list",
+        "--json",
+        ...extra,
+        ...CONTRACT_PROJECTS.flatMap((project) => ["--project", project]),
+      ],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        maxBuffer: 256 * 1024 * 1024,
+        env: { ...process.env, MARFA_SERVER_BIN: "list-only" },
+      },
+    );
+  const listed = (output: ReturnType<typeof run>) => {
+    if (output.status !== 0) return undefined;
+    try {
+      return countCollected(JSON.parse(output.stdout) as { file: string }[]);
+    } catch {
+      return undefined;
+    }
+  };
+  const ran = run("--staticParse=false");
+  const counts = listed(ran);
+  if (counts !== undefined) {
+    return { counts, notes: collectionNotes(counts, []) };
+  }
+  console.error(`Listing the tests failed.\n${ran.stderr.slice(0, 2000)}`);
+  const unrun = filesNamedIn(`${ran.stderr}${ran.stdout}`);
+  const read = listed(run()) ?? new Map<string, number>();
+  const used = new Map(unrun.map((file) => [file, read.get(file) ?? 0]));
+  return { counts: used, notes: collectionNotes(used, unrun) };
+}
+
 function reportsUnder(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory()
@@ -57,8 +112,14 @@ if (paths.length === 0) {
 const reports = paths.map(
   (path) => JSON.parse(readFileSync(path, "utf8")) as VitestReport,
 );
-const score = scoreRun(reports, contractFiles(ROOT), RUST_JUDGED);
-const markdown = renderScore(score);
+const collected = collect();
+const score = scoreRun(
+  reports,
+  contractFiles(ROOT),
+  RUST_JUDGED,
+  collected.counts,
+);
+const markdown = renderScore(score, collected.notes);
 console.log(markdown);
 if (args.markdown !== undefined) appendFileSync(args.markdown, markdown);
 if (score.failures.length > 0) {

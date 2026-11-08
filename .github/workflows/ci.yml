@@ -1320,7 +1320,8 @@ jobs:
           cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
 
       # A failed test does not fail the step: the score job counts it. A run
-      # that wrote no report does.
+      # that wrote no report does. Retries are off, so a test that passes
+      # only on a retry fails: this step's reporters replace the flaky report.
       - name: Run the shard
         working-directory: conformance
         env:
@@ -1329,7 +1330,7 @@ jobs:
           report="$RUNNER_TEMP/rust-contract-report/vitest.json"
           mkdir -p "$(dirname "$report")"
           read -r -a args <<< "$ARGS"
-          args+=(--reporter=default --reporter=json "--outputFile.json=$report")
+          args+=(--retry=0 --reporter=default --reporter=json "--outputFile.json=$report")
           status=0
           pnpm exec vitest run "${args[@]}" || status=$?
           echo "Vitest exited with status $status."
