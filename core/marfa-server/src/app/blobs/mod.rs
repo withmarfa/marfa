@@ -32,6 +32,7 @@ use super::faults::{
 };
 use super::housekeeping;
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
 use crate::settings::registry::{
@@ -528,6 +529,14 @@ fn joined<T>(outcome: std::result::Result<T, tokio::task::JoinError>) -> Result<
     outcome.map_err(|error| Refusal::internal(&format!("a blob task did not finish: {error}")))
 }
 
+/// Runs work that holds a blob's lock or changes a store or the copy record on a task the
+/// server owns, so a caller that goes away abandons only its wait.
+async fn owned<T: Send + 'static>(
+    work: impl Future<Output = Result<T>> + Send + 'static,
+) -> Result<T> {
+    joined(tokio::spawn(work).await)?
+}
+
 fn failed(refused: Refusal) -> Failed {
     Failed::Io(io::Error::other(refused.to_string()))
 }
@@ -552,16 +561,9 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
 }
 
 /// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
-pub struct Placed {
+struct Placed {
     recording: Recording,
     held: store::Held,
-}
-
-impl Placed {
-    /// What records the bytes inside the write; the lock stays with `self`, past the commit.
-    pub fn recording(&self) -> Recording {
-        self.recording.clone()
-    }
 }
 
 #[derive(Clone)]
@@ -664,7 +666,7 @@ impl App {
     }
 
     /// Places the bytes on the disk. Nothing serves them until a record names them.
-    pub async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
+    async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(mut staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
@@ -724,7 +726,7 @@ impl App {
 
     /// Unlocks placed bytes once the write that records them has ended, and replicates them if
     /// it committed.
-    pub fn release_upload(&self, placed: Placed, committed: bool) {
+    fn release_upload(&self, placed: Placed, committed: bool) {
         let Placed { recording, held } = placed;
         drop(held);
         if committed && recording.replicates {
@@ -732,23 +734,43 @@ impl App {
         }
     }
 
-    /// Places the bytes on the disk, and only then records them: a file with no record is
-    /// never served, and a recorded one is never removed.
-    pub async fn finish_upload(&self, caller: &Caller, intake: Intake) -> Result<Blob> {
-        let placed = self.place_upload(intake).await?;
-        let recording = placed.recording();
+    /// Places the bytes on the disk and only then runs `job`, the write that records them, so
+    /// a file with no record is never served and a recorded one is never removed. The lock on
+    /// the bytes is held until the write has ended, on a task the server owns.
+    pub async fn keep_upload<T, F>(
+        self: &Arc<App>,
+        caller: &Caller,
+        action: &'static str,
+        intake: Intake,
+        job: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Unit<'_, '_>, &Recording) -> Result<T> + Send + 'static,
+    {
+        let (app, caller) = (self.clone(), caller.clone());
+        owned(async move {
+            let placed = app.place_upload(intake).await?;
+            let recording = placed.recording.clone();
+            let written = app
+                .write(&caller, action, move |unit| job(unit, &recording))
+                .await;
+            app.release_upload(placed, written.is_ok());
+            written
+        })
+        .await
+    }
+
+    pub async fn finish_upload(self: &Arc<App>, caller: &Caller, intake: Intake) -> Result<Blob> {
         let cache = self.catalog_handle();
-        let recorded = self
-            .write(caller, "blob.upload", move |unit| {
-                let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
-                unit.caller
-                    .require_upload(catalog.provenance.keys().map(String::as_str))?;
-                let holder = unit.caller.credential_handle();
-                recording.record(unit.tx(), Some(&holder), &unit.at)
-            })
-            .await;
-        self.release_upload(placed, recorded.is_ok());
-        recorded
+        self.keep_upload(caller, "blob.upload", intake, move |unit, recording| {
+            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            unit.caller
+                .require_upload(catalog.provenance.keys().map(String::as_str))?;
+            let holder = unit.caller.credential_handle();
+            recording.record(unit.tx(), Some(&holder), &unit.at)
+        })
+        .await
     }
 
     /// Carries out the queued deletions of a store's bytes of a blob, each of an object no copy
@@ -978,9 +1000,21 @@ impl App {
         self.db.read(rows::orphans).await
     }
 
-    /// Drops one store's copy while `min_copies` others remain, each confirmed by its store.
-    /// The copy leaves the copy record, with its deletion queued, before its bytes go.
-    pub async fn drop_copy(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
+    /// Drops one store's copy while `min_copies` others remain, each confirmed by its store,
+    /// on a task the server owns. The copy leaves the copy record, with its deletion queued,
+    /// before its bytes go.
+    pub async fn drop_copy(
+        self: &Arc<App>,
+        caller: &Caller,
+        hash: &Hash,
+        store_id: &str,
+    ) -> Result<()> {
+        let (app, caller, hash) = (self.clone(), caller.clone(), hash.clone());
+        let store_id = store_id.to_string();
+        owned(async move { app.dropping(&caller, &hash, &store_id).await }).await
+    }
+
+    async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
         let min_copies = self.settings.live().get(BLOB_MIN_COPIES);
         let blob = hash.clone();
         let (found, holders) = self

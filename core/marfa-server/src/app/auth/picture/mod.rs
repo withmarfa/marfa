@@ -3,6 +3,7 @@
 mod kind;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Map, Value, json};
@@ -115,7 +116,7 @@ impl App {
     }
 
     pub async fn put_picture(
-        &self,
+        self: &Arc<App>,
         caller: &Caller,
         door: Door,
         bytes: Vec<u8>,
@@ -133,38 +134,33 @@ impl App {
             intake.discard().await;
             return Err(refused);
         }
-        let placed = self.place_upload(intake).await?;
-        let recording = placed.recording();
-        let written = self
-            .write(caller, door.action(), move |unit| {
-                door.admit(&unit.caller, &unit.at)?;
-                let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
-                let blob = recording.record(unit.tx(), None, &unit.at)?;
-                set(
-                    unit.tx(),
-                    &unit.caller,
-                    &blob.hash,
-                    kind.mime_type(),
-                    &unit.at,
-                )?;
-                found.avatar = true;
-                note(
-                    unit.tx(),
-                    &unit.at,
-                    Some(&unit.caller),
-                    &visit,
-                    Note {
-                        action: door.action(),
-                        resource_type: "auth_user",
-                        resource_id: &found.id,
-                        details: Some(json!({ "fields": ["avatar"] })),
-                    },
-                )?;
-                Ok(found)
-            })
-            .await;
-        self.release_upload(placed, written.is_ok());
-        written
+        self.keep_upload(caller, door.action(), intake, move |unit, recording| {
+            door.admit(&unit.caller, &unit.at)?;
+            let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
+            let blob = recording.record(unit.tx(), None, &unit.at)?;
+            set(
+                unit.tx(),
+                &unit.caller,
+                &blob.hash,
+                kind.mime_type(),
+                &unit.at,
+            )?;
+            found.avatar = true;
+            note(
+                unit.tx(),
+                &unit.at,
+                Some(&unit.caller),
+                &visit,
+                Note {
+                    action: door.action(),
+                    resource_type: "auth_user",
+                    resource_id: &found.id,
+                    details: Some(json!({ "fields": ["avatar"] })),
+                },
+            )?;
+            Ok(found)
+        })
+        .await
     }
 
     /// The owner's picture and the blob that holds it, read as one.

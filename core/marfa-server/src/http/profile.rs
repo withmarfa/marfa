@@ -84,7 +84,7 @@ async fn arrived(
 }
 
 async fn put(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     visit: Visit,
     request: Request,

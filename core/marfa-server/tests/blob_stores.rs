@@ -6,12 +6,14 @@ mod fake_s3;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::App;
+use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Accepted, Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
@@ -849,6 +851,99 @@ async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more
     let result = instance.run("blob-integrity").await;
     assert_eq!(result["struck"], 0, "{result}");
     assert_eq!(instance.copies(&kept).await.len(), 2);
+}
+
+/// Occupies the writer until the sender is used or dropped, beating so writes queued behind
+/// it wait. The receiver answers once the writer has started on it.
+fn occupy_writer(
+    app: &Arc<App>,
+) -> (
+    std::sync::mpsc::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    let (started, began) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (app, pulse) = (app.clone(), app.db.pulse());
+    tokio::spawn(async move {
+        app.db
+            .write(Write::own(), move |_tx| {
+                let _ = started.send(());
+                while let Err(RecvTimeoutError::Timeout) =
+                    released.recv_timeout(Duration::from_millis(10))
+                {
+                    pulse.tick();
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+    });
+    (release, began)
+}
+
+/// Lets every task woken so far run as far as it can without waiting on anything.
+async fn settle() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn an_upload_whose_client_goes_away_while_its_record_waits_behind_a_purge_keeps_its_file() {
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let bytes = b"uploaded again while its purge waits for the writer".to_vec();
+    let hash = instance.stored(&bytes).await;
+    instance.run("blob-orphans").await;
+    instance.app.clock.advance(1).unwrap();
+
+    instance.arm("hold:write", Some("blob.purge"));
+    let control = instance.control.clone();
+    let purge = tokio::spawn(async move {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/housekeeping/blob-orphans/run")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        send(&control, request).await
+    });
+    instance.when_held().await;
+
+    // The writer's queue becomes: the purge, a second hold, then the upload's record.
+    let (first, first_began) = occupy_writer(&instance.app);
+    first_began.await.unwrap();
+    instance.app.faults.clear(Some("hold:write"));
+    settle().await;
+    let (second, second_began) = occupy_writer(&instance.app);
+    settle().await;
+    let mut upload = Box::pin(instance.put(&bytes));
+    let waited = tokio::time::timeout(Duration::from_millis(300), &mut upload).await;
+    assert!(
+        waited.is_err(),
+        "the upload answered while the writer was held"
+    );
+    drop(upload);
+
+    first.send(()).unwrap();
+    second_began.await.unwrap();
+    let began = Instant::now();
+    while instance.file(&hash).exists() && began.elapsed() < Duration::from_millis(500) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    second.send(()).unwrap();
+    let run = purge.await.unwrap();
+    assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+
+    assert!(instance.file(&hash).is_file(), "{}", run.body);
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+    assert_eq!(fetched.bytes, bytes);
+    assert_eq!(instance.copies(&hash).await.len(), 1);
+    assert_eq!(
+        instance.count("SELECT count(*) FROM blob_pending_deletions"),
+        0
+    );
 }
 
 /// A picture `width` pixels wide, so each width is a different blob.
