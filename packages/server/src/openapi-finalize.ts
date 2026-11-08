@@ -1074,7 +1074,8 @@ function eventSchemas(): Record<string, unknown> {
         },
         requested: {
           type: "string",
-          description: "The `Last-Event-ID` you sent.",
+          description:
+            "The `Last-Event-ID` you sent, or the ID of the latest event when you sent none.",
         },
       },
       required: ["event_type", "min_retained_id", "requested"],

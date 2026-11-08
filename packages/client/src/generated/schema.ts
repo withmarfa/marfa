@@ -6554,7 +6554,7 @@ export interface components {
             event_type: "catchup_too_old";
             /** @description The ID of the oldest event the log still holds. */
             min_retained_id: string;
-            /** @description The `Last-Event-ID` you sent. */
+            /** @description The `Last-Event-ID` you sent, or the ID of the latest event when you sent none. */
             requested: string;
         };
         /** @description The last frame, with no `id:`, when your `Last-Event-ID` is past the latest event in the log, as after the instance is restored to an earlier state. Read state again from the API. */

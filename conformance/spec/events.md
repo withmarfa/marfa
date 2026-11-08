@@ -325,6 +325,14 @@ If a stream reaches an event in the log that the server can no longer read, then
 
 **Tests:** `compliance/stream-unreadable-rows.test.ts › ends with catchup_too_old at an event it cannot read, and does not send it`.
 
+### `events/unreadable-row-too-old-fields`
+
+When the server ends a stream with `catchup_too_old` because the stream reached an event it cannot read, the server MUST give `min_retained_id` the id of the oldest event the log holds and `requested` the `Last-Event-ID` the client sent, or the log's head when the stream opened with none.
+
+**Reason:** the fields say what is true of the log and of the request, so a client that reads them is not told that the log lost events it still holds. The event that cannot be read is in the log's retained range, so `min_retained_id` may be at or below `requested` plus one, and the client still reads its state again.
+
+**Tests:** `compliance/stream-unreadable-rows.test.ts › ends with catchup_too_old at an event it cannot read, and does not send it`.
+
 ## Filters
 
 ### `events/type-subtree`

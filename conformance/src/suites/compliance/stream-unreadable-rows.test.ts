@@ -108,14 +108,18 @@ describe("a stream that reaches a row the server cannot read", () => {
         return { events };
       };
 
-      const expectTooOld = (events: SseEvent[], id: bigint): void => {
+      const expectTooOld = (
+        events: SseEvent[],
+        requested: string,
+        oldest: string,
+      ): void => {
         const last = events.at(-1)!;
         expect(last.event).toBe("catchup_too_old");
         expect(last.id).toBeUndefined();
         expect(last.data).toEqual({
           event_type: "catchup_too_old",
-          min_retained_id: String(id + 1n),
-          requested: String(id - 1n),
+          min_retained_id: oldest,
+          requested,
         });
         expect(
           events.some((e) => e.event === "stream_live"),
@@ -147,6 +151,14 @@ describe("a stream that reaches a row the server cannot read", () => {
         },
       });
 
+      const oldest = (
+        await runSqlite("sqlite3", [
+          fresh.sqlitePath,
+          "SELECT MIN(id) FROM event_log;",
+        ])
+      ).stdout.trim();
+      expect(oldest, "the log holds no event").toMatch(/^\d+$/);
+
       // From the start: the readable rows before the damage are sent, and the
       // stream then ends with catchup_too_old, naming the damaged row as the
       // last one it cannot go past.
@@ -164,7 +176,7 @@ describe("a stream that reaches a row the server cannot read", () => {
         sent.some((e) => itemOf(e) === notJson || itemOf(e) === after),
         "the replay went past the row it cannot read",
       ).toBe(false);
-      expectTooOld(ended.events, first);
+      expectTooOld(ended.events, "0", oldest);
 
       // Each kind of damage ends a stream that reaches it the same way, and
       // never sends the row.
@@ -175,7 +187,7 @@ describe("a stream that reaches a row the server cannot read", () => {
           reached.events.some((e) => e.id !== undefined),
           `the replay sent a frame at or past the ${name} row, which cannot be read`,
         ).toBe(false);
-        expectTooOld(reached.events, id);
+        expectTooOld(reached.events, cursor, oldest);
       }
 
       // A replay that starts past the damage is not affected by it.
