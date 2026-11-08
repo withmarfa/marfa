@@ -25,7 +25,7 @@ Every event and stream frame the server sends is a row of the table below, which
 | `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                                                                                                                                                                                                                      |
 | `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.                                                                                                                                                                                                      |
 | `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                                                                                                                                                                                                                                 |
-| `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                                                                                                                                                                                                                         |
+| `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent, or the stream reaches an event it cannot read.                                                                                                                                                                          |
 | `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                                                                                                                                                                                                                              |
 | `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                                                                                                                                                                                                                                   |
 
@@ -113,7 +113,7 @@ When a client resumes from the `cursor` of `stream_cursor`, the server MUST send
 
 ### `events/stream-live-after-replay`
 
-When a stream has sent the replay and the live frames held while it ran, the server MUST send `stream_live` before any frame after them.
+When a stream has sent the replay, the server MUST send `stream_live` before any frame after it.
 
 **Reason:** `stream_live` is how a client learns it has caught up, and a frame the filter or the credential withheld means the last frame it was sent may be well behind the head.
 
@@ -127,17 +127,9 @@ The server MUST send `stream_live` without an `id:` line.
 
 ### `events/stream-live-cursor`
 
-Where the server announced a head, the server MUST give the `cursor` of `stream_live` as a string at or past that head.
+The server MUST give the `cursor` of `stream_live` as a string at or past the head it announced.
 
 **Tests:** `sync/stream-contract.test.ts › marks the end of the replay with a cursor a filtered reader can resume from`.
-
-### `events/stream-live-drain-cursor`
-
-When a stream's final drain consumes a logged live frame, the server MUST give `stream_live` a cursor at or past that frame's id, including when the credential withholds it.
-
-**Reason:** the drain settles delivery just as replay does, so its withheld frames are also covered by the marker.
-
-**Tests:** `compliance/stream-prologue-holds.test.ts › gives stream_live a cursor at or past a drained frame the credential withholds`.
 
 ### `events/stream-live-skips-covered`
 
@@ -150,12 +142,6 @@ When a client resumes from the `cursor` of `stream_live`, the server MUST NOT se
 When a client resumes from the `cursor` of `stream_live`, the server MUST send it every event written after the marker.
 
 **Tests:** `sync/stream-contract.test.ts › marks the end of the replay with a cursor a filtered reader can resume from`.
-
-### `events/stream-live-unknown-head`
-
-If the server cannot read the log's head within its budget, and before `stream_live` the stream has neither read an event in a replay nor sent one, then the server MUST send `stream_live` with `cursor` `null`.
-
-**Tests:** `compliance/stream-opening-faults.test.ts › sends stream_live with a null cursor when it has read and sent no event`, `› names the furthest event it replayed instead when it read one`.
 
 ## Cursors
 
@@ -285,7 +271,7 @@ The server MUST NOT retire the newest event the log holds.
 
 ### `events/ids-ascending`
 
-The server MUST send the event frames of one stream in ascending id order, edge frames among item frames, except for the live copy that `events/unreadable-row-live-copy` sends.
+The server MUST send the event frames of one stream in ascending id order, edge frames among item frames.
 
 **Tests:** `sync/resume.test.ts › a reader that closes at the head and resumes from its last id misses nothing and repeats nothing`, `› a purge's edge.deleted frames carry lower ids than its item.purged frame, live and replayed`.
 
@@ -325,25 +311,19 @@ When a client resumes after a restart from the last id it received before it, th
 
 ### `events/live-no-repeat`
 
-When a stream has sent or replayed events up to an id, the server MUST NOT send it an event at or below that id again.
+The server MUST NOT send a stream an event at or below an id it has already sent it.
 
-**Reason:** an archive restore announces its events after it commits, by which time a stream opened since may have replayed them from the log.
+**Reason:** an archive restore announces its events after it commits, by which time a stream opened since may have read them from the log, and a client that applied a later id has moved its cursor past them.
 
-**Tests:** `compliance/stream-prologue-holds.test.ts › is not sent again to a stream that opened between the commit and the announcement`, `› is not sent again to a copy stream that opened between the commit and the announcement`.
+**Tests:** `compliance/stream-prologue-holds.test.ts › sends an event written while the replay waited once, and none at or below an id it has sent`, `› does not send an event a stream opened between the commit and the next write again`.
 
 ### `events/unreadable-row-not-replayed`
 
-If the log holds an event the server can no longer read, then the server MUST NOT replay it.
+If a stream reaches an event in the log that the server can no longer read, then the server MUST end the stream with a terminal `catchup_too_old` frame in place of that event and of every event after it.
 
-**Tests:** `compliance/stream-unreadable-rows.test.ts › does not replay an event it cannot read`.
+**Reason:** the event is gone from the stream's point of view, so sending what follows it would leave a gap the client could not see, which is what `events/catchup-too-old` refuses. The log is the only carrier of an event, so the client reads its state again from the API.
 
-### `events/unreadable-row-live-copy`
-
-If the log holds an event the server can no longer read, then the server MUST send a subscriber connected when it was published its live copy after the replay, behind higher ids.
-
-**Reason:** the live copy is the one carrier the event has left. It is the one place ids are not ascending.
-
-**Tests:** `compliance/stream-prologue-holds.test.ts › sends an unreadable row's live copy after the replay, behind higher ids`.
+**Tests:** `compliance/stream-unreadable-rows.test.ts › ends with catchup_too_old at an event it cannot read, and does not send it`.
 
 ## Filters
 
@@ -677,14 +657,6 @@ When a purge has taken an edge's source item, the server MUST withhold the edge'
 
 **Tests:** `compliance/edge-events.test.ts › withholds a purged item's edges from a subscriber that could not read it, live and on a replay`.
 
-### `events/edge-frame-no-source-type`
-
-If an edge event carries no `source_type`, then the server MUST NOT send it to any subscriber or webhook.
-
-**Reason:** a source the server cannot classify cannot be shown readable.
-
-**Tests:** `compliance/edge-frame-no-source-type.test.ts › is not replayed to a subscriber`, `› is not sent to a live subscriber`, `› is sent to no webhook`.
-
 ## A stream and the source filter
 
 The source filter is `enforcement.source_filter` as it holds for the stream's credential: its own override's if the override names one, and else the instance's (`types/source-filter`). A copy stream is held to `reach/frame-excluded` instead.
@@ -721,21 +693,13 @@ Where the source filter leaves out an item the credential may read, the server M
 
 ## A stream and its credential
 
-### `events/held-authority`
+### `events/page-judged`
 
-When replay or the final drain consumes a live frame selected by a stream's immutable `type` and `edges` request filters, the server MUST judge whether to send that frame under the credential's authority at consumption.
+The server MUST judge each frame of a stream by the stream's credential as it stands when the page of the log that holds the frame is read.
 
-**Reason:** authority can widen while a frame waits, so an earlier credential read cannot settle whether it will be delivered.
+**Reason:** authority can widen or narrow while a stream waits, and the credential that reads a page is the one that decides whether its frames are sent. A frame withheld stays withheld, and `stream_live` covers it.
 
-**Tests:** `compliance/stream-prologue-holds.test.ts › judges a frame held across a widening of the credential by the credential at the drain`, `› judges a frame held across a narrowing of the credential by the credential at the drain`, `› judges a frame a replay consumes by the credential at the replay`.
-
-### `events/replay-consumed`
-
-When a replay has sent or legitimately withheld a readable logged event, the server MUST suppress that event's live twin on the same stream, including after the credential's authority widens.
-
-**Reason:** replay has settled the row, and a later widening cannot revive it behind a higher delivered cursor; `events/unreadable-row-live-copy` still governs rows the replay could not classify.
-
-**Tests:** `compliance/stream-prologue-holds.test.ts › suppresses the live twin of an event the replay withheld, after the credential widens`, `› sends an event the replay sent once`.
+**Tests:** `compliance/stream-prologue-holds.test.ts › sends a frame the credential has come to read by the time its page is read`, `› withholds a frame the credential has come to lose by the time its page is read, and covers it with stream_live`, `› withholds a frame the credential never read, and sends the key's readable frames after it`.
 
 ### `events/credential-narrowed`
 
@@ -801,31 +765,25 @@ If a client opens `GET /events` with a key that has been revoked, then the serve
 
 **Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`.
 
-## A reader that falls behind
+## A reader that takes nothing
 
-### `events/reader-behind`
+### `events/reader-stalled`
 
-When a reader leaves 4 MiB or more of frames unread and a further live frame arrives, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `reader_behind`.
+If a stream's reader takes nothing for a ping interval, 30 seconds, while the server holds a frame for it, then the server MUST close the stream.
 
-**Reason:** a stalled reader would otherwise hold the server's memory. The reader reconnects from the frame's `cursor` and the replay serves the rest.
+**Reason:** a stalled reader would otherwise hold the server's connection and the stream's task without end. The server keeps no copy of what the reader did not take, so the reader reconnects from the last id it took and the log serves the rest.
 
-**Tests:** `compliance/stream-reader-behind.test.ts › is ended with reader_behind once it falls past the bound, and resumes from its cursor`.
-
-### `events/reader-behind-resumes`
-
-When a client resumes from the `cursor` of a `reader_behind` frame, the server MUST send it every event after that cursor.
-
-**Tests:** `compliance/stream-reader-behind.test.ts › is ended with reader_behind once it falls past the bound, and resumes from its cursor`.
+**Tests:** `compliance/stream-stalled-reader.test.ts › is closed once it has taken nothing for a ping interval, and resumes from the last id it took`.
 
 ## How a stream ends
 
-`stream_incomplete` ends a stream that can no longer deliver what it opened with. Everything after the event it names is still in the log, so the recovery is to reconnect from its `cursor`. `credential_ended` is `events/credential-revoked`, `reader_behind` is `events/reader-behind` and `server_stopping` is `instance/stop-stream-reason`.
+`stream_incomplete` ends a stream that can no longer deliver what it opened with. Everything after the event it names is still in the log, so the recovery is to reconnect from its `cursor`. `credential_ended` is `events/credential-revoked`, `read_failed` is `events/read-failed` and `server_stopping` is `instance/stop-stream-reason`.
 
 ### `events/incomplete-cursor`
 
 When the server ends a stream with `stream_incomplete`, the server MUST give `cursor` as the id of the last event the stream sent, or `null` when it sent none.
 
-**Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`, `compliance/stream-reader-behind.test.ts › is ended with reader_behind once it falls past the bound, and resumes from its cursor`, `compliance/stream-shutdown.test.ts › names the last event the stream sent as the cursor of its closing frame`.
+**Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`, `compliance/stream-shutdown.test.ts › names the last event the stream sent as the cursor of its closing frame`.
 
 ### `events/incomplete-no-id`
 
@@ -833,33 +791,21 @@ The server MUST send `stream_incomplete` without an `id:` line.
 
 **Reason:** the same as `events/cursor-ahead-no-id`: an `id:` would become the cursor a reconnect resumes from.
 
-**Tests:** `compliance/stream-credential.test.ts › ends with credential_ended when the key is revoked, and sends nothing after`, `compliance/stream-reader-behind.test.ts › is ended with reader_behind once it falls past the bound, and resumes from its cursor`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
+**Tests:** `compliance/stream-credential.test.ts › ends with credential_ended when the key is revoked, and sends nothing after`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
 
 ### `events/incomplete-closes`
 
 When the server has sent `stream_incomplete`, the server MUST close the stream.
 
-**Tests:** `compliance/stream-credential.test.ts › ends with credential_ended when the key is revoked, and sends nothing after`, `compliance/stream-reader-behind.test.ts › is ended with reader_behind once it falls past the bound, and resumes from its cursor`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
+**Tests:** `compliance/stream-credential.test.ts › ends with credential_ended when the key is revoked, and sends nothing after`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
 
-### `events/replay-failed`
+### `events/read-failed`
 
-If the server's read of the log's head fails when a stream opens, a read of the log fails while the stream replays, or the read of the stream's credential before a page of the replay fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
+If the server's read of the log fails when a stream opens or while it replays, or the read of the stream's credential before a page of the log or at a heartbeat fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `read_failed`.
 
-**Tests:** `compliance/stream-opening-faults.test.ts › ends with replay_failed when the read of the head fails as it opens`, `› ends a copy stream's opening with replay_failed when the read of the head fails`, `› ends with replay_failed and a null cursor when the first replay page fails`, `› ends a copy stream's replay with replay_failed when a read of the log fails`, `› ends with replay_failed when the read of its credential before a page of the replay fails`, `› ends a copy stream's replay with replay_failed when its credential cannot be read`.
+**Reason:** a stream that cannot read the log or its credential can no longer say what it has not sent, so it ends and the client reconnects from its `cursor`.
 
-### `events/live-delivery-failed`
-
-If the read of a stream's credential at a heartbeat or before a batch of live frames fails, or the server cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
-
-**Tests:** `compliance/stream-opening-faults.test.ts › ends with live_delivery_failed when the read of its credential before a batch fails`, `› ends a copy stream with live_delivery_failed when the read of its credential before a batch fails`, `› ends with live_delivery_failed when the read of its credential at a heartbeat fails`, `› ends every stream with live_delivery_failed when the server cannot confirm a commit whose events they wait for`.
-
-### `events/backlog-overflow`
-
-If more than 500 live frames selected by a stream's immutable `type` and `edges` request filters are waiting before it sends `stream_live`, and either no replay is reading or one of them is a row the replay cannot read from the log, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
-
-**Reason:** the frames a stream holds while it opens are bounded, including those excluded only by mutable credential authority because that authority can widen before delivery. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
-
-**Tests:** `compliance/stream-prologue-holds.test.ts › ends with backlog_overflow when more than 500 selected frames wait and no replay is reading`, `› ends with backlog_overflow when a row the replay reads is unreadable and its live copy was given up to the replay`.
+**Tests:** `compliance/stream-opening-faults.test.ts › ends with read_failed when the read of the head fails as it opens`, `› ends with read_failed and a null cursor when the first replay page fails`, `› ends with read_failed when the read of its credential before a page of the replay fails`, `› ends with read_failed when the read of its credential before a batch fails`, `› ends with read_failed when the read of its credential at a heartbeat fails`.
 
 ## Registering a subscription
 
