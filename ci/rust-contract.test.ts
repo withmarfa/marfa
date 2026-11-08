@@ -61,7 +61,7 @@ describe("the Rust server's release build", () => {
   it("is the release build of marfa-server on a standard Linux runner, locked, and is uploaded for the shards", () => {
     expect(build?.["runs-on"]).toBe("ubuntu-latest");
     expect(step(build, "Build the Rust server").run).toBe(
-      "cargo build --locked --release -p marfa-server",
+      "cargo build --locked --release -p marfa-server --features test-hooks",
     );
     const upload = step(build, "Keep the server");
     expect(upload.with?.path).toBe("core/target/release/marfa-server");

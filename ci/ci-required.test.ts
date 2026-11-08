@@ -931,14 +931,21 @@ describe("what a change runs", () => {
                 "core-checks-linux",
                 "rust-contract",
               ]
-            : READ_AT_RUN_TIME.includes(chapter)
+            : chapter === "instance.md"
               ? [
                   "workspace",
                   "conformance-offline",
-                  "conformance-compliance",
+                  "core-checks-linux",
                   "rust-contract",
                 ]
-              : ["workspace", "conformance-offline"],
+              : READ_AT_RUN_TIME.includes(chapter)
+                ? [
+                    "workspace",
+                    "conformance-offline",
+                    "conformance-compliance",
+                    "rust-contract",
+                  ]
+                : ["workspace", "conformance-offline"],
         );
       } else if (path === "core/marfa-cli/COMMANDS.md") {
         expect(beyond(path), path).toEqual(["core-checks-linux"]);
