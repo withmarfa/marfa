@@ -68,11 +68,13 @@ describe("owner and delegated profile changes", () => {
       headers: { authorization: `Bearer ${app.token}` },
     });
     expect(identity.status).toBe(200);
-    expect(await identity.json()).toEqual({
+    const read = await identity.json();
+    expect(read).toEqual({
       name: "New owner",
       email: "changed.owner@example.test",
       avatar: null,
     });
+    await expectMatchesSchema("GET", "/profile", 200, read);
 
     const signin = (email: string) =>
       fetch(server.apiUrl + "/auth/sign-in/email", {
