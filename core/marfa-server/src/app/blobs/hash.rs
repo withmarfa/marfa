@@ -4,7 +4,7 @@ const PREFIX: &str = "sha256:";
 const HEX_LEN: usize = 64;
 
 /// A blob's name: `sha256:` and the 64 lowercase hex characters of a digest.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Hash(String);
 
 impl Hash {

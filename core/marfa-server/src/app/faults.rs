@@ -66,7 +66,16 @@ points! {
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
     FAIL_BLOB_WRITE = Fail "blob-write" Nth;
+    FAIL_BLOB_READ = Fail "blob-read" Nth;
+    FAIL_BLOB_DELETE = Fail "blob-delete" Nth;
+    HOLD_BLOB_HAS = Hold "blob-has" None;
+    HOLD_BLOB_READ = Hold "blob-read" Nth;
+    HOLD_BLOB_WRITE = Hold "blob-write" None;
+    HOLD_BLOB_DELETE = Hold "blob-delete" None;
+    HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
 }
+
+const STORE_CHECK_DEADLINE: &str = "store-check-deadline";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Volume {
@@ -154,7 +163,9 @@ fn is_action(text: &str) -> bool {
 fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     let name = point.name;
     let Some(arg) = arg else {
-        return Ok((point.argument != Argument::None).then_some(Aim {
+        let every = point.argument == Argument::None
+            || (point.kind == Kind::Hold && point.argument == Argument::Nth);
+        return Ok((!every).then_some(Aim {
             action: None,
             nth: 1,
         }));
@@ -205,10 +216,7 @@ fn judge_job(
     }
 }
 
-fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
-    if !housekeeping::is_job(job) {
-        return Err(format!("no job is named {job}"));
-    }
+fn milliseconds(arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
         .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
@@ -217,7 +225,17 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
+    if !housekeeping::is_job(job) {
+        return Err(format!("no job is named {job}"));
+    }
+    milliseconds(arg)
+}
+
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+    if name == STORE_CHECK_DEADLINE {
+        return milliseconds(arg).map(|ms| (None, Some(ms)));
+    }
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
         return judge_job(kind, job, arg);
@@ -253,8 +271,8 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
         _ => Err(
-            "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job> \
-             or free:<volume>"
+            "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, \
+             free:<volume> or store-check-deadline"
                 .to_string(),
         ),
     }
@@ -412,6 +430,15 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
+    /// How long a store is given to answer, when a test has shortened it.
+    pub fn store_check_deadline(&self) -> Option<Duration> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == STORE_CHECK_DEADLINE)
+            .and_then(|fault| fault.number)
+            .map(Duration::from_millis)
+    }
+
     pub fn free(&self, volume: Volume) -> Option<u64> {
         self.armed()
             .iter()
@@ -523,6 +550,40 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    #[test]
+    fn a_store_check_deadline_takes_milliseconds_alone() {
+        assert!(refused("store-check-deadline", None));
+        assert!(refused("store-check-deadline", Some("0")));
+        assert!(refused("store-check-deadline:disk", Some("10")));
+        let faults = Faults::default();
+        faults.set("store-check-deadline", Some("200")).unwrap();
+        assert_eq!(
+            faults.store_check_deadline(),
+            Some(Duration::from_millis(200))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_counted_hold_with_no_count_holds_every_caller() {
+        let faults = Arc::new(Faults::default());
+        faults.set("hold:blob-read", None).unwrap();
+        let held: Vec<_> = (0..2)
+            .map(|_| {
+                let faults = faults.clone();
+                tokio::spawn(async move { faults.hold(HOLD_BLOB_READ, None).await })
+            })
+            .collect();
+        while faults.list()[0].waiting < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        faults.set("hold:blob-read", Some("2")).unwrap();
+        faults.hold(HOLD_BLOB_READ, None).await;
+        faults.clear(None);
+        for task in held {
+            task.await.unwrap();
+        }
     }
 
     #[tokio::test]
