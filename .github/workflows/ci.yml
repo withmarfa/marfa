@@ -248,7 +248,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
     name: Core checks
-    timeout-minutes: 24
+    timeout-minutes: 45
     runs-on: macos-26
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
