@@ -620,7 +620,7 @@ it("sends the published app grant operations and reads an empty disconnect answe
   expect(
     (
       await client.DELETE("/auth/grants/{id}", {
-        params: { path: { id: "app-1" }, query: { revoke_keys: "1" } },
+        params: { path: { id: "app-1" } },
       })
     ).response.status,
   ).toBe(204);
@@ -629,7 +629,7 @@ it("sends the published app grant operations and reads an empty disconnect answe
   ).toEqual([
     ["GET", "/auth/grants", ""],
     ["PATCH", "/auth/grants/app-1", ""],
-    ["DELETE", "/auth/grants/app-1", "?revoke_keys=1"],
+    ["DELETE", "/auth/grants/app-1", ""],
   ]);
   expect(await seen[1]!.json()).toEqual(choice);
 });
