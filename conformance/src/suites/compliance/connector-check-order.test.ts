@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import {
@@ -10,7 +11,6 @@ import {
   createSecondClient,
   createTestContext,
   getManagementClient,
-  getOwnerClient,
 } from "../../utils/setup.js";
 
 /**
@@ -887,15 +887,15 @@ describe("a credential that is missing, against what the body would be refused f
     }
   });
 
-  it("answers direct owner authority 403 before a registration body it would be refused for", async () => {
-    const operator = getOwnerClient();
+  it("answers local authority 403 before a registration body it would be refused for", async () => {
     for (const body of [{ name: "" }, {}, { name: "n".repeat(201) }]) {
-      const refused = await operator.rawRequest<unknown>("/connectors", {
-        method: "POST",
-        body,
-      });
+      const refused = await controlRequest(
+        process.env.MARFA_CONTROL_SOCKET!,
+        "/connectors",
+        { method: "POST", body },
+      );
       expect(refused.status, JSON.stringify(body).slice(0, 30)).toBe(403);
-      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.body).toMatchObject({ error: { code: "forbidden" } });
       // The witness: a working key sending the body is refused for it.
       const invalid = await stranger.rawRequest<unknown>("/connectors", {
         method: "POST",

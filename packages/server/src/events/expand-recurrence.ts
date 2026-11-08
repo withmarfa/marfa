@@ -133,11 +133,14 @@ export function expandSeries(
     if (!Number.isNaN(at)) shadowed.set(at, exception);
   }
 
+  const forcedCheck = faultsArmed() ? unfoldDeadlineFault() : undefined;
+  let checks = 0;
   const meter = new RecurrenceMeter(
     limits.iterations ?? MAX_EXPANSION_ITERATIONS,
-    limits.timeMs ??
-      (faultsArmed() ? unfoldDeadlineFault() : undefined) ??
-      RECURRENCE_TIME_LIMIT_MS,
+    forcedCheck === undefined
+      ? (limits.timeMs ?? RECURRENCE_TIME_LIMIT_MS)
+      : forcedCheck - 1,
+    forcedCheck === undefined ? undefined : () => checks++,
   );
   let starts: number[];
   try {

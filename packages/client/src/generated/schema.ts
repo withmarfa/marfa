@@ -2640,7 +2640,7 @@ export interface components {
                 name: string;
             } | null;
         };
-        /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
+        /** @description The source's current problems, by opaque key. Each message is at most 500 characters. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
         ConnectorProblems: {
             [key: string]: string;
         };
@@ -4469,7 +4469,7 @@ export interface components {
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
         };
-        /** @description The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply. */
+        /** @description The occurrences in a time window, with any rules Marfa couldn't apply. */
         OccurrencePage: {
             /** @description The occurrences that overlap the window, by start time. */
             data: components["schemas"]["Occurrence"][];
@@ -4482,23 +4482,11 @@ export interface components {
                 /** @description The end of the window, in UTC. */
                 to: string;
             };
-            /** @description What this read cost, and the limits that would stop it. */
+            /** @description How many rules Marfa couldn't apply or finish. */
             scan: {
-                /** @description How many event items this request read. It grows with the size of the calendar more than with the window. */
-                events_read: number;
-                /** @description How many occurrences `data` holds. */
-                occurrences: number;
-                /** @description The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it. */
-                max_occurrences: number;
                 /** @description How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest. */
                 series_errors: number;
-                /** @description The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds. */
-                max_series_errors: number;
-                /** @description How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here. */
-                unproductive_iterations: number;
-                /** @description The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it. */
-                max_unproductive_iterations: number;
-                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`. */
+                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once the series that produced nothing had used up the request's share of work. Above `0`, `expansion_incomplete` is `true`. */
                 series_unexpanded: number;
             };
             /** @description One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none. */
@@ -4508,7 +4496,7 @@ export interface components {
                 /** @description What is wrong with its rule, for a person to read. */
                 message: string;
             }[];
-            /** @description `true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
+            /** @description `true` when `series_errors` stops at 500 entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
             series_errors_truncated?: boolean;
             /** @description `true` when a series didn't finish expanding, so `data` may be missing occurrences; `scan.series_unexpanded` counts them. If a series has too many in the window, narrow the window; else narrow by `type` or fix the rules. Absent otherwise. */
             expansion_incomplete?: boolean;
@@ -10049,7 +10037,7 @@ export interface operations {
                 from: string;
                 /** @description Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
-                /** @description Only return events of this type, or of the event types a wildcard matches. */
+                /** @description Only return events of this type, or of the event types a wildcard matches. Names one type. */
                 type?: string;
             };
             header?: never;
@@ -10075,7 +10063,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `from` or `to` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.
+             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences`, or `max_days` for the window.
              */
             400: {
                 headers: {

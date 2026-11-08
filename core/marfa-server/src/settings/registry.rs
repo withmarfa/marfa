@@ -281,6 +281,9 @@ registry! {
     AUTH_SESSION_CLEANUP_INTERVAL_MS: u64 = "auth_session_cleanup_interval_ms", Some("AUTH_SESSION_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `auth-session-cleanup` job runs, in milliseconds.";
     DCR_CLIENT_CLEANUP_INTERVAL_MS: u64 = "dcr_client_cleanup_interval_ms", Some("MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `dcr-client-cleanup` job runs, in milliseconds.";
     SSE_MAX_VIEWERS: u64 = "sse_max_viewers", Some("MARFA_SSE_MAX_VIEWERS"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
+    MCP_FETCH_ENABLED: bool = "mcp_fetch_enabled", None, Rule::Boolean, "true", "Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.";
+    MCP_FETCH_MAX_BYTES: u64 = "mcp_fetch_max_bytes", None, Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "52428800", "The largest file an MCP tool fetches from a web address to save, in bytes. A larger file is refused and nothing is stored.";
+    MCP_FETCH_TIMEOUT_MS: u64 = "mcp_fetch_timeout_ms", None, Rule::Whole { min: 1, max: 3_600_000 }, "60000", "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in milliseconds.";
     EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
     FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
     HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", Some("MARFA_HEARTBEAT_INTERVAL_MS"), INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
