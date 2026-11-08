@@ -1,5 +1,4 @@
-//! Connectors: a registration under a key, its heartbeats and runs, the hold that fences its
-//! writes, and the state and agreements its source keeps.
+//! Registrations belong to keys; state and agreements belong to sources.
 
 pub mod read_only;
 mod request;

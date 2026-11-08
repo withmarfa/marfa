@@ -1,6 +1,4 @@
-//! What each connector operation is asked, read from a body or a query. A request is read in two
-//! steps: `parse` judges the fields the operation declares, and `checked` judges what the
-//! operation's own rules add, after the registration and its key have been found.
+//! Late checks follow registration lookup and authorization to preserve refusal precedence.
 
 use std::collections::HashSet;
 
@@ -40,7 +38,7 @@ fn invalid(field: &str, message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into()).with_detail("field", field)
 }
 
-/// The bytes a document takes serialized, as a client's own JSON library prints it.
+/// Size limits use the wire format's number printing.
 fn serialized(document: &Fields) -> Result<usize> {
     js::to_vec(document)
         .map(|bytes| bytes.len())

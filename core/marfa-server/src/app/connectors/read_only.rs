@@ -1,6 +1,3 @@
-//! Whether an item is read only: every live registration that reaches its source lists its
-//! type, and its key may write that type.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 

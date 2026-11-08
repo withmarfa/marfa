@@ -471,9 +471,7 @@ fn ill_formed(pointer: String) -> Refusal {
         .with_detail("errors", json!([{ "path": pointer, "message": message }]))
 }
 
-/// Refuses a body too deep or ill-formed to read, under any `Content-Type`. A body over
-/// the cap is left to its operation, which answers the credential first, except under
-/// `/connectors`, where the size is read before anything else.
+/// Connector size refusals precede credential checks.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let limit = cap_on(&app, request.uri().path(), request.extensions());
     if super::profile::reads_own_body(&request) || request.body().is_end_stream() {
