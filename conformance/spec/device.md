@@ -5394,7 +5394,7 @@ While a device holds a create that the server has not answered, a device MUST ho
 
 **Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
 
-### `device/order-numeric-names`
+### `device/order-array-index`
 
 A device MUST give a property whose name reads as a number no place of its own, ordering it as it orders any other property under `device/order-create`, `device/order-merge` and `device/order-replace`.
 
