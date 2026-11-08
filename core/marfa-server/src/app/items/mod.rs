@@ -19,6 +19,7 @@ use serde_json::{Map, Value, json};
 
 use super::access::Caller;
 use super::catalog::Catalog;
+use super::connectors::ReadOnly;
 use super::edges::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
 
@@ -221,8 +222,8 @@ impl Item {
         }
     }
 
-    pub fn answered(&self, tx: &Transaction<'_>, caller: &Caller) -> Result<String> {
-        let read_only = read_only(tx, &self.source, &self.type_id)?;
+    pub fn answered(&self, read_only: &ReadOnly, caller: &Caller) -> Result<String> {
+        let read_only = read_only.of(&self.source, &self.type_id);
         with_properties(
             &self.head(Some(read_only), Marks::To(caller)),
             &self.properties,
@@ -232,11 +233,12 @@ impl Item {
     pub(crate) fn hydrated(
         &self,
         tx: &Transaction<'_>,
+        read_only: &ReadOnly,
         caller: &Caller,
         catalog: &Catalog,
     ) -> Result<String> {
         let blocks = edges::hydrate(tx, caller, catalog, &self.id, Reach::Outbound)?;
-        Ok(with_blocks(self.answered(tx, caller)?, &blocks.text))
+        Ok(with_blocks(self.answered(read_only, caller)?, &blocks.text))
     }
 
     /// A frame adds `read_only` when it is sent.
@@ -300,10 +302,6 @@ impl Snapshot {
             source_id: self.source_id.clone(),
         }
     }
-}
-
-pub fn read_only(_tx: &Transaction<'_>, _source: &str, _type_id: &str) -> Result<bool> {
-    Ok(false)
 }
 
 fn not_found() -> Refusal {

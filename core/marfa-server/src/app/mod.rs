@@ -8,6 +8,7 @@ pub mod blobs;
 pub mod catalog;
 pub mod clock;
 pub mod config;
+pub mod connectors;
 pub mod consequences;
 pub mod edge_types;
 pub mod edges;
@@ -70,6 +71,7 @@ pub struct App {
     pub viewers: events::Viewers,
     stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
+    read_only: Arc<ArcSwap<connectors::Registry>>,
     bound_port: OnceLock<u16>,
     pub(crate) documents: oauth::clients::Documents,
 }
@@ -128,6 +130,7 @@ impl App {
             blobs,
             telemetry: Telemetry::default(),
             catalog,
+            read_only: Arc::new(ArcSwap::from_pointee(connectors::Registry::empty())),
             bound_port: OnceLock::new(),
             documents: oauth::clients::Documents::default(),
         });
@@ -149,6 +152,10 @@ impl App {
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
         self.catalog.clone()
+    }
+
+    pub(crate) fn read_only_handle(&self) -> Arc<ArcSwap<connectors::Registry>> {
+        self.read_only.clone()
     }
 
     pub fn addresses(&self) -> Addresses {

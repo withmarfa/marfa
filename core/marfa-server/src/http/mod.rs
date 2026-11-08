@@ -10,6 +10,7 @@ pub mod caller;
 mod caller_address;
 mod compression;
 mod config;
+mod connectors;
 mod control;
 #[cfg(test)]
 mod document;
@@ -248,6 +249,41 @@ fn config_doors() -> Routes {
         .route("/config/settings", get(config::settings))
 }
 
+fn connector_doors() -> Routes {
+    Doors::new()
+        .route(
+            "/connectors",
+            post(connectors::register).get(connectors::list),
+        )
+        .route(
+            "/connectors/{id}",
+            get(connectors::read).delete(connectors::remove),
+        )
+        .route("/connectors/{id}/heartbeat", post(connectors::heartbeat))
+        .route(
+            "/connectors/{id}/runs",
+            post(connectors::report_run).get(connectors::runs),
+        )
+        .route(
+            "/connectors/{id}/hold",
+            post(connectors::take_hold).delete(connectors::release_hold),
+        )
+        .route(
+            "/connectors/{id}/state",
+            get(connectors::state)
+                .put(connectors::replace_state)
+                .delete(connectors::clear_state),
+        )
+        .route(
+            "/connectors/{id}/agreements",
+            post(connectors::write_agreements).get(connectors::list_agreements),
+        )
+        .route(
+            "/connectors/{id}/agreements/lookup",
+            post(connectors::lookup_agreements),
+        )
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/", get(root::describe))
@@ -262,6 +298,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
         .merge(blob_doors())
+        .merge(connector_doors())
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())

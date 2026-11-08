@@ -18,6 +18,7 @@ use super::{
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
+use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION};
 use crate::app::refusal::{Refusal, Result};
@@ -33,6 +34,7 @@ pub(crate) struct Reader<'a, 'c> {
     pub tx: &'a Transaction<'c>,
     pub caller: Caller,
     pub catalog: Arc<Catalog>,
+    pub read_only: ReadOnly,
     faults: &'a Faults,
 }
 
@@ -43,16 +45,20 @@ where
 {
     let caller = caller.clone();
     let cache = app.catalog_handle();
+    let marked = app.read_only_handle();
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     app.db
         .read(move |tx| {
-            let caller = caller.current(tx, &clock.stamp())?;
+            let at = clock.stamp();
+            let caller = caller.current(tx, &at)?;
             let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
+            let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
             job(&Reader {
                 tx,
                 caller,
                 catalog,
+                read_only,
                 faults: &faults,
             })
         })
@@ -148,7 +154,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
         }
         held.push(format!(
             "{{\"item\":{},\"metadata\":{}}}",
-            row.answered(read.tx, &read.caller)?,
+            row.answered(&read.read_only, &read.caller)?,
             metadata_for(read.tx, &row, &read.caller)?
         ));
     }
@@ -199,7 +205,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
         };
         Ok(format!(
             "{{\"item\":{},\"metadata\":{}{versions}{backrefs}{neighbors}}}",
-            with_blocks(row.answered(read.tx, &read.caller)?, &outbound.text),
+            with_blocks(row.answered(&read.read_only, &read.caller)?, &outbound.text),
             metadata_for(read.tx, &row, &read.caller)?
         ))
     })
@@ -262,9 +268,9 @@ pub async fn bulk_get(
         let mut metadata = Vec::new();
         for row in &visible {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
             } else {
-                row.answered(read.tx, &read.caller)?
+                row.answered(&read.read_only, &read.caller)?
             };
             text.pop();
             if include.extensions {
@@ -297,9 +303,9 @@ pub(crate) fn listed_rows(
         .iter()
         .map(|row| {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
             } else {
-                row.answered(read.tx, &read.caller)?
+                row.answered(&read.read_only, &read.caller)?
             };
             if include.extensions {
                 let held =
@@ -698,9 +704,9 @@ pub async fn lookup(
                 continue;
             }
             data.push(if edges {
-                row.hydrated(read.tx, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
             } else {
-                row.answered(read.tx, &read.caller)?
+                row.answered(&read.read_only, &read.caller)?
             });
         }
         let tombstones = match keys.filter(|_| readable) {

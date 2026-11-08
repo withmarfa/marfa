@@ -190,9 +190,9 @@ fn read_page(
         return Ok(page);
     }
     let judge = Judge {
-        tx: read.tx,
         caller: &read.caller,
         rules: &read.catalog.rules,
+        read_only: &read.read_only,
         filter,
     };
     let mut scanned = 0;

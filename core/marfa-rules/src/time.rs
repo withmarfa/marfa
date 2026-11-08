@@ -11,6 +11,11 @@ pub fn normalize(value: &str, field: &str) -> Result<String> {
     Ok(instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
+/// Whether `value` is a timestamp, whatever year it falls in.
+pub fn is_timestamp(value: &str) -> bool {
+    parse(value).is_some()
+}
+
 pub fn invalid(field: &str, reason: &str) -> RuleError {
     RuleError::validation(format!("Invalid {field}: {reason}"))
 }
