@@ -584,6 +584,17 @@ mod tests {
     }
 
     #[test]
+    fn the_unfold_deadline_is_a_whole_number_of_milliseconds() {
+        assert!(refused("unfold-deadline", None));
+        assert!(refused("unfold-deadline", Some("0")));
+        assert!(refused("unfold-deadline", Some("soon")));
+        let faults = Faults::default();
+        assert_eq!(faults.unfold_deadline(), None);
+        faults.set("unfold-deadline", Some("1")).unwrap();
+        assert_eq!(faults.unfold_deadline(), Some(Duration::from_millis(1)));
+    }
+
+    #[test]
     fn a_refusal_stays_until_cleared_and_counts_each_refusal() {
         let faults = Faults::default();
         faults.set("refuse:read", None).unwrap();
