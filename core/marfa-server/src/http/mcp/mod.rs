@@ -349,14 +349,17 @@ pub fn doors() -> super::Routes {
             Group::Items.path(),
             post_to(post_items).get(only_post).delete(only_post),
         )
+        .refusing(axum::http::Method::DELETE, Group::Items.path())
         .route(
             Group::Schema.path(),
             post_to(post_schema).get(only_post).delete(only_post),
         )
+        .refusing(axum::http::Method::DELETE, Group::Schema.path())
         .route(
             Group::Admin.path(),
             post_to(post_admin).get(only_post).delete(only_post),
         )
+        .refusing(axum::http::Method::DELETE, Group::Admin.path())
 }
 
 #[cfg(test)]

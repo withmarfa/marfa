@@ -152,7 +152,7 @@ When a write names `X-Marfa-Instance-Id` and meets more than one of the answers 
 
 **Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
 
-**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on a conditional read before it judges the read's reach`.
 
 ### `instance/write-instance-not-recorded`
 
