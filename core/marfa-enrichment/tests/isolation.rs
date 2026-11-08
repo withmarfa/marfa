@@ -6,6 +6,7 @@
 
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -396,15 +397,53 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
     )?;
     let path = folder.path().join("writable");
     std::fs::write(&path, b"x").map_err(|error| error.to_string())?;
-    let writable = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|error| error.to_string())?;
-    let outcome = marfa_enrichment::read(&writable, TEXT, &no_time);
+    // The witness: the same file, open for reading only, is let through to a child, which
+    // is the time limit's refusal and not the call's.
+    let witness = marfa_enrichment::read(
+        &File::open(&path).map_err(|e| e.to_string())?,
+        TEXT,
+        &no_time,
+    );
     check(
-        matches!(&outcome, Err(Refusal::ReaderUnavailable(why)) if why.contains("reading only")),
-        || format!("a file the reader could write gave {outcome:?}"),
+        matches!(&witness, Err(Refusal::ReaderUnavailable(why)) if !why.contains("the file cannot be read")),
+        || format!("the witness: a readable file gave {witness:?}"),
+    )?;
+    for (what, read_it, write_it, append_it) in [
+        ("a file open for reading and writing", true, true, false),
+        ("a file open for writing only", false, true, false),
+        ("a file open to append", false, false, true),
+        ("a file open to read and append", true, false, true),
+    ] {
+        let file = std::fs::OpenOptions::new()
+            .read(read_it)
+            .write(write_it)
+            .append(append_it)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        let outcome = marfa_enrichment::read(&file, TEXT, &no_time);
+        check(
+            matches!(&outcome, Err(Refusal::ReaderUnavailable(why)) if why.contains("reading only")),
+            || format!("{what} gave {outcome:?}"),
+        )?;
+    }
+    // A pipe cannot be read by position, and opening one for reading would otherwise
+    // wait for a writer.
+    let pipe = folder.path().join("pipe");
+    let named =
+        std::ffi::CString::new(pipe.to_str().ok_or("a path")?).map_err(|e| e.to_string())?;
+    // SAFETY: a NUL-terminated path that outlives the call.
+    if unsafe { libc::mkfifo(named.as_ptr(), 0o600) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string().into());
+    }
+    let fifo = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&pipe)
+        .map_err(|error| error.to_string())?;
+    let outcome = marfa_enrichment::read(&fifo, TEXT, &no_time);
+    check(
+        matches!(&outcome, Err(Refusal::ReaderUnavailable(why)) if why.contains("regular file")),
+        || format!("a pipe gave {outcome:?}"),
     )
 }
 
@@ -1114,6 +1153,56 @@ mod faults {
         )
     }
 
+    /// The child is given the caller's descriptor as stdin, so a taken-over child could
+    /// write to the caller's file if that descriptor allowed it.
+    pub(super) fn a_child_cannot_write_to_the_file_it_was_given() -> Result<(), Failed> {
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = folder.path().join("given");
+        let bytes = fault("write-stdin");
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        // The witness: the same call on a descriptor that is open for writing writes.
+        let writable =
+            File::create(folder.path().join("witness")).map_err(|error| error.to_string())?;
+        // SAFETY: a one-byte buffer that outlives the call.
+        let written = unsafe {
+            libc::write(
+                std::os::fd::AsRawFd::as_raw_fd(&writable),
+                c"x".as_ptr().cast(),
+                1,
+            )
+        };
+        check(written == 1, || "the witness could not write".into())?;
+
+        let file = File::open(&path).map_err(|error| error.to_string())?;
+        let reading = marfa_enrichment::read(&file, TEXT, &short()).map_err(|r| r.to_string())?;
+        check(
+            reading.text.starts_with("refused") && reading.text.contains("Bad file descriptor"),
+            || format!("the child's write gave {:?}", reading.text),
+        )?;
+        let left = std::fs::read(&path).map_err(|error| error.to_string())?;
+        check(left == bytes, || "the child changed the file".into())
+    }
+
+    /// The offset belongs to the open file description the caller and the child share, so
+    /// a taken-over child can move it, as the documentation says. `pread` is what keeps an
+    /// honest reader from doing so.
+    pub(super) fn a_taken_over_child_can_move_the_callers_place() -> Result<(), Failed> {
+        use std::io::{Seek as _, SeekFrom};
+
+        let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = folder.path().join("given");
+        std::fs::write(&path, fault("lseek-stdin 3")).map_err(|error| error.to_string())?;
+        let mut file = File::open(&path).map_err(|error| error.to_string())?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| error.to_string())?;
+        let reading = marfa_enrichment::read(&file, TEXT, &short()).map_err(|r| r.to_string())?;
+        check(reading.text == "moved to 3", || {
+            format!("{:?}", reading.text)
+        })?;
+        let place = file.stream_position().map_err(|error| error.to_string())?;
+        check(place == 3, || format!("the caller's offset is {place}"))
+    }
+
     pub(super) fn a_child_cannot_write_a_file() -> Result<(), Failed> {
         let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
         let path = folder.path().join("left-behind");
@@ -1600,6 +1689,14 @@ fn main() {
         (
             "a_data_folder_with_a_quote_in_its_name_still_sandboxes",
             faults::a_data_folder_with_a_quote_in_its_name_still_sandboxes,
+        ),
+        (
+            "a_child_cannot_write_to_the_file_it_was_given",
+            faults::a_child_cannot_write_to_the_file_it_was_given,
+        ),
+        (
+            "a_taken_over_child_can_move_the_callers_place",
+            faults::a_taken_over_child_can_move_the_callers_place,
         ),
         (
             "a_child_cannot_write_a_file",

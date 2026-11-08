@@ -110,6 +110,24 @@ pub(super) fn act(opening: &[u8]) -> Option<String> {
             let outcome = std::fs::write(argument, b"x");
             Some(format!("{outcome:?}"))
         }
+        "write-stdin" => {
+            // SAFETY: a one-byte buffer that outlives the call.
+            let written = unsafe { libc::write(0, c"x".as_ptr().cast(), 1) };
+            Some(if written == 1 {
+                "written".to_owned()
+            } else {
+                format!("refused: {}", std::io::Error::last_os_error())
+            })
+        }
+        "lseek-stdin" => {
+            // SAFETY: moves the offset of the descriptor the child was given.
+            let moved = unsafe { libc::lseek(0, argument.parse().unwrap_or(0), libc::SEEK_SET) };
+            Some(if moved >= 0 {
+                format!("moved to {moved}")
+            } else {
+                format!("refused: {}", std::io::Error::last_os_error())
+            })
+        }
         "open" => Some(match File::open(argument) {
             Ok(_) => "opened".to_owned(),
             Err(error) => format!("refused: {error}"),
