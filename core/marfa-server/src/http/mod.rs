@@ -99,7 +99,7 @@ fn webhook_doors(app: Arc<App>) -> Routes {
             "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
             post(webhooks::redeliver),
         )
-        .route_layer(from_fn_with_state(app, webhooks::not_a_session))
+        .admitting(app, Admission::Presented)
 }
 
 fn schema_doors() -> Routes {

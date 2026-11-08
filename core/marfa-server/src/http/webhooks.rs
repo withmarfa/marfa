@@ -1,28 +1,16 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri};
-use axum::middleware::Next;
-use axum::response::Response;
 use serde_json::json;
 
-use super::answer::{Answer, json_answer, refusal_answer};
+use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
-use super::caller::identify;
 use super::listing::{Params, whole_limit};
 use super::query;
 use crate::app::App;
-use crate::app::access::{Caller, unauthorized};
+use crate::app::access::Caller;
 use crate::app::webhooks::{self, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
-
-/// Browser sessions cannot own subscriptions.
-pub async fn not_a_session(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Owner(_)))) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(Request::from_parts(parts, body)).await
-}
 
 pub async fn create(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
     caller.webhook_maker()?;
