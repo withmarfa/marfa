@@ -12,10 +12,10 @@ import {
   newRunId,
   trackEdge,
   trackEdgeType,
-  trackFolder,
   trackItem,
   trackKey,
   trackType,
+  trackView,
 } from "../../utils/setup.js";
 import {
   openEventStream,
@@ -682,20 +682,20 @@ describe("conditional working-copy reaches", () => {
   });
 
   it("answers a system row to a bulk read under a reach only when include names system", async () => {
-    const folder = await fetch(`${server.apiUrl}/folders`, {
+    const view = await fetch(`${server.apiUrl}/views`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${server.workingKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ title: "Bulk read of a folder" }),
+      body: JSON.stringify({ title: "Bulk read of a view" }),
     });
-    expect(folder.status).toBe(201);
-    const made = (await folder.json()) as {
+    expect(view.status).toBe(201);
+    const made = (await view.json()) as {
       item: { id: string; type: string };
     };
-    trackFolder(ctx, made.item.id);
-    expect(made.item.type).toBe("system.folder");
+    trackView(ctx, made.item.id);
+    expect(made.item.type).toBe("system.view");
     const proof = await bootstrap();
 
     const hidden = await bulkGet(
@@ -1048,7 +1048,7 @@ describe("conditional working-copy reaches", () => {
     }
   });
 
-  it("returns item, edge and folder write receipts without a reach certificate", async () => {
+  it("returns item, edge and view write receipts without a reach certificate", async () => {
     const proof = await bootstrap();
     const write = async (path: string, body: unknown) =>
       fetch(`${server.apiUrl}${path}`, {
@@ -1079,12 +1079,12 @@ describe("conditional working-copy reaches", () => {
     const edgeBody = (await edge.json()) as { edge: { id: string } };
     expect(edgeBody).not.toHaveProperty("reach");
     trackEdge(ctx, edgeBody.edge.id);
-    const folder = await write("/folders", { title: "Reach receipt" });
-    expect(folder.status).toBe(201);
-    expect(folder.headers.get("X-Marfa-Reach")).toBeNull();
-    const folderBody = (await folder.json()) as { item: { id: string } };
-    expect(folderBody).not.toHaveProperty("reach");
-    trackFolder(ctx, folderBody.item.id);
+    const view = await write("/views", { title: "Reach receipt" });
+    expect(view.status).toBe(201);
+    expect(view.headers.get("X-Marfa-Reach")).toBeNull();
+    const viewBody = (await view.json()) as { item: { id: string } };
+    expect(viewBody).not.toHaveProperty("reach");
+    trackView(ctx, viewBody.item.id);
     certified(
       await request(`/items/${body.item.id}`, proof.reach),
       proof.reach,
