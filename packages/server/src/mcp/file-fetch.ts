@@ -44,7 +44,6 @@ export type ToolFetch = <T>(
 
 export interface ToolFetchOptions {
   fetcher: PublicFetcher;
-  /** `MARFA_MCP_FETCH_ENABLED`. */
   enabled: boolean;
   audit: Pick<AuditStore, "log">;
   /** The allowance per credential, or null where rate limiting is off. */
