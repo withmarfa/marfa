@@ -477,6 +477,48 @@ describe("the folder door", () => {
     },
   );
 
+  it("refuses include and ignore lines that hold more than 6144 characters together, on a create and on a change", async () => {
+    const { id } = await folder();
+    const lines = Array.from({ length: 4 }, () => "a".repeat(1000));
+    const alone = await client.createFolder({
+      title: "alone",
+      include: lines,
+    });
+    expect(alone.status).toBe(201);
+    const settings = { include: lines, ignore: lines };
+    for (const r of [
+      await client.createFolder({ title: "refused", ...settings }),
+      await client.updateFolder(id, { version: 1, ...settings }),
+    ]) {
+      expect(r.status).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path).toBe("ignore");
+    }
+  });
+
+  it("refuses a list that compiles past the bound with its list named, on a create and on a change", async () => {
+    const { id } = await folder();
+    const wild = Array.from({ length: 12 }, () => "?".repeat(500));
+    const one = await client.createFolder({
+      title: "one",
+      include: ["?".repeat(500)],
+      ignore: ["?".repeat(500)],
+    });
+    expect(one.status).toBe(201);
+    for (const list of ["include", "ignore"] as const) {
+      for (const r of [
+        await client.createFolder({ title: "refused", [list]: wild }),
+        await client.updateFolder(id, { version: 1, [list]: wild }),
+      ]) {
+        expect(r.status).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path).toBe(list);
+      }
+    }
+  });
+
   it("refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change", async () => {
     const { id } = await folder();
     for (const r of [

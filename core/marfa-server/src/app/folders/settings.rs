@@ -3,6 +3,7 @@
 use marfa_rules::folder as rules;
 use marfa_rules::validation;
 use serde_json::{Map, Value, json};
+use tokio::sync::Semaphore;
 
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -30,6 +31,15 @@ const MAX_PATTERNS: usize = 1_000;
 const MAX_TEXT: usize = 1_024;
 const MAX_DEFAULT_EDGE_TYPES: usize = 100;
 const MAX_DEFAULT_EDGE_TARGETS: usize = 100;
+
+/// Pattern lists compiled at once: each peaks at a few MiB, and a queue of
+/// them waits here and not on the writer.
+static COMPILING: Semaphore = Semaphore::const_new(2);
+
+/// The request's `include` and `ignore` lists, read and compiled. Only
+/// `compile_patterns` makes one, and a folder write needs one.
+#[derive(Debug)]
+pub struct Patterns(());
 
 /// Undeclared keys, by path from the request body.
 pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
@@ -210,7 +220,34 @@ fn check_threshold(settings: &Map<String, Value>, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
+/// Judges the lists a request sends before its write is queued: compiling takes
+/// milliseconds that no other write should wait for, and depends on nothing
+/// the writer holds.
+pub async fn compile_patterns(settings: &Map<String, Value>) -> Result<Patterns> {
+    check_patterns(settings, "include")?;
+    check_patterns(settings, "ignore")?;
+    let (include, ignore) = (
+        strings(settings.get("include")),
+        strings(settings.get("ignore")),
+    );
+    if include.is_empty() && ignore.is_empty() {
+        return Ok(Patterns(()));
+    }
+    let permit = COMPILING
+        .acquire()
+        .await
+        .map_err(|_| Refusal::internal("the pattern checks have stopped"))?;
+    let judged = tokio::task::spawn_blocking(move || rules::check_patterns(&include, &ignore))
+        .await
+        .map_err(|_| Refusal::internal("a pattern check did not finish"))?;
+    drop(permit);
+    judged
+        .map(|()| Patterns(()))
+        .map_err(|violation| at(&violation.path, violation.message))
+}
+
+/// Judges the settings a request names, but for the patterns `compile_patterns` judged.
+pub fn check(settings: &Map<String, Value>, catalog: &Catalog, _: &Patterns) -> Result<()> {
     if let Some(title) = settings.get("title") {
         check_title(title)?;
     }
@@ -220,8 +257,6 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     if let Some(defaults) = settings.get("defaults") {
         check_defaults(defaults, catalog)?;
     }
-    check_patterns(settings, "include")?;
-    check_patterns(settings, "ignore")?;
     if let Some(placement) = settings.get("first_placement") {
         check_placement(placement, catalog)?;
     }
@@ -297,7 +332,7 @@ fn judged(settings: &Map<String, Value>, catalog: &Catalog, complete: bool) -> R
                 .collect()
         })
         .unwrap_or_default();
-    rules::check(
+    rules::check_settled(
         Some(&catalog.rules),
         &rules::Settings {
             types: &types,

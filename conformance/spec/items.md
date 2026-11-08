@@ -2352,6 +2352,22 @@ If an `include` or `ignore` line is not a gitignore pattern a device reads, such
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
+### `items/folder-setting-pattern-text`
+
+If the `include` and `ignore` lines of the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold more than 6144 characters together, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a device compiles both lists each time it starts, and a bound on their text keeps that work small on the smallest machine that follows a folder. A change is judged on the complete lists it leaves, not on the list it names.
+
+**Tests:** `compliance/folders.test.ts › refuses include and ignore lines that hold more than 6144 characters together, on a create and on a change`.
+
+### `items/folder-setting-pattern-size`
+
+If an `include` or an `ignore` list compiles to more than 1 MiB for a device to match with, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a few hundred lines of wildcards can need far more memory and time to compile than their text suggests, and a folder whose list a device cannot afford to compile would be stuck on every device. The server judges the lists before it queues the write, so a slow or refused list holds up no other write.
+
+**Tests:** `compliance/folders.test.ts › refuses a list that compiles past the bound with its list named, on a create and on a change`.
+
 ### `items/folder-query-every-type`
 
 When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.

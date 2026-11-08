@@ -174,8 +174,27 @@ fn check_filter(text: &str) -> Result<(), Violation> {
     Ok(())
 }
 
-/// Checks complete settings; checking the default type requires a catalog.
+/// Whether the two lists hold no more text than a device compiles, every line
+/// is a pattern and each list compiles within the bound. It compiles them, so
+/// a server runs it before its writer and not inside it.
+pub fn check_patterns(include: &[String], ignore: &[String]) -> Result<(), Violation> {
+    pattern::check_text(include, ignore)
+        .map_err(|(path, message)| Violation::invalid(path, message))?;
+    for (path, lines) in [("include", include), ("ignore", ignore)] {
+        pattern::check_list(path, lines).map_err(|message| Violation::invalid(path, message))?;
+    }
+    Ok(())
+}
+
+/// Checks complete settings, patterns included.
 pub fn check(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Violation> {
+    check_patterns(settings.include, settings.ignore)?;
+    check_settled(catalog, settings)
+}
+
+/// Everything but the compiling of the lists: what a write is judged on in
+/// its transaction. Checking the default type requires a catalog.
+pub fn check_settled(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Violation> {
     if let Some(states) = settings.state {
         check_states(states).map_err(|fault| match fault {
             StateFault::Empty => {
@@ -206,17 +225,8 @@ pub fn check(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Viola
             )
         })?;
     }
-    for (path, lines) in [("include", settings.include), ("ignore", settings.ignore)] {
-        pattern::check_list(path, lines).map_err(|message| Violation::invalid(path, message))?;
-    }
-    for name in settings
-        .include
-        .iter()
-        .filter(|line| !line.trim_start().starts_with('!'))
-        .flat_map(|line| pattern::dot_names(line))
-    {
-        pattern::name_regexes(&name).map_err(|message| Violation::invalid("include", message))?;
-    }
+    pattern::check_text(settings.include, settings.ignore)
+        .map_err(|(path, message)| Violation::invalid(path, message))?;
     check_threshold("removal_threshold", settings.removal)?;
     if let Some(seconds) = settings.full_pass_interval_seconds
         && !(FULL_PASS_SECONDS.contains(&seconds) && seconds.fract() == 0.0)
@@ -341,6 +351,39 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    fn patterns(include: &[String], ignore: &[String]) -> Result<(), Violation> {
+        check(
+            None,
+            &Settings {
+                include,
+                ignore,
+                ..Settings::default()
+            },
+        )
+    }
+
+    #[test]
+    fn lists_that_compile_past_the_bound_are_refused() {
+        let wild = vec!["?".repeat(500); 12];
+        let refused = patterns(&wild, &[]).unwrap_err();
+        assert_eq!(refused.path, "include");
+        assert!(refused.message.contains("too long"), "{refused:?}");
+        let refused = patterns(&[], &wild).unwrap_err();
+        assert_eq!(refused.path, "ignore");
+        let some = vec!["?".repeat(500)];
+        assert!(patterns(&some, &some).is_ok());
+    }
+
+    #[test]
+    fn lists_that_hold_too_much_text_together_are_refused() {
+        let line = "a".repeat(1_000);
+        let half = vec![line; 4];
+        assert!(patterns(&half, &[]).is_ok());
+        let refused = patterns(&half, &half).unwrap_err();
+        assert_eq!(refused.path, "ignore");
+        assert!(refused.message.contains("characters"), "{refused:?}");
     }
 
     fn placed(directory: &str) -> Result<(), Violation> {

@@ -69,16 +69,17 @@ fn declared(body: &ReadBody, allowed: &[&str]) -> Result<Map<String, Value>> {
     .with_detail("unknown_body_fields", unknown))
 }
 
-fn creating(body: &ReadBody) -> Result<FolderChange> {
+async fn creating(body: &ReadBody) -> Result<FolderChange> {
     let settings = declared(body, &SETTINGS)?;
     refuse_null(&settings)?;
     if !settings.contains_key("title") {
         return Err(missing_field("title"));
     }
-    Ok(FolderChange::Create { settings })
+    let patterns = folders::compile_patterns(&settings).await?;
+    Ok(FolderChange::Create { settings, patterns })
 }
 
-fn updating(id: String, body: &ReadBody) -> Result<FolderChange> {
+async fn updating(id: String, body: &ReadBody) -> Result<FolderChange> {
     let mut allowed = SETTINGS.to_vec();
     allowed.push("version");
     let mut settings = declared(body, &allowed)?;
@@ -91,9 +92,11 @@ fn updating(id: String, body: &ReadBody) -> Result<FolderChange> {
     if settings.is_empty() {
         return Err(Refusal::validation("Name at least one setting to change."));
     }
+    let patterns = folders::compile_patterns(&settings).await?;
     Ok(FolderChange::Update {
         id,
         settings,
+        patterns,
         version,
     })
 }
@@ -119,7 +122,7 @@ pub async fn create(State(app): State<Arc<App>>, caller: Caller, sent: Sent) -> 
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        let change = creating(&body)?;
+        let change = creating(&body).await?;
         write::run(&door, &who, claim, Change::Folder(change)).await
     })
     .await
@@ -137,7 +140,7 @@ pub async fn update(
         query::only(&uri, &[])?;
         body.object(Bag::Whole)?;
         check_item_id(&id)?;
-        let change = updating(id, &body)?;
+        let change = updating(id, &body).await?;
         write::run(&door, &who, claim, Change::Folder(change)).await
     })
     .await

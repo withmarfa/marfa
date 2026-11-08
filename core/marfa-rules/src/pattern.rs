@@ -55,24 +55,89 @@ pub fn compile_list(list: &str, lines: &[String]) -> Result<Compiled, String> {
     Ok(compiled)
 }
 
-/// A form's regexes together. Each is held to globset's limit on its own, so
-/// the set is allowed that much for every line it holds.
-pub fn regex_set(list: &str, regexes: &[String]) -> Result<RegexSet, String> {
-    let limit = LINE_LIMIT * regexes.len().max(1);
-    RegexSetBuilder::new(regexes)
-        .dot_matches_new_line(true)
-        .size_limit(limit)
-        .dfa_size_limit(limit)
-        .build()
-        .map_err(|error| format!("the folder's {list} list is too long to match: {error}"))
+/// One form of a list, compiled together.
+#[derive(Debug)]
+pub struct Set {
+    pub set: RegexSet,
+    /// Each pattern in `set`, in order.
+    pub lines: Vec<Line>,
 }
 
-/// Whether every line of a list is a pattern and the list is short enough to
-/// match with.
-pub fn check_list(list: &str, lines: &[String]) -> Result<(), String> {
+/// A list's lines as written and with their names folded, ready to match with.
+#[derive(Debug)]
+pub struct Built {
+    pub original: Set,
+    pub folded: Set,
+}
+
+/// A list ready to match with, or the refusal naming the line that is no
+/// pattern, or saying the list compiles past the bound.
+pub fn build_list(list: &str, lines: &[String]) -> Result<Built, String> {
     let compiled = compile_list(list, lines)?;
-    regex_set(list, &compiled.original.regexes)?;
-    regex_set(list, &compiled.folded.regexes)?;
+    let set = |form: Form| match limited_set(&form.regexes) {
+        Ok(set) => Ok(Set {
+            set,
+            lines: form.lines,
+        }),
+        Err(error) => Err(read_again(list, lines, &form, &error)),
+    };
+    Ok(Built {
+        original: set(compiled.original)?,
+        folded: set(compiled.folded)?,
+    })
+}
+
+/// The refusal for a form that failed to compile together: the line whose
+/// regex fails alone, or the list's length.
+fn read_again(list: &str, lines: &[String], form: &Form, error: &regex::Error) -> String {
+    for (regex, line) in form.regexes.iter().zip(&form.lines) {
+        if let Err(why) = limited(&mut RegexBuilder::new(regex)).build() {
+            return refusal(list, &lines[line.index], &why.to_string());
+        }
+    }
+    format!("the folder's {list} list is too long to match: {error}")
+}
+
+fn limited_set(regexes: &[String]) -> Result<RegexSet, regex::Error> {
+    RegexSetBuilder::new(regexes)
+        .dot_matches_new_line(true)
+        .size_limit(SET_LIMIT)
+        .dfa_size_limit(SET_LIMIT)
+        .build()
+}
+
+/// Whether the include and ignore lists hold no more text together than a
+/// device compiles. Counting costs nothing, so it is judged on the settings a
+/// write leaves.
+pub fn check_text(include: &[String], ignore: &[String]) -> Result<(), (&'static str, String)> {
+    let mut held = 0;
+    for (path, lines) in [("include", include), ("ignore", ignore)] {
+        held += lines.iter().map(|line| line.chars().count()).sum::<usize>();
+        if held > MAX_TEXT {
+            return Err((
+                path,
+                format!(
+                    "the folder's include and ignore lists hold at most {MAX_TEXT} characters together"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether every line of a list is a pattern and the list compiles within the
+/// bound. Each list stands alone, so two lists compile within twice the bound.
+pub fn check_list(list: &str, lines: &[String]) -> Result<(), String> {
+    build_list(list, lines)?;
+    if list == "include" {
+        for name in lines
+            .iter()
+            .filter(|line| !line.trim_start().starts_with('!'))
+            .flat_map(|line| dot_names(line))
+        {
+            name_regexes(&name)?;
+        }
+    }
     Ok(())
 }
 
@@ -111,7 +176,12 @@ pub fn refusal(list: &str, line: &str, why: &str) -> String {
     format!("the folder's {list} list holds {line:?}, which is not a gitignore pattern: {why}")
 }
 
-const LINE_LIMIT: usize = 10 << 20;
+/// The compiled size one form of one list may reach. Compiling stops at it, so a
+/// list cannot cost more than this to refuse.
+const SET_LIMIT: usize = 1 << 20;
+
+/// The characters the include and ignore lists may hold together.
+pub const MAX_TEXT: usize = 6_144;
 
 /// A gitignore line, read as git reads one: a comment or a blank line is
 /// nothing, `!` negates, a leading `/` anchors it to the folder, a trailing
@@ -162,10 +232,6 @@ fn compile(index: usize, line: &str) -> std::result::Result<Option<(String, Line
         .build()
         .map_err(|error| error.kind().to_string())?;
     let regex = by_character(glob.regex());
-    // Refused here, line by line, so the refusal names the line.
-    limited(&mut RegexBuilder::new(&regex))
-        .build()
-        .map_err(|error| error.to_string())?;
     Ok(Some((
         regex,
         Line {
@@ -181,8 +247,8 @@ fn compile(index: usize, line: &str) -> std::result::Result<Option<(String, Line
 fn limited(builder: &mut RegexBuilder) -> &mut RegexBuilder {
     builder
         .dot_matches_new_line(true)
-        .size_limit(LINE_LIMIT)
-        .dfa_size_limit(LINE_LIMIT)
+        .size_limit(SET_LIMIT)
+        .dfa_size_limit(SET_LIMIT)
 }
 
 /// A glob's regex, read over characters. globset writes its regex over bytes,

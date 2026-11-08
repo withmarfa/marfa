@@ -260,18 +260,14 @@ fn hit(list: &Patterns, path: &str, folded: &str, mut is_dir: bool) -> bool {
 }
 
 fn built(list: &str, lines: &[String]) -> Result<Patterns> {
-    let compiled = pattern::compile_list(list, lines).map_err(CoreError::Invalid)?;
-    let set = |form: pattern::Form| {
-        pattern::regex_set(list, &form.regexes)
-            .map(|set| Lines {
-                set,
-                lines: form.lines,
-            })
-            .map_err(CoreError::Invalid)
+    let built = pattern::build_list(list, lines).map_err(CoreError::Invalid)?;
+    let lines = |set: pattern::Set| Lines {
+        set: set.set,
+        lines: set.lines,
     };
     Ok(Patterns {
-        original: set(compiled.original)?,
-        folded: set(compiled.folded)?,
+        original: lines(built.original),
+        folded: lines(built.folded),
     })
 }
 
@@ -568,11 +564,13 @@ mod tests {
     }
 
     #[test]
-    fn a_long_list_compiles_when_each_of_its_lines_does() {
-        let long: Vec<String> = (0..4000).map(|i| format!("*cache{i}*")).collect();
+    fn a_long_list_compiles_within_the_bound() {
+        let long: Vec<String> = (0..200).map(|i| format!("*cache{i}*")).collect();
         let lists = Lists::new(&[], &long).unwrap();
-        assert!(!lists.takes("a/xcache3999y.md"));
+        assert!(!lists.takes("a/xcache199y.md"));
         assert!(lists.takes("a/notes.md"));
+        let too_long: Vec<String> = (0..4000).map(|i| format!("*cache{i}*")).collect();
+        assert!(Lists::new(&[], &too_long).is_err());
     }
 
     #[test]

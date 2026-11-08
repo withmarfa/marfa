@@ -109,10 +109,12 @@ pub enum ViewChange {
 pub enum FolderChange {
     Create {
         settings: Map<String, Value>,
+        patterns: folders::Patterns,
     },
     Update {
         id: String,
         settings: Map<String, Value>,
+        patterns: folders::Patterns,
         version: i64,
     },
     Revoke {
@@ -855,8 +857,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn folder(&self, change: FolderChange) -> Result<Done> {
         self.caller().require_folder_write()?;
         match change {
-            FolderChange::Create { settings } => {
-                folders::check(&settings, &self.catalog)?;
+            FolderChange::Create { settings, patterns } => {
+                folders::check(&settings, &self.catalog, &patterns)?;
                 folders::judge(&settings, &self.catalog)?;
                 let source = self.source_of(None)?;
                 let item = self.created(
@@ -873,10 +875,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             FolderChange::Update {
                 id,
                 settings,
+                patterns,
                 version,
             } => {
                 let row = self.folder_row(&id)?;
-                folders::check(&settings, &self.catalog)?;
+                folders::check(&settings, &self.catalog, &patterns)?;
                 self.refuse_revoked(&row)?;
                 let (item, resolution) = self.landed(
                     &row,
