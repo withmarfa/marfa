@@ -31,6 +31,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/claimed-sources.test.ts",
   "src/suites/compliance/client-closed-request.test.ts",
   "src/suites/compliance/connector-bounds.test.ts",
+  "src/suites/compliance/connector-read-only.test.ts",
   "src/suites/compliance/connector-state.test.ts",
   "src/suites/compliance/connectors.test.ts",
   "src/suites/compliance/contact-lists.test.ts",
