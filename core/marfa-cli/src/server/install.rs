@@ -782,10 +782,6 @@ pub(super) fn start(
     docker.compose(dir, &["up", "-d"], false)
 }
 
-/// What the image's entrypoint logs when the server refuses its database and
-/// the container stays up, unhealthy, rather than restart into the refusal.
-pub(super) const CONTAINER_REFUSED: &str = "will not start on the database";
-
 /// What a start waits on, and where it looks when the server does not answer.
 pub(super) enum Watch<'a> {
     Container {
@@ -811,7 +807,7 @@ impl Watch<'_> {
                 )),
                 _ => {
                     let tail = docker.logs_tail(name);
-                    tail.contains(CONTAINER_REFUSED).then(|| {
+                    tail.contains(REFUSED_DATABASE).then(|| {
                         format!("the server will not start on its database. Its log ends:\n{tail}")
                     })
                 }

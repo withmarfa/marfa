@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::docker::{self, Docker};
-use super::install::{CONTAINER_REFUSED, Watch, wait_until_healthy, write_compose};
+use super::install::{Watch, wait_until_healthy, write_compose};
 use super::prompt::Prompter;
 use super::run::{self, REFUSED_DATABASE};
 use super::service::{Control, Manager, Service};
@@ -181,7 +181,7 @@ fn upgrade_docker(
         name: &state.name,
     };
     if let Err(error) = wait_until_healthy(&watch, state.port, args.wait) {
-        if unchanged || !docker.logs_tail(&state.name).contains(CONTAINER_REFUSED) {
+        if unchanged || !docker.logs_tail(&state.name).contains(REFUSED_DATABASE) {
             return Err(error);
         }
         return Err(CliError::Install(format!(
@@ -239,7 +239,7 @@ fn database_update(log: &str) -> Option<DatabaseUpdate> {
         .filter(|entry| {
             entry["message"]
                 .as_str()
-                .is_some_and(|message| message.starts_with("Updated the database"))
+                .is_some_and(|m| m.starts_with("Updated "))
         })
         .filter_map(|entry| {
             Some(DatabaseUpdate {
@@ -667,9 +667,9 @@ mod tests {
     #[test]
     fn the_last_update_the_log_reports_is_the_one_read() {
         let log = [
-            r#"{"message":"Updated the database","schema_from":3,"schema_to":4,"backup_path":"/a"}"#,
+            r#"{"message":"Updated /d/marfa.db, keeping a copy at /a","schema_from":3,"schema_to":4,"backup_path":"/a"}"#,
             "not json",
-            r#"{"message":"Updated the database","schema_from":4,"schema_to":5,"backup_path":"/b"}"#,
+            r#"{"message":"Updated /d/marfa.db, keeping a copy at /b","schema_from":4,"schema_to":5,"backup_path":"/b"}"#,
             r#"{"message":"Listening"}"#,
         ]
         .join("\n");
