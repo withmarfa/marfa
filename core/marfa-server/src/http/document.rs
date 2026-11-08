@@ -148,6 +148,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "DELETE /_control/test/faults",
         "the private control socket, with test hooks on",
     ),
+    (
+        "GET /_control/test/blob-stores",
+        "the private control socket, with test hooks on",
+    ),
 ];
 
 /// Published operations the router does not serve yet. An entry that becomes

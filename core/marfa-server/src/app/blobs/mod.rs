@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use futures_util::future::join_all;
 use serde_json::json;
 
@@ -25,7 +26,7 @@ use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
-    HOLD_BLOB_READ, HOLD_BLOB_WRITE, Volume,
+    HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie, Volume,
 };
 use super::housekeeping;
 use super::refusal::{Code, Refusal, Result};
@@ -200,6 +201,11 @@ impl Blobs {
             self.faults.hold(HOLD_BLOB_HAS, None).await;
             match store {
                 Store::Disk(disk) => {
+                    match self.faults.lie(hash.as_str()) {
+                        Some(Lie::Lost) => return Ok(None),
+                        Some(Lie::Unreadable) => return Err(store::unreadable()),
+                        Some(Lie::Damaged) | None => {}
+                    }
                     let (disk, hash) = (disk.clone(), hash.clone());
                     tokio::task::spawn_blocking(move || disk.size_of(&hash))
                         .await
@@ -229,11 +235,21 @@ impl Blobs {
             }
             match store {
                 Store::Disk(disk) => {
+                    let lie = self.faults.lie(hash.as_str());
+                    match lie {
+                        Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
+                        Some(Lie::Unreadable) => return Err(store::unreadable()),
+                        Some(Lie::Damaged) | None => {}
+                    }
                     let (disk, hash) = (disk.clone(), hash.clone());
                     let file = tokio::task::spawn_blocking(move || disk.open_blob(&hash))
                         .await
                         .map_err(io::Error::other)??;
-                    Ok(store::file_stream(file, first, length))
+                    let bytes = store::file_stream(file, first, length);
+                    if lie == Some(Lie::Damaged) && first == 0 {
+                        return Ok(store::first_byte_changed(bytes));
+                    }
+                    Ok(bytes)
                 }
                 Store::S3(s3) => s3.read(hash, first, length).await,
             }
@@ -241,6 +257,43 @@ impl Blobs {
         match tokio::time::timeout(self.check(), opened).await {
             Ok(answer) => answer.map_err(Failed::Io),
             Err(_) => Err(Failed::Late),
+        }
+    }
+
+    /// Whether the store has bytes under the blob's name, and whether they hash to it, asked
+    /// of the store itself.
+    async fn holding(&self, store: &Store, hash: &Hash) -> (bool, bool) {
+        let asked = async {
+            match store {
+                Store::Disk(disk) => {
+                    let (disk, hash) = (disk.clone(), hash.clone());
+                    let read = tokio::task::spawn_blocking(move || {
+                        disk.rehash(&hash, false)
+                            .map(|found| found.map(|(_, found)| found == hash))
+                    });
+                    read.await.map_err(io::Error::other)?
+                }
+                Store::S3(s3) => {
+                    let Some(size) = s3.size_of(hash).await? else {
+                        return Ok(None);
+                    };
+                    let mut bytes = s3.read(hash, 0, size).await?;
+                    let mut hasher = store::Hasher::default();
+                    while let Some(chunk) = bytes.next().await {
+                        hasher.update(&chunk?);
+                    }
+                    Ok(Some(hasher.matches(hash, size).is_ok()))
+                }
+            }
+        };
+        match tokio::time::timeout(self.check(), asked).await {
+            Ok(Ok(Some(intact))) => (true, intact),
+            Ok(Ok(None)) => (false, false),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, store = store.kind(), "A store did not say what it holds");
+                (false, false)
+            }
+            Err(_) => (false, false),
         }
     }
 
@@ -272,9 +325,14 @@ impl Blobs {
                     return Err(io::Error::other("the store failed the delete"));
                 }
                 match store {
-                    Store::Disk(disk) => tokio::task::spawn_blocking(move || disk.delete(&blob))
-                        .await
-                        .map_err(io::Error::other)?,
+                    Store::Disk(disk) => {
+                        let gone = blob.clone();
+                        tokio::task::spawn_blocking(move || disk.delete(&gone))
+                            .await
+                            .map_err(io::Error::other)??;
+                        faults.heal(blob.as_str(), false);
+                        Ok(())
+                    }
                     Store::S3(s3) => s3.delete(&blob).await,
                 }
             })
@@ -449,13 +507,16 @@ impl App {
             );
             return Err(unavailable());
         }
-        let (target, placed) = (self.blobs.disk.clone(), hash.clone());
+        let (target, placed, faults) = (self.blobs.disk.clone(), hash.clone(), self.faults.clone());
         let mut staged = staged;
         self.blobs
             .writing(&hash, size, async move {
+                let name = placed.clone();
                 tokio::task::spawn_blocking(move || target.publish(&mut staged, &placed))
                     .await
-                    .map_err(io::Error::other)?
+                    .map_err(io::Error::other)??;
+                faults.heal(name.as_str(), true);
+                Ok(())
             })
             .await
             .map_err(|failure| match failure {
@@ -555,6 +616,40 @@ impl App {
             held,
             recorded,
         })
+    }
+
+    /// What each attached store physically holds of `hash`, past every blob fault, and the
+    /// files the disk store is receiving now. Only the test hooks ask.
+    pub async fn inspect_stores(&self, hash: Option<&str>) -> Result<serde_json::Value> {
+        let hash = match hash {
+            Some(text) if text.starts_with("sha256:") => Some(Hash::parse(text)?),
+            Some(_) => {
+                return Err(Refusal::validation("Provide hash as a sha256: blob name.")
+                    .with_detail("field", "hash"));
+            }
+            None => None,
+        };
+        let mut stores = Vec::new();
+        for store in self.blobs.attached() {
+            let (holds, intact) = match &hash {
+                Some(hash) => self.blobs.holding(&store, hash).await,
+                None => (false, false),
+            };
+            stores.push(json!({
+                "id": store.id(),
+                "kind": store.kind(),
+                "holds": holds,
+                "intact": intact,
+            }));
+        }
+        let disk = self.blobs.disk.clone();
+        let spool = joined(tokio::task::spawn_blocking(move || disk.spool()).await)?
+            .map_err(|error| Refusal::internal(&error.to_string()))?;
+        let spool: Vec<_> = spool
+            .into_iter()
+            .map(|(name, size)| json!({ "name": name, "size": size }))
+            .collect();
+        Ok(json!({ "stores": stores, "spool": spool }))
     }
 
     /// A blob the caller may read; one it may not read is answered as an unknown one.

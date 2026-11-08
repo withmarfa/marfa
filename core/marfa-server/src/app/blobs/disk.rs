@@ -147,8 +147,9 @@ impl Disk {
         }
     }
 
-    /// Reads a blob's file through and answers its size and what it hashes to.
-    pub fn rehash(&self, hash: &Hash) -> io::Result<Option<(u64, Hash)>> {
+    /// Reads a blob's file through and answers its size and what it hashes to, with its first
+    /// byte changed when `changed` says so.
+    pub fn rehash(&self, hash: &Hash, changed: bool) -> io::Result<Option<(u64, Hash)>> {
         let mut file = match self.open_blob(hash) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -160,10 +161,35 @@ impl Disk {
             if count == 0 {
                 break;
             }
+            if changed && size == 0 {
+                buffer[0] ^= 0xff;
+            }
             hasher.update(&buffer[..count]);
             size += count as u64;
         }
         Ok(Some((size, Hash::from_digest(&hasher.finalize()))))
+    }
+
+    /// The name and size of each file in `tmp`. It blocks.
+    pub fn spool(&self) -> io::Result<Vec<(String, u64)>> {
+        let entries = match fs::read_dir(self.tmp()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            match entry.metadata() {
+                Ok(meta) => {
+                    files.push((entry.file_name().to_string_lossy().into_owned(), meta.len()))
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        files.sort();
+        Ok(files)
     }
 
     /// Removes a blob's file. One that is not there is already gone.
@@ -329,12 +355,14 @@ mod tests {
         staged.append(b"kept bytes").unwrap();
         let hash = staged.seal().unwrap();
         disk.publish(&mut staged, &hash).unwrap();
-        assert_eq!(disk.rehash(&hash).unwrap(), Some((10, hash.clone())));
+        assert_eq!(disk.rehash(&hash, false).unwrap(), Some((10, hash.clone())));
+        let changed = Hash::from_digest(&Sha256::digest(b"\x94ept bytes"));
+        assert_eq!(disk.rehash(&hash, true).unwrap(), Some((10, changed)));
         fs::write(disk.path_of(&hash), b"kept bytez").unwrap();
-        assert_ne!(disk.rehash(&hash).unwrap().unwrap().1, hash);
+        assert_ne!(disk.rehash(&hash, false).unwrap().unwrap().1, hash);
         disk.delete(&hash).unwrap();
         disk.delete(&hash).unwrap();
-        assert_eq!(disk.rehash(&hash).unwrap(), None);
+        assert_eq!(disk.rehash(&hash, false).unwrap(), None);
     }
 
     #[test]

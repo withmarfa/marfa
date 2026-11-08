@@ -199,6 +199,27 @@ impl Hasher {
     }
 }
 
+/// The error a disk gives for a read it cannot make.
+pub fn unreadable() -> io::Error {
+    io::Error::other("EIO: the disk could not read the blob")
+}
+
+/// `bytes` with their first byte changed.
+pub fn first_byte_changed(bytes: ByteStream) -> ByteStream {
+    let mut first = true;
+    bytes
+        .map(move |chunk| {
+            let chunk = chunk?;
+            if !std::mem::take(&mut first) || chunk.is_empty() {
+                return Ok(chunk);
+            }
+            let mut changed = chunk.to_vec();
+            changed[0] ^= 0xff;
+            Ok(Bytes::from(changed))
+        })
+        .boxed()
+}
+
 /// A window of a file, read a chunk at a time off the runtime.
 pub fn file_stream(file: std::fs::File, first: u64, length: u64) -> ByteStream {
     use std::os::unix::fs::FileExt;

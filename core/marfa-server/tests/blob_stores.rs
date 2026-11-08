@@ -151,6 +151,11 @@ impl Instance {
         run.body["result"].clone()
     }
 
+    async fn inspect(&self, hash: &str) -> Reply {
+        let path = format!("/_control/test/blob-stores?hash={hash}");
+        self.call(Method::GET, &path, None).await
+    }
+
     async fn copies(&self, hash: &str) -> Vec<Value> {
         let listed = self
             .call(Method::GET, &format!("/blobs/{hash}/copies"), None)
@@ -310,6 +315,43 @@ async fn integrity_strikes_an_altered_copy_and_a_deleted_one_and_keeps_an_intact
     );
     assert_eq!(instance.fetch(&altered).await.status, StatusCode::NOT_FOUND);
     assert_eq!(instance.fetch(&intact).await.bytes, b"left alone");
+}
+
+#[tokio::test]
+async fn a_blob_fault_changes_what_the_disk_reads_and_never_what_it_holds() {
+    let instance = Instance::start(&[]).await;
+    let lost = instance.stored(b"read as absent").await;
+    let damaged = instance.stored(b"read with a changed first byte").await;
+    instance.arm("lose:blob", Some(&lost));
+    instance.arm("damage:blob", Some(&damaged));
+
+    for hash in [&lost, &damaged] {
+        let seen = instance.inspect(hash).await;
+        assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+        assert_eq!(seen.body["stores"][0]["kind"], "disk");
+        assert_eq!(seen.body["stores"][0]["holds"], true);
+        assert_eq!(seen.body["stores"][0]["intact"], true);
+        assert_eq!(seen.body["spool"], json!([]));
+    }
+    let read = instance.fetch(&damaged).await;
+    assert_eq!(read.bytes.len(), 30);
+    assert_eq!(read.bytes[0], b'r' ^ 0xff);
+    assert_eq!(&read.bytes[1..], &b"read with a changed first byte"[1..]);
+
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 2, "{result}");
+    for hash in [&lost, &damaged] {
+        assert!(instance.copies(hash).await.is_empty());
+        assert_eq!(
+            instance.inspect(hash).await.body["stores"][0]["holds"],
+            false
+        );
+    }
+    let bare = instance
+        .inspect(lost.strip_prefix("sha256:").unwrap())
+        .await;
+    assert_eq!(bare.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bare.code(), "validation_error");
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ use serde_json::json;
 use super::store::{self, Failed, Store};
 use super::{App, Hash, room, rows};
 use crate::app::access::Caller;
-use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ};
+use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
 use crate::db::Write;
@@ -121,13 +121,14 @@ async fn copy_to(
                     tracing::warn!(error = %refused, "The disk has no room for a blob's copy");
                     return Copy::Skipped;
                 }
-                let disk = disk.clone();
+                let (disk, faults) = (disk.clone(), app.faults.clone());
                 blobs
-                    .writing(
-                        &blob.hash,
-                        size,
-                        store::place_on_disk(disk, hash, size, bytes),
-                    )
+                    .writing(&blob.hash, size, async move {
+                        let name = hash.clone();
+                        store::place_on_disk(disk, hash, size, bytes).await?;
+                        faults.heal(name.as_str(), true);
+                        Ok(())
+                    })
                     .await
             }
             Store::S3(s3) => {
@@ -257,7 +258,14 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
                 if faults.fail(FAIL_BLOB_READ, None) {
                     return Err(io::Error::other("the store failed the read"));
                 }
-                tokio::task::spawn_blocking(move || disk.rehash(&hash))
+                let lie = faults.lie(hash.as_str());
+                match lie {
+                    Some(Lie::Lost) => return Ok(None),
+                    Some(Lie::Unreadable) => return Err(store::unreadable()),
+                    Some(Lie::Damaged) | None => {}
+                }
+                let changed = lie == Some(Lie::Damaged);
+                tokio::task::spawn_blocking(move || disk.rehash(&hash, changed))
                     .await
                     .map_err(io::Error::other)?
             };
