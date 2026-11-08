@@ -490,7 +490,10 @@ fn insufficient() -> Refusal {
 
 /// A write that ran out of room is `507`; any other failure is the store's.
 fn unwritable(error: io::Error) -> Refusal {
-    if error.kind() == io::ErrorKind::StorageFull {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    ) {
         return insufficient();
     }
     tracing::error!(%error, "A blob write failed");
@@ -534,6 +537,13 @@ pub struct Intake {
 }
 
 impl Intake {
+    /// Removes the file on a blocking task, so that when this returns it is gone.
+    pub async fn discard(mut self) {
+        if let Some(staged) = self.staged.take() {
+            let _ = tokio::task::spawn_blocking(move || staged.discard()).await;
+        }
+    }
+
     pub async fn push(&mut self, bytes: impl AsRef<[u8]> + Send + 'static) -> Result<()> {
         let Some(mut staged) = self.staged.take() else {
             return Err(Refusal::internal("an upload was pushed after it finished"));
@@ -599,6 +609,7 @@ impl App {
             return Err(Refusal::internal("an upload finished twice"));
         };
         if staged.size() == 0 {
+            let _ = tokio::task::spawn_blocking(move || staged.discard()).await;
             return Err(
                 Refusal::validation("The body is empty; send the bytes to keep.")
                     .with_detail("field", "body"),
@@ -708,15 +719,10 @@ impl App {
         let Some(blob) = rows::find(tx, hash)? else {
             return Err(not_found());
         };
-        if let Some(caller) = caller {
-            let lenders = if caller.reads_every_blob() {
-                Vec::new()
-            } else {
-                rows::lenders(tx, hash)?
-            };
-            if !caller.may_read_blob(&lenders) {
-                return Err(not_found());
-            }
+        if let Some(caller) = caller
+            && !caller.may_read_blob(rows::lenders(tx, hash))?
+        {
+            return Err(not_found());
         }
         let copies = rows::copies(tx, hash)?;
         let recorded = !copies.is_empty();

@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::os::fd::AsFd;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -279,6 +280,42 @@ impl Docker {
             })
             .unwrap_or_default()
     }
+}
+
+/// Brings the Docker engine up if it is down, on a Mac, and waits for it.
+pub fn ensure_engine(docker: &Docker, seconds: u64, trace: bool) -> Result<(), CliError> {
+    if docker.running() {
+        return Ok(());
+    }
+    if !cfg!(target_os = "macos") {
+        return Err(CliError::Install(
+            "Docker's engine is not running. Start it (`sudo systemctl start docker`), then run this again".into(),
+        ));
+    }
+    let app = ["OrbStack", "Docker"].into_iter().find(|app| {
+        Path::new(&format!("/Applications/{app}.app")).exists()
+            || crate::server::launchd::home()
+                .is_ok_and(|home| home.join(format!("Applications/{app}.app")).exists())
+    });
+    let Some(app) = app else {
+        return Err(CliError::Install(
+            "Docker's engine is not running, and neither OrbStack nor Docker Desktop is installed to start it".into(),
+        ));
+    };
+    if trace {
+        eprintln!("  $ open -g -a {app}");
+    }
+    let _ = Command::new("open").args(["-g", "-a", app]).output();
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while Instant::now() < deadline {
+        if docker.running() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    Err(CliError::Install(format!(
+        "{app} was opened, and Docker's engine did not answer in {seconds} seconds"
+    )))
 }
 
 fn failed(args: &[&str], output: &Output) -> CliError {

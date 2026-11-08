@@ -402,3 +402,324 @@ async fn an_upload_is_refused_before_its_body_is_read_in_the_order_the_contract_
     assert_eq!(unreached.status, StatusCode::NOT_FOUND);
     assert_eq!(unreached.code(), "blob_not_found");
 }
+
+/// A body that sends one frame and then waits for ever.
+struct Stalling(Option<Vec<u8>>);
+
+impl http_body::Body for Stalling {
+    type Data = axum::body::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.0.take() {
+            Some(data) => Poll::Ready(Some(Ok(Frame::data(data.into())))),
+            None => Poll::Pending,
+        }
+    }
+}
+
+/// A body that sends one frame, runs `before_second` as the second is asked for, then ends.
+struct Tripping {
+    first: Option<Vec<u8>>,
+    before_second: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl http_body::Body for Tripping {
+    type Data = axum::body::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        if let Some(data) = self.first.take() {
+            return Poll::Ready(Some(Ok(Frame::data(data.into()))));
+        }
+        if let Some(trip) = self.before_second.take() {
+            trip();
+            return Poll::Ready(Some(Ok(Frame::data(vec![2u8; 1000].into()))));
+        }
+        Poll::Ready(None)
+    }
+}
+
+fn closes(reply: &Reply) -> bool {
+    reply
+        .headers
+        .get(header::CONNECTION)
+        .is_some_and(|value| value == "close")
+}
+
+const RESERVE: &[(&str, &str)] = &[
+    ("MARFA_DISK_RESERVE_BYTES", "1000000"),
+    ("MARFA_UPLOAD_IDLE_TIMEOUT_MS", "200"),
+];
+
+#[tokio::test]
+async fn an_upload_that_stops_arriving_is_ended_with_408_and_nothing_is_kept() {
+    let instance = Instance::with(RESERVE).await;
+    let ended = send(
+        &instance.control,
+        upload_request(None, Body::new(Stalling(Some(vec![1u8; 4096]))), None),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::REQUEST_TIMEOUT);
+    assert_eq!(ended.code(), "request_timeout");
+    assert!(closes(&ended));
+    assert_eq!(instance.files(), Vec::<PathBuf>::new());
+
+    let whole = instance.put(&[1u8; 4096]).await;
+    assert_eq!(whole.status, StatusCode::CREATED);
+    assert!(!closes(&whole));
+}
+
+#[tokio::test]
+async fn an_upload_that_would_leave_less_than_the_reserve_is_refused_with_507_and_nothing_is_kept()
+{
+    let instance = Instance::with(RESERVE).await;
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("1500000"))
+        .unwrap();
+
+    let mut declared = upload_request(None, Body::new(Stalling(None)), None);
+    declared
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, "600000".parse().unwrap());
+    let refused = send(&instance.control, declared).await;
+    assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(refused.code(), "insufficient_storage");
+    assert_eq!(
+        refused.json()["error"]["details"]["reserve_bytes"],
+        1_000_000
+    );
+    assert!(closes(&refused));
+    assert_eq!(instance.files(), Vec::<PathBuf>::new());
+
+    let faults = instance.app.faults.clone();
+    let streamed = Tripping {
+        first: Some(vec![1u8; 1000]),
+        before_second: Some(Box::new(move || {
+            faults.set("free:blobs", Some("900000")).unwrap();
+        })),
+    };
+    let refused = send(
+        &instance.control,
+        upload_request(None, Body::new(streamed), None),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(refused.code(), "insufficient_storage");
+    assert!(closes(&refused));
+    assert_eq!(instance.files(), Vec::<PathBuf>::new());
+
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("1500000"))
+        .unwrap();
+    assert_eq!(instance.put(&[1u8; 1000]).await.status, StatusCode::CREATED);
+}
+
+/// What a client sees of one request on a real connection: the answer, and whether the
+/// server then closed the connection.
+async fn over_a_socket(public: &Router, request: &str, then_wait: Duration) -> (String, bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(marfa_server::http::serve(
+        marfa_server::http::listening::Tcp::new(listener, "test"),
+        public.clone(),
+        std::future::pending(),
+        Duration::from_secs(30),
+    ));
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut seen = Vec::new();
+    let mut buffer = [0u8; 4096];
+    let closed = loop {
+        match tokio::time::timeout(then_wait, stream.read(&mut buffer)).await {
+            Err(_) => break false,
+            Ok(Ok(0) | Err(_)) => break true,
+            Ok(Ok(count)) => seen.extend_from_slice(&buffer[..count]),
+        }
+    };
+    (String::from_utf8_lossy(&seen).to_string(), closed)
+}
+
+#[tokio::test]
+async fn an_answer_to_an_upload_given_before_its_body_is_read_closes_the_connection() {
+    let instance = Instance::with(RESERVE).await;
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("1500000"))
+        .unwrap();
+    let reader = instance
+        .writer("reader", json!({ "core.note": "read" }))
+        .await;
+    let writer = instance
+        .writer("writer", json!({ "core.note": "write" }))
+        .await;
+    let ahead = |token: Option<&str>, path: &str, length: u64, extra: &str| {
+        let auth = token.map_or(String::new(), |t| format!("Authorization: Bearer {t}\r\n"));
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\n{auth}{extra}Content-Length: {length}\r\n\r\n{}",
+            "x".repeat(2000)
+        )
+    };
+    let big = 1u64 << 30;
+    let cases = [
+        (ahead(None, "/blobs", big, ""), "401"),
+        (ahead(Some(&reader), "/blobs", big, ""), "403"),
+        (ahead(Some(&writer), "/blobs?mime=text", big, ""), "400"),
+        (
+            ahead(
+                Some(&writer),
+                "/blobs",
+                big,
+                "Content-Type: multipart/form-data; boundary=x\r\n",
+            ),
+            "400",
+        ),
+        (ahead(Some(&writer), "/blobs", 600_000, ""), "507"),
+        (ahead(Some(&writer), "/blobs", 3000, ""), "408"),
+    ];
+    for (request, status) in cases {
+        let (answer, closed) =
+            over_a_socket(&instance.public, &request, Duration::from_secs(3)).await;
+        assert!(
+            answer.starts_with(&format!("HTTP/1.1 {status}")),
+            "{answer}"
+        );
+        assert!(
+            answer.to_ascii_lowercase().contains("connection: close"),
+            "{answer}"
+        );
+        assert!(closed, "the connection stayed open after {status}");
+    }
+
+    let whole = format!(
+        "POST /blobs HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {writer}\r\nContent-Length: 5\r\n\r\nhello"
+    );
+    let (answer, closed) =
+        over_a_socket(&instance.public, &whole, Duration::from_millis(500)).await;
+    assert!(answer.starts_with("HTTP/1.1 201"), "{answer}");
+    assert!(
+        !answer.to_ascii_lowercase().contains("connection: close"),
+        "{answer}"
+    );
+    assert!(!closed);
+}
+
+#[tokio::test]
+async fn a_link_is_minted_fetched_and_refused_when_altered_expired_or_over_the_cap() {
+    let instance = Instance::start().await;
+    let bytes = b"0123456789abcdef".to_vec();
+    let hash = hash_of(&bytes);
+    assert_eq!(instance.put(&bytes).await.status, StatusCode::CREATED);
+
+    let minted = send(
+        &instance.control,
+        get(Method::GET, &format!("/blobs/{hash}/url?ttl=60"), None),
+    )
+    .await;
+    assert_eq!(minted.status, StatusCode::OK);
+    assert_eq!(minted.json()["expires_in"], 60);
+    let url = minted.json()["url"].as_str().unwrap().to_string();
+    let mut path = url[url.find("/blobs/").unwrap()..].to_string();
+
+    let fetched = send(&instance.control, get(Method::GET, &path, None)).await;
+    assert_eq!(fetched.status, StatusCode::OK);
+    assert_eq!(fetched.bytes, bytes);
+    let head = send(&instance.control, get(Method::HEAD, &path, None)).await;
+    assert_eq!(head.status, StatusCode::OK);
+    assert_eq!(head.headers[header::CONTENT_LENGTH], "16");
+    assert!(head.bytes.is_empty());
+
+    let last = path.pop().unwrap();
+    let altered = format!("{path}{}", if last == '0' { '1' } else { '0' });
+    path.push(last);
+    let refused = send(&instance.control, get(Method::GET, &altered, None)).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+
+    let capped = send(
+        &instance.control,
+        get(
+            Method::GET,
+            &format!("/blobs/{hash}/url?ttl=99999999"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(capped.json()["expires_in"], 604_800);
+
+    instance.app.clock.advance(61_000).unwrap();
+    let expired = send(&instance.control, get(Method::GET, &path, None)).await;
+    assert_eq!(expired.status, StatusCode::UNAUTHORIZED);
+    let expired_head = send(&instance.control, get(Method::HEAD, &path, None)).await;
+    assert_eq!(expired_head.status, StatusCode::UNAUTHORIZED);
+    let capped_path = {
+        let url = capped.json()["url"].as_str().unwrap().to_string();
+        url[url.find("/blobs/").unwrap()..].to_string()
+    };
+    let still = send(&instance.control, get(Method::GET, &capped_path, None)).await;
+    assert_eq!(still.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_range_past_the_end_is_416_and_head_answers_a_range_without_a_body() {
+    let instance = Instance::start().await;
+    let bytes = b"0123456789abcdef".to_vec();
+    let hash = hash_of(&bytes);
+    assert_eq!(instance.put(&bytes).await.status, StatusCode::CREATED);
+    let ranged = |method: Method, range: &str| {
+        let mut request = get(method, &format!("/blobs/{hash}"), None);
+        request
+            .headers_mut()
+            .insert(header::RANGE, range.parse().unwrap());
+        request
+    };
+
+    let past = send(&instance.control, ranged(Method::GET, "bytes=100-200")).await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.code(), "range_not_satisfiable");
+    assert_eq!(past.headers[header::CONTENT_RANGE], "bytes */16");
+    assert_eq!(past.json()["error"]["details"]["size_bytes"], 16);
+
+    let head = send(&instance.control, ranged(Method::HEAD, "bytes=2-5")).await;
+    assert_eq!(head.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(head.headers[header::CONTENT_LENGTH], "4");
+    assert_eq!(head.headers[header::CONTENT_RANGE], "bytes 2-5/16");
+    assert!(head.bytes.is_empty());
+}
+
+#[tokio::test]
+async fn every_read_door_answers_a_key_that_reaches_no_type_403_before_looking_at_the_hash() {
+    let instance = Instance::start().await;
+    let hash = hash_of(b"never uploaded");
+    let blind = instance.writer("blind", json!({})).await;
+    let sighted = instance
+        .writer("sighted", json!({ "core.note": "read" }))
+        .await;
+    let doors = [
+        (Method::GET, format!("/blobs/{hash}")),
+        (Method::HEAD, format!("/blobs/{hash}")),
+        (Method::GET, format!("/blobs/{hash}/url")),
+        (Method::GET, format!("/blobs/{hash}/copies")),
+        (Method::GET, "/blobs/not-a-hash".to_string()),
+    ];
+    for (method, path) in doors {
+        let refused = send(&instance.public, get(method.clone(), &path, Some(&blind))).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{method} {path}");
+        if method != Method::HEAD {
+            assert_eq!(refused.code(), "type_not_permitted", "{method} {path}");
+        }
+        let looked = send(&instance.public, get(method.clone(), &path, Some(&sighted))).await;
+        assert_ne!(looked.status, StatusCode::FORBIDDEN, "{method} {path}");
+    }
+}

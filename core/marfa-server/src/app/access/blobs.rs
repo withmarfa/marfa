@@ -37,7 +37,7 @@ impl Caller {
         &self,
         held: bool,
         uploaded: impl FnOnce() -> Result<bool>,
-        lenders: impl FnOnce() -> Result<Vec<Lender>>,
+        lenders: impl IntoIterator<Item = Result<Lender>>,
     ) -> Result<bool> {
         if matches!(self, Caller::Server) || !held {
             return Ok(false);
@@ -45,7 +45,7 @@ impl Caller {
         if self.reads_every_blob() || uploaded()? {
             return Ok(true);
         }
-        Ok(self.may_read_blob(&lenders()?))
+        self.may_read_blob(lenders)
     }
 
     /// A working credential may not name as a file's bytes a blob it did not prove. The answer
@@ -66,14 +66,21 @@ impl Caller {
         self.holds(Permission::BlobsManage)
     }
 
-    /// A blob is read through a row that lends it and that the caller may read: an item of a
-    /// readable type, an edge its map and its source's type reach, or an extension its map
-    /// reaches on an item of a readable type. Whoever manages blobs reads every blob held.
-    pub fn may_read_blob(&self, lenders: &[Lender]) -> bool {
+    /// Stop at the first readable lender to avoid fetching the rest from storage.
+    pub fn may_read_blob(&self, lenders: impl IntoIterator<Item = Result<Lender>>) -> Result<bool> {
         if self.reads_every_blob() {
-            return true;
+            return Ok(true);
         }
-        lenders.iter().any(|lender| match lender {
+        for lender in lenders {
+            if self.may_read_lender(&lender?) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn may_read_lender(&self, lender: &Lender) -> bool {
+        match lender {
             Lender::Item { type_id } => self.may_read_type(type_id),
             Lender::Edge {
                 edge_type,
@@ -83,7 +90,7 @@ impl Caller {
                 namespace,
                 item_type,
             } => self.may_read_extension(namespace) && self.may_read_type(item_type),
-        })
+        }
     }
 }
 
@@ -96,9 +103,13 @@ mod tests {
         panic!("not asked")
     }
 
+    fn none() -> std::iter::Empty<Result<Lender>> {
+        std::iter::empty()
+    }
+
     #[test]
     fn a_write_for_no_credential_proves_nothing_whatever_it_holds() {
-        let proved = Caller::Server.proves_blob(true, || Ok(true), || Ok(Vec::new()));
+        let proved = Caller::Server.proves_blob(true, || Ok(true), none());
         assert!(!proved.unwrap());
         assert!(Caller::Server.require_file_bytes(false).is_ok());
     }
@@ -106,8 +117,8 @@ mod tests {
     #[test]
     fn a_local_caller_proves_every_held_blob_and_none_that_is_not_held() {
         let local = Caller::Local(Standing::default());
-        assert!(local.proves_blob(true, asked, || Ok(Vec::new())).unwrap());
-        assert!(!local.proves_blob(false, asked, || Ok(Vec::new())).unwrap());
+        assert!(local.proves_blob(true, asked, none()).unwrap());
+        assert!(!local.proves_blob(false, asked, none()).unwrap());
         assert!(local.require_file_bytes(false).is_ok());
     }
 }

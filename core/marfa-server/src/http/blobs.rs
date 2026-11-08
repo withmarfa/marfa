@@ -21,7 +21,7 @@ use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::blobs::range::{self, Slice};
-use crate::app::blobs::{ByteStream, DEFAULT_TYPE, Found, Hash, link};
+use crate::app::blobs::{ByteStream, DEFAULT_TYPE, Found, Hash, Intake, link};
 use crate::app::refusal::{Code, Refusal};
 use crate::app::types::missing_field;
 
@@ -66,24 +66,9 @@ pub async fn upload(State(app): State<Arc<App>>, caller: Caller, request: Reques
         return Err(empty().into());
     }
     let mut intake = app.begin_upload(declared, mime_type).await?;
-    let idle = app.upload_idle();
-    loop {
-        match tokio::time::timeout(idle, body.frame()).await {
-            Err(_) => {
-                return Err(Refusal::new(
-                    Code::RequestTimeout,
-                    "The body stopped arriving; the upload was ended.",
-                )
-                .into());
-            }
-            Ok(None) => break,
-            Ok(Some(Err(_))) => return Err(Stopped::ClientClosed),
-            Ok(Some(Ok(frame))) => {
-                if let Ok(data) = frame.into_data() {
-                    intake.push(data).await?;
-                }
-            }
-        }
+    if let Err(stopped) = received(&mut body, &mut intake, app.upload_idle()).await {
+        intake.discard().await;
+        return Err(stopped);
     }
     let blob = app.finish_upload(&caller, intake).await?;
     Ok(json_answer(
@@ -94,6 +79,28 @@ pub async fn upload(State(app): State<Arc<App>>, caller: Caller, request: Reques
             "size_bytes": blob.size_bytes,
         }),
     ))
+}
+
+/// Reads the body into the intake until it ends or stops.
+async fn received(body: &mut Body, intake: &mut Intake, idle: Duration) -> Result<(), Stopped> {
+    loop {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Err(_) => {
+                return Err(Refusal::new(
+                    Code::RequestTimeout,
+                    "The body stopped arriving; the upload was ended.",
+                )
+                .into());
+            }
+            Ok(None) => return Ok(()),
+            Ok(Some(Err(_))) => return Err(Stopped::ClientClosed),
+            Ok(Some(Ok(frame))) => {
+                if let Ok(data) = frame.into_data() {
+                    intake.push(data).await?;
+                }
+            }
+        }
+    }
 }
 
 fn empty() -> Refusal {

@@ -826,3 +826,74 @@ async fn a_file_refused_for_its_bytes_keeps_no_answer_under_its_idempotency_key(
     assert_eq!(replayed.text, taken.text);
     assert_eq!(marfa.items(), 1);
 }
+
+#[tokio::test]
+async fn a_lending_row_is_judged_by_the_types_it_has_now() {
+    let marfa = Instance::start().await;
+    let every = json!({ "*": "write" });
+    let (_, owner) = marfa
+        .key(
+            "owner",
+            json!({ "type_permissions": every, "edge_permissions": every }),
+        )
+        .await;
+    let reader = |source: &'static str, types: Value| {
+        marfa.key(
+            source,
+            json!({ "type_permissions": types, "edge_permissions": { "*": "read" } }),
+        )
+    };
+    let notes = reader("notes", notes("read")).await.1;
+    let tasks = reader("tasks", json!({ "core.task": "read" })).await.1;
+    let retype = |id: String| {
+        let owner = owner.clone();
+        let marfa = &marfa;
+        async move {
+            let moved = json!({
+                "version": 1,
+                "type": "core.task",
+                "retype": true,
+                "properties": { "title": "now a task" },
+            });
+            let moved = marfa
+                .call(&owner, Method::PATCH, &format!("/items/{id}"), moved)
+                .await;
+            assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+        }
+    };
+    let readers = async |hash: &str| {
+        (
+            marfa.reads(&notes, hash).await,
+            marfa.reads(&tasks, hash).await,
+        )
+    };
+
+    let own = marfa.upload(&owner, b"an item's own bytes").await;
+    let item = marfa.note(&owner, &own).await;
+    assert_eq!(readers(&own).await, (true, false));
+    retype(item).await;
+    assert_eq!(readers(&own).await, (false, true));
+
+    let cover = marfa.upload(&owner, b"an edge's cover").await;
+    let source = marfa.note(&owner, "source").await;
+    let target = marfa.note(&owner, "target").await;
+    let made = json!({
+        "source_id": source,
+        "target_id": target,
+        "edge_type": "parent-of",
+        "properties": { "cover": cover },
+    });
+    let made = marfa.call(&owner, Method::POST, "/edges", made).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let made = made.json()["edge"].clone();
+    assert_eq!(readers(&cover).await, (true, false));
+    retype(source).await;
+    assert_eq!(readers(&cover).await, (false, true));
+
+    let moved_to = marfa.note(&owner, "another source").await;
+    let moved = json!({ "version": made["version"], "source_id": moved_to });
+    let path = format!("/edges/{}", made["id"].as_str().unwrap());
+    let moved = marfa.call(&owner, Method::PATCH, &path, moved).await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+    assert_eq!(readers(&cover).await, (true, false));
+}

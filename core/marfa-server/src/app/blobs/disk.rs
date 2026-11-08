@@ -112,7 +112,8 @@ impl Disk {
         })
     }
 
-    /// Moves a sealed file into place over whatever stands there, and syncs the folders.
+    /// Moves a sealed file into place over whatever stands there, which may be a damaged
+    /// copy's bytes, and syncs it and every folder whose entries changed, the root included.
     pub fn publish(&self, staged: &mut Staged, hash: &Hash) -> io::Result<()> {
         if !self.reachable() {
             return Err(Disk::unreachable());
@@ -121,11 +122,17 @@ impl Disk {
         let Some(folder) = target.parent() else {
             return Err(io::Error::other("a blob path has no folder"));
         };
+        let Some(parent) = folder.parent() else {
+            return Err(io::Error::other("a blob path has no folder"));
+        };
         fs::create_dir_all(folder)?;
         fs::rename(&staged.path, &target)?;
         staged.published = true;
-        File::open(folder)?.sync_all()?;
-        File::open(&self.root)?.sync_all()
+        File::open(&target)?.sync_all()?;
+        for synced in [folder, parent, self.root.as_path()] {
+            File::open(synced)?.sync_all()?;
+        }
+        Ok(())
     }
 
     pub fn open_blob(&self, hash: &Hash) -> io::Result<File> {
@@ -289,10 +296,38 @@ impl Staged {
     }
 }
 
-impl Drop for Staged {
-    fn drop(&mut self) {
+impl Staged {
+    /// Removes the file unless it was placed. It blocks, so a caller on the async runtime
+    /// runs it on a blocking task.
+    pub fn discard(mut self) {
+        self.remove();
+    }
+
+    fn remove(&mut self) {
         if !self.published {
+            self.published = true;
             let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl Drop for Staged {
+    /// The way out for an upload that was cancelled while it held the file, wherever it was
+    /// dropped: on the runtime the removal goes to a blocking task.
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        let path = std::mem::take(&mut self.path);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(move || {
+                    let _ = fs::remove_file(path);
+                });
+            }
+            Err(_) => {
+                let _ = fs::remove_file(path);
+            }
         }
     }
 }
@@ -343,6 +378,22 @@ mod tests {
         dropped.append(b"half").unwrap();
         drop(dropped);
         assert!(fs::read_dir(disk.tmp()).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_staged_file_dropped_on_the_runtime_is_removed_off_it() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(dir.path()).unwrap();
+        let mut dropped = disk.stage().unwrap();
+        dropped.append(b"half").unwrap();
+        drop(dropped);
+        for _ in 0..100 {
+            if fs::read_dir(disk.tmp()).unwrap().next().is_none() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("the staged file was not removed");
     }
 
     #[test]
