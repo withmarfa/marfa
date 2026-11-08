@@ -146,6 +146,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/webhook-bulk-backlog.test.ts",
   "src/suites/compliance/webhook-delivery.test.ts",
   "src/suites/compliance/webhook-history.test.ts",
+  "src/suites/compliance/webhook-owner-standing.test.ts",
   "src/suites/compliance/webhook-resolution.test.ts",
   "src/suites/compliance/webhook-retries.test.ts",
   "src/suites/compliance/webhook-schedule-gap.test.ts",

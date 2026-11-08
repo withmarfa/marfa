@@ -7,6 +7,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
@@ -44,12 +45,24 @@ function client(key: string): MarfaClient {
   return new MarfaClient({ baseUrl: server!.apiUrl, apiKey: key });
 }
 
-/** The instance's owner, who reads every maker's subscriptions. */
-function person(): MarfaClient {
-  return new MarfaClient({
-    baseUrl: server!.apiUrl,
-    ownerCookie: server!.ownerCookie,
-  });
+/** The private local socket, which reads every maker's subscriptions. */
+async function local(path: string): Promise<number> {
+  return (await controlRequest(server!.controlSocket, path)).status;
+}
+
+interface Row {
+  id: string;
+  status: string;
+}
+
+async function localDeliveries(
+  webhookId: string,
+): Promise<{ status: number; rows: Row[] }> {
+  const read = await controlRequest(
+    server!.controlSocket,
+    `/webhooks/${webhookId}/deliveries`,
+  );
+  return { status: read.status, rows: (read.body.data ?? []) as Row[] };
 }
 
 async function note(body: string): Promise<string> {
@@ -72,21 +85,6 @@ async function subscribe(owner: MarfaClient, label: string): Promise<string> {
   return created.data.id;
 }
 
-/** Runs a job, again while the server's own run holds its name. */
-async function run(name: string): Promise<void> {
-  await waitFor(
-    `${name} to run`,
-    async () => {
-      const ran = await client(server!.managementKey).runHousekeeping(name);
-      if (ran.status === 409) return undefined;
-      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
-      expect(ran.data.outcome, ran.data.error ?? "").toBe("ok");
-      return true;
-    },
-    30_000,
-  );
-}
-
 const sentTo = (label: string) =>
   receiver.received.filter((r) => r.path === `/hook/${label}`);
 
@@ -103,7 +101,7 @@ describe("a subscription whose credential stops standing", () => {
     expect((await appClient.listWebhooks()).data.data.map((w) => w.id)).toEqual(
       [id],
     );
-    expect((await person().getWebhook(id)).status).toBe(200);
+    expect(await local(`/webhooks/${id}`)).toBe(200);
     const before = await note("grant-before");
     await receiver.waitFor(
       (r) => r.path === "/hook/grant-app" && r.body.includes(before),
@@ -121,9 +119,11 @@ describe("a subscription whose credential stops standing", () => {
     );
     expect(revoked.status).toBe(204);
 
-    expect((await person().getWebhook(id)).status).toBe(404);
+    expect(await local(`/webhooks/${id}`)).toBe(404);
+    const listed = await controlRequest(server!.controlSocket, "/webhooks");
+    expect(listed.status).toBe(200);
     expect(
-      (await person().listWebhooks()).data.data.map((w) => w.id),
+      (listed.body.data as { id: string }[]).map((w) => w.id),
     ).not.toContain(id);
     await subscribe(operator, "grant-sentinel");
     const after = await note("grant-after");
@@ -185,8 +185,15 @@ describe("a subscription whose credential stops standing", () => {
     await receiver.waitFor(
       (r) => r.path === "/hook/expiry-sentinel" && r.body.includes(after),
     );
-    await run("webhook-poll");
-    await run("webhook-poll");
+    // The move made the waiting retry due: it is settled, or its subscription
+    // is gone, rather than left waiting.
+    await waitFor("the waiting retry to settle", async () => {
+      const stored = await localDeliveries(retrying);
+      return stored.status === 404 ||
+        stored.rows.find((row) => row.id === pending.id)?.status !== "pending"
+        ? true
+        : undefined;
+    });
 
     expect(
       sentTo("expiry-live").some((r) => r.body.includes(after)),
@@ -196,14 +203,14 @@ describe("a subscription whose credential stops standing", () => {
       sentTo("expiry-retrying").length,
       "a pending delivery of the expired key was attempted",
     ).toBe(sentBefore);
-    // The owner reads the subscription if it still stands; it is gone, or its
-    // delivery was not made.
-    const stored = await person().listWebhookDeliveries(retrying);
+    // The local socket reads the subscription if it still stands; it is
+    // gone, or its delivery was not made.
+    const stored = await localDeliveries(retrying);
     if (stored.status !== 404) {
       expect(stored.status).toBe(200);
-      expect(
-        stored.data.data.find((row) => row.id === pending.id)?.status,
-      ).not.toBe("success");
+      expect(stored.rows.find((row) => row.id === pending.id)?.status).not.toBe(
+        "success",
+      );
     }
   });
 });
