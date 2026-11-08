@@ -26,6 +26,9 @@
  *   space on the volume (`database` or `blobs`) from now until the fault is
  *   cleared or set again. Setting it again while a body streams in is how
  *   a volume fills as the bytes arrive.
+ * - `limit:<lane>=<n>` lowers the attempts a counted lane allows per window
+ *   to `<n>`, from now until the fault is cleared or set again. The count
+ *   stays in the database, so it outlasts a restart that the fault does not.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
@@ -77,6 +80,7 @@ export const POINTS: {
 } = {
   hold: [
     { name: "webhook:response", arg: "none" },
+    { name: "connector-write", arg: "none" },
     { name: "bulk-job:selected", arg: "none" },
     { name: "bulk-job:claimed", arg: "none" },
     { name: "bulk-job:in-chunk", arg: "none" },
@@ -122,6 +126,10 @@ export const POINTS: {
     { name: "stream-credential", arg: "nth" },
     { name: "stream-replay-row", arg: "nth" },
     { name: "edge-source-type", arg: "nth" },
+    { name: "session-lookup", arg: "nth" },
+    { name: "session-delete", arg: "nth" },
+    { name: "session-use", arg: "nth" },
+    { name: "housekeeping-read", arg: "nth" },
   ],
 };
 
@@ -215,6 +223,11 @@ function aim(point: Point, arg: string | null): Target | string {
   return { action, nth: count };
 }
 
+/** The counted lanes a `limit` fault may lower. */
+const LIMIT_LANES = ["device-owner-instance"] as const;
+export type LimitLane = (typeof LIMIT_LANES)[number];
+const MAX_LIMIT = 1_000_000;
+
 /** An address a `resolve` fault may script. */
 function isAddress(text: string): boolean {
   return ipaddr.IPv4.isValidFourPartDecimal(text) || ipaddr.IPv6.isValid(text);
@@ -279,6 +292,14 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "a free fault takes a whole number of bytes";
     return undefined;
   }
+  if (kind === "limit") {
+    if (!LIMIT_LANES.includes(rest as LimitLane))
+      return `${rest} is not a limit: ${LIMIT_LANES.join(" or ")}`;
+    const count = arg === null ? Number.NaN : Number(arg);
+    if (!/^[0-9]+$/.test(arg ?? "") || count < 1 || count > MAX_LIMIT)
+      return `a limit fault takes a whole number of attempts from 1 to ${String(MAX_LIMIT)}`;
+    return undefined;
+  }
   if (name === "unfold-deadline" || name === "store-check-deadline") {
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
@@ -296,7 +317,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, limit:<lane>, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -529,6 +550,13 @@ export function deadlineFault(job: string): number | undefined {
 export function freeFault(volume: Volume): number | undefined {
   if (faults.size === 0) return undefined;
   const arg = faults.get(`free:${volume}`)?.arg;
+  return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** The attempts `limit:<lane>` allows a window, if one is armed. */
+export function limitFault(lane: LimitLane): number | undefined {
+  if (faults.size === 0) return undefined;
+  const arg = faults.get(`limit:${lane}`)?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
 }
 

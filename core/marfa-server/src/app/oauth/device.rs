@@ -130,7 +130,8 @@ pub async fn admit_lookup(
     let now = app.clock.now_ms();
     match session {
         Some(session) => {
-            let lanes = device_owner_lanes(&session.user_id);
+            let lanes =
+                device_owner_lanes(&session.user_id, app.faults.limit("device-owner-instance"));
             app.db
                 .write(Write::own(), move |tx| admit(tx, now, &lanes))
                 .await

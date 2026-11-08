@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::{Note, Visit, names, note, seconds_of, stamp_of};
 use crate::app::access::{Caller, Standing, unauthorized};
+use crate::app::faults::{FAIL_SESSION_DELETE, FAIL_SESSION_LOOKUP, FAIL_SESSION_USE};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
@@ -246,6 +247,12 @@ pub async fn seen(app: &App, session: Session) -> Result<Option<Seen>> {
             recorded: false,
         }));
     }
+    if app.faults.fail(FAIL_SESSION_USE, None) {
+        return Ok(Some(Seen {
+            session,
+            recorded: false,
+        }));
+    }
     let id = session.id.clone();
     let clock = app.clock.clone();
     match app
@@ -335,14 +342,26 @@ pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i
     Ok(i64::try_from(count).unwrap_or(i64::MAX))
 }
 
+fn io_failure() -> Refusal {
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None)
+        .into()
+}
+
 /// Signs a browser out. A session that ended while this waited is out already.
 pub async fn sign_out(app: &App, caller: &Caller, visit: Visit) -> Result<()> {
     if caller.session().is_none() {
         return Err(unauthorized());
     }
+    if app.faults.fail(FAIL_SESSION_LOOKUP, None) {
+        return Err(io_failure());
+    }
+    let faults = app.faults.clone();
     let ending = app
         .write(caller, ENDED, move |unit| {
             let session = unit.caller.session().ok_or_else(unauthorized)?;
+            if faults.fail(FAIL_SESSION_DELETE, None) {
+                return Err(io_failure());
+            }
             ended(
                 unit.tx(),
                 &unit.at,

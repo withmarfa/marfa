@@ -11,6 +11,7 @@ import {
   faultsArmed,
   freeFault,
   healthAdmitted,
+  limitFault,
   holdArmed,
   holdAt,
   POINTS,
@@ -305,6 +306,27 @@ describe("a free fault", () => {
     expect(arm("free:blobs")).toMatch(/whole number/);
     for (const arg of ["-1", "1.5", "1e3", "", "ten", "9007199254740993"]) {
       expect(arm("free:blobs", arg), arg).toMatch(/whole number/);
+    }
+    expect(activeFaults()).toEqual([]);
+  });
+});
+
+describe("a limit fault", () => {
+  it("reads the attempts it was set to for its lane, until it is set again or cleared", () => {
+    expect(limitFault("device-owner-instance")).toBeUndefined();
+    expect(arm("limit:device-owner-instance", "2")).toBeUndefined();
+    expect(limitFault("device-owner-instance")).toBe(2);
+    clearFaults();
+    expect(limitFault("device-owner-instance")).toBeUndefined();
+  });
+
+  it("refuses a lane nothing counts, and an argument that is not a whole number from 1", () => {
+    expect(arm("limit:elsewhere", "1")).toMatch(/not a limit/);
+    expect(arm("limit:device-owner-instance")).toMatch(/whole number/);
+    for (const arg of ["0", "-1", "1.5", "", "ten", "1000001"]) {
+      expect(arm("limit:device-owner-instance", arg), arg).toMatch(
+        /whole number/,
+      );
     }
     expect(activeFaults()).toEqual([]);
   });

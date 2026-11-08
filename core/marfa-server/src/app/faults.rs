@@ -65,6 +65,9 @@ points! {
     FAIL_COMMIT = Fail "commit" Write;
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
+    FAIL_SESSION_LOOKUP = Fail "session-lookup" Nth;
+    FAIL_SESSION_DELETE = Fail "session-delete" Nth;
+    FAIL_SESSION_USE = Fail "session-use" Nth;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,6 +219,10 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+/// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
+const LIMIT_LANES: [&str; 1] = ["device-owner-instance"];
+const MAX_LIMIT: u64 = 1_000_000;
+
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
@@ -251,9 +258,25 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        "limit" => {
+            if !LIMIT_LANES.contains(&rest) {
+                return Err(format!(
+                    "{rest} is not a limit: {}",
+                    LIMIT_LANES.join(" or ")
+                ));
+            }
+            let count = arg
+                .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|text| text.parse::<u64>().ok())
+                .filter(|count| (1..=MAX_LIMIT).contains(count))
+                .ok_or_else(|| {
+                    format!("a limit fault takes a whole number of attempts, from 1 to {MAX_LIMIT}")
+                })?;
+            Ok((None, Some(count)))
+        }
         _ => Err(
-            "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job> \
-             or free:<volume>"
+            "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, \
+             free:<volume> or limit:<lane>"
                 .to_string(),
         ),
     }
@@ -411,6 +434,15 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
+    pub fn limit(&self, lane: &str) -> Option<i64> {
+        let name = format!("limit:{lane}");
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == name)
+            .and_then(|fault| fault.number)
+            .and_then(|count| i64::try_from(count).ok())
+    }
+
     pub fn free(&self, volume: Volume) -> Option<u64> {
         self.armed()
             .iter()
@@ -480,6 +512,10 @@ mod tests {
         assert!(refused("free:elsewhere", Some("1")));
         assert!(refused("free:database", Some("9007199254740992")));
         assert!(refused("free:database", None));
+        assert!(refused("limit:elsewhere", Some("1")));
+        assert!(refused("limit:device-owner-instance", None));
+        assert!(refused("limit:device-owner-instance", Some("0")));
+        assert!(refused("limit:device-owner-instance", Some("1000001")));
         assert!(refused("something", None));
         assert!(refused("hold:read-snapshot", Some("1")));
         assert!(refused("fail:lock", Some("item.create")));
@@ -489,6 +525,18 @@ mod tests {
         assert!(refused("hold:write", Some("<action>@<n>")));
         assert!(refused("hold:write", Some("Item@1")));
         assert!(refused("hold:write", Some("item@")));
+    }
+
+    #[test]
+    fn a_limit_lowers_a_lane_to_the_count_it_is_set_to() {
+        let faults = Faults::default();
+        assert_eq!(faults.limit("device-owner-instance"), None);
+        faults
+            .set("limit:device-owner-instance", Some("3"))
+            .unwrap();
+        assert_eq!(faults.limit("device-owner-instance"), Some(3));
+        faults.clear(None);
+        assert_eq!(faults.limit("device-owner-instance"), None);
     }
 
     #[test]
@@ -504,6 +552,16 @@ mod tests {
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
         assert!(!refused("deadline:trash-purge", Some("300")));
+    }
+
+    #[test]
+    fn takes_the_session_points_with_a_count_alone() {
+        for name in ["session-lookup", "session-delete", "session-use"] {
+            assert!(!refused(&format!("fail:{name}"), None));
+            assert!(!refused(&format!("fail:{name}"), Some("2")));
+            assert!(refused(&format!("fail:{name}"), Some("item.create")));
+            assert!(refused(&format!("hold:{name}"), None));
+        }
     }
 
     #[test]

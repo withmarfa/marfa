@@ -4,6 +4,7 @@ import {
   MAX_PROBLEMS,
   MAX_PROBLEM_LENGTH,
 } from "./_connector-problems.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
@@ -564,6 +565,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
         { field: "state" },
       );
     }
+    if (faultsArmed()) await holdAt("connector-write");
     const written = await storage.connectorState.putState(
       { connectorId: connector.id, keyId: key.id, process },
       connector.source,
@@ -624,6 +626,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     }
     // The key is read in the transaction, which refreshes it, and not before:
     // a narrowing saved since admission decides which rows are skipped.
+    if (faultsArmed()) await holdAt("connector-write");
     const written = await storage.runInTransaction(() =>
       storage.connectorState.writeAgreements(
         { connectorId: connector.id, keyId: key.id, process: body.process },
