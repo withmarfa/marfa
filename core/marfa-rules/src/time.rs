@@ -11,6 +11,14 @@ pub fn normalize(value: &str, field: &str) -> Result<String> {
     Ok(instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
+/// Milliseconds since the epoch of a value [`normalize`] reads.
+pub fn epoch_ms(value: &str) -> Option<i64> {
+    let instant = parse(value)?;
+    (0..=9999)
+        .contains(&instant.year())
+        .then(|| instant.and_utc().timestamp_millis())
+}
+
 /// RFC 3339 as written: a date, `T`, a time with seconds, and a zone; `t` and `z` may be lowercase.
 pub fn rfc3339(value: &str, field: &str) -> Result<String> {
     let bytes = value.as_bytes();

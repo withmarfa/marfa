@@ -31,12 +31,14 @@ pub struct Asked {
     pub mode: &'static str,
     pub atomic: bool,
     pub retype: bool,
+    pub fanout: bool,
 }
 
 pub struct Page {
     pub entries: Vec<Result<Entry>>,
     pub mode: &'static str,
     pub retype: bool,
+    pub fanout: bool,
     pub operation: String,
     pub pulse: Pulse,
     pub faults: Arc<Faults>,
@@ -57,6 +59,7 @@ pub struct Note {
     pub total: usize,
     pub mode: &'static str,
     pub retype: bool,
+    pub fanout: bool,
     pub operation: String,
 }
 
@@ -185,6 +188,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
         mode,
         atomic,
         retype,
+        fanout,
     } = asked;
     if entries.is_empty() {
         return Ok(json!({ "counts": Counts::default(), "results": [] }).to_string());
@@ -195,6 +199,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             entries,
             mode,
             retype,
+            fanout,
             operation,
             pulse: app.db.pulse(),
             faults: app.faults.clone(),
@@ -216,6 +221,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
                     total,
                     mode,
                     retype,
+                    fanout,
                     operation: operation.clone(),
                 };
                 let entry = Box::new(entry);

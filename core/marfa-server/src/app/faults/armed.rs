@@ -15,6 +15,8 @@ const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
 const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
+/// The time one series may take to unfold in a read of occurrences.
+const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
 
@@ -206,6 +208,14 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
+    arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
+        .ok_or_else(|| {
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
+        })
+}
 const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
 const MAX_LIMIT: u64 = 1_000_000;
 
@@ -258,6 +268,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        UNFOLD_DEADLINE if rest.is_empty() => {
+            unfold_deadline_of(arg).map(|check| (None, Some(check)))
+        }
         "resolve" => {
             if rest.is_empty()
                 || !rest
@@ -300,7 +313,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume>, resolve:<host>, limit:<lane> or unreadable:<stored>"
+             deadline:<job>, unfold-deadline, free:<volume>, resolve:<host>, limit:<lane> or unreadable:<stored>"
                 .to_string(),
         ),
     }
@@ -509,6 +522,13 @@ impl Faults {
             .map(Duration::from_millis)
     }
 
+    pub fn unfold_deadline(&self) -> Option<u64> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == UNFOLD_DEADLINE)
+            .and_then(|fault| fault.number)
+    }
+
     pub fn limit(&self, lane: &str) -> Option<i64> {
         let name = format!("limit:{lane}");
         self.armed()
@@ -692,6 +712,17 @@ mod tests {
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
         assert!(!refused("deadline:trash-purge", Some("300")));
+    }
+
+    #[test]
+    fn the_unfold_deadline_names_a_deadline_check() {
+        assert!(refused("unfold-deadline", None));
+        assert!(refused("unfold-deadline", Some("0")));
+        assert!(refused("unfold-deadline", Some("soon")));
+        let faults = Faults::default();
+        assert_eq!(faults.unfold_deadline(), None);
+        faults.set("unfold-deadline", Some("1")).unwrap();
+        assert_eq!(faults.unfold_deadline(), Some(1));
     }
 
     #[test]

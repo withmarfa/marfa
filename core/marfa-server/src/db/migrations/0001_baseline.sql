@@ -237,7 +237,8 @@ CREATE TABLE IF NOT EXISTS event_log (
     type TEXT NOT NULL,
     source TEXT NOT NULL,
     at TEXT NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    fanout INTEGER NOT NULL CHECK (fanout IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
