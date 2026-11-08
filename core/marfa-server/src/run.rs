@@ -99,7 +99,7 @@ fn listen(
 
 /// Runs until a stop signal, and returns the status to exit with.
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
-    let claim = Claim::take(&accepted.fixed().control_socket)?;
+    let mut claim = Claim::take(&accepted.fixed().control_socket)?;
     let app = App::start(accepted).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
     let mut signals = Signals::install()?;

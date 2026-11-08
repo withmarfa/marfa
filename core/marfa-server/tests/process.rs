@@ -14,6 +14,12 @@ use tempfile::TempDir;
 
 const MAX_BODY: usize = 1024 * 1024;
 
+/// The socket's folders must hold no symbolic link, as macOS's temporary
+/// folder does.
+fn control_socket(dir: &Path) -> PathBuf {
+    dir.canonicalize().unwrap().join("control").join("s.sock")
+}
+
 fn program(dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_marfa-server"));
     command
@@ -23,7 +29,7 @@ fn program(dir: &Path) -> Command {
         .env("MARFA_TEST_HOOKS", "true")
         .env("SQLITE_PATH", dir.join("marfa.db"))
         .env("BLOB_PATH", dir.join("blobs"))
-        .env("MARFA_CONTROL_SOCKET", dir.join("control").join("s.sock"))
+        .env("MARFA_CONTROL_SOCKET", control_socket(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
