@@ -21,10 +21,15 @@
  *   does not shift the count. `fail:lock` counts only the writes a request
  *   starts, never the server's own, so a background job cannot take the fault
  *   from the request it is set for.
+ * - `refuse:<point>` makes the server refuse what it is asked at the point,
+ *   every time, until the fault is cleared. `fired` counts the refusals. A
+ *   refused read or write fails as the database failing does, and
+ *   `write-lock` makes a write wait for the lock as one held elsewhere would
+ *   keep it, until its busy budget is spent or the fault is cleared.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
  * - `free:<volume>=<bytes>` makes the server read that many bytes of free
- *   space on the volume (`database` or `blobs`) from now until the fault is
- *   cleared or set again. Setting it again while a body streams in is how
+ *   space on the volume (`database` or `blobs`), or none for `unknown`, from now until the
+ *   fault is cleared or set again. Setting it again while a body streams in is how
  *   a volume fills as the bytes arrive.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
@@ -86,6 +91,7 @@ interface Point {
 export const POINTS: {
   hold: readonly Point[];
   fail: readonly Point[];
+  refuse: readonly Point[];
 } = {
   hold: [
     { name: "webhook:response", arg: "none" },
@@ -110,6 +116,7 @@ export const POINTS: {
     { name: "export-validation", arg: "none" },
     { name: "write", arg: "write" },
     { name: "export-page", arg: "nth" },
+    { name: "bulk-page", arg: "nth" },
     { name: "blob-read", arg: "every-or-nth" },
     { name: "blob-has", arg: "none" },
     { name: "blob-write", arg: "none" },
@@ -135,7 +142,16 @@ export const POINTS: {
     { name: "stream-replay", arg: "nth" },
     { name: "stream-credential", arg: "nth" },
     { name: "stream-replay-row", arg: "nth" },
+    { name: "stream-replay-untyped", arg: "nth" },
     { name: "edge-source-type", arg: "nth" },
+    { name: "health-write", arg: "nth" },
+    { name: "event-stamp", arg: "nth" },
+  ],
+  refuse: [
+    { name: "read", arg: "none" },
+    { name: "write", arg: "none" },
+    { name: "write-lock", arg: "none" },
+    { name: "blob-store", arg: "none" },
   ],
 };
 
@@ -196,7 +212,7 @@ const faults = new Map<string, Entry>();
 
 /** The point a name addresses, and the job it names if it names one. */
 function declared(
-  kind: "hold" | "fail",
+  kind: "hold" | "fail" | "refuse",
   text: string,
 ): { point: Point; job: string | undefined } | undefined {
   for (const point of POINTS[kind]) {
@@ -301,6 +317,11 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
     const target = aim(found.point, arg);
     return typeof target === "string" ? target : undefined;
   }
+  if (kind === "refuse") {
+    if (declared(kind, rest) === undefined)
+      return `no refuse point is named ${rest}`;
+    return arg === null ? undefined : "a refuse fault takes no argument";
+  }
   if (kind === "deadline") {
     if (!JOB_NAME.test(rest)) return `${rest} is not a job name`;
     const ms = arg === null ? Number.NaN : Number(arg);
@@ -311,9 +332,10 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
   if (kind === "free") {
     if (!VOLUMES.includes(rest as Volume))
       return `${rest} is not a volume: ${VOLUMES.join(" or ")}`;
+    if (arg === "unknown") return undefined;
     const bytes = arg === null ? Number.NaN : Number(arg);
     if (!/^[0-9]+$/.test(arg ?? "") || !Number.isSafeInteger(bytes))
-      return "a free fault takes a whole number of bytes";
+      return "a free fault takes a whole number of bytes, or unknown";
     return undefined;
   }
   if (name === "unfold-deadline" || name === "store-check-deadline") {
@@ -351,7 +373,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -621,11 +643,29 @@ export function deadlineFault(job: string): number | undefined {
   return arg === undefined || arg === null ? undefined : Number(arg);
 }
 
-/** The free space `free:<volume>` makes the server read, if one is armed. */
-export function freeFault(volume: Volume): number | undefined {
+/**
+ * The free space `free:<volume>` makes the server read, if one is armed:
+ * a number of bytes, or `null` for space that cannot be read.
+ */
+export function freeFault(volume: Volume): number | null | undefined {
   if (faults.size === 0) return undefined;
   const arg = faults.get(`free:${volume}`)?.arg;
-  return arg === undefined || arg === null ? undefined : Number(arg);
+  if (arg === undefined || arg === null) return undefined;
+  return arg === "unknown" ? null : Number(arg);
+}
+
+/** Whether `refuse:<point>` is armed, without counting a refusal. */
+export function refuseArmed(point: string): boolean {
+  return faults.size > 0 && faults.has(`refuse:${point}`);
+}
+
+/** Whether `refuse:<point>` is armed; each call that finds it counts one refusal. */
+export function refusing(point: string): boolean {
+  if (faults.size === 0) return false;
+  const entry = faults.get(`refuse:${point}`);
+  if (entry === undefined) return false;
+  entry.fired += 1;
+  return true;
 }
 
 /** The time `unfold-deadline` allows one series to unfold, if it is armed. */

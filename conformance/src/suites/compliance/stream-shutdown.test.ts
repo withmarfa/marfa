@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -33,23 +31,10 @@ afterAll(async () => {
 /** The grace a container runtime gives a stopped process, by default. */
 const GRACE_MS = 10_000;
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 describe("stopping the instance with an event stream open", () => {
   it(
     "ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds",
     async () => {
-      const state = dirname(server.sqlitePath);
-      const group = Number(
-        readFileSync(join(state, "server.pid"), "utf8").trim(),
-      );
       const response = await fetch(`${server.apiUrl}/events`, {
         headers: { Authorization: `Bearer ${server.workingKey}` },
       });
@@ -63,8 +48,7 @@ describe("stopping the instance with an event stream open", () => {
         text += decoder.decode(chunk.value, { stream: true });
       }
 
-      const stoppedAt = Date.now();
-      process.kill(-group, "SIGTERM");
+      server.signal("SIGTERM");
       let closed = false;
       while (!closed) {
         const chunk = await reader.read();
@@ -81,11 +65,7 @@ describe("stopping the instance with an event stream open", () => {
         cursor: null,
       });
       expect(text).not.toMatch(/id: [^\n]*\nevent: stream_incomplete/);
-      while (alive(group) && Date.now() - stoppedAt < GRACE_MS) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      expect(alive(group)).toBe(false);
-      expect(Date.now() - stoppedAt).toBeLessThan(GRACE_MS - 2_000);
+      expect((await server.exit()).ms).toBeLessThan(GRACE_MS - 2_000);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -93,12 +73,6 @@ describe("stopping the instance with an event stream open", () => {
   it(
     "names the last event the stream sent as the cursor of its closing frame",
     async () => {
-      const group = Number(
-        readFileSync(
-          join(dirname(served.sqlitePath), "server.pid"),
-          "utf8",
-        ).trim(),
-      );
       const response = await fetch(`${served.apiUrl}/events`, {
         headers: { Authorization: `Bearer ${served.workingKey}` },
       });
@@ -132,7 +106,7 @@ describe("stopping the instance with an event stream open", () => {
       const sent = [...text.matchAll(/^id: (.+)$/gm)].map((m) => m[1]);
       expect(sent.length, "the stream sent no event with an id").toBe(2);
 
-      process.kill(-group, "SIGTERM");
+      served.signal("SIGTERM");
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;

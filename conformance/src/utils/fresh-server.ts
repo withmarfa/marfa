@@ -133,6 +133,8 @@ export interface FreshServer {
    * takes while the instance is writing. The caller removes the directory.
    */
   image(): Promise<string>;
+  /** Everything the server has written so far: its log, then what it printed to stderr. */
+  output(): Promise<string>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
@@ -428,8 +430,10 @@ export async function bootFreshServer(
   // When the last signal went out, so that `ServerExit.ms` can say how long
   // the stop took.
   let signaledAt: number | undefined;
+  let signaledWith: StopSignal | undefined;
   const signal = (name: StopSignal): void => {
     signaledAt = Date.now();
+    signaledWith = name;
     signalGroup(groupOf(state), name);
   };
   const exit = async (): Promise<ServerExit> => {
@@ -438,7 +442,7 @@ export async function bootFreshServer(
         `the server under ${state} was still running ${String(STOP_GRACE_MS)}ms after it was asked to end`,
       );
     }
-    return readExit(state, signaledAt, false);
+    return readExit(state, signaledAt, signaledWith === "SIGKILL");
   };
   const listArmedFaults = async (): Promise<ArmedFault[]> => {
     const listed = await adapter("fault", "list");
@@ -560,6 +564,13 @@ export async function bootFreshServer(
       }
     },
     faults: listArmedFaults,
+    async output() {
+      const logged = await adapter("log");
+      if (logged.status !== 0) {
+        throw new Error(`the target did not give its log:\n${logged.output}`);
+      }
+      return logged.output;
+    },
     async waitForHold(name, count = 1, timeoutMs = 60_000) {
       const deadline = Date.now() + timeoutMs;
       let seen = 0;
@@ -593,11 +604,6 @@ export interface RefusedBootOptions {
    */
   prepare?: (sqlitePath: string, stateDir: string) => void | Promise<void>;
   extraEnv?: Record<string, string>;
-  /**
-   * Text that, once the server's log holds it, has the server killed with
-   * `SIGKILL`: a start stopped partway, which then leaves no exit status.
-   */
-  killWhen?: string;
   /**
    * The `NODE_ENV` the server is started under, which every other boot
    * leaves unset. Naming one also leaves `MARFA_AUTH_SECRET` and
@@ -660,9 +666,6 @@ export async function bootRefused(
         ...(options.nodeEnv === undefined
           ? []
           : ["--node-env", options.nodeEnv]),
-        ...(options.killWhen === undefined
-          ? []
-          : ["--kill-when", options.killWhen]),
         ...envArgs(options.extraEnv ?? {}),
       ],
       serverEnv(),
@@ -672,7 +675,7 @@ export async function bootRefused(
         `the server booted into ${state} was not refused:\n${refused.output}`,
       );
     }
-    const ended = readExit(state, undefined, options.killWhen !== undefined);
+    const ended = readExit(state, undefined, false);
     return {
       ...ended,
       output: redactSetupProof(serverOutput(state)),
