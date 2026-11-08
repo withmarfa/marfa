@@ -53,11 +53,13 @@ pub struct Blob {
     pub size_bytes: u64,
 }
 
-/// A blob a caller may read, and the attached stores the copy record says hold it.
+/// A blob a caller may read, the attached stores the copy record says hold it, and whether
+/// it records a copy anywhere.
 #[derive(Debug)]
 pub struct Found {
     pub blob: Blob,
     held: Vec<String>,
+    recorded: bool,
 }
 
 pub struct Link {
@@ -541,8 +543,18 @@ impl App {
                 return Err(not_found());
             }
         }
-        let held = rows::holders(tx, hash)?;
-        Ok(Found { blob, held })
+        let copies = rows::copies(tx, hash)?;
+        let recorded = !copies.is_empty();
+        let held = copies
+            .into_iter()
+            .filter(|copy| !copy.detached)
+            .map(|copy| copy.store_id)
+            .collect();
+        Ok(Found {
+            blob,
+            held,
+            recorded,
+        })
     }
 
     /// A blob the caller may read; one it may not read is answered as an unknown one.
@@ -554,10 +566,10 @@ impl App {
     }
 
     /// A window of a blob's bytes, from the first store that holds a copy and begins to
-    /// answer in time. No copy in an attached store is an unknown blob, and no store that
-    /// answers is a store that failed.
+    /// answer in time. A blob with no recorded copy is an unknown one; a copy in a detached
+    /// store, or in a store that does not answer, is a store that failed.
     pub async fn bytes_of(&self, found: &Found, first: u64, length: u64) -> Result<ByteStream> {
-        if found.held.is_empty() {
+        if !found.recorded {
             return Err(not_found());
         }
         for store in self.blobs.attached() {

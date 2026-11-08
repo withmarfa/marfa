@@ -336,6 +336,42 @@ async fn a_folder_gone_while_running_is_unreachable_strikes_nothing_and_reads_an
 }
 
 #[tokio::test]
+async fn a_blob_held_only_by_a_detached_store_answers_503_and_an_unknown_one_404() {
+    let instance = Instance::start(&[]).await;
+    let hash = instance.stored(b"left in a folder no longer named").await;
+    let elsewhere = instance.dir.path().join("elsewhere");
+    let app = App::start(settings(
+        instance.dir.path(),
+        &[("BLOB_PATH", elsewhere.to_str().unwrap())],
+    ))
+    .await
+    .unwrap();
+    let moved = Instance {
+        public: public(app.clone()),
+        control: control(app.clone()),
+        app,
+        dir: TempDir::new().unwrap(),
+        writer: String::new(),
+    };
+
+    let copies = moved.copies(&hash).await;
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["detached"], true);
+    let read = moved.fetch(&hash).await;
+    assert_eq!(
+        read.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        read.body
+    );
+    assert_eq!(read.code(), "blob_store_unavailable");
+
+    let unknown = moved.fetch(&hash_of(b"never stored")).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    assert_eq!(unknown.code(), "blob_not_found");
+}
+
+#[tokio::test]
 async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_item_names() {
     let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "1000")]).await;
     let orphan = instance.stored(b"nothing names this").await;
