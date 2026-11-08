@@ -1,9 +1,5 @@
 /**
- * Build the published OpenAPI document, the spec committed at the repo root.
- *
- * `scripts/generate-openapi.ts` is a thin wrapper over `buildPublishedOpenAPISpec`
- * so the committed artifact and any test that checks it exercise the same code
- * path rather than two copies of the assembly.
+ * Build the OpenAPI document this server serves at `/openapi.json`.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -81,9 +77,7 @@ export async function buildPublishedOpenAPISpec(): Promise<
       new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
       config,
       // A literal, not a mint. The document describes the shape of a
-      // response, not this run's value, and an id in it would change the
-      // generated file on every regeneration — which is exactly what the
-      // freshness job reads as drift.
+      // response, not this run's value.
       SPEC_GENERATION_INSTANCE_ID,
     );
     // The committed document names a server; the one an instance serves at

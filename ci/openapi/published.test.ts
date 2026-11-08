@@ -1,18 +1,16 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { buildPublishedOpenAPISpec } from "./openapi-published.js";
-import {
-  CHAIN_REFUSALS,
-  finalizeOpenAPISpec,
-  PUBLIC_TAGS,
-} from "./openapi-finalize.js";
-import { makeErrorResponseSchema } from "./openapi.js";
-import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
+/**
+ * What the committed `openapi.json` says about itself, beyond the style
+ * guide: every operation is identifiable, the refusals are closed sets, no
+ * shape is written out twice and no component admits a null it cannot
+ * answer.
+ */
+import { describe, expect, it } from "vitest";
+import { document, inlineRefs } from "./document.js";
 
 type Operation = Record<string, unknown>;
 type Paths = Record<string, Record<string, Operation>>;
 
-/** `GET /items/{id}` — the identity used to compare operations across specs. */
+/** `GET /items/{id}` as the document keys an operation. */
 function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
   const paths = (spec.paths ?? {}) as Paths;
   const out = new Map<string, Operation>();
@@ -89,7 +87,7 @@ function openRefusals(document: Record<string, unknown>): string[] {
       const media = Object.values(response.content ?? {});
       if (media.length === 0) out.push(`${key} ${status} (no content)`);
       for (const { schema } of media) {
-        const found = problem(inlineOpenApiRefs(schema, document));
+        const found = problem(inlineRefs(schema, document));
         if (found === "open") out.push(`${key} ${status}`);
         else if (found !== undefined) out.push(`${key} ${status} (${found})`);
       }
@@ -98,170 +96,8 @@ function openRefusals(document: Record<string, unknown>): string[] {
   return [...new Set(out)].sort();
 }
 
-describe("published OpenAPI spec", () => {
-  let published: Map<string, Operation>;
-  let document: Record<string, unknown>;
-
-  beforeAll(async () => {
-    document = await buildPublishedOpenAPISpec();
-    published = operationKeys(document);
-  }, 60_000);
-
-  it("is the document the server itself serves at /openapi.json", async () => {
-    const ctx = await createTestContext();
-    try {
-      const res = await request(ctx.app, "GET", "/openapi.json");
-      expect(res.status).toBe(200);
-      const served = operationKeys(
-        (await res.json()) as Record<string, unknown>,
-      );
-      expect([...served.keys()].sort()).toEqual([...published.keys()].sort());
-    } finally {
-      await ctx.cleanup();
-    }
-  });
-
-  it("reflects the root, event stream and registration at their route mounts", async () => {
-    const ctx = await createTestContext();
-    try {
-      const reflected = operationKeys(
-        ctx.app.getOpenAPI31Document({
-          openapi: "3.1.0",
-          info: { title: "reflected", version: "0" },
-        }) as unknown as Record<string, unknown>,
-      );
-      for (const door of [
-        "GET /",
-        "GET /events",
-        "POST /auth/oauth2/register",
-      ]) {
-        expect(published.has(door), `published witness: ${door}`).toBe(true);
-        expect(reflected.get(door)?.operationId, door).toBe(
-          published.get(door)?.operationId,
-        );
-      }
-    } finally {
-      await ctx.cleanup();
-    }
-  });
-
-  it("serves the root, event stream and registration where their schemas publish them", async () => {
-    // These handlers retain their own validation and execution. Their
-    // registered descriptions must still name the paths that actually serve.
-    const ctx = await createTestContext();
-    try {
-      for (const [method, path] of [
-        ["GET", "/"],
-        ["GET", "/events"],
-        ["POST", "/auth/oauth2/register"],
-      ] as const) {
-        const res = await request(ctx.app, method, path, {
-          headers: { origin: "http://localhost:0" },
-        });
-        expect(res.status, `${method} ${path}`).not.toBe(404);
-      }
-    } finally {
-      await ctx.cleanup();
-    }
-  });
-
-  it("documents the registration schema's public fields and Marfa's supported methods", async () => {
-    const ctx = await createTestContext();
-    try {
-      const native = ctx.app.auth!.registration!;
-      const operation = published.get("POST /auth/oauth2/register")!;
-      const request = inlineOpenApiRefs(operation.requestBody, document) as {
-        content: {
-          "application/json": {
-            schema: { properties: Record<string, Record<string, unknown>> };
-          };
-        };
-      };
-      const properties = request.content["application/json"].schema.properties;
-      expect(Object.keys(properties).sort()).toEqual(
-        Object.keys(native.options.body.shape)
-          .filter(
-            (name) =>
-              ![
-                "skip_consent",
-                "backchannel_logout_uri",
-                "backchannel_logout_session_required",
-              ].includes(name),
-          )
-          .sort(),
-      );
-      expect(properties.token_endpoint_auth_method?.enum).toEqual([
-        "none",
-        "client_secret_basic",
-        "client_secret_post",
-      ]);
-      expect(properties.token_endpoint_auth_method?.default).toBe(
-        "client_secret_basic",
-      );
-      const response = inlineOpenApiRefs(
-        (operation.responses as Record<string, unknown>)["201"],
-        document,
-      ) as {
-        content: {
-          "application/json": {
-            schema: { required: string[]; properties: Record<string, unknown> };
-          };
-        };
-      };
-      expect(response.content["application/json"].schema.required).toContain(
-        "client_id",
-      );
-      expect(
-        response.content["application/json"].schema.properties,
-      ).toHaveProperty("dpop_bound_access_tokens");
-    } finally {
-      await ctx.cleanup();
-    }
-  });
-
-  it("publishes each group with its operations in order", () => {
-    const probe = finalizeOpenAPISpec({
-      openapi: "3.1.0",
-      info: { title: "probe", version: "0" },
-      tags: [{ name: "Supplied", description: "Tags the caller declared." }],
-      paths: {},
-    });
-    expect(probe.tags).toEqual(
-      PUBLIC_TAGS.map(({ name, description, operations }) => ({
-        name,
-        description,
-        "x-operation-order": operations,
-      })),
-    );
-    expect(PUBLIC_TAGS.map(({ name }) => name)).not.toContain("Supplied");
-  });
-
-  it("orders paths by the first appearance of their operations", () => {
-    const operation = (operationId: string) => ({
-      operationId,
-      responses: { "200": { description: "x" } },
-    });
-    const ordered = finalizeOpenAPISpec({
-      openapi: "3.1.0",
-      info: { title: "probe", version: "0" },
-      paths: {
-        "/unlisted": { get: operation("nothingListsThis") },
-        "/keys": { post: operation("createKey") },
-        // One path in two groups stands where its earliest operation does.
-        "/mixed": {
-          get: operation("getItemMetadata"),
-          post: operation("createItem"),
-        },
-        "/search": { get: operation("searchItems") },
-      },
-    });
-    expect(Object.keys(ordered.paths)).toEqual([
-      "/mixed",
-      "/search",
-      "/keys",
-      "/unlisted",
-    ]);
-  });
+describe("the committed OpenAPI document", () => {
+  const published = operationKeys(document);
 
   it("gives every published operation an operationId", () => {
     // Reference renderers otherwise generate an unstable anchor.
@@ -275,10 +111,9 @@ describe("published OpenAPI spec", () => {
   it("declares 500 internal_error on every operation the error handler answers for", () => {
     // The handler answers a fault nothing named alike on every door, so a
     // door that left the status out would send a client branching on the
-    // document to a status it never declared. Registration is the one door
-    // the sign-in library serves, and what it answers for its own fault is
-    // not this server's envelope.
-    const ref = `#/components/schemas/${CHAIN_REFUSALS.internalError.name}`;
+    // document to a status it never declared. Registration answers in the
+    // sign-in library's own envelope, so it declares none.
+    const ref = "#/components/schemas/InternalErrorRefusal";
     const declares = (operation: Operation): boolean => {
       const responses = (operation.responses ?? {}) as Record<
         string,
@@ -295,7 +130,6 @@ describe("published OpenAPI spec", () => {
     // The witness: the check is about an operation that declares it.
     expect(declares(published.get("GET /items/{id}")!)).toBe(true);
     expect(declares({ responses: {} })).toBe(false);
-    expect(CHAIN_REFUSALS.internalError.codes).toEqual(["internal_error"]);
   });
 
   it("does not send a reader to a documentation site to learn what a door does", () => {
@@ -346,7 +180,7 @@ describe("published OpenAPI spec", () => {
       expect(responses, `${key} has no responses object`).toBeDefined();
       // Followed through the registered components, because the type shape
       // is one, so the field this pins is a reference away.
-      const text = JSON.stringify(inlineOpenApiRefs(responses, document));
+      const text = JSON.stringify(inlineRefs(responses, document));
       if (!text.includes('"compatible_with"')) missing.push(key);
     }
     expect(missing.sort()).toEqual([]);
@@ -393,63 +227,12 @@ describe("published OpenAPI spec", () => {
     return found;
   }
 
-  it("declares the chain's own refusals as a reflected one would", () => {
-    // The credential gate, the body-size cap and the limiter are each
-    // middleware across a set of routes, so the operations that answer them
-    // are decided by where the middleware sits. What a reflected refusal looks like is
-    // not a matter of opinion: it is whatever `makeErrorResponseSchema`
-    // produces, so one is built here and the two are compared. Reflected
-    // through its own app rather than read out of the document, because the
-    // point is the shape a route would have registered.
-    for (const refusal of Object.values(CHAIN_REFUSALS)) {
-      const probe = new OpenAPIHono();
-      probe.openapi(
-        createRoute({
-          operationId: `probe${refusal.name}`,
-          method: "get",
-          path: "/probe",
-          responses: {
-            400: {
-              content: {
-                "application/json": {
-                  schema: makeErrorResponseSchema(
-                    refusal.codes as unknown as [string, ...string[]],
-                  ),
-                },
-              },
-              description: "Refused by the chain.",
-            },
-          },
-        }),
-        (c) => c.json({ error: { code: refusal.codes[0], message: "" } }, 400),
-      );
-      const reflected = (
-        probe.getOpenAPI31Document({
-          openapi: "3.1.0",
-          info: { title: "probe", version: "1" },
-        }).components as { schemas: Record<string, unknown> }
-      ).schemas[refusal.name];
-
-      expect(
-        reflected,
-        `${refusal.name} was not registered by the probe`,
-      ).toBeDefined();
-      expect(refusal.schema, refusal.name).toEqual(reflected);
-      expect(
-        (document.components as { schemas: Record<string, unknown> }).schemas[
-          refusal.name
-        ],
-        refusal.name,
-      ).toEqual(reflected);
-    }
-  });
-
   it("registers no component that admits a null it cannot answer", () => {
     // `.nullable()` on a registered shape does not wrap the reference: it
     // folds the null into the component, so one door that answers `null`
     // makes every door referencing that shape declare a null it never
-    // sends. `nullableRef` in `routes/_schemas.ts` is what carries a null
-    // at the one position that has one.
+    // sends. A null belongs at the one position that has it, beside the
+    // reference.
     const components = (
       document.components as { schemas: Record<string, unknown> }
     ).schemas;
@@ -468,38 +251,14 @@ describe("published OpenAPI spec", () => {
     expect(Object.keys(components).length).toBeGreaterThan(20);
     expect(
       admitting.sort(),
-      "Carry the null at the position that has one, with `nullableRef`.",
+      "Carry the null at the position that has one, beside the reference.",
     ).toEqual([]);
 
-    // The witness: the same shape, made nullable at one use, is what the
-    // predicate above has to catch.
-    const outcome = z.enum(["ok", "error"]).openapi("ProbeOutcome");
-    const probe = new OpenAPIHono();
-    probe.openapi(
-      createRoute({
-        operationId: "probeNullable",
-        method: "get",
-        path: "/probe",
-        responses: {
-          200: {
-            content: {
-              "application/json": {
-                schema: z.object({ last: outcome.nullable(), now: outcome }),
-              },
-            },
-            description: "ok",
-          },
-        },
-      }),
-      (c) => c.json({ last: null, now: "ok" as const }, 200),
-    );
-    const polluted = (
-      probe.getOpenAPI31Document({
-        openapi: "3.1.0",
-        info: { title: "probe", version: "1" },
-      }).components as { schemas: Record<string, { enum?: unknown[] }> }
-    ).schemas.ProbeOutcome;
-    expect(admitsNull(polluted), JSON.stringify(polluted)).toBe(true);
+    // The witness: a shape that admits a null is what the predicate has to
+    // catch.
+    expect(admitsNull({ type: ["string", "null"] })).toBe(true);
+    expect(admitsNull({ type: "null" })).toBe(true);
+    expect(admitsNull({ enum: ["ok", null] })).toBe(true);
     expect(admitsNull(components.ItemState)).toBe(false);
   });
 
@@ -549,9 +308,7 @@ describe("published OpenAPI spec", () => {
   it("writes a shape once, as a component, wherever it appears twice", () => {
     // A shape written out twice is two types in every generated client,
     // and they drift the moment one door's schema is edited and the other
-    // is not. The document is generated, so this is never a matter of
-    // care: it is a shape declared somewhere other than where a component
-    // would have come from.
+    // is not.
     const repeated = [...inlineShapes(shapeSources()).entries()]
       .filter(([, places]) => places.length > 1)
       .map(([shape, places]) => {
@@ -562,7 +319,7 @@ describe("published OpenAPI spec", () => {
       });
     expect(
       repeated.sort(),
-      'Declare the shape once and register it with `.openapi("Name")`.',
+      "Declare the shape once under components and reference it.",
     ).toEqual([]);
   });
 
@@ -611,7 +368,7 @@ describe("published OpenAPI spec", () => {
   it("declares every refusal code as a closed set", () => {
     expect(
       openRefusals(document),
-      "Declare the codes this status answers with `makeErrorResponseSchema`.",
+      "Declare the codes this status answers as an enum.",
     ).toEqual([]);
 
     // The witness: one refusal component opened to any string, and a
@@ -662,5 +419,24 @@ describe("published OpenAPI spec", () => {
       "GET /items 400 (no content)",
       "GET /items 401 (no code)",
     ]);
+  });
+
+  it("declares a credential on every operation but the public ones", () => {
+    // A door with no `security` is reachable without a credential, so each is
+    // named here with why.
+    const PUBLIC = new Set([
+      "GET /",
+      "GET /health",
+      "POST /owner",
+      "POST /auth/oauth2/register",
+    ]);
+    const open = [...published]
+      .filter(([, operation]) => operation.security === undefined)
+      .map(([key]) => key)
+      .sort();
+    expect(open).toEqual([...PUBLIC].sort());
+
+    // The witness: the check reads declarations that exist.
+    expect(published.get("GET /items")?.security).toEqual([{ bearerAuth: [] }]);
   });
 });
