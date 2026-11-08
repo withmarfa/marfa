@@ -35,7 +35,7 @@
  * which only sees a shape once somebody has already centralized it. What is
  * held here is the *staying* centralized, not the *becoming* it. What
  * catches a shape two route files describe identically is the document:
- * `openapi-published.test.ts` refuses a shape written out twice, whether or
+ * `ci/openapi/published.test.ts` refuses a shape written out twice, whether or
  * not anybody has centralized it.
  */
 import { describe, it, expect } from "vitest";

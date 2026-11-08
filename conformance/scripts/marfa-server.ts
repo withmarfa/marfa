@@ -77,6 +77,7 @@ import { tmpdir } from "node:os";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -131,8 +132,18 @@ const RUN_SERVER = resolve(
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
-  command: "up" | "down" | "status" | "refused" | "restart" | "clock" | "fault";
+  command:
+    | "up"
+    | "down"
+    | "status"
+    | "refused"
+    | "restart"
+    | "clock"
+    | "fault"
+    | "image";
   state: string;
+  /** For `image`: the directory the copy is made into. */
+  to?: string;
   port?: number;
   nodeEnv?: string;
   env: Record<string, string>;
@@ -172,13 +183,14 @@ const COMMANDS = [
   "restart",
   "clock",
   "fault",
+  "image",
 ] as const;
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | image [--state <dir>] --to <dir>",
     );
   }
   const args: Args = {
@@ -200,6 +212,8 @@ function parseArgs(argv: string[]): Args {
     } else if (arg === "--kill-when" && args.command === "refused") {
       args.killWhen = rest[++i] ?? "";
       if (args.killWhen === "") throw new Error("--kill-when needs a text");
+    } else if (arg === "--to" && args.command === "image") {
+      args.to = resolve(rest[++i] ?? "");
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
     } else if (arg === "--env") {
@@ -1006,6 +1020,29 @@ async function refuseToClearUnderALiveServer(state: string): Promise<void> {
   }
 }
 
+/**
+ * Copies the instance's data directory as it stands at one instant, as a
+ * volume snapshot would, into the empty directory `to`. The server's whole
+ * process group is stopped while the copy is taken and then resumed, so no
+ * write lands between one file and the next. What the running process owns
+ * rather than holds is left out.
+ */
+export function takeImage(state: string, to: string): void {
+  const group = groupOf(state);
+  signalGroup(group, "SIGSTOP");
+  try {
+    cpSync(state, to, {
+      recursive: true,
+      filter: (source) =>
+        !/server\.(pid|log|exit)$/.test(source) &&
+        !/\/control-directory$/.test(source) &&
+        !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
+    });
+  } finally {
+    signalGroup(group, "SIGCONT");
+  }
+}
+
 function status(args: Args): void {
   const p = paths(args.state);
   const pid = readPid(p.pid);
@@ -1159,7 +1196,11 @@ if (
     if (args.command === "up") await bootServer(boot);
     else if (args.command === "refused") await bootRefused(boot, args.killWhen);
     else if (args.command === "restart") await restartServer(boot, args.signal);
-    else if (args.command === "clock" || args.command === "fault") {
+    else if (args.command === "image") {
+      if (args.to === undefined) throw new Error("image needs --to <dir>");
+      takeImage(args.state, args.to);
+      console.log(`[marfa-server] image of ${args.state} in ${args.to}`);
+    } else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);
     } else if (args.command === "down") {
       await stopServer(args);

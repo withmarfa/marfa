@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { readFileSync, writeFileSync } from "node:fs";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -9,12 +8,12 @@ import {
 import {
   bytesOf,
   clientsFor,
-  diskPath,
   leaveBacklog,
   ownObjectStore,
   replicationIdle,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { damageBlobs } from "../../utils/store-faults.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -110,15 +109,6 @@ async function replicated(
   );
   await replicationIdle(operator);
   return hash;
-}
-
-/** Alters the disk's copy of `hash` at its first byte, keeping its length,
- *  so the next integrity check strikes it. */
-function corruptOnDisk(hash: string): void {
-  const path = diskPath(server, hash);
-  const bytes = readFileSync(path);
-  bytes[0] = (bytes[0] ?? 0) ^ 0xff;
-  writeFileSync(path, bytes);
 }
 
 /** Replicates until no store lacks a blob, once the stores answer again. */
@@ -286,7 +276,7 @@ describe("a strike whose delete does not answer", () => {
       await replicated("struck while the disk's delete hangs, first"),
       await replicated("struck while the disk's delete hangs, second"),
     ];
-    for (const hash of hashes) corruptOnDisk(hash);
+    await damageBlobs(server, hashes);
 
     await server.setFault("store-check-deadline=200");
     await server.setFault("hold:blob-delete");
@@ -303,7 +293,8 @@ describe("a strike whose delete does not answer", () => {
     expect(left).toEqual(expect.arrayContaining([["s3"], ["disk", "s3"]]));
 
     // The witness: once the disk answers, the next run strikes the other.
-    await server.clearFault();
+    await server.clearFault("hold:blob-delete");
+    await server.clearFault("store-check-deadline");
     const next = await runJob(operator, "blob-integrity");
     expect(next.result).toMatchObject({ struck: 1, unreachable: 0 });
     await replicatedAgain("the disk's copies made again");

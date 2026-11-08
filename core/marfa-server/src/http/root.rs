@@ -12,7 +12,7 @@ use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 use crate::settings::registry::MAX_REQUEST_BYTES;
 
-const DOCUMENT: &str = include_str!("../../../../openapi.json");
+pub(super) const DOCUMENT: &str = include_str!("../../../../openapi.json");
 
 pub async fn document(State(app): State<Arc<App>>) -> Answer {
     if app.settings.start.contract_version.is_none() {

@@ -7,13 +7,11 @@ mod token;
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{Next, from_fn};
 use axum::response::Response;
-use axum::routing::{get, patch, post};
 
 pub(super) use origins::page_origins;
 
@@ -21,6 +19,7 @@ use super::Routes;
 use super::answer::{Answer, Stopped, json_answer};
 use super::auth::origin::{self, Source};
 use super::caller::browser_owner;
+use super::doors::{Doors, get, patch, post};
 use super::no_store;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -97,7 +96,7 @@ async fn any_origin(request: Request, next: Next) -> Response {
 }
 
 pub fn grant_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route("/auth/grants", get(grants::list))
         .route(
             "/auth/grants/{id}",
@@ -107,7 +106,7 @@ pub fn grant_doors() -> Routes {
 }
 
 pub fn doors() -> Routes {
-    let held = Router::new()
+    let held = Doors::new()
         .route("/auth/oauth2/authorize", get(authorize::begin))
         .route("/auth/authorize", get(authorize::screen))
         .route("/auth/authorize/decision", post(authorize::decide))
@@ -120,7 +119,7 @@ pub fn doors() -> Routes {
             get(device::screen).post(device::answer),
         )
         .route_layer(from_fn(no_store));
-    let open = Router::new()
+    let open = Doors::new()
         .route(
             "/auth/oauth2/register",
             post(token::register)

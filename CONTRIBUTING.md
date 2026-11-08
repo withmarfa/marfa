@@ -135,5 +135,6 @@ pnpm marfa:down
 See [`conformance/README.md`](./conformance/README.md) for the individual lanes and the load profiles.
 
 A change to what the server does and the change to the contract that admits
-it belong in the same pull request. Where a document and the server
-disagree, the server is right.
+it belong in the same pull request. The committed `openapi.json` and the
+contract are what both servers are held to; where a server and either of them
+disagree, whichever is wrong is fixed.
