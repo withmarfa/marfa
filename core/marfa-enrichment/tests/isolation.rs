@@ -1,15 +1,18 @@
 //! Each test here is the real thing: this program calls `serve_child_if_asked` as the
-//! first line of `main`, so `read` starts this very program, as it starts any program that calls `read`.
+//! first line of `main`, so `read` starts this very program, as it starts any program
+//! that calls `read`.
 //! The tests run one at a time, because they count this process's children and
 //! descriptors.
 
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use marfa_enrichment::{Options, Reading, Refusal, read, serve_child_if_asked};
+use marfa_enrichment::{Options, Reading, Refusal, Sandbox, serve_child_if_asked};
 
 const TEXT: &str = "text/plain";
 /// Says that a run of this program is a scenario in a copy of it, not the tests.
@@ -25,6 +28,18 @@ fn options() -> Options {
     }
 }
 
+/// A file open for reading only that holds `bytes`, and is already gone from disk.
+fn file_of(bytes: &[u8]) -> File {
+    let mut named = tempfile::NamedTempFile::new().expect("a temporary file");
+    named.write_all(bytes).expect("a write to it");
+    File::open(named.path()).expect("the file, open for reading")
+}
+
+/// `marfa_enrichment::read` on a file that holds `bytes`.
+fn read(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
+    marfa_enrichment::read(&file_of(bytes), mime, options)
+}
+
 fn read_text(words: &str) -> Result<Reading, Refusal> {
     read(words.as_bytes(), TEXT, &options())
 }
@@ -34,6 +49,28 @@ fn fixture(name: &str) -> Vec<u8> {
         .join("fixtures")
         .join(name);
     std::fs::read(path).expect("a fixture of this crate")
+}
+
+/// Whether this kernel can sandbox a child, asked apart from the code under test.
+fn kernel_can_sandbox() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
+        // SAFETY: with this flag and no attributes the call only gives the ABI version.
+        let version = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<libc::c_void>(),
+                0usize,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
+        };
+        // SAFETY: this prctl takes plain integers and only reads.
+        let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
+        version > 0 && seccomp >= 0
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
 }
 
 fn check(condition: bool, problem: impl FnOnce() -> String) -> Result<(), Failed> {
@@ -108,12 +145,183 @@ fn reads_an_image_size() -> Result<(), Failed> {
     check(size.width > 0 && size.height > 0, || format!("{size:?}"))
 }
 
+fn fixture_file(name: &str) -> File {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name);
+    File::open(path).expect("a fixture of this crate")
+}
+
+/// A read that came back with the sandbox the kernel allows.
+fn confined(reading: &Reading) -> Result<(), String> {
+    if reading.sandbox == Sandbox::Full || !kernel_can_sandbox() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the kernel has a sandbox and the child reported {:?}",
+            reading.sandbox
+        ))
+    }
+}
+
+fn near(seconds: Option<f64>, expected: f64) -> Result<(), String> {
+    if seconds.is_some_and(|seconds| (seconds - expected).abs() < 0.06) {
+        Ok(())
+    } else {
+        Err(format!("{seconds:?} seconds, not {expected}"))
+    }
+}
+
+fn reads_the_length_of_a_sound_and_a_video() -> Result<(), Failed> {
+    for (name, mime, seconds) in [
+        ("sample.mp3", "audio/mpeg", 1.0),
+        ("sample.wav", "audio/wav", 1.5),
+        ("sample.flac", "audio/flac", 1.5),
+        ("sample.ogg", "audio/ogg", 1.5),
+        ("sample.opus", "audio/opus", 1.5065),
+        ("sample.m4a", "audio/mp4", 1.564),
+        ("sample-audio.webm", "audio/webm", 1.508),
+        ("sample.mp4", "video/mp4", 1.0),
+        ("sample.webm", "video/webm", 1.008),
+    ] {
+        let reading = marfa_enrichment::read(&fixture_file(name), mime, &options())
+            .map_err(|refusal| format!("{name}: {refusal}"))?;
+        near(reading.duration, seconds).map_err(|error| format!("{name}: {error}"))?;
+        check(reading.text.is_empty(), || format!("{name}: text"))?;
+        confined(&reading).map_err(|error| format!("{name}: {error}"))?;
+    }
+    let video = marfa_enrichment::read(&fixture_file("sample.mp4"), "video/mp4", &options())
+        .map_err(|refusal| refusal.to_string())?;
+    check(
+        video
+            .dimensions
+            .is_some_and(|size| (size.width, size.height) == (160, 120)),
+        || format!("{:?}", video.dimensions),
+    )?;
+    parent_is_whole()
+}
+
+/// The reader is given the descriptor the caller holds, and shares its offset.
+fn the_callers_place_in_the_file_does_not_move() -> Result<(), Failed> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    for (name, mime) in [("sample.mp3", "audio/mpeg"), ("sample.txt", TEXT)] {
+        let mut file = fixture_file(name);
+        file.seek(SeekFrom::Start(7))
+            .map_err(|error| error.to_string())?;
+        marfa_enrichment::read(&file, mime, &options()).map_err(|refusal| refusal.to_string())?;
+        let place = file.stream_position().map_err(|error| error.to_string())?;
+        check(place == 7, || {
+            format!("{name}: the offset moved to {place}")
+        })?;
+        let mut next = [0u8; 1];
+        file.read_exact(&mut next)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn bad_media_is_malformed_and_the_next_file_reads() -> Result<(), Failed> {
+    let words = b"Not a sound, whatever the type says. ".repeat(100);
+    for mime in [
+        "audio/mpeg",
+        "audio/flac",
+        "audio/ogg",
+        "video/mp4",
+        "video/webm",
+    ] {
+        let outcome = read(&words, mime, &options());
+        check(matches!(outcome, Err(Refusal::Malformed(_))), || {
+            format!("{mime}: {outcome:?}")
+        })?;
+        parent_is_whole()?;
+    }
+    let mp3 = fixture("sample.mp3");
+    for cut in [0, 1, 100, mp3.len() / 2, mp3.len() - 1] {
+        let outcome = read(&mp3[..cut], "audio/mpeg", &options());
+        check(
+            matches!(outcome, Ok(_) | Err(Refusal::Malformed(_))),
+            || format!("cut to {cut}: {outcome:?}"),
+        )?;
+    }
+    parent_is_whole()
+}
+
+/// A video with its index after the pictures, as a camera or an encoder leaves it,
+/// and one with its index first: a few hundred mebibytes of nothing between.
+fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
+    use std::io::{Seek as _, SeekFrom};
+
+    let mp4 = fixture("sample.mp4");
+    let moov = mp4[mp4.len() - 1797..].to_vec();
+    check(&moov[4..8] == b"moov", || "the fixture's index".into())?;
+    let ftyp = mp4[..32].to_vec();
+    let limited = Options {
+        max_memory_bytes: 64 * MIB,
+        ..options()
+    };
+    // The box size is 32 bits, or 64 for a larger file. The last is a download cut off
+    // at 300 MiB of five gibibytes, which a reader that wants its index there cannot
+    // have.
+    for (size, claimed, index_first, wide) in [
+        (300 * MIB, 300 * MIB, false, false),
+        (300 * MIB, 300 * MIB, true, false),
+        (300 * MIB, 300 * MIB, false, true),
+        (300 * MIB, 5 * 1024 * MIB, true, true),
+    ] {
+        let mut named = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+        let file = named.as_file_mut();
+        let written = (|| -> std::io::Result<()> {
+            file.write_all(&ftyp)?;
+            if index_first {
+                file.write_all(&moov)?;
+            }
+            if wide {
+                file.write_all(&1u32.to_be_bytes())?;
+                file.write_all(b"mdat")?;
+                file.write_all(&(claimed + 16).to_be_bytes())?;
+            } else {
+                file.write_all(&u32::try_from(claimed + 8).unwrap_or(u32::MAX).to_be_bytes())?;
+                file.write_all(b"mdat")?;
+            }
+            let end = file.seek(SeekFrom::Current(i64::try_from(size).unwrap_or(0)))?;
+            file.set_len(end)?;
+            if !index_first {
+                file.write_all(&moov)?;
+            }
+            file.flush()
+        })();
+        written.map_err(|error| error.to_string())?;
+        let on_disk = std::fs::metadata(named.path())
+            .map_err(|error| error.to_string())?
+            .len();
+        check(on_disk > size, || format!("only {on_disk} bytes"))?;
+        let started = Instant::now();
+        let reader = File::open(named.path()).map_err(|error| error.to_string())?;
+        let reading =
+            marfa_enrichment::read(&reader, "video/mp4", &limited).map_err(|refusal| {
+                format!("{size} bytes, claimed {claimed}, index first {index_first}: {refusal}")
+            })?;
+        let took = started.elapsed();
+        near(reading.duration, 1.0)?;
+        check(reading.dimensions.is_some(), || "no picture size".into())?;
+        confined(&reading)?;
+        check(took < Duration::from_secs(5), || format!("took {took:?}"))?;
+        // The same file as text has to be held whole, which the limit does not allow.
+        let as_text = marfa_enrichment::read(&reader, TEXT, &limited);
+        check(matches!(as_text, Err(Refusal::OverLimit(_))), || {
+            format!("as text: {as_text:?}")
+        })?;
+    }
+    parent_is_whole()
+}
+
 fn an_empty_file_reads_as_nothing() -> Result<(), Failed> {
     let reading = read(b"", TEXT, &options()).map_err(|refusal| refusal.to_string())?;
     check(reading.text.is_empty(), || format!("{:?}", reading.text))
 }
 
-fn twenty_mebibytes_cross_the_pipe() -> Result<(), Failed> {
+fn twenty_mebibytes_are_read_from_the_file() -> Result<(), Failed> {
     let mut bytes = b"start ".repeat(1 << 20);
     bytes.resize(20 * MIB as usize, b'x');
     bytes.extend_from_slice(b" end");
@@ -128,7 +336,7 @@ fn twenty_mebibytes_cross_the_pipe() -> Result<(), Failed> {
     check(reading.text.ends_with(" end"), || "the end is lost".into())
 }
 
-fn the_text_limit_holds_across_the_pipe() -> Result<(), Failed> {
+fn the_text_limit_holds_in_the_reader() -> Result<(), Failed> {
     let limited = Options {
         max_text_chars: 10,
         ..options()
@@ -164,12 +372,39 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
     )?;
     let small = Options {
         max_memory_bytes: 3,
-        ..no_time
+        ..no_time.clone()
     };
     let outcome = read(b"four", TEXT, &small);
     check(matches!(outcome, Err(Refusal::OverLimit(_))), || {
         format!("a file over the memory limit gave {outcome:?}")
-    })
+    })?;
+    // A sound or a video is not held whole, so its size is no reason to refuse it
+    // before a child is started.
+    let outcome = read(b"four", "audio/mpeg", &small);
+    check(
+        matches!(outcome, Err(Refusal::ReaderUnavailable(_))),
+        || format!("a sound over the memory limit gave {outcome:?}"),
+    )?;
+    // The reader is given the caller's descriptor, so only a file it can merely read.
+    let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let directory = File::open(folder.path()).map_err(|error| error.to_string())?;
+    let outcome = marfa_enrichment::read(&directory, TEXT, &no_time);
+    check(
+        matches!(&outcome, Err(Refusal::ReaderUnavailable(why)) if why.contains("regular file")),
+        || format!("a directory gave {outcome:?}"),
+    )?;
+    let path = folder.path().join("writable");
+    std::fs::write(&path, b"x").map_err(|error| error.to_string())?;
+    let writable = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| error.to_string())?;
+    let outcome = marfa_enrichment::read(&writable, TEXT, &no_time);
+    check(
+        matches!(&outcome, Err(Refusal::ReaderUnavailable(why)) if why.contains("reading only")),
+        || format!("a file the reader could write gave {outcome:?}"),
+    )
 }
 
 #[cfg(not(feature = "native"))]
@@ -358,7 +593,11 @@ fn the_program_exits_non_zero_on_a_refusal() -> Result<(), Failed> {
 fn a_child_started_by_hand_reads_nothing() -> Result<(), Failed> {
     let run = run_read(&["--marfa-enrichment-child"]);
     check(run.status.code() == Some(74), || format!("{run:?}"))?;
-    let run = run_read(&["--marfa-enrichment-child", "soon", "much"]);
+    let run = run_read(&["--marfa-enrichment-child", "soon", "much", "{}"]);
+    check(run.status.code() == Some(74), || format!("{run:?}"))?;
+    let run = run_read(&["--marfa-enrichment-child", "1000", "1000", "not a request"]);
+    check(run.status.code() == Some(74), || format!("{run:?}"))?;
+    let run = run_read(&["--marfa-enrichment-child", "1000", "1000"]);
     check(run.status.code() == Some(74), || format!("{run:?}"))
 }
 
@@ -552,8 +791,6 @@ mod faults {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
-    use marfa_enrichment::Sandbox;
-
     use super::*;
 
     fn fault(name: &str) -> Vec<u8> {
@@ -700,20 +937,6 @@ mod faults {
         parent_is_whole()
     }
 
-    pub(super) fn a_child_that_closes_stdin_early_does_not_hold_the_parent() -> Result<(), Failed> {
-        let mut bytes = fault("close-stdin");
-        bytes.resize(20 * MIB as usize, b'x');
-        let started = Instant::now();
-        let outcome = read(&bytes, TEXT, &short());
-        check(started.elapsed() < Duration::from_secs(1), || {
-            format!("took {:?}", started.elapsed())
-        })?;
-        check(matches!(outcome, Err(Refusal::Crashed(_))), || {
-            format!("{outcome:?}")
-        })?;
-        parent_is_whole()
-    }
-
     fn over_memory(name: &str) -> Result<(), Failed> {
         let limit = 256 * MIB;
         let options = Options {
@@ -811,28 +1034,6 @@ mod faults {
     fn sandbox_of(name: &str) -> Result<(String, Sandbox), Failed> {
         let reading = read(&fault(name), TEXT, &short()).map_err(|refusal| refusal.to_string())?;
         Ok((reading.text, reading.sandbox))
-    }
-
-    /// Whether this kernel can sandbox a child, asked apart from the code under test.
-    fn kernel_can_sandbox() -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
-            // SAFETY: with this flag and no attributes the call only gives the ABI version.
-            let version = unsafe {
-                libc::syscall(
-                    libc::SYS_landlock_create_ruleset,
-                    std::ptr::null::<libc::c_void>(),
-                    0usize,
-                    LANDLOCK_CREATE_RULESET_VERSION,
-                )
-            };
-            // SAFETY: this prctl takes plain integers and only reads.
-            let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
-            version > 0 && seccomp >= 0
-        }
-        #[cfg(not(target_os = "linux"))]
-        true
     }
 
     /// A kernel with no sandbox still reads, and has to say so: the file then opens,
@@ -1250,16 +1451,32 @@ fn main() {
         ("reads_text", reads_text),
         ("reads_an_image_size", reads_an_image_size),
         (
+            "reads_the_length_of_a_sound_and_a_video",
+            reads_the_length_of_a_sound_and_a_video,
+        ),
+        (
+            "the_callers_place_in_the_file_does_not_move",
+            the_callers_place_in_the_file_does_not_move,
+        ),
+        (
+            "bad_media_is_malformed_and_the_next_file_reads",
+            bad_media_is_malformed_and_the_next_file_reads,
+        ),
+        (
+            "a_large_video_is_read_without_holding_it",
+            a_large_video_is_read_without_holding_it,
+        ),
+        (
             "an_empty_file_reads_as_nothing",
             an_empty_file_reads_as_nothing,
         ),
         (
-            "twenty_mebibytes_cross_the_pipe",
-            twenty_mebibytes_cross_the_pipe,
+            "twenty_mebibytes_are_read_from_the_file",
+            twenty_mebibytes_are_read_from_the_file,
         ),
         (
-            "the_text_limit_holds_across_the_pipe",
-            the_text_limit_holds_across_the_pipe,
+            "the_text_limit_holds_in_the_reader",
+            the_text_limit_holds_in_the_reader,
         ),
         (
             "what_the_call_decides_starts_no_child",
@@ -1358,10 +1575,6 @@ fn main() {
         (
             "an_answer_over_the_text_limit_is_a_crash",
             faults::an_answer_over_the_text_limit_is_a_crash,
-        ),
-        (
-            "a_child_that_closes_stdin_early_does_not_hold_the_parent",
-            faults::a_child_that_closes_stdin_early_does_not_hold_the_parent,
         ),
         (
             "memory_over_the_limit_is_over_limit",

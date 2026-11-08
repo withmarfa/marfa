@@ -33,6 +33,16 @@ pub fn guess_type(file: &Path) -> Option<&'static str> {
         "gif" => "image/gif",
         "heic" => "image/heic",
         "avif" => "image/avif",
+        "mp3" => "audio/mpeg",
+        "m4a" | "m4b" => "audio/mp4",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "ogg" | "oga" => "audio/ogg",
+        "opus" => "audio/opus",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
         _ => return None,
     })
 }

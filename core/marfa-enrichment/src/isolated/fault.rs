@@ -3,10 +3,10 @@
 //! is never on in a shipped program; `build.rs` stops a release build that has it.
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -30,27 +30,23 @@ fn parse(bytes: &[u8]) -> Option<(&str, &str)> {
     Some(line.split_once(' ').unwrap_or((line, "")))
 }
 
-/// Reads the start of the file. The one fault that cannot wait for the rest of it
-/// happens here. Returns how much was read.
-pub(super) fn read_opening(stdin: &mut File, bytes: &mut [u8]) -> usize {
-    let len = bytes.len().min(OPENING);
-    if stdin.read_exact(&mut bytes[..len]).is_err() {
-        // SAFETY: ends the process.
-        unsafe { libc::_exit(super::EXIT_PARENT_GONE) };
+/// The start of the file, where a fault is named.
+pub(super) fn opening(file: &File, len: u64) -> Vec<u8> {
+    let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(OPENING).min(OPENING)];
+    let mut filled = 0;
+    while filled < bytes.len() {
+        match file.read_at(&mut bytes[filled..], filled as u64) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => filled += read,
+        }
     }
-    if let Some(("close-stdin", _)) = parse(&bytes[..len]) {
-        // SAFETY: descriptor 0 is the pipe from the parent, and nothing reads it now.
-        unsafe { libc::close(0) };
-        std::thread::sleep(Duration::from_millis(200));
-        // SAFETY: ends the process.
-        unsafe { libc::_exit(0) };
-    }
-    len
+    bytes.truncate(filled);
+    bytes
 }
 
 /// Does what the marked bytes ask. A probe gives back the text to answer with.
-pub(super) fn act(bytes: &Result<Vec<u8>, crate::Refusal>) -> Option<String> {
-    let (fault, argument) = parse(bytes.as_ref().ok()?)?;
+pub(super) fn act(opening: &[u8]) -> Option<String> {
+    let (fault, argument) = parse(opening)?;
     match fault {
         "segfault" => {
             // SAFETY: not safe at all. Writing to address 1 is the fault.
