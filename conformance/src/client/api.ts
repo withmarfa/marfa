@@ -1482,7 +1482,7 @@ export class MarfaClient {
     );
   }
 
-  /** `GET /owner`: direct owner or local authority. */
+  /** `GET /owner`: local authority. */
   async getOwner(): Promise<ApiResponse<Owner>> {
     return this.request<Owner>("/owner");
   }
