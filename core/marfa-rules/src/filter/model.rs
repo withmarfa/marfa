@@ -117,7 +117,7 @@ const OPERATORS: [FilterOperator; 10] = [
 ];
 
 impl FilterExpression {
-    /// Refused with `validation_error` where empty, longer than 2,048 UTF-16 code units, over 10 conditions, or a field and operator it does not take together.
+    /// Refused with `validation_error` where empty, too long, over 10 conditions, or a field and operator it does not take together.
     pub fn encode(&self) -> Result<String> {
         let mut parts = Vec::with_capacity(self.conditions.len());
         for condition in &self.conditions {

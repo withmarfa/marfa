@@ -11,7 +11,6 @@ pub use model::{
     FilterValue, SystemField,
 };
 
-/// Measured in UTF-16 code units.
 const MAX_INPUT_LENGTH: usize = 2048;
 const MAX_CONDITIONS: usize = 10;
 
@@ -228,7 +227,6 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
 
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
-    // Positions in UTF-16 code units.
     let at: Vec<usize> = chars
         .iter()
         .scan(0, |units, ch| {

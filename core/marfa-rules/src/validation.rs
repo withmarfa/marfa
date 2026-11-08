@@ -7,15 +7,15 @@ use crate::js;
 use crate::thumbnail::{THUMBNAIL_MAX_BYTES, Thumbnail};
 use crate::url_host;
 
-/// Longest tag, in UTF-16 code units. A tag is removed through its own URL path, so one longer could be written and never removed.
+/// Longest tag. A tag is removed through its own URL path, so one longer could be written and never removed.
 pub const MAX_TAG_LENGTH: usize = 128;
 
 pub const MAX_TAGS_PER_ITEM: usize = 100;
 
-/// Longest string field value, in UTF-16 code units, with no `maxLength` of its own.
+/// Longest string field value with no `maxLength` of its own.
 const STRING_MAX_LENGTH: u64 = 100_000;
 
-/// Longest value, in UTF-16 code units, of a type's body field with no `maxLength` of its own.
+/// Longest value of a type's body field with no `maxLength` of its own.
 pub const BODY_MAX_LENGTH: u64 = 1_000_000;
 
 struct Problem {
@@ -101,7 +101,7 @@ fn fault(path: &str, code: &'static str, message: impl Into<String>) -> (String,
     )
 }
 
-/// At most `MAX_TAGS_PER_ITEM`, duplicates counted; each not empty, not blank, not `.` or `..` (a URL path cannot name them), and at most `MAX_TAG_LENGTH` UTF-16 code units. Refused here so a doomed write is never saved or queued.
+/// At most `MAX_TAGS_PER_ITEM`, duplicates counted; each not empty, not blank, not `.` or `..` (a URL path cannot name them), and at most `MAX_TAG_LENGTH` long. Refused here so a doomed write is never saved or queued.
 pub fn tags(tags: &[String]) -> Result<(), RuleError> {
     let mut faults: Vec<(String, FieldError)> = tags
         .iter()
