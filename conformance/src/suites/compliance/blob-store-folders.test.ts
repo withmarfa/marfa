@@ -8,8 +8,6 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,11 +23,11 @@ import {
   blobFolder,
   bytesOf,
   clientsFor,
-  diskPath,
   DISK_ONLY,
   pastInstant,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { damageBlobs, diskHolds, loseBlobs } from "../../utils/store-faults.js";
 
 /**
  * The copy record and the stores behind it, on a server of the fixture's
@@ -174,11 +172,8 @@ describe("the copy record on an instance with one disk store", () => {
     }
 
     // The same length, so only the digest can tell.
-    writeFileSync(
-      diskPath(server!, hashes.altered),
-      new Uint8Array(sizes.altered).fill(0x41),
-    );
-    unlinkSync(diskPath(server!, hashes.missing));
+    await damageBlobs(server!, [hashes.altered]);
+    await loseBlobs(server!, [hashes.missing]);
     const struck = await runJob(operator, "blob-integrity");
     expect(struck.result).toEqual({
       verified: 2,
@@ -224,7 +219,7 @@ describe("a blob that lost its last copy", () => {
     expect(served.status).toBe(200);
     await served.arrayBuffer();
 
-    unlinkSync(diskPath(server!, hash));
+    await loseBlobs(server!, [hash]);
     const struck = await runJob(operator, "blob-integrity");
     expect(struck.result.struck).toBe(1);
     expect(await copies(hash)).toEqual([]);
@@ -269,7 +264,7 @@ describe("a store is its folder", () => {
     expect(await copies(hashes.first)).toEqual([
       expect.objectContaining({ store_id: original.id, detached: false }),
     ]);
-    expect(existsSync(diskPath(server!, hashes.first))).toBe(false);
+    expect(await diskHolds(server!.controlSocket, hashes.first)).toBe(false);
 
     // Another folder, which holds no marker: a fresh store with no copies
     // claimed, and the first one stays listed, detached.
@@ -425,7 +420,7 @@ describe("a store whose folder is away", () => {
     expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
     const hash = uploaded.data.hash;
 
-    unlinkSync(diskPath(server!, hash));
+    await loseBlobs(server!, [hash]);
     const run = await runJob(operator, "blob-integrity");
     expect(run.result).toMatchObject({ struck: 1, unreachable: 0 });
     expect(await copies(hash)).toEqual([]);

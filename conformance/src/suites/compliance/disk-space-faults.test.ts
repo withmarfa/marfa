@@ -13,9 +13,9 @@ import {
 import {
   blobFolder,
   clientsFor,
-  diskPath,
   DISK_ONLY,
 } from "../../utils/own-blob-server.js";
+import { diskHolds } from "../../utils/store-faults.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -163,7 +163,7 @@ describe("an upload whose body declares no length", () => {
       },
     );
     expect(done.status, done.body).toBe(201);
-    expect(existsSync(diskPath(server, blobHash(body)))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blobHash(body))).toBe(true);
   });
 
   it("is answered 507 insufficient_storage and leaves nothing when the volume falls inside the reserve as the bytes arrive", async () => {
@@ -244,7 +244,7 @@ describe("a restore whose archive inflates past the room", () => {
     expect(refused.error?.error.code).toBe("insufficient_storage");
     expect((await working.getItem(itemId)).status).toBe(404);
     expect((await operator.downloadBlob(entryHash)).status).toBe(404);
-    expect(existsSync(diskPath(server, entryHash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, entryHash)).toBe(false);
     await waitFor("the spool to empty", () =>
       Promise.resolve(spooled().length === 0 ? true : undefined),
     );
@@ -255,7 +255,7 @@ describe("a restore whose archive inflates past the room", () => {
     const done = await ownerClient().restoreArchive(archive());
     expect(done.status, JSON.stringify(done.error)).toBe(200);
     expect((await working.getItem(itemId)).status).toBe(200);
-    expect(existsSync(diskPath(server, entryHash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, entryHash)).toBe(true);
   });
 });
 
@@ -273,12 +273,12 @@ describe("a write that meets a volume with no room", () => {
       (await server.faults()).find((f) => f.name === "fail:blob-write")?.fired,
     ).toBe(1);
     expect((await operator.downloadBlob(hash)).status).toBe(404);
-    expect(existsSync(diskPath(server, hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(false);
     expect(spooled()).toEqual([]);
 
     const landed = await working.uploadBlob(body, "text/plain");
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
-    expect(existsSync(diskPath(server, hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(true);
   });
 
   it("is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no row", async () => {
@@ -306,7 +306,7 @@ describe("a write that meets a volume with no room", () => {
       (await server.faults()).find((f) => f.name === "fail:blob-write")?.fired,
     ).toBe(1);
     expect((await working.getItem(id)).status).toBe(404);
-    expect(existsSync(diskPath(server, blobHash(entry)))).toBe(false);
+    expect(await diskHolds(server.controlSocket, blobHash(entry))).toBe(false);
 
     await server.clearFault();
     const landed = await ownerClient().restoreArchive(archive);

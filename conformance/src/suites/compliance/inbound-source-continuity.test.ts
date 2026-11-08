@@ -1,12 +1,11 @@
-import { execFileSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { HeldLock } from "../../utils/held-lock.js";
 import { idOf, openBody, send } from "../../utils/inbound-sender.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
@@ -95,12 +94,43 @@ async function listed(id: string, key: string, suffix = "endpoints") {
   expect(response.status).toBe(200);
   return (await response.json()) as { data: Record<string, unknown>[] };
 }
-function sql(query: string) {
-  return execFileSync(
-    "sqlite3",
-    ["-batch", "-bail", server.sqlitePath, query],
-    { encoding: "utf8" },
-  ).trim();
+/** The registrations whose key is `keyId`, as the operator lists them. */
+async function registrationsOf(keyId: string): Promise<string[]> {
+  const response = await call("/connectors");
+  expect(response.status).toBe(200);
+  const rows = (await response.json()) as {
+    data: { id: string; key_id: string }[];
+  };
+  return rows.data.filter((row) => row.key_id === keyId).map((row) => row.id);
+}
+/** The registrations of `source` that hold its endpoints now. */
+async function holders(source: string): Promise<string[]> {
+  const response = await call("/connectors");
+  expect(response.status).toBe(200);
+  const rows = (await response.json()) as {
+    data: { id: string; source: string }[];
+  };
+  const holding: string[] = [];
+  for (const row of rows.data.filter((r) => r.source === source)) {
+    if ((await listed(row.id, server.managementKey)).data.length > 0)
+      holding.push(row.id);
+  }
+  return holding;
+}
+function operator(): MarfaClient {
+  return new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: server.managementKey,
+  });
+}
+/** How many times `keyId` registered a connector, by the audit listing. */
+async function registrationAudits(keyId: string): Promise<number> {
+  const listing = await operator().listAudit({
+    action: "connector.register",
+    limit: 100,
+  });
+  expect(listing.ok, JSON.stringify(listing.error)).toBe(true);
+  return listing.data.data.filter((entry) => entry.key_id === keyId).length;
 }
 
 describe("source-owned inbound continuity", () => {
@@ -138,7 +168,7 @@ describe("source-owned inbound continuity", () => {
       expect(
         (await send(server.apiUrl, endpoint.path, "before binding")).status,
       ).toBe(404);
-      const lock = await HeldLock.take(server.sqlitePath);
+      await server.setFault("hold:write=connector.register");
       let completed = false;
       const blocked = call(
         "/connectors",
@@ -155,50 +185,15 @@ describe("source-owned inbound continuity", () => {
           return 0;
         },
       );
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        expect(completed).toBe(false);
-        expect(
-          sql(
-            `SELECT count(*) FROM connectors WHERE key_id = '${successorKey.id}'`,
-          ),
-        ).toBe("0");
-        expect(
-          sql(
-            `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-          ),
-        ).toBe(old.id);
-        const ended = await server.restart({
-          signal: "SIGKILL",
-          whileStopped: async () => {
-            await blocked;
-            expect(
-              sql(
-                `SELECT count(*) FROM connectors WHERE key_id = '${successorKey.id}'`,
-              ),
-            ).toBe("0");
-            expect(
-              sql(
-                `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-              ),
-            ).toBe(old.id);
-            await lock.release();
-          },
-        });
-        expect(ended.signal).toBe("SIGKILL");
-      } finally {
-        await lock.release();
-      }
-      expect(
-        sql(
-          `SELECT count(*) FROM connectors WHERE key_id = '${successorKey.id}'`,
-        ),
-      ).toBe("0");
-      expect(
-        sql(
-          `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-        ),
-      ).toBe(old.id);
+      await server.waitForHold("hold:write");
+      expect(completed).toBe(false);
+      expect(await registrationsOf(successorKey.id)).toEqual([]);
+      expect(await holders(source)).toEqual([old.id]);
+      const ended = await server.restart({ signal: "SIGKILL" });
+      expect(ended.signal).toBe("SIGKILL");
+      await blocked;
+      expect(await registrationsOf(successorKey.id)).toEqual([]);
+      expect(await holders(source)).toEqual([old.id]);
       const answers = await Promise.all([
         register(successorKey.key),
         register(successorKey.key),
@@ -216,18 +211,10 @@ describe("source-owned inbound continuity", () => {
           )
         ).status,
       ).toBe(401);
-      expect(
-        sql(
-          `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-        ),
-      ).toBe(successor.id);
+      expect(await holders(source)).toEqual([successor.id]);
       expect(successor.last_run).toBeNull();
       expect(successor.hold_expires_at).toBeNull();
-      expect(
-        sql(
-          `SELECT count(*) FROM connectors WHERE key_id = '${successorKey.id}'`,
-        ),
-      ).toBe("1");
+      expect(await registrationsOf(successorKey.id)).toEqual([successor.id]);
       expect((await listed(successor.id, successor.key)).data).toMatchObject([
         {
           id: endpoint.id,
@@ -288,30 +275,22 @@ describe("source-owned inbound continuity", () => {
       });
       const retried = await register(lostKey.key);
       expect(retried.status).toBe(200);
-      expect(
-        sql(`SELECT id FROM connectors WHERE key_id = '${lostKey.id}'`),
-      ).toBe(retried.id);
-      expect(
-        sql(
-          `SELECT count(*) FROM connectors WHERE key_id = '${successorKey.id}'`,
-        ),
-      ).toBe("1");
+      expect(await registrationsOf(lostKey.id)).toEqual([retried.id]);
+      expect(await registrationsOf(successorKey.id)).toEqual([successor.id]);
       expect((await call(`/connectors/${successor.id}`, "DELETE")).status).toBe(
         200,
       );
       expect((await send(server.apiUrl, endpoint.path, "deleted")).status).toBe(
         404,
       );
+      // The source's next registration inherits what the source still owns,
+      // which is nothing once its last registration was deleted.
+      const again = await register(successorKey.key);
+      expect(again.status).toBe(201);
+      expect((await listed(again.id, again.key)).data).toEqual([]);
       expect(
-        sql(
-          `SELECT count(*) FROM inbound_deliveries WHERE endpoint_id = '${endpoint.id}'`,
-        ),
-      ).toBe("0");
-      expect(
-        sql(
-          `SELECT count(*) FROM inbound_delivery_bodies WHERE delivery_id = '${original}'`,
-        ),
-      ).toBe("0");
+        (await listed(again.id, again.key, "deliveries?state=any")).data,
+      ).toEqual([]);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
@@ -382,15 +361,18 @@ describe("source-owned inbound continuity", () => {
     // Minting the replacement retires the expired source holder publicly.
     const next = await mint(source);
     expect(
-      sql(
-        `SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = '${oldKey.id}'`,
-      ),
-    ).toBe("1");
+      (await call("/keys/current", "GET", undefined, oldKey.key)).status,
+    ).toBe(401);
+    const revocations = await operator().listAudit({
+      action: "key.revoke",
+      resource_id: oldKey.id,
+    });
+    expect(revocations.ok, JSON.stringify(revocations.error)).toBe(true);
     expect(
-      sql(
-        `SELECT count(*) FROM audit_log WHERE action = 'key.revoke' AND resource_id = '${oldKey.id}' AND json_extract(details, '$.reason') = 'expired'`,
+      revocations.data.data.filter(
+        (entry) => entry.details.reason === "expired",
       ),
-    ).toBe("1");
+    ).toHaveLength(1);
     expect(
       (await send(server.apiUrl, endpoint.path, "unregistered")).status,
     ).toBe(404);
@@ -435,16 +417,15 @@ describe("source-owned inbound continuity", () => {
           .status,
       ).toBe(201);
     const receipt = idOf(await send(server.apiUrl, endpoint.path, "kept"));
-    const before = sql(
-      `SELECT id,source,received_at,size,stored_bytes FROM inbound_deliveries WHERE id = '${receipt}'`,
-    );
+    const before = (await listed(old.id, old.key, "deliveries?state=any"))
+      .data[0];
+    expect(before?.id).toBe(receipt);
     expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
     const successor = await register((await mint(source)).key);
     expect(
-      sql(
-        `SELECT id,source,received_at,size,stored_bytes FROM inbound_deliveries WHERE id = '${receipt}'`,
-      ),
-    ).toBe(before);
+      (await listed(successor.id, successor.key, "deliveries?state=any"))
+        .data[0],
+    ).toEqual(before);
     expect(
       (
         await call(
@@ -498,15 +479,11 @@ describe("source-owned inbound continuity", () => {
       expect(
         (await call("/keys/current", "GET", undefined, waitingKey.key)).status,
       ).toBe(200);
-      const bindingBefore = sql(
-        `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-      );
-      const auditBefore = sql(
-        `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
-      );
-      expect(bindingBefore).toBe(old.id);
-      expect(auditBefore).toBe("0");
-      const lock = await HeldLock.take(server.sqlitePath);
+      const bindingBefore = await holders(source);
+      const auditBefore = await registrationAudits(waitingKey.id);
+      expect(bindingBefore).toEqual([old.id]);
+      expect(auditBefore).toBe(0);
+      await server.setFault("hold:write=connector.register");
       let completed = false;
       const waiting = call(
         "/connectors",
@@ -517,69 +494,35 @@ describe("source-owned inbound continuity", () => {
         completed = true;
         return response;
       });
-      try {
-        // The held writer can also block credential reads. This black-box
-        // case proves refusal without partial effects; the route fixture
-        // identifies the exact post-authentication admission boundary.
-        expect(
-          sql(
-            `SELECT revoked_at IS NULL AND (expires_at IS NULL OR expires_at > '${new Date(clock.now()).toISOString()}') FROM api_keys WHERE id = '${waitingKey.id}'`,
-          ),
-        ).toBe("1");
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        expect(completed).toBe(false);
-        expect(
-          sql(
-            `SELECT count(*) FROM connectors WHERE key_id = '${waitingKey.id}'`,
-          ),
-        ).toBe("0");
-        if (standing === "revoked") {
-          await lock.commit([
-            `UPDATE api_keys SET revoked_at = '2020-01-01T00:00:00.000Z' WHERE id = '${waitingKey.id}'`,
-          ]);
-        } else {
-          await clock.advance(2 * HOUR_MS);
-          await lock.commit();
-        }
-        const refused = await waiting;
-        expect(refused.status).toBe(401);
-        expect(
-          ((await refused.json()) as { error: { code: string } }).error.code,
-        ).toBe("unauthorized");
-        expect(
-          sql(
-            `SELECT count(*) FROM connectors WHERE key_id = '${waitingKey.id}'`,
-          ),
-        ).toBe("0");
-        expect(
-          sql(
-            `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-          ),
-        ).toBe(bindingBefore);
-        expect(
-          sql(
-            `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${waitingKey.id}'`,
-          ),
-        ).toBe(auditBefore);
-      } finally {
-        await lock.release();
+      await server.waitForHold("hold:write");
+      expect(completed).toBe(false);
+      expect(await registrationsOf(waitingKey.id)).toEqual([]);
+      if (standing === "revoked") {
+        expect((await call(`/keys/${waitingKey.id}`, "DELETE")).status).toBe(
+          200,
+        );
+      } else {
+        await clock.advance(2 * HOUR_MS);
       }
+      await server.clearFault("hold:write");
+      const refused = await waiting;
+      expect(refused.status).toBe(401);
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code,
+      ).toBe("unauthorized");
+      expect(await registrationsOf(waitingKey.id)).toEqual([]);
+      expect(await holders(source)).toEqual(bindingBefore);
+      expect(await registrationAudits(waitingKey.id)).toBe(auditBefore);
+      // The witness: the same wait, with the key still standing, registers.
       const live = await mint(source);
-      const controlLock = await HeldLock.take(server.sqlitePath);
+      await server.setFault("hold:write=connector.register");
       const control = register(live.key);
-      await controlLock.commit();
+      await server.waitForHold("hold:write");
+      await server.clearFault("hold:write");
       const admitted = await control;
       expect(admitted.status).toBe(201);
-      expect(
-        sql(
-          `SELECT connector_id FROM inbound_sources WHERE source = '${source}'`,
-        ),
-      ).toBe(admitted.id);
-      expect(
-        sql(
-          `SELECT count(*) FROM audit_log WHERE action = 'connector.register' AND key_id = '${live.id}'`,
-        ),
-      ).toBe("1");
+      expect(await holders(source)).toEqual([admitted.id]);
+      expect(await registrationAudits(live.id)).toBe(1);
       expect((await send(server.apiUrl, endpoint.path, "control")).status).toBe(
         202,
       );
