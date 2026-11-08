@@ -176,6 +176,14 @@ fn next_after(held: Option<i64>, started: i64, finished: i64, interval: i64, aga
     }
 }
 
+pub fn bring_forward(tx: &Transaction<'_>, name: &str, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE housekeeping_jobs SET next_run_at = ?2 WHERE name = ?1 AND next_run_at > ?2",
+    )?
+    .execute(params![name, at])?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Finish<'a> {
     pub name: &'a str,

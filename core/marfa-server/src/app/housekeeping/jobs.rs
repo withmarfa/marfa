@@ -1,9 +1,11 @@
 use std::time::Duration;
 
+use super::super::blobs::upkeep;
 use super::super::{items, oauth};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
-    AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
+    AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
+    BLOB_INTEGRITY_INTERVAL_MS, BLOB_REPLICATE_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
     EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS, HEARTBEAT_INTERVAL_MS,
     RATE_LIMIT_CLEANUP_INTERVAL_MS, REVOKED_KEY_REAP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS,
     VERSION_THINNING_INTERVAL_MS,
@@ -97,5 +99,27 @@ pub(super) const JOBS: &[Job] = &[
         40_000,
         HOUR,
         |app, run| Box::pin(oauth::sweep::retire_idle_grants(app, run)),
+    ),
+    Job::new(
+        "blob-replicate",
+        BLOB_REPLICATE_INTERVAL_MS,
+        5_000,
+        HOUR,
+        |app, run| Box::pin(upkeep::replicate(app, run)),
+    ),
+    Job::new(
+        "blob-orphans",
+        BLOB_CLEANUP_INTERVAL_MS,
+        30_000,
+        HOUR,
+        |app, run| Box::pin(upkeep::orphans(app, run)),
+    )
+    .switched_by(upkeep::sweeps),
+    Job::new(
+        "blob-integrity",
+        BLOB_INTEGRITY_INTERVAL_MS,
+        60_000,
+        HOUR,
+        |app, run| Box::pin(upkeep::integrity(app, run)),
     ),
 ];

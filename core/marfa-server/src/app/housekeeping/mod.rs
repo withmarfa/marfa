@@ -209,6 +209,16 @@ impl Housekeeping {
     }
 }
 
+/// Brings a job's next run forward to `at`, in the write that gives it work.
+pub fn bring_forward(tx: &rusqlite::Transaction<'_>, name: &str, at: &str) -> Result<()> {
+    schedule::bring_forward(tx, name, at)
+}
+
+/// Lets the scheduler look again now, after a write brought a run forward.
+pub fn wake(app: &App) {
+    app.housekeeping.wake.notify_one();
+}
+
 pub fn is_job(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name)
 }

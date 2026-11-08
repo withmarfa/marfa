@@ -196,7 +196,9 @@ impl Reader<'_> {
         let bucket = self.environment.get("S3_BUCKET")?.to_string();
         let endpoint = self.url_kept_private("S3_ENDPOINT");
         let path_style = match endpoint {
-            Some(_) => self.take("S3_FORCE_PATH_STYLE", rule::boolean).unwrap_or(true),
+            Some(_) => self
+                .take("S3_FORCE_PATH_STYLE", rule::boolean)
+                .unwrap_or(true),
             None => true,
         };
         let text = |name: &str| self.environment.get(name).map(str::to_string);
@@ -208,7 +210,9 @@ impl Reader<'_> {
             access_key_id,
             secret_access_key: self.secret("S3_SECRET_ACCESS_KEY", 1),
             path_style,
-            prefix: self.take("S3_PREFIX", prefix).unwrap_or_else(|| "blobs".to_string()),
+            prefix: self
+                .take("S3_PREFIX", prefix)
+                .unwrap_or_else(|| "blobs".to_string()),
         })
     }
 

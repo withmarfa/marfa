@@ -65,7 +65,10 @@ pub const DECLARED: &[Declared] = &[
     ),
     plain("S3_REGION", "The region of the object store."),
     secret("S3_ENDPOINT", "Where the object store is."),
-    plain("S3_ACCESS_KEY_ID", "The key the object store is reached with."),
+    plain(
+        "S3_ACCESS_KEY_ID",
+        "The key the object store is reached with.",
+    ),
     secret(
         "S3_SECRET_ACCESS_KEY",
         "The secret the object store is reached with.",

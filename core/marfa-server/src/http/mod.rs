@@ -204,9 +204,11 @@ fn blob_doors() -> Routes {
     Router::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/orphans", get(blobs::orphans))
         .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
         .route("/blobs/{hash}/url", get(blobs::url))
         .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route("/blobs/{hash}/copies/{store}", delete(blobs::drop_copy))
         .route(
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),

@@ -394,7 +394,11 @@ mod tests {
         let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
         let store = read_back.ok().unwrap().fixed.object_store.unwrap();
         assert_eq!(
-            (store.bucket.as_str(), store.region.as_str(), store.prefix.as_str()),
+            (
+                store.bucket.as_str(),
+                store.region.as_str(),
+                store.prefix.as_str()
+            ),
             ("marfa", "us-east-1", "one/two")
         );
         assert!(store.path_style && store.endpoint.is_none());
@@ -417,7 +421,10 @@ mod tests {
         ];
         let store = read(&styled).ok().unwrap().fixed.object_store.unwrap();
         assert!(!store.path_style);
-        assert_eq!(refused(&[styled[0], styled[1], ("S3_FORCE_PATH_STYLE", "maybe")]).len(), 1);
+        assert_eq!(
+            refused(&[styled[0], styled[1], ("S3_FORCE_PATH_STYLE", "maybe")]).len(),
+            1
+        );
     }
 
     #[test]
