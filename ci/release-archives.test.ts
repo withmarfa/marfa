@@ -305,9 +305,12 @@ describe("pack-programs.sh", () => {
     "refuses a folder with %s missing or empty",
     (name) => {
       for (const empty of [false, true]) {
-        const files = good("0.0.9") as Record<string, string>;
-        if (empty) files[name] = "";
-        else delete files[name];
+        const full = good("0.0.9") as Record<string, string>;
+        const files = empty
+          ? { ...full, [name]: "" }
+          : Object.fromEntries(
+              Object.entries(full).filter(([key]) => key !== name),
+            );
         const { directory, folder, archive } = archiveOf(files);
         try {
           const packed = spawnSync("bash", [PACK, folder, archive], {

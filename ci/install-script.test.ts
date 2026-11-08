@@ -246,7 +246,7 @@ describe("it installs nothing it cannot vouch for", () => {
     );
     writeFileSync(
       join(fake, "sysctl"),
-      `#!/bin/sh\necho ${appleSilicon ? 1 : 0}\n`,
+      `#!/bin/sh\necho ${appleSilicon ? "1" : "0"}\n`,
     );
     chmodSync(join(fake, "uname"), 0o755);
     chmodSync(join(fake, "sysctl"), 0o755);

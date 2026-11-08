@@ -151,11 +151,11 @@ describe("the version a tag names", () => {
 
   it("refuses any other gap, including the one after 0.0.70", () => {
     for (const version of [68, 69, 71, 72]) {
-      const run = tagged(`0.0.${version}`, {
+      const run = tagged(`0.0.${String(version)}`, {
         tags: [66, version],
         released: [66],
       });
-      expect(run.status, `0.0.${version}`).toBe(1);
+      expect(run.status, `0.0.${String(version)}`).toBe(1);
       expect(run.said).toContain("does not follow the tags before it");
     }
     const after = tagged("0.0.72", { tags: [66, 70, 72], released: [66, 70] });
