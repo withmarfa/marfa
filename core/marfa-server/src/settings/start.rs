@@ -72,6 +72,8 @@ pub struct Fixed {
     pub clock_offset_ms: u64,
     pub contract_version: Option<u32>,
     pub busy_budget: Duration,
+    /// How long a connector's hold lasts after its last take or renewal.
+    pub connector_hold: Duration,
     pub blob_path: PathBuf,
     /// Never stored and never logged: its address can hold a credential.
     pub heartbeat_url: Option<String>,
@@ -206,6 +208,9 @@ impl Fixed {
         let busy_budget = reader
             .whole("SQLITE_BUSY_BUDGET_MS", 0, MAX_I32)
             .unwrap_or(5_000);
+        let connector_hold = reader
+            .whole("MARFA_CONNECTOR_HOLD_MS", 1_000, 3_600_000)
+            .unwrap_or(180_000);
         let given = Given {
             api_key_salt: reader.secret("API_KEY_SALT", 1),
             auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),
@@ -230,6 +235,7 @@ impl Fixed {
             clock_offset_ms,
             contract_version,
             busy_budget: Duration::from_millis(busy_budget),
+            connector_hold: Duration::from_millis(connector_hold),
             blob_path: PathBuf::from(environment.get("BLOB_PATH").unwrap_or("./data/blobs")),
             heartbeat_url,
             error_receiver: environment.get("ERROR_WEBHOOK_URL").is_some()

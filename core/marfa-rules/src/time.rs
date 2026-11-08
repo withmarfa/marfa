@@ -19,6 +19,22 @@ pub fn epoch_ms(value: &str) -> Option<i64> {
         .then(|| instant.and_utc().timestamp_millis())
 }
 
+/// RFC 3339 as written: a date, `T`, a time with seconds, and a zone; `t` and `z` may be lowercase.
+pub fn rfc3339(value: &str, field: &str) -> Result<String> {
+    let bytes = value.as_bytes();
+    let zoned = matches!(bytes.last(), Some(b'Z' | b'z'))
+        || bytes.len() > 6 && bytes[bytes.len() - 3] == b':';
+    let instant = (zoned && matches!(bytes.get(10), Some(b'T' | b't')))
+        .then(|| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .flatten()
+        .map(|instant| instant.naive_utc())
+        .ok_or_else(|| invalid(field, "expected an RFC 3339 timestamp"))?;
+    if !(0..=9999).contains(&instant.year()) {
+        return Err(invalid(field, "the UTC year must be between 0000 and 9999"));
+    }
+    Ok(instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+}
+
 pub fn invalid(field: &str, reason: &str) -> RuleError {
     RuleError::validation(format!("Invalid {field}: {reason}"))
 }
@@ -178,6 +194,43 @@ mod tests {
             "9999-12-31T23:59-00:01",
         ] {
             assert!(normalize(input, "time").is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn rfc3339_takes_a_full_timestamp_with_a_zone_and_nothing_looser() {
+        for (input, expected) in [
+            ("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01T00:00:00.5Z", "2026-01-01T00:00:00.500Z"),
+            ("2026-01-01T01:00:00+01:00", "2026-01-01T00:00:00.000Z"),
+            ("2025-12-31T23:00:00-01:00", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01t00:00:00z", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01t00:00:00Z", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01T00:00:00.5z", "2026-01-01T00:00:00.500Z"),
+            ("2026-01-01t01:00:00+01:00", "2026-01-01T00:00:00.000Z"),
+        ] {
+            assert_eq!(rfc3339(input, "time").unwrap(), expected, "{input}");
+        }
+        for input in [
+            "2026",
+            "2026-01",
+            "2026-01-01",
+            "2026-01-01T00:00Z",
+            "2026-01-01T00:00:00",
+            "2026-01-01T00:00:00.5",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:00:00+0100",
+            "2026-01-01T00:00:00+01",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01t00:00:00",
+            "2026-01-01t00:00z",
+            "2026-01-01T00:00:00.Z",
+            "2026-01-01T00:00:00Zjunk",
+            "0000-01-01T00:00:00+00:01",
+            "9999-12-31T23:59:59-00:01",
+            " 2026-01-01T00:00:00Z",
+        ] {
+            assert!(rfc3339(input, "time").is_err(), "{input}");
         }
     }
 }

@@ -9,14 +9,7 @@ import {
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
-/**
- * A stream is built from what the log stores, and a stored row the server can
- * no longer read ends the stream with catchup_too_old rather than being
- * skipped or guessed at.
- *
- * No request can write such a row, so the server is told to read one stored
- * row as damaged.
- */
+// No request can write an unreadable row, so a fault makes the server read one as damaged.
 
 let server: FreshServer | undefined;
 let writer: MarfaClient;

@@ -2640,7 +2640,7 @@ export interface components {
                 name: string;
             } | null;
         };
-        /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
+        /** @description The source's current problems, by opaque key. Each message is at most 500 characters. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
         ConnectorProblems: {
             [key: string]: string;
         };
@@ -6387,7 +6387,7 @@ export interface components {
              */
             event_type: "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed";
             item: components["schemas"]["Item"] & unknown;
-            /** @description The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`. */
+            /** @description The item's tags and extensions after the change, or before it on `item.purged`, with only the namespaces you can read. A webhook sends `null`. */
             metadata?: components["schemas"]["Metadata"] | null;
             /** @description On `item.restored` of an item another item's restore brought back: the ID of that item, if you can read its type. */
             restored_with?: string;

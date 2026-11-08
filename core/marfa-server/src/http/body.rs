@@ -27,6 +27,8 @@ const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
 const BULK_PATH: &str = "/items/bulk";
 const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
+const CONNECTORS_PATH: &str = "/connectors";
 const REGISTER_PATH: &str = "/auth/oauth2/register";
 const PLAIN_JSON: &str = "application/json";
 const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
@@ -208,6 +210,9 @@ fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
     if path == REGISTER_PATH {
         return REGISTER_REQUEST_BYTES;
     }
+    if let Some(cap) = connector_cap(path) {
+        return cap;
+    }
     let local = extensions
         .get::<RequestContext>()
         .is_some_and(|context| context.transport == Transport::LocalSocket);
@@ -220,6 +225,21 @@ fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
         live
     };
     usize::try_from(cap).unwrap_or(usize::MAX)
+}
+
+fn under_connectors(path: &str) -> bool {
+    path.strip_prefix(CONNECTORS_PATH)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// The state document and the agreements batch carry more than the usual cap.
+fn connector_cap(path: &str) -> Option<usize> {
+    let mut parts = path.strip_prefix("/connectors/")?.split('/').skip(1);
+    match (parts.next(), parts.next()) {
+        (Some("state"), None) => Some(STATE_REQUEST_BYTES),
+        (Some("agreements"), None) => Some(BULK_REQUEST_BYTES),
+        _ => None,
+    }
 }
 
 fn essence_of(content_type: &str) -> String {
@@ -451,14 +471,16 @@ fn ill_formed(pointer: String) -> Refusal {
         .with_detail("errors", json!([{ "path": pointer, "message": message }]))
 }
 
-/// Refuses a body too deep or ill-formed to read, under any `Content-Type`. A body over
-/// the cap is left to its operation, which answers the credential first.
+/// Connector size refusals precede credential checks.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let limit = cap_on(&app, request.uri().path(), request.extensions());
-    if super::profile::reads_own_body(&request)
-        || request.body().is_end_stream()
-        || declared_length(request.headers()) > Some(limit)
-    {
+    if super::profile::reads_own_body(&request) || request.body().is_end_stream() {
+        return next.run(request).await;
+    }
+    if declared_length(request.headers()) > Some(limit) {
+        if under_connectors(request.uri().path()) {
+            return refusal_answer(&too_large(limit));
+        }
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();

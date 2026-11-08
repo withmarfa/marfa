@@ -13,17 +13,7 @@ import {
   stopFreshServers,
 } from "../../utils/fresh-server.js";
 
-/**
- * A reader that takes nothing for a ping interval is closed, and the server
- * holds nothing for it in the meantime.
- *
- * The subscriber here is a raw socket that stops reading as soon as its
- * request is sent, which is what a sleeping laptop or a stuck proxy looks
- * like to the server: nothing a client library could buffer on its behalf
- * sits between the two. Enough is written to fill whatever the operating
- * system's socket buffers hold, the socket is left unread for longer than a
- * ping interval, and only then is it read.
- */
+// A raw socket, so no client library buffers on the reader's behalf.
 
 let client: MarfaClient;
 let ctx: TestContext;
