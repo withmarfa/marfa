@@ -606,11 +606,6 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     updated_at TEXT NOT NULL
 ) STRICT;
 
--- What the enrichment sweep has made of the bytes a file item's `blob_ref` names. A row comes
--- with each lending reference an item gets, and goes with it. `waiting` rows are offered while
--- `attempts` is below the most allowed, and an attempt is counted before the bytes are read.
--- A `skipped` row is offered again when the settings its `reason` depends on differ from
--- `signature`, which holds them as they were.
 CREATE TABLE IF NOT EXISTS enrichment_files (
     item_seq INTEGER NOT NULL,
     hash TEXT NOT NULL,
@@ -625,8 +620,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
 
 CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);
 
--- A write that gives an item a lending reference to a blob queues it for the sweep and brings
--- the sweep's next run forward, a few seconds on so that a burst of writes is one run.
+-- Delay the wake to group a burst of writes into one run.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_referenced AFTER INSERT ON blob_references
 WHEN NEW.kind = 'item' AND NEW.lends = 1
 BEGIN

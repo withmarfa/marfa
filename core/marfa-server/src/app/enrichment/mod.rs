@@ -1,6 +1,3 @@
-//! The `enrichment-sweep` job: reads what the file items name, one file at a time in a
-//! process of its own, and writes the text, size and length onto the items that lack them.
-
 mod queue;
 
 use std::fs::File;
@@ -220,8 +217,7 @@ enum Begun {
     Reading(Offered),
 }
 
-/// Records the attempt before the file is read, in the write that checks the item still
-/// names the bytes.
+/// Persist the attempt before reading so a crash counts.
 async fn begin(app: &Arc<App>, seq: i64, hash: &Hash) -> Result<Begun> {
     let (cache, hash) = (app.catalog_handle(), hash.clone());
     app.write(&Caller::Server, ACTION, move |unit| {
@@ -246,8 +242,7 @@ async fn begin(app: &Arc<App>, seq: i64, hash: &Hash) -> Result<Begun> {
     .await
 }
 
-/// Writes what was read and settles the file in one transaction, so that a file purged or
-/// changed during the reading is left as it is.
+/// Recheck the item and settle the attempt in the same transaction.
 async fn store(
     app: &Arc<App>,
     plan: &Plan,

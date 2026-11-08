@@ -1,7 +1,3 @@
-//! The file items the enrichment sweep reads, and the write that stores what it read. The write
-//! is the server's own: it fills only what the item leaves empty, and it names no digest as
-//! lending.
-
 use arc_swap::ArcSwap;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
@@ -27,8 +23,7 @@ pub struct Offered {
 
 #[derive(Debug)]
 pub enum Offer {
-    /// The item is gone, is no file, or no longer names these bytes through a reference that
-    /// lends them, so there is nothing to read for it.
+    /// The item no longer qualifies to read these bytes.
     Dropped,
     /// The item is in the bin. It is offered again once it is out.
     Binned,
@@ -92,8 +87,7 @@ pub enum Written {
     Landed,
     /// The item holds every field the reading gave.
     Nothing,
-    /// The item no longer names these bytes through a reference that lends them, or is in the
-    /// bin, and so nothing was written.
+    /// The item no longer qualifies to receive this reading.
     Changed,
 }
 

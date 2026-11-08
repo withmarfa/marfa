@@ -1,5 +1,4 @@
-//! The enrichment sweep, with the real reader: it starts this program as the child, so `main`
-//! serves the child first.
+//! The reader starts this test program as its child; `main` must serve it first.
 
 use std::sync::Arc;
 
