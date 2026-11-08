@@ -504,7 +504,6 @@ fn announce_held(
     })
 }
 
-/// Deletes the row, announcing the tags and extensions it held.
 pub(super) fn purge(unit: &Unit<'_, '_>, item: &Item) -> Result<()> {
     let metadata = metadata_text(unit.tx(), item, |_| true)?;
     rows::purge(unit.tx(), item, &unit.at)?;

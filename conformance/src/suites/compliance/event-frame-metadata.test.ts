@@ -68,10 +68,6 @@ async function seed(body: string): Promise<string> {
   return made.data.item.id;
 }
 
-/**
- * One item through every item event, with tags and two extension namespaces
- * written before the events that follow them. Returns its id.
- */
 async function lifecycle(): Promise<string> {
   const made = await client.createItem(
     createNote({
@@ -106,7 +102,6 @@ function rowOf(event: SseEvent): string | undefined {
   return (event.data as { item?: { id?: string } }).item?.id;
 }
 
-/** What each item event of `id` says its metadata is, in the order sent. */
 function carried(events: SseEvent[], id: string) {
   return events
     .filter((event) => rowOf(event) === id)
@@ -125,7 +120,6 @@ function expectCarried(
   frames: ReturnType<typeof carried>,
   namespaces: Record<string, unknown>,
 ) {
-  // The first create is the item's own; a restore and a second delete follow.
   expect(frames.map((frame) => frame.event)).toEqual([
     "item.created",
     "item.updated",
@@ -169,8 +163,7 @@ describe("event frame metadata", () => {
       [seen]: { a: 1 },
       [unseen]: { b: 2 },
     });
-    // The witness above shows the unread namespace is producible, so its
-    // absence here is the filter's.
+    // The full subscriber witnesses the namespace withheld from the narrow subscriber.
     expectCarried(carried(frames.narrow, frames.id), { [seen]: { a: 1 } });
   });
 
@@ -200,12 +193,10 @@ describe("event frame metadata", () => {
   });
 });
 
-/** The lifecycle as a full and a narrow subscriber each see it while it happens. */
 async function liveFrames(signal: AbortSignal) {
   return withStream(apiUrl, apiKey, {}, (full) =>
     withStream(apiUrl, narrowKey, {}, async (narrow) => {
-      // A write that lands before a subscription is on the publisher's list
-      // is published to nobody.
+      // Allow both subscriptions to join before the first write.
       await new Promise((resolve) => setTimeout(resolve, 250));
       const id = await lifecycle();
       const witness = await seed("live-witness");
