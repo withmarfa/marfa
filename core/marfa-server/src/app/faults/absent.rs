@@ -49,6 +49,10 @@ impl Faults {
         None
     }
 
+    pub fn unfold_deadline(&self) -> Option<u64> {
+        None
+    }
+
     pub fn unreadable(&self, _stored: &str, _id: &str) -> bool {
         false
     }

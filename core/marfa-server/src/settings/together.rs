@@ -2,14 +2,12 @@
 //! be after a change, defaults a clear exposes included, and is registered once so a write
 //! through `/config` and the listing read the same list.
 
-use std::sync::Arc;
-
 use super::registry::{
     self, ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot,
     VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
-use crate::app::addresses::{Address, Addresses};
+use crate::app::addresses::Address;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Breach {
@@ -91,6 +89,10 @@ pub fn judge(
 /// outside a rule.
 #[cfg(feature = "test-hooks")]
 pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
+    use std::sync::Arc;
+
+    use crate::app::addresses::Addresses;
+
     let after = Arc::new(Snapshot::resolve(seeds, &[], 0));
     let touched: Vec<&str> = seeds.keys().copied().collect();
     let known = start.port != 0 || after.get(registry::SIGN_IN_ADDRESS).is_some();
