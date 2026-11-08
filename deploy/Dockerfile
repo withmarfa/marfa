@@ -1,86 +1,48 @@
 # syntax=docker/dockerfile:1
 #
-# The server with Litestream beside it. Build from the repository root:
+# The Marfa server, from the release's own static Linux programs. Nothing is compiled
+# here, so the image runs the bytes in the release's archives. The build context is
+# a folder holding, for each platform, `amd64/` and `arm64/` with `marfa`,
+# `marfa-server` and `NOTICES.txt`:
 #
-#   docker build -f deploy/Dockerfile -t marfa-server .
+#   docker buildx build -f deploy/Dockerfile --platform linux/amd64 -t marfa-server <context>
 #
-# A release is published from this file as `ghcr.io/withmarfa/marfa-server`,
-# built by `.github/workflows/release.yml` with `VERSION_RELEASE` set.
+# `release.yml` publishes it as `ghcr.io/withmarfa/marfa-server`.
 #
-# The build context is the whole repository because the server's workspace
-# dependencies are built from source here. The runtime stage carries the
-# pruned production install `pnpm deploy` makes, the Litestream binary and
-# the sidecar's configuration; `Dockerfile.dockerignore` beside this file
-# keeps installed modules, build output and local state out of the context.
+# The base has CA certificates, a non-root user (65532) and `/tmp`, and no shell,
+# package manager or libc. To move the pin, look up the digest of
+# `gcr.io/distroless/static-debian12:nonroot` and replace it.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
-ARG NODE_VERSION=24
-ARG LITESTREAM_VERSION=0.5.17
+ARG TARGETARCH
+ARG VERSION
+ARG REVISION
+ARG SOURCE=https://github.com/withmarfa/marfa
 
-FROM rust:1-slim-bookworm AS cli-build
-WORKDIR /repo
-COPY core/ ./core/
-COPY packages/types/generated/icon-set-lucide.json packages/types/generated/icon-set-simple-icons.json ./packages/types/generated/
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-RUN cargo fetch --locked --manifest-path core/Cargo.toml
-# A release build stamps its version into the workspace the way
-# `scripts/release/stamp-version.sh` does, so the packaged `marfa` reports the
-# release in `--version` and in its telemetry rather than the placeholder
-# `0.0.0`. The lock file follows the manifest, offline, from the crates
-# fetched above.
-ARG VERSION_RELEASE
-RUN if [ -n "$VERSION_RELEASE" ]; then \
-      printf '%s' "$VERSION_RELEASE" | grep -Eq '^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' \
-        || { echo "VERSION_RELEASE must be major.minor.patch" >&2; exit 1; }; \
-      sed -i "0,/^version = \"0.0.0\"/s//version = \"$VERSION_RELEASE\"/" core/Cargo.toml; \
-      (cd core && cargo update --workspace --offline --quiet); \
-    fi
-RUN cargo build --manifest-path core/Cargo.toml --locked --release -p marfa-cli
+LABEL org.opencontainers.image.title="Marfa server" \
+      org.opencontainers.image.description="The Marfa server." \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
-FROM node:${NODE_VERSION}-slim AS build
-WORKDIR /repo
-RUN corepack enable
-COPY . .
-RUN pnpm install --frozen-lockfile
-# `...` builds the server and every workspace package it depends on.
-RUN pnpm --filter "@withmarfa/server..." build
-# A self-contained production install: dist, the runtime dependencies, the
-# workspace dependencies copied in rather than linked.
-RUN pnpm --filter @withmarfa/server --legacy deploy --prod /out
+COPY --chmod=0755 ${TARGETARCH}/marfa ${TARGETARCH}/marfa-server /usr/local/bin/
+COPY ${TARGETARCH}/NOTICES.txt /usr/share/doc/marfa/NOTICES.txt
 
-FROM litestream/litestream:${LITESTREAM_VERSION} AS litestream
+# The server listens on every interface of the container; the volume mounted at /data
+# holds the database, the files and the private control socket.
+ENV MARFA_LISTEN_HOST=0.0.0.0 \
+    PORT=8600 \
+    SQLITE_PATH=/data/marfa.db \
+    BLOB_PATH=/data/blobs \
+    MARFA_CONTROL_SOCKET=/data/control/marfa.sock
 
-FROM node:${NODE_VERSION}-slim AS runtime
-ENV NODE_ENV=production
-ENV PORT=8600
-# Where the volume is mounted. Both names are read by the server and by
-# `entrypoint.sh`, which restores the database to the first when the volume
-# holds none.
-ENV SQLITE_PATH=/data/marfa.db
-ENV BLOB_PATH=/data/blobs
-ENV MARFA_CONTROL_SOCKET=/data/control/marfa.sock
-# The commit this image was built from, which the server reads from
-# `version.json` at boot and reports on `GET /` as `version`, in `/health` and
-# as the version of every span it exports. `VERSION_RELEASE`, given only by a
-# release build, is the release's version, which the server reports on `GET /`
-# as `release` and which the packaged `marfa` reports as its own; a build
-# without it names no release.
-ARG VERSION_SHA
-ARG VERSION_RELEASE
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends acl ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=cli-build /repo/core/target/release/marfa /usr/local/bin/marfa
-COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
-COPY --from=build --chown=node:node /out ./
-COPY deploy/litestream.yml /etc/litestream.yml
-COPY deploy/entrypoint.sh /usr/local/bin/marfa-entrypoint
-RUN printf '{"sha":"%s","deployed_at":"%s"%s}\n' "${VERSION_SHA:-dev}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${VERSION_RELEASE:+,\"release\":\"$VERSION_RELEASE\"}" > version.json \
-  && chmod +x /usr/local/bin/marfa-entrypoint \
-  && mkdir -p /data \
-  && chown -R node:node /app /data
-USER node
+USER 65532:65532
+WORKDIR /data
 EXPOSE 8600
-# `/health` answers 200 with a status of ok or degraded and 503 when a
-# component is down; slim carries no curl, so the probe is Node's own fetch.
+# Asks `/health` of the server in this container, with no key. It follows `PORT`'s default.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8600)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-ENTRYPOINT ["/usr/local/bin/marfa-entrypoint"]
+  CMD ["/usr/local/bin/marfa", "--no-keychain", "--url", "http://127.0.0.1:8600", "status"]
+# `marfa server run` supervises the server: a database the server refuses leaves the
+# container up and idle, so a restart policy does not start it into the same refusal.
+ENTRYPOINT ["/usr/local/bin/marfa", "server", "run"]

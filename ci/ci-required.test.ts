@@ -57,7 +57,6 @@ const SERVER: Job[] = [
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
-  "image",
 ];
 /**
  * Only the device fixtures drive the `marfa` binary, so only they read the
@@ -272,7 +271,6 @@ describe("what a change runs", () => {
         "clients-freshness",
         ...CONFORMANCE,
         "mcp-conformance",
-        "image",
       ],
     ],
     [
@@ -293,10 +291,10 @@ describe("what a change runs", () => {
     [
       "the core's lockfile, since a dependency bump can break an Apple build",
       ["core/Cargo.lock"],
-      [...RUST, ...ENRICHMENT, "ci-sqlite", "version-fields"],
+      [...RUST, ...ENRICHMENT, "image", "ci-sqlite", "version-fields"],
     ],
     [
-      "the native readers' scripts, pins and patches, which only the native build runs",
+      "the native readers' scripts, pins and patches, which only the native build and the image's programs read",
       [
         "core/marfa-enrichment/native/release.sh",
         "core/marfa-enrichment/native/manifest.txt",
@@ -304,7 +302,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["ci-sqlite", "core-native"],
+      ["ci-sqlite", "core-native", "image"],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",
@@ -670,24 +668,34 @@ describe("what a change runs", () => {
       SERVER,
     ],
     [
-      "the image's Litestream, and the image itself",
+      "the image, which the test hooks' test also reads",
       ["deploy/Dockerfile"],
-      ["ci-sqlite", "restore-drill", "image"],
+      ["ci-sqlite", "workspace", "image"],
     ],
     [
       "the Litestream configuration, which the offline lane also reads",
       ["deploy/litestream.yml"],
-      ["ci-sqlite", ...CONFORMANCE, "restore-drill", "image"],
+      ["ci-sqlite", ...CONFORMANCE, "restore-drill"],
     ],
     [
-      "the entrypoint, which the image, a ci/ test and the drill's backup fixtures run",
+      "the entrypoint, which a ci/ test and the drill's backup fixtures run",
       ["deploy/entrypoint.sh"],
-      ["ci-sqlite", "workspace", "restore-drill", "image"],
+      ["ci-sqlite", "workspace", "restore-drill"],
     ],
     [
-      "the ignore file the image's build reads",
-      ["deploy/Dockerfile.dockerignore"],
+      "the script that builds the release's programs, which the image is made from",
+      ["scripts/release/build-programs.sh"],
       ["ci-sqlite", "workspace", "image"],
+    ],
+    [
+      "the native readers' scripts, which the image's programs are built with",
+      ["core/marfa-enrichment/native/lib.sh"],
+      ["ci-sqlite", "core-native", "image"],
+    ],
+    [
+      "the settings, whose names the Dockerfile sets",
+      ["core/marfa-server/src/settings/start.rs"],
+      ["ci-sqlite", "core-checks-linux", "rust-contract", "image"],
     ],
     [
       "the image's replica fixtures, which the drill's job runs",
@@ -725,7 +733,6 @@ describe("what a change runs", () => {
         "mcp-conformance",
         "cli-scenarios",
         "restore-drill",
-        "image",
         "types-freshness",
         "version-fields",
         "clients-freshness",
@@ -805,7 +812,6 @@ describe("what a change runs", () => {
         ...SHARDS,
         "conformance-statuses",
         "mcp-conformance",
-        "image",
         "core",
         "rust-contract",
       ],
@@ -1720,7 +1726,7 @@ describe("what a job reads reaches it", () => {
       "conformance/scripts/marfa-server.ts",
     ]);
     expect(files).toContain("conformance/src/utils/drill.ts");
-    const read = [...files, "deploy/Dockerfile", "deploy/litestream.yml"];
+    const read = [...files, "deploy/litestream.yml"];
     expect(read.filter((f) => !affected(f).has("restore-drill"))).toEqual([]);
   });
 
