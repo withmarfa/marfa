@@ -51,6 +51,14 @@ export const JOBS = [
   // the non-macOS credential store and the test keychain it uses are built.
   // It reads what `core-checks` reads but the Swift crate.
   "core-checks-linux",
+  // `Core native (x86_64 Linux)`: `marfa-enrichment`'s PDF and OCR readers,
+  // built from pinned sources by `native/release.sh` and checked on real
+  // x86_64 hardware, where every read must report `sandbox: Full`.
+  "core-native",
+  // `Core fault injection (Linux)`: the tests of `marfa-enrichment` built with
+  // `fault-injection`, which make a child crash, hang and misbehave. `Core
+  // checks` runs the same tests on macOS, where the sandbox is other code.
+  "core-fault-injection",
   // The contract's suites, run against a server booted from this checkout,
   // and the offline lane that needs none. `ci.yml` runs the three groups of
   // server fixtures as shards, each on a runner of its own, and `Conformance`
@@ -179,6 +187,13 @@ const RUST_LINUX: readonly Job[] = [
   "conformance-device",
   "cli-scenarios",
 ];
+
+/**
+ * The jobs that read `marfa-enrichment`'s source: the fault-injection tests
+ * and the native build, which links the crate with PDFium and Tesseract and
+ * runs the checks of `native/verify.sh` on it.
+ */
+const ENRICHMENT: readonly Job[] = ["core-native", "core-fault-injection"];
 
 /**
  * The jobs that run on macOS for a pull request: the core's checks and its
@@ -471,19 +486,31 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-rules\/src\/builtin_catalog\.json$/,
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
-  [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
-  [/^core\/Cargo\.lock$/, RUST],
-  [/^core\/\.cargo\//, [...RUST, "workspace"]],
+  [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "workspace"]],
+  [/^core\/Cargo\.lock$/, [...RUST, ...ENRICHMENT]],
+  [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "workspace"]],
   [
     /^core\/\.config\//,
-    ["core-checks", "core-checks-linux", "core", "workspace"],
+    [
+      "core-checks",
+      "core-checks-linux",
+      "core-fault-injection",
+      "core",
+      "workspace",
+    ],
   ],
   // It can hide a file the client generator writes from the freshness
   // check's `git status`.
   [/^core\/\.gitignore$/, ["clients-freshness"]],
   [
     /^core\/scripts\/test-limits\.sh$/,
-    ["core-checks", "core-checks-linux", "core", "workspace"],
+    [
+      "core-checks",
+      "core-checks-linux",
+      "core-fault-injection",
+      "core",
+      "workspace",
+    ],
   ],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
@@ -510,6 +537,22 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core-checks", "core-checks-linux", "core", "conformance-device"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
+  // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
+  // its native readers are read by the native job alone: nothing else compiles
+  // or runs them.
+  [/^core\/marfa-enrichment\/native\//, ["core-native"]],
+  // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
+  // and its memory watch reads each system's own counter, so the source of
+  // the isolation, the tests and the build script run on a Mac as well. A
+  // change to the manifest is covered too: a dependency can break an Apple
+  // build.
+  [
+    /^core\/marfa-enrichment\/(src\/isolated\/|tests\/|build\.rs$|Cargo\.toml$)/,
+    [...RUST, ...ENRICHMENT],
+  ],
+  // The rest of its source, its fixtures and its README are pure Rust, read
+  // the same on every system, and so Linux vouches for them.
+  [/^core\/marfa-enrichment\//, [...RUST_LINUX, ...ENRICHMENT]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac
   // runs them too.
