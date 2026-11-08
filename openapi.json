@@ -9610,10 +9610,10 @@
             "items": {
               "type": "string"
             },
-            "description": "Resource identifiers to register the client for. Leave it out for the instance's default resources."
+            "description": "Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`."
           }
         },
-        "description": "An OAuth client: its app metadata and the grants it uses."
+        "description": "An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer."
       },
       "StreamCapacityExhaustedOrWriteContentionRefusal": {
         "type": "object",
@@ -52681,14 +52681,6 @@
                         "web",
                         "native"
                       ]
-                    },
-                    "resources": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "Final resource identifiers linked to the registered client"
                     },
                     "client_id": {
                       "type": "string",

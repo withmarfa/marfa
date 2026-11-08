@@ -1189,6 +1189,22 @@ When a client registers at `POST /auth/oauth2/register`, which takes no credenti
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
+### `keys-and-oauth/register-unsupported-metadata`
+
+When client metadata at `POST /auth/oauth2/register` holds a member the server does not support, such as `dpop_bound_access_tokens`, `subject_type`, `software_statement` or `resources`, the server MUST answer `201` without that member.
+
+**Reason:** RFC 7591 section 2 has a server ignore metadata it does not understand, and section 3.1.1 a software statement it does not support, and an answer without the member tells the client it was not honored.
+
+**Tests:** `compliance/oauth-registration-schema.test.ts › registers a client whose metadata the server does not support, and leaves that metadata out of its answer`.
+
+### `keys-and-oauth/register-resource-uri`
+
+If client metadata at `POST /auth/oauth2/register` names in `resources` a value that is not an absolute URI without a fragment, then the server MUST answer `400 invalid_target`.
+
+**Reason:** RFC 8707 section 2 holds a resource indicator to an absolute URI with no fragment.
+
+**Tests:** `compliance/oauth-registration-schema.test.ts › describes the refusal of a resource that is not an absolute URI`.
+
 ### `keys-and-oauth/register-auth-methods`
 
 When valid client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `none` or leaves it out, the server MUST register the client with `none`.
@@ -1831,11 +1847,11 @@ If a request to `POST /auth/oauth2/token` names a grant type the server does not
 
 ### `keys-and-oauth/client-credential-refused`
 
-If a request to `POST /auth/oauth2/token` or `POST /auth/device/code` carries an `Authorization` header, a `client_secret` or a client assertion, then the server MUST answer `401 invalid_client`.
+If a request to `POST /auth/oauth2/token`, `POST /auth/device/code` or `POST /auth/oauth2/revoke` carries an `Authorization` header, or a `client_secret`, `client_assertion` or `client_assertion_type` field, empty or not, then the server MUST answer `401 invalid_client`, whatever else the request holds or lacks.
 
-**Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds.
+**Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds, and each door refuses it the same way.
 
-**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses a client that presents a credential of its own 401 invalid_client, at the device code and the token doors`.
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses a client that presents a credential of its own 401 invalid_client, at the device code, token and revocation doors`, `› refuses a client credential before it judges what the request lacks, at the device code, token and revocation doors`.
 
 ## Refresh tokens
 
