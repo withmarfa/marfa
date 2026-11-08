@@ -686,7 +686,7 @@ pub(crate) fn replay_build(
     }
     if !reached_head {
         return Err(CoreError::StreamIncomplete {
-            reason: "replay_failed".into(),
+            reason: "read_failed".into(),
         });
     }
     report.catalog_changed = *catalog_changed;
