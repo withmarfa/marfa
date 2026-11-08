@@ -850,3 +850,100 @@ async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more
     assert_eq!(result["struck"], 0, "{result}");
     assert_eq!(instance.copies(&kept).await.len(), 2);
 }
+
+/// A picture `width` pixels wide, so each width is a different blob.
+fn jpeg(width: u8) -> Vec<u8> {
+    vec![
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0, 8, 0, width, 1, 1, 0x11, 0, 0xff, 0xda, 0x00,
+        0x08, 1, 1, 0, 0, 0x3f, 0, 0, 0xff, 0xd9,
+    ]
+}
+
+impl Instance {
+    async fn with_owner(more: &[(&str, &str)]) -> Instance {
+        let mut pairs = vec![
+            ("MARFA_BLOB_CLEANUP_GRACE_MS", "0"),
+            ("MARFA_AUTH_BASE_URL", "http://127.0.0.1:8600"),
+        ];
+        pairs.extend_from_slice(more);
+        let instance = Instance::start(&pairs).await;
+        let claim = json!({ "email": "owner@example.test", "password": "the first password" });
+        let claimed = instance
+            .call(Method::POST, "/_control/setup/claim", Some(claim))
+            .await;
+        assert_eq!(claimed.status, StatusCode::CREATED, "{}", claimed.body);
+        instance
+    }
+
+    async fn picture(&self, bytes: &[u8]) -> String {
+        let request = Request::builder()
+            .method(Method::PUT)
+            .uri("/owner/picture")
+            .body(Body::from(bytes.to_vec()))
+            .unwrap();
+        let stored = send(&self.control, request).await;
+        assert_eq!(stored.status, StatusCode::OK, "{}", stored.body);
+        hash_of(bytes)
+    }
+
+    fn blobs_named(&self, hash: &str) -> i64 {
+        self.count(&format!("SELECT count(*) FROM blobs WHERE hash = '{hash}'"))
+    }
+}
+
+#[tokio::test]
+async fn the_owners_picture_is_replicated_and_purged_only_once_replaced() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::with_owner(&pairs(&env)).await;
+    let first = instance.picture(&jpeg(8)).await;
+    instance.run("blob-replicate").await;
+    object_key(&s3, "blobs", &first);
+    assert_eq!(instance.copies(&first).await.len(), 2);
+    for _ in 0..3 {
+        let run = instance.run("blob-orphans").await;
+        assert_eq!(run["purged"], 0, "{run}");
+        instance.app.clock.advance(1).unwrap();
+    }
+    assert_eq!(instance.blobs_named(&first), 1);
+
+    let second = instance.picture(&jpeg(9)).await;
+    instance.run("blob-replicate").await;
+    instance.run("blob-orphans").await;
+    instance.app.clock.advance(1).unwrap();
+    let run = instance.run("blob-orphans").await;
+    assert_eq!(run["purged"], 1, "{run}");
+    assert_eq!(instance.blobs_named(&first), 0);
+    assert!(!instance.file(&first).exists());
+    assert!(s3.objects_under(&objects_of("blobs", &first)).is_empty());
+
+    assert_eq!(instance.copies(&second).await.len(), 2);
+    std::fs::remove_file(instance.file(&second)).unwrap();
+    let served = instance.call(Method::GET, "/owner/picture", None).await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert_eq!(served.bytes, jpeg(9));
+}
+
+#[tokio::test]
+async fn a_picture_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
+    let instance = Instance::with_owner(&[]).await;
+    let bytes = jpeg(10);
+    let picture = instance.stored(&bytes).await;
+    let witness = instance.stored(b"named by nothing").await;
+    instance.run("blob-orphans").await;
+    instance.app.clock.advance(1).unwrap();
+
+    instance.arm("hold:blob-orphans:purge", None);
+    let set = async {
+        instance.when_held().await;
+        instance.picture(&bytes).await;
+        instance.app.faults.clear(Some("hold:blob-orphans:purge"));
+    };
+    let (run, ()) = tokio::join!(instance.run("blob-orphans"), set);
+    assert_eq!(run["purged"], 1, "{run}");
+    assert_eq!(instance.blobs_named(&witness), 0);
+    assert_eq!(instance.blobs_named(&picture), 1);
+    let served = instance.call(Method::GET, "/owner/picture", None).await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert_eq!(served.bytes, bytes);
+}
