@@ -90,7 +90,7 @@ export const JOBS = [
   "version-fields",
   "clients-freshness",
   // `core-live.yml`, on macOS, which `ci.yml` calls for a pull request. It
-  // boots the server too, but a pull request that changes only the server
+  // boots the Rust server, but a pull request that changes only the server
   // leaves it to the push to `main`, where `core.yml` runs it.
   "core",
   // `Control socket (macOS)`: the private control socket's tests on macOS,
@@ -609,9 +609,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
-  // its native readers are read by the native job and the image, which builds
-  // the release programs with them: nothing else compiles or runs them.
-  [/^core\/marfa-enrichment\/native\//, ["core-native", "image"]],
+  // its native readers are read by the native job, by the image, which builds
+  // the release programs with them, and by the Rust contract build, which links
+  // the server with them: nothing else compiles or runs them.
+  [
+    /^core\/marfa-enrichment\/native\//,
+    ["core-native", "image", "rust-contract"],
+  ],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
   // the isolation, the tests and the build script run on a Mac as well. A
@@ -638,8 +642,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core-checks-linux", "rust-contract", "image"],
   ],
   // The rest of the server is built and tested on Linux, and its contract is
-  // run by the Rust contract jobs; the binary and the Swift package do not
-  // depend on it.
+  // run by the Rust contract jobs, with the real `marfa` binary; the live
+  // job on macOS boots it too but waits for the push to `main`.
   [/^core\/marfa-server\//, ["core-checks-linux", "rust-contract"]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac

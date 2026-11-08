@@ -37,10 +37,7 @@ pub const POWERS: [(&str, &str); 12] = [
         "instance.read",
         "See health, metrics, storage and job status",
     ),
-    (
-        "instance.maintain",
-        "Run housekeeping, remove retired platform types and cancel bulk jobs",
-    ),
+    ("instance.maintain", "Run housekeeping and cancel bulk jobs"),
     ("schema.write", "Replace or remove type definitions"),
     (
         "blobs.manage",

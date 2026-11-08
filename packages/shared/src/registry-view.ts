@@ -200,12 +200,6 @@ export function stagePlatformRegistryType(
     change(view.system, schema.id, family === "system" ? true : REMOVED);
   });
 }
-export function removePlatformRegistryType(id: string): void {
-  mutate(true, (view) => {
-    change(view.platform, id, REMOVED);
-    change(view.system, id, REMOVED);
-  });
-}
 export function stageRegistryEdge(schema: EdgeTypeSchema): void {
   mutate(false, (view) => {
     change(view.edges, schema.id, immutableRegistrySchema(schema));

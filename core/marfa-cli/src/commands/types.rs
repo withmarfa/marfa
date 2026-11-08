@@ -64,13 +64,6 @@ pub enum TypesCommand {
     ///
     /// It moves only the items the key can see. Once no item of the type remains, the folders, views and webhooks that name it are changed to name the new one. An item the new type refuses stays where it is, and the command names it. The command waits for the move to finish, and exits with an error, saying why, when it leaves the settings unchanged: an item it couldn't move, one written while it ran, one the key can't see, or a setting it can't change. Run it again once those are dealt with.
     Move(MoveArgs),
-    /// The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
-    Retired,
-    /// Delete one retired platform type. Requires `instance.maintain`.
-    DeleteRetired {
-        /// The type id.
-        id: String,
-    },
 }
 
 #[derive(Debug, Args)]
@@ -219,14 +212,6 @@ pub fn job_request(id: &str) -> Request {
     Request::get(&["items", "bulk-actions", "jobs", id])
 }
 
-pub fn retired_request() -> Request {
-    Request::get(&["platform-types", "retired"])
-}
-
-pub fn delete_retired_request(id: &str) -> Request {
-    Request::delete(&["platform-types", id])
-}
-
 /// `remote` resolves the server and the credential, for the commands that
 /// send: `scaffold` resolves neither.
 pub fn run(
@@ -245,8 +230,6 @@ pub fn run(
         TypesCommand::Delete { id, force } => delete_request(id, *force),
         TypesCommand::SetIcon { id, icon } => set_icon_request(id, icon),
         TypesCommand::ClearIcon { id } => clear_icon_request(id),
-        TypesCommand::Retired => retired_request(),
-        TypesCommand::DeleteRetired { id } => delete_retired_request(id),
     };
     let answer = remote()?.json(&request)?;
     match &command {

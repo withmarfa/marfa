@@ -345,6 +345,42 @@ async fn a_key_with_only_the_types_map_may_add_an_optional_field_and_no_more() {
 }
 
 #[tokio::test]
+async fn a_definition_an_unreadable_fault_names_is_refused_to_a_read_and_replaced_by_a_write() {
+    let instance = Instance::start().await;
+    instance.register(simple("acme.fine")).await;
+    instance.register(simple("acme.damaged")).await;
+    instance
+        .app
+        .faults
+        .set("unreadable:type-definition", Some("acme.damaged"))
+        .unwrap();
+
+    let read = instance
+        .local(Method::GET, "/types/acme.damaged", None)
+        .await;
+    assert_eq!(read.status, StatusCode::CONFLICT, "{}", read.body);
+    assert_eq!(read.code(), "type_chain_unresolvable");
+    assert_eq!(read.body["error"]["details"]["type_id"], "acme.damaged");
+    let other = instance.local(Method::GET, "/types/acme.fine", None).await;
+    assert_eq!(other.status, StatusCode::OK, "{}", other.body);
+
+    let replaced = instance
+        .local(
+            Method::PUT,
+            "/types/acme.damaged",
+            Some(simple("acme.damaged")),
+        )
+        .await;
+    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+
+    instance.app.faults.clear(None);
+    let readable = instance
+        .local(Method::GET, "/types/acme.damaged", None)
+        .await;
+    assert_eq!(readable.status, StatusCode::OK, "{}", readable.body);
+}
+
+#[tokio::test]
 async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_the_start() {
     let instance = Instance::start().await;
     instance.register(simple("acme.fine")).await;
@@ -395,61 +431,6 @@ async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_t
         .local(Method::GET, "/types/acme.broken", None)
         .await;
     assert_eq!(readable.status, StatusCode::OK, "{}", readable.body);
-}
-
-#[tokio::test]
-async fn a_platform_type_this_build_no_longer_ships_stays_until_the_owner_removes_it() {
-    let instance = Instance::start().await;
-    let before = instance
-        .local(Method::GET, "/platform-types/retired", None)
-        .await;
-    assert_eq!(
-        before.body["data"].as_array().map(Vec::len),
-        Some(0),
-        "{}",
-        before.body
-    );
-
-    let instance = instance
-        .restart(|database| {
-            database
-                .execute(
-                    "INSERT INTO types (id, origin, definition, created_at, updated_at) VALUES \
-                     ('core.retired', 'platform', '{\"id\":\"core.retired\",\"fields\":{}}', 'then', 'then')",
-                    [],
-                )
-                .unwrap();
-        })
-        .await;
-
-    let retired = instance
-        .local(Method::GET, "/platform-types/retired", None)
-        .await;
-    let rows = retired.body["data"].as_array().unwrap();
-    assert_eq!(rows.len(), 1, "{}", retired.body);
-    assert_eq!(rows[0]["id"], "core.retired");
-    assert_eq!(rows[0]["removable"], true);
-    let read = instance
-        .local(Method::GET, "/types/core.retired", None)
-        .await;
-    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
-    let deleted = instance
-        .local(Method::DELETE, "/types/core.retired", None)
-        .await;
-    assert_eq!(deleted.code(), "core_type_immutable");
-
-    let removed = instance
-        .local(Method::DELETE, "/platform-types/core.retired", None)
-        .await;
-    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
-    let after = instance
-        .local(Method::GET, "/types/core.retired", None)
-        .await;
-    assert_eq!(after.status, StatusCode::NOT_FOUND, "{}", after.body);
-    let shipped = instance
-        .local(Method::DELETE, "/platform-types/core.note", None)
-        .await;
-    assert!(shipped.status.is_client_error(), "{}", shipped.body);
 }
 
 #[tokio::test]

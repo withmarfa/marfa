@@ -4,7 +4,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { DAY_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
@@ -305,19 +304,14 @@ describe("the owner device lookup lane", () => {
     },
   );
 
-  it("holds the owner lane aggregate to one hundred and resets its fifteen-minute window", async () => {
-    // One owner reaches its own ten-attempt cap before the aggregate. Arrange
-    // only that otherwise unreachable aggregate state, then assert over HTTP.
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare(
-        "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) VALUES (?, ?, ?, ?)",
-      ).run(
-        "device-user-code-owner-instance",
-        "all",
-        99,
-        new Date(clock.now() + 15 * MINUTE_MS).toISOString(),
-      );
-    });
+  it("holds the owner lane aggregate to its limit and resets its fifteen-minute window", async () => {
+    // One owner reaches its own ten-attempt cap before the aggregate of one
+    // hundred, so the fault lowers the aggregate to two attempts.
+    const aggregate = "limit:device-owner-instance=2";
+    await server.setFault(aggregate);
+    expect(
+      await location(await enter(codeFor(0), server.ownerCookie)),
+    ).toContain("error=invalid_code");
     expect(
       await location(await enter(codeFor(1), server.ownerCookie)),
     ).toContain("error=invalid_code");
@@ -329,6 +323,7 @@ describe("the owner device lookup lane", () => {
     );
     await server.restart();
     origin = await issuerOrigin(server);
+    await server.setFault(aggregate);
     expect(
       await location(await enter(codeFor(4), server.ownerCookie)),
     ).toContain("error=too_many_attempts");

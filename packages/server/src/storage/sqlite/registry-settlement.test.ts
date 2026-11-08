@@ -1,11 +1,5 @@
 import { createClient, type InStatement } from "@libsql/client";
-import {
-  getTypeSchema,
-  registerTypeSchema,
-  SYSTEM_TYPE_IDS,
-  TYPE_REGISTRY,
-  validateProperties,
-} from "@withmarfa/shared";
+import { getTypeSchema, registerTypeSchema } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -20,7 +14,6 @@ import {
 } from "../../test-utils.js";
 import { runAuditedTransaction } from "../audited-transaction.js";
 import { afterCommit } from "../commit-hooks.js";
-import { setRetiredPlatformTypes } from "../retired-platform-types.js";
 import { createSqliteStorage } from "./index.js";
 import * as registryContext from "./registry-context.js";
 import { sqliteRequestContext } from "./request-context.js";
@@ -101,7 +94,6 @@ afterEach(async () => {
   fault.readFailed = false;
   fault.entered = undefined;
   fault.release = undefined;
-  setRetiredPlatformTypes([]);
   vi.restoreAllMocks();
   __resetEventLogForTests();
   observer.close();
@@ -326,54 +318,6 @@ it("an escaped async context cannot register after its root scope closes", async
   await rejection;
   expect(getTypeSchema("example.escaped")).toBeUndefined();
 });
-
-it.each([false, true])(
-  "the existing platform removal door commits its platform facet and system membership (rollback=%s)",
-  async (rollback) => {
-    const retired = {
-      id: "system.retired_registry",
-      version: 1,
-      fields: { name: { type: "string" as const } },
-    };
-    await ctx.storage.types.create(retired, { origin: "platform" });
-    setRetiredPlatformTypes([retired.id]);
-    const map = TYPE_REGISTRY,
-      set = SYSTEM_TYPE_IDS;
-    expect(map.has(retired.id)).toBe(true);
-    expect(set.has(retired.id)).toBe(true);
-    expect(
-      validateProperties(retired.id, { name: "before" }, { strict: true })
-        .success,
-    ).toBe(true);
-    const remove = () =>
-      request(ctx.app, "DELETE", `/platform-types/${retired.id}`, {
-        key: ctx.managementKey,
-      });
-    if (rollback)
-      await expect(
-        ctx.storage.runInTransaction(async () => {
-          expect((await remove()).status).toBe(200);
-          expect(map.has(retired.id)).toBe(false);
-          expect(set.has(retired.id)).toBe(false);
-          throw new Error("platform rollback witness");
-        }),
-      ).rejects.toThrow("platform rollback witness");
-    else expect((await remove()).status).toBe(200);
-    const rows = (
-      await observer.execute({
-        sql: "SELECT id FROM types WHERE id = ?",
-        args: [retired.id],
-      })
-    ).rows;
-    expect(rows.length).toBe(rollback ? 1 : 0);
-    expect(map.has(retired.id)).toBe(rollback);
-    expect(set.has(retired.id)).toBe(rollback);
-    expect(
-      validateProperties(retired.id, { name: "before" }, { strict: true })
-        .success,
-    ).toBe(rollback);
-  },
-);
 
 it.each(["before", "after"] as const)(
   "an uncertain structural %s-COMMIT preserves independent event settlement and the live reconnect remedy",

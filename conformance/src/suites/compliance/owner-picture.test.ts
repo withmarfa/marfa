@@ -8,7 +8,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import {
@@ -492,15 +491,10 @@ describe("the owner's picture", () => {
     ];
     for (const file of files) expect((await putOwner(file)).status).toBe(200);
     const last = files.at(-1)!;
-    const rows = withInstanceDatabase(server.sqlitePath, (db) =>
-      (
-        db.prepare("SELECT sha256 FROM owner_picture").all() as {
-          sha256: string;
-        }[]
-      ).map((row) => row.sha256),
-    );
-    expect(rows).toEqual([sha256(last)]);
     expect((await served()).bytes).toEqual(last);
+    // Removing it leaves none of the earlier ones to be served.
+    expect((await patchOwner({ avatar: null })).status).toBe(200);
+    expect((await getAsOwner()).status).toBe(404);
   });
 
   it("removes the picture through either PATCH door and leaves the other fields as they were", async () => {
@@ -521,17 +515,6 @@ describe("the owner's picture", () => {
       expect(await ownerNow(), door).toEqual({ ...before, avatar: null });
       expect((await getAsOwner()).status, door).toBe(404);
     }
-    expect(
-      withInstanceDatabase(
-        server.sqlitePath,
-        (db) =>
-          (
-            db.prepare("SELECT count(*) AS n FROM owner_picture").get() as {
-              n: number;
-            }
-          ).n,
-      ),
-    ).toBe(0);
   });
 
   it("refuses a web address as the avatar and changes nothing", async () => {
