@@ -192,7 +192,7 @@ mod tests {
     use super::*;
 
     fn signer() -> Signer {
-        Signer::derive("a secret long enough to sign with").unwrap()
+        Signer::derive(&format!("instance-{}", std::process::id())).unwrap()
     }
 
     #[test]
