@@ -228,6 +228,22 @@ If a `marfa_delete` call carries a `confirm` token from a preview more than five
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a confirmation once five minutes have passed since the preview`.
 
+### `mcp/delete-single-use`
+
+If a `marfa_delete` call carries a `confirm` token that an earlier call already used, then the server MUST NOT move any item to the trash on it.
+
+**Reason:** a person agreed once. The server records a used token until it expires, in the transaction that moved the items, so a retry, a replay or a second client holding the token cannot trash again what was restored in between.
+
+**Tests:** `compliance/mcp-single-use.test.ts › moves nothing to the trash again on a confirmation an earlier call used`.
+
+### `mcp/delete-repeated`
+
+When a `marfa_delete` call carries a `confirm` token that an earlier call used to move the same IDs to the trash, by the same credential, the server MUST answer `already_trashed` as `true` and the `total` that call moved.
+
+**Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
+
+**Tests:** `compliance/mcp-single-use.test.ts › says a repeated confirmation already moved the items to the trash`.
+
 ## Moving items to another type
 
 `marfa_move_items` moves every item of one type to another in two calls, as `marfa_delete` trashes: a preview that names the items the move would take, with a `confirm` token, and a call with that token, which starts the move as a job. A token is refused, as `marfa_delete`'s is, when another credential sends it or five minutes have passed.
