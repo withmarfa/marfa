@@ -59,8 +59,9 @@ pub fn serve_child_if_asked() {
 /// Reads `file` by the MIME type `mime`, in a process of its own; its parameters and
 /// letter case do not matter, but a `charset` parameter is read as a hint for text.
 ///
-/// The file must be a regular file, open for reading only. The child reads it by
-/// position, so the offset the caller holds does not move.
+/// The file must be a regular file, open for reading only, and opened for this
+/// reading alone. The child reads it by position, so the offset the caller holds
+/// does not move unless a taken-over child calls `lseek` on the shared file description.
 ///
 /// This blocks until the child answers or `Options::time_limit` passes, so an async
 /// caller runs it on a blocking thread. Several threads may call it at once.

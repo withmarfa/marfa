@@ -17,7 +17,7 @@ fn main() {
 }
 ```
 
-The file must be a regular file open for reading only. The child reads it by position through the descriptor it is given as stdin, so the offset the caller holds does not move, and the file is never copied into the child except for the formats that need all of it.
+The file must be a regular file open for reading only. The child reads it by position through the descriptor it is given as stdin, so the offset the caller holds does not move unless a taken-over child calls `lseek` on the shared file description. Pass a file opened for this reading alone. The file is never copied into the child except for the formats that need all of it.
 
 `read` blocks until the child answers, so an async caller runs it on a blocking thread. Several threads can call it at once. A program that forgets `serve_child_if_asked` panics at its first `read`, and nothing is started or read.
 

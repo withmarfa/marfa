@@ -7,7 +7,8 @@ use std::os::unix::fs::FileExt;
 use symphonia::core::io::MediaSource;
 
 /// A file read at positions of its own with `pread`, so it moves nothing the caller
-/// holds: a descriptor's offset is shared with every copy of it.
+/// holds: a descriptor's offset is shared with every copy of it. A taken-over child can
+/// still `lseek` that shared offset.
 pub(crate) struct Source<'a> {
     file: &'a File,
     position: u64,
