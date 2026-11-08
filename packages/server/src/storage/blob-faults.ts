@@ -34,22 +34,6 @@ async function* firstOf(source: Readable, bytes: number) {
   }
 }
 
-/** `source`, ending in the error of a file that has gone if the blob is lost before a chunk is read. */
-async function* endingWhenLost(hash: string, source: Readable) {
-  try {
-    for await (const chunk of source) {
-      if (blobLie(hash) === "lose") {
-        throw Object.assign(new Error("ENOENT: no such file or directory"), {
-          code: "ENOENT",
-        });
-      }
-      yield chunk;
-    }
-  } finally {
-    source.destroy();
-  }
-}
-
 /** `source` with its first byte changed. */
 async function* firstByteChanged(source: Readable) {
   let first = true;
@@ -103,8 +87,7 @@ export function unfaulted(store: BlobStore): Pick<BlobStore, "get" | "has"> {
  * no store otherwise, so the disk store and the object store fail the same
  * way. A blob named by `lose:blob` reads as absent, one named by
  * `damage:blob` reads with its first byte changed and one named by
- * `damage:blob-unreadable` fails to read, on the disk store alone; a read of
- * a blob lost while it is open ends in an error at its next chunk. A read
+ * `damage:blob-unreadable` fails to read, on the disk store alone. A read
  * fails or is held before it opens the bytes, or ends short after it opens
  * them, a question of presence is held before it is asked, a
  * write fails or is held before it stores any, and a delete before it
@@ -127,16 +110,8 @@ export function withBlobFaults<S extends BlobStore>(store: S): S {
     if (lie === "unreadable") throw unreadable("read");
     if (lie === "lose") return null;
     const opened = await get(hash, range, signal);
-    const read =
-      opened && lies
-        ? {
-            ...opened,
-            stream: Readable.from(endingWhenLost(hash, opened.stream), {
-              objectMode: false,
-            }),
-          }
-        : opened;
-    const shown = read && lie === "damage" ? withFirstByteChanged(read) : read;
+    const shown =
+      opened && lie === "damage" ? withFirstByteChanged(opened) : opened;
     return shown && failAt("blob-read-short") ? endingShort(shown) : shown;
   };
   store.has = async (hash, signal) => {

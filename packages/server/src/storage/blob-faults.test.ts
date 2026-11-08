@@ -188,18 +188,3 @@ describe("a blob made to read as lost or damaged", () => {
     expect(await store.has(HASH)).not.toBeNull();
   });
 });
-
-describe("a blob lost while it is being read", () => {
-  it("ends the read in the error of a file that has gone, when the loss comes before a chunk is read", async () => {
-    await store.put(HASH, source());
-    const read = await store.get(HASH);
-    setFault("lose:blob", HASH);
-    const chunks: Buffer[] = [];
-    await expect(
-      (async () => {
-        for await (const chunk of read!.stream) chunks.push(chunk as Buffer);
-      })(),
-    ).rejects.toThrow(/ENOENT/);
-    expect(chunks).toEqual([]);
-  });
-});

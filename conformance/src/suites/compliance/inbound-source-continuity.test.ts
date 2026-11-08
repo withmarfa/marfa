@@ -288,9 +288,35 @@ describe("source-owned inbound continuity", () => {
       const again = await register(successorKey.key);
       expect(again.status).toBe(201);
       expect((await listed(again.id, again.key)).data).toEqual([]);
+      // Removing the current registration frees the room its deliveries held.
+      await server.restart({
+        env: {
+          MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
+          MARFA_INBOUND_RETAINED_DELIVERIES: "1",
+        },
+      });
+      const full = await fixture();
       expect(
-        (await listed(again.id, again.key, "deliveries?state=any")).data,
-      ).toEqual([]);
+        (await send(server.apiUrl, full.endpoint.path, "kept")).status,
+      ).toBe(202);
+      // The witness: with the delivery kept, the next one is refused.
+      expect(
+        (await send(server.apiUrl, full.endpoint.path, "more")).status,
+      ).toBe(503);
+      expect((await call(`/connectors/${full.old.id}`, "DELETE")).status).toBe(
+        200,
+      );
+      const replacement = await register(full.oldKey.key);
+      expect(replacement.status).toBe(201);
+      const fresh = await call(
+        `/connectors/${replacement.id}/endpoints`,
+        "POST",
+        {},
+        replacement.key,
+      );
+      expect(fresh.status).toBe(201);
+      const { path } = (await fresh.json()) as { path: string };
+      expect((await send(server.apiUrl, path, "room")).status).toBe(202);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

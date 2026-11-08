@@ -68,8 +68,8 @@ export interface StoreHolding {
 
 export interface StoreInspection {
   stores: StoreHolding[];
-  /** The names of the files the disk store keeps while it receives bytes. */
-  spool: string[];
+  /** The files the disk store keeps while it receives bytes, with their sizes. */
+  spool: { name: string; size: number }[];
 }
 
 /**
@@ -114,7 +114,15 @@ export async function diskIntact(
   return disk?.holds === true && disk.intact;
 }
 
-/** The files in the disk store's receiving folder. */
+/** The names of the files in the disk store's receiving folder. */
 export async function spooled(socket: string): Promise<string[]> {
-  return (await inspectStores(socket)).spool;
+  return (await inspectStores(socket)).spool.map((file) => file.name);
+}
+
+/** The bytes in the disk store's receiving folder. */
+export async function spooledBytes(socket: string): Promise<number> {
+  return (await inspectStores(socket)).spool.reduce(
+    (total, file) => total + file.size,
+    0,
+  );
 }

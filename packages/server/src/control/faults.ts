@@ -41,9 +41,10 @@
  *   store deletes that blob (or, for a lost blob, places it again) or the
  *   fault is cleared or set again. `<hashes>` is a list of `sha256:` names
  *   separated by `,`.
- * - `damage:webhook-position=<state>` makes each webhook-schedule run find
- *   its log position `ahead` of the event log, `behind` its retention, at a
- *   `hole` (the event after it missing) or `missing` altogether.
+ * - `hide:event=<first>[-<last>]` makes each webhook-schedule run read the
+ *   events with those ids (a whole number, or a range of two) as absent from
+ *   the event log, and `hide:webhook-position` makes it read the place it
+ *   keeps in the log as absent. Nothing is stored.
  * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery, or an
  *   MCP tool's fetch of a file, resolve that name to scripted addresses.
  *   `<answers>` is one answer per lookup, separated by `;`, each a list of
@@ -62,6 +63,7 @@
  */
 
 import ipaddr from "ipaddr.js";
+import type { HiddenEventIds } from "../storage/interface.js";
 
 /** What follows `=` in the name of a fault, by the point it is set on. */
 type ArgShape =
@@ -156,14 +158,6 @@ const MAX_DEADLINE_MS = 2_147_483_647;
 const MAX_NTH = 1_000_000;
 const BLOB_HASH = /^sha256:[0-9a-f]{64}$/;
 const MAX_BLOB_HASHES = 1_000;
-/** The states of a webhook-schedule log position `damage:webhook-position` may set. */
-export const WEBHOOK_POSITION_DAMAGE = [
-  "ahead",
-  "behind",
-  "hole",
-  "missing",
-] as const;
-export type WebhookPositionDamage = (typeof WEBHOOK_POSITION_DAMAGE)[number];
 
 export interface ActiveFault {
   name: string;
@@ -285,6 +279,15 @@ function blobHashes(arg: string | null): string[] | undefined {
     : undefined;
 }
 
+/** The events a `hide:event` argument names, or undefined where it is not an id or a range. */
+function hiddenRange(arg: string | null): HiddenEventIds | undefined {
+  const match = /^([1-9][0-9]{0,17})(?:-([1-9][0-9]{0,17}))?$/.exec(arg ?? "");
+  if (match?.[1] === undefined) return undefined;
+  const first = BigInt(match[1]);
+  const last = match[2] === undefined ? first : BigInt(match[2]);
+  return last < first ? undefined : { first, last };
+}
+
 function shapeProblem(name: string, arg: string | null): string | undefined {
   const colon = name.indexOf(":");
   const kind = colon < 0 ? name : name.slice(0, colon);
@@ -324,11 +327,18 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return blobHashes(arg) === undefined
         ? `a ${kind}:${rest} fault takes sha256: blob names separated by ,`
         : undefined;
-    if (kind === "damage" && rest === "webhook-position")
-      return WEBHOOK_POSITION_DAMAGE.includes(arg as WebhookPositionDamage)
-        ? undefined
-        : `a damage:webhook-position fault takes ${WEBHOOK_POSITION_DAMAGE.join(", ")}`;
     return `no ${kind} is named ${rest}`;
+  }
+  if (kind === "hide") {
+    if (rest === "event")
+      return hiddenRange(arg) === undefined
+        ? "a hide:event fault takes an event id, or two joined by -, from 1"
+        : undefined;
+    if (rest === "webhook-position")
+      return arg === null
+        ? undefined
+        : "a hide:webhook-position fault takes no argument";
+    return `no hide is named ${rest}`;
   }
   if (kind === "release") {
     if (declared("hold", rest) === undefined)
@@ -341,7 +351,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, damage:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -594,13 +604,15 @@ export function healBlob(hash: string, placed: boolean): void {
   faults.get("damage:blob-unreadable")?.hashes?.delete(hash);
 }
 
-/** What `damage:webhook-position` makes the webhook-schedule run find, if it is armed. */
-export function webhookPositionFault(): WebhookPositionDamage | undefined {
+/** The events `hide:event` makes the webhook-schedule job read as absent, if it is armed. */
+export function hiddenEventsFault(): HiddenEventIds | undefined {
   if (faults.size === 0) return undefined;
-  const arg = faults.get("damage:webhook-position")?.arg;
-  return arg === undefined || arg === null
-    ? undefined
-    : (arg as WebhookPositionDamage);
+  return hiddenRange(faults.get("hide:event")?.arg ?? null);
+}
+
+/** Whether `hide:webhook-position` makes the webhook-schedule job read its place in the log as absent. */
+export function webhookPositionHidden(): boolean {
+  return faults.size > 0 && faults.has("hide:webhook-position");
 }
 
 /** The deadline `deadline:<job>` sets for a run of `job`, if one is armed. */

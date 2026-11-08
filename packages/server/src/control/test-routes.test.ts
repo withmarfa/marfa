@@ -118,7 +118,7 @@ describe("the blob-stores route", () => {
     expect(all.status).toBe(200);
     const listed = (await all.json()) as {
       stores: { kind: string; holds: boolean }[];
-      spool: string[];
+      spool: { name: string; size: number }[];
     };
     expect(listed.stores.map((store) => store.kind)).toContain("disk");
     expect(listed.spool).toEqual([]);

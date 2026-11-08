@@ -107,7 +107,8 @@ export interface FreshServer {
    * `lose:blob=<hashes>` and `damage:blob=<hashes>` make the disk store read
    * those blobs as absent or with a changed first byte,
    * `damage:blob-unreadable=<hashes>` makes a read of them fail,
-   * `damage:webhook-position=<state>` damages the outbound webhook position,
+   * `hide:event=<first>[-<last>]` and `hide:webhook-position` make the
+   * `webhook-schedule` job read events, or its place in the log, as absent,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name

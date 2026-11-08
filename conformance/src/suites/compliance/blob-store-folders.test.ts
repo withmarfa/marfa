@@ -1,15 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   renameSync,
   rmSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
 import {
@@ -440,15 +438,13 @@ describe("a store whose folder is missing at start", () => {
       const [copy] = await copies(hash);
       const folder = blobFolder(server!);
       const away = `${folder}.away`;
-      const database = join(
-        mkdtempSync(join(tmpdir(), "blob-folder-missing-")),
-        "marfa.db",
-      );
+      const image = await server!.image();
       const refusals: RefusedBoot[] = [];
-      /** Boots on a copy of the stopped server's database and its folder. */
+      /** Boots on a copy of the running server's data, with the folder it names. */
       const refusedStart = async (): Promise<RefusedBoot> => {
         const refused = await bootRefused("blob-folder-missing", {
-          prepare: (sqlitePath) => copyFileSync(database, sqlitePath),
+          prepare: (_database, state) =>
+            cpSync(image, state, { recursive: true }),
           extraEnv: { ...DISK_ONLY, BLOB_PATH: folder },
         });
         refusals.push(refused);
@@ -456,7 +452,6 @@ describe("a store whose folder is missing at start", () => {
       };
       try {
         await server!.restart(async () => {
-          copyFileSync(server!.sqlitePath, database);
           renameSync(folder, away);
 
           const missing = await refusedStart();
@@ -477,7 +472,7 @@ describe("a store whose folder is missing at start", () => {
         });
       } finally {
         for (const refused of refusals) await refused.stop();
-        rmSync(join(database, ".."), { recursive: true, force: true });
+        rmSync(image, { recursive: true, force: true });
       }
 
       // The witness: with the folder back, the same store serves the blob.

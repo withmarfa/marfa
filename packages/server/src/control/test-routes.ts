@@ -9,7 +9,8 @@ import {
   pauseClock,
 } from "../clock.js";
 import { createHash } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { unfaulted } from "../storage/blob-faults.js";
 import { bareHex } from "../storage/blob-store.js";
@@ -90,10 +91,25 @@ export function testRoutes(
         };
       }),
     );
-    const spool = await readdir(blobs.disk.spoolDir).catch((error: unknown) => {
+    const names = await readdir(blobs.disk.spoolDir).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     });
+    const spool = (
+      await Promise.all(
+        names.map(async (name) => {
+          const size = await stat(join(blobs.disk.spoolDir, name)).then(
+            (file) => file.size,
+            (error: unknown) => {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                return null;
+              throw error;
+            },
+          );
+          return size === null ? null : { name, size };
+        }),
+      )
+    ).filter((file) => file !== null);
     return c.json({ stores, spool });
   });
   app.get("/faults", (c) => c.json({ faults: activeFaults() }));

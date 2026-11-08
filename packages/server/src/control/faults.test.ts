@@ -18,7 +18,8 @@ import {
   POINTS,
   setFault,
   storeCheckDeadlineFault,
-  webhookPositionFault,
+  hiddenEventsFault,
+  webhookPositionHidden,
 } from "./faults.js";
 
 const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
@@ -529,16 +530,29 @@ describe("a blob fault", () => {
   });
 });
 
-describe("a damage:webhook-position fault", () => {
-  it("takes one of four states and reads it until cleared", () => {
-    for (const state of ["ahead", "behind", "hole", "missing"]) {
-      expect(arm("damage:webhook-position", state), state).toBeUndefined();
-      expect(webhookPositionFault()).toBe(state);
-    }
-    expect(arm("damage:webhook-position", "sideways")).not.toBeUndefined();
-    expect(arm("damage:webhook-position")).not.toBeUndefined();
+describe("a hide:event fault", () => {
+  it("takes an event id or a range of two and reads it until cleared", () => {
+    expect(arm("hide:event", "7")).toBeUndefined();
+    expect(hiddenEventsFault()).toEqual({ first: 7n, last: 7n });
+    expect(arm("hide:event", "3-9")).toBeUndefined();
+    expect(hiddenEventsFault()).toEqual({ first: 3n, last: 9n });
+    for (const bad of ["0", "9-3", "a", "1-", "-4", "1.5", ""])
+      expect(arm("hide:event", bad), bad).not.toBeUndefined();
+    expect(arm("hide:event")).not.toBeUndefined();
     clearFaults();
-    expect(webhookPositionFault()).toBeUndefined();
+    expect(hiddenEventsFault()).toBeUndefined();
+  });
+});
+
+describe("a hide:webhook-position fault", () => {
+  it("takes no argument and reads until cleared", () => {
+    expect(webhookPositionHidden()).toBe(false);
+    expect(arm("hide:webhook-position")).toBeUndefined();
+    expect(webhookPositionHidden()).toBe(true);
+    expect(arm("hide:webhook-position", "ahead")).not.toBeUndefined();
+    expect(arm("hide:other")).not.toBeUndefined();
+    clearFaults();
+    expect(webhookPositionHidden()).toBe(false);
   });
 });
 
