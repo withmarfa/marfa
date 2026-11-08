@@ -182,6 +182,70 @@ describe("the event log's retention job", () => {
   );
 
   it(
+    "ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old",
+    async ({ signal }) => {
+      const log = await instance("event-retention-copy");
+      const early = await notes(log, 2, "retired-before-a-copy-resume");
+      await log.clock.advance(PAST_EVENT_WINDOW_MS);
+      const late = await notes(log, 2, "kept-for-a-copy-resume");
+      const ids = await eventIds(log, [...early, ...late], signal);
+      const copy = (options: { lastEventId?: string; reach?: string }) => ({
+        query: [
+          ["edges", "all"],
+          ["copy", "1"],
+        ] as Array<[string, string]>,
+        ...options,
+      });
+
+      const live = await withStream(
+        log.server.apiUrl,
+        log.server.workingKey,
+        copy({}),
+        async (stream) => {
+          const { events } = await collectUntil(
+            stream,
+            (seen) => seen.some((e) => e.event === "stream_live"),
+            "the copy stream live",
+            signal,
+          );
+          return events.find((e) => e.event === "stream_live")!.data as {
+            reach: string;
+          };
+        },
+      );
+
+      const run = await log.operator().runHousekeeping("event-log-cleanup");
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      expect(run.data.result).toMatchObject({ deleted: 2 });
+
+      const refused = await withStream(
+        log.server.apiUrl,
+        log.server.workingKey,
+        copy({ lastEventId: String(ids[0]), reach: live.reach }),
+        async (stream) =>
+          (
+            await collectUntil(
+              stream,
+              tooOld,
+              "the copy stream refused as too old",
+              signal,
+            )
+          ).events,
+      );
+      expect(refused.map((e) => e.event)).toEqual([
+        "stream_cursor",
+        "catchup_too_old",
+      ]);
+      expect(refused[0]!.id).toBeUndefined();
+      expect(refused[1]!.id).toBeUndefined();
+      expect(refused[1]!.data).toMatchObject({
+        min_retained_id: String(ids[2]),
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "never leaves a hole: an event past the window that stands above one within it is kept",
     async ({ signal }) => {
       const log = await instance("event-retention-hole");

@@ -7,6 +7,7 @@ mod items;
 mod levers;
 mod maps;
 mod profile;
+pub mod reach;
 mod schema;
 
 use rusqlite::Transaction;

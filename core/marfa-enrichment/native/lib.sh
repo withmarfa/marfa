@@ -230,3 +230,100 @@ make_build_image() {
   docker build --quiet --platform linux/amd64 --build-arg "BASE=$base" --build-arg "SNAPSHOT=$snapshot" \
     -f "$NATIVE_DIR/linux/Dockerfile" -t "$image" "$NATIVE_DIR" >/dev/null || die "could not build $image"
 }
+
+# cargo_environment: the Rust toolchain, the cargo environment and the flags every
+# program for $TARGET is built with, so the file reader and the server and command
+# line are made the same way. Needs select_target and select_root done, CORE set to
+# the core workspace, and `cargo` and `rustc` on PATH. Exports MACOSX_DEPLOYMENT_TARGET
+# for a Mac, and on Linux needs `file` and `readelf` for check_program.
+cargo_environment() {
+  local want have
+  want=$(manifest_line toolchain rust | awk '{ print $3 }')
+  have=$(rustc --version | awk '{ print $2 }')
+  [ "$have" = "$want" ] || [ -n "${MARFA_ALLOW_OTHER_RUST:-}" ] \
+    || die "the manifest pins Rust $want and rustc is $have (MARFA_ALLOW_OTHER_RUST=1 builds anyway)"
+
+  [ -f "$PREFIX/lib/libpdfium.a" ] || die "no prefix at $PREFIX; run native/build.sh $TARGET first"
+
+  # Cargo's output, its cache of downloaded crates, and nothing from the caller's
+  # configuration: not the compiler wrapper or the shared build folder a developer sets.
+  local target_dir=${MARFA_CARGO_TARGET_DIR:-$ROOT/cargo-target}
+  export CARGO_TARGET_DIR="$target_dir/$TARGET"
+  export CARGO_BUILD_BUILD_DIR="$CARGO_TARGET_DIR"
+  export CARGO_BUILD_RUSTC_WRAPPER=
+  export RUSTC_WRAPPER=
+  export CARGO_INCREMENTAL=0
+  export CARGO_PROFILE_RELEASE_STRIP=symbols
+  export MARFA_NATIVE_PREFIX="$PREFIX"
+
+  # Paths in the program name the code, not the builder's folders.
+  local flags="--remap-path-prefix=$CORE=/marfa/core --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+
+  case "$TARGET" in
+    aarch64-apple-darwin)
+      # PDFium's objects are built for 13.0. The Rust code, the shim and the linker
+      # must not claim an older macOS than the oldest one the library supports.
+      export MACOSX_DEPLOYMENT_TARGET=${MARFA_MACOS_DEPLOYMENT_TARGET:-13.0}
+      ;;
+    *-unknown-linux-musl)
+      # One compiler for everything: the one PDFium and Tesseract were built with, and
+      # its libstdc++ and musl, so the program holds one C++ library.
+      kept_tool "$MUSL_TOOLCHAIN"
+      local toolchain=$KEPT_TOOL
+      local underscored=${TARGET//-/_}
+      local upper
+      upper=$(echo "$underscored" | tr '[:lower:]' '[:upper:]')
+      export "CARGO_TARGET_${upper}_LINKER=$toolchain/bin/${MUSL_PREFIX}gcc"
+      export "CC_${underscored}=$toolchain/bin/${MUSL_PREFIX}gcc"
+      export "CXX_${underscored}=$toolchain/bin/${MUSL_PREFIX}g++"
+      export "AR_${underscored}=$toolchain/bin/${MUSL_PREFIX}ar"
+      # The toolchain's own C library and start files, which its libstdc++ was built
+      # against, in place of the ones rustc carries.
+      flags="$flags -C link-self-contained=no"
+      need file readelf
+      ;;
+  esac
+  export RUSTFLAGS="$flags"
+}
+
+# check_program <file>: that a finished program is what a release ships for $TARGET. On a
+# Mac it links only system libraries, claims the deployment target and carries a valid
+# signature (the linker makes an ad hoc one). On Linux it is the target's architecture,
+# statically linked, with no shared library and no program interpreter.
+check_program() {
+  local program=$1
+  case "$TARGET" in
+    aarch64-apple-darwin)
+      local bad minos
+      bad=$(otool -L "$program" | tail -n +2 | awk '{ print $1 }' \
+        | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
+      [ -z "$bad" ] || die "$program links something that is not part of macOS: $bad"
+      minos=$(vtool -show-build "$program" | awk '$1 == "minos" { print $2 }')
+      [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] \
+        || die "$program is built for macOS $minos, not $MACOSX_DEPLOYMENT_TARGET"
+      codesign --verify "$program" 2>/dev/null || die "$program has no valid signature (the linker makes an ad hoc one)"
+      ;;
+    *-unknown-linux-musl)
+      local kind description
+      case "$TARGET" in
+        aarch64-*) kind='ARM aarch64' ;;
+        x86_64-*) kind='x86-64' ;;
+      esac
+      description=$(file -b "$program")
+      case "$description" in
+        *"$kind"*) ;;
+        *) die "$program is not $kind: $description" ;;
+      esac
+      case "$description" in
+        *"statically linked"* | *"static-pie linked"*) ;;
+        *) die "$program is not statically linked: $description" ;;
+      esac
+      if readelf -d "$program" 2>/dev/null | grep -q NEEDED; then
+        die "$program needs a shared library"
+      fi
+      if readelf -l "$program" | grep -q INTERP; then
+        die "$program names a program interpreter"
+      fi
+      ;;
+  esac
+}

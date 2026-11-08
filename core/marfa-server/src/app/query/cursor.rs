@@ -16,15 +16,24 @@ const TAG_BYTES: usize = 16;
 pub struct Secret(pub Vec<u8>);
 
 impl Secret {
-    fn tag(&self, scope: &str, payload: &[u8]) -> Result<Vec<u8>> {
+    fn whole_tag(&self, scope: &str, payload: &[u8]) -> Result<Vec<u8>> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.0)
             .map_err(|_| Refusal::internal("the cursor secret was refused"))?;
         mac.update(scope.as_bytes());
         mac.update(&[0]);
         mac.update(payload);
-        let mut tag = mac.finalize().into_bytes().to_vec();
+        Ok(mac.finalize().into_bytes().to_vec())
+    }
+
+    fn tag(&self, scope: &str, payload: &[u8]) -> Result<Vec<u8>> {
+        let mut tag = self.whole_tag(scope, payload)?;
         tag.truncate(TAG_BYTES);
         Ok(tag)
+    }
+
+    /// The whole tag in hex, for a value that is compared and never opened.
+    pub fn certify(&self, scope: &str, payload: &str) -> Result<String> {
+        Ok(hex::encode(self.whole_tag(scope, payload.as_bytes())?))
     }
 
     pub fn keyed(&self, scope: &str, text: &str) -> Result<String> {

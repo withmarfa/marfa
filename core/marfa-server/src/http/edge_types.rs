@@ -11,9 +11,9 @@ use crate::app::App;
 use crate::app::access::{Caller, Door, SchemaKind};
 use crate::app::edge_types;
 
-pub async fn list(State(app): State<Arc<App>>, _caller: Caller, uri: Uri) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     query::only(&uri, &[])?;
-    let data = edge_types::list(&app).await?;
+    let data = edge_types::list(&app, &caller).await?;
     Ok(json_answer(
         StatusCode::OK,
         &json!({ "data": data, "next_cursor": null }),

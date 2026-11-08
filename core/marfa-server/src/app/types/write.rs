@@ -13,6 +13,7 @@ use super::{
 use crate::app::App;
 use crate::app::access::{Caller, Door, Level, Permission, SchemaKind};
 use crate::app::catalog::{self, Catalog, Provenance, Snapshot};
+use crate::app::instance;
 use crate::app::items;
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -121,6 +122,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                 ],
             )?;
             catalog::raise(unit.tx())?;
+            instance::raise_reach(unit.tx())?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
@@ -174,6 +176,9 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
                 if let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, below) {
                     return Err(Refusal::validation(fault));
                 }
+            }
+            if stored.and_then(|held| text_of(held, "parent")) != text_of(&schema, "parent") {
+                instance::raise_reach(unit.tx())?;
             }
             store(unit.tx(), &id, &schema, &unit.at)?;
             let next = catalog.types.with(schema);
@@ -279,6 +284,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         }
         unit.tx().execute("DELETE FROM types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
         let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
         items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;

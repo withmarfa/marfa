@@ -22,11 +22,12 @@ select_target "${1:-}"
 select_root
 need cargo rustc
 
+CORE=$(cd "$NATIVE_DIR/../.." && pwd)
 OUT="$ROOT/out/$TARGET"
 mkdir -p "$OUT"
 rm -f "$OUT"/marfa-enrichment-read "$OUT"/marfa-enrichment-read-proof "$OUT"/marfa-enrichment-fuzz
 
-source "$(dirname "${BASH_SOURCE[0]}")/program-env.sh"
+cargo_environment
 
 # build <program> <features> <file>
 build() {
@@ -70,42 +71,9 @@ if [ -n "$runs_here" ]; then
 fi
 rm -f "$fault_file"
 
-case "$TARGET" in
-  aarch64-apple-darwin)
-    for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
-      bad=$(otool -L "$program" | tail -n +2 | awk '{ print $1 }' \
-        | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
-      [ -z "$bad" ] || die "$program links something that is not part of macOS: $bad"
-      minos=$(vtool -show-build "$program" | awk '$1 == "minos" { print $2 }')
-      [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] \
-        || die "$program is built for macOS $minos, not $MACOSX_DEPLOYMENT_TARGET"
-      codesign --verify "$program" 2>/dev/null || die "$program has no valid signature (the linker makes an ad hoc one)"
-    done
-    ;;
-  *-unknown-linux-musl)
-    case "$TARGET" in
-      aarch64-*) kind='ARM aarch64' ;;
-      x86_64-*) kind='x86-64' ;;
-    esac
-    for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
-      description=$(file -b "$program")
-      case "$description" in
-        *"$kind"*) ;;
-        *) die "$program is not $kind: $description" ;;
-      esac
-      case "$description" in
-        *"statically linked"* | *"static-pie linked"*) ;;
-        *) die "$program is not statically linked: $description" ;;
-      esac
-      if readelf -d "$program" 2>/dev/null | grep -q NEEDED; then
-        die "$program needs a shared library"
-      fi
-      if readelf -l "$program" | grep -q INTERP; then
-        die "$program names a program interpreter"
-      fi
-    done
-    ;;
-esac
+for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
+  check_program "$program"
+done
 
 for program in "$shipped" "$proof" "$OUT/marfa-enrichment-fuzz"; do
   echo "program: $(wc -c <"$program") bytes $program"

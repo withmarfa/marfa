@@ -15,7 +15,8 @@ OUT="$ROOT/out/$TARGET"
 mkdir -p "$OUT"
 rm -f "$OUT/marfa-server"
 
-source "$(dirname "${BASH_SOURCE[0]}")/program-env.sh"
+CORE=$(cd "$NATIVE_DIR/../.." && pwd)
+cargo_environment
 
 (cd "$CORE" && cargo build --release --locked --target "$TARGET" -p marfa-server --features native)
 cp "$CARGO_TARGET_DIR/$TARGET/release/marfa-server" "$OUT/marfa-server"

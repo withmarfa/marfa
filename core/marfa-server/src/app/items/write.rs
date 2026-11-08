@@ -1110,6 +1110,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if resulting != row.type_id {
             let replaced = writing.edges.as_deref().unwrap_or_default();
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
+            instance::raise_reach(self.unit.tx())?;
         }
         let decided = self.referenced(
             Some(Referencing::Item(row.seq)),
