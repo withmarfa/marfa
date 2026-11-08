@@ -165,7 +165,7 @@ impl State {
 }
 
 fn valid_time(time: &str) -> bool {
-    time.len() == 24 && time.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(time).is_ok()
+    marfa_rules::time::rfc3339(time, "received_at").is_ok()
 }
 
 fn millis() -> u64 {

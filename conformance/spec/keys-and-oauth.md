@@ -531,7 +531,7 @@ When `POST /keys` or `PATCH /keys/{id}` names an `expires_at`, the server MUST a
 
 If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` string that is not an RFC 3339 date-time, as `items/occurred-at-form` states, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
 
-**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`, `› takes an expiry written with a lowercase t or z, as RFC 3339 allows, on a mint and on an update`.
 
 ### `keys-and-oauth/expiry-range`
 

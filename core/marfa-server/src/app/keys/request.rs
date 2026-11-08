@@ -202,22 +202,11 @@ pub fn bad_expiry(value: impl Into<Value>) -> Refusal {
         .with_detail("value", value)
 }
 
-fn has_a_time(text: &str) -> bool {
-    let date_and_hour = text.get(..16).map(str::as_bytes);
-    let shape = b"dddd-dd-ddTdd:dd";
-    date_and_hour.is_some_and(|held| {
-        held.iter().zip(shape).all(|(byte, want)| match want {
-            b'd' => byte.is_ascii_digit(),
-            other => byte == other,
-        })
-    })
-}
-
 fn expiry(value: &Value) -> Result<Option<String>> {
     if value.is_null() {
         return Ok(None);
     }
-    let Some(text) = value.as_str().filter(|text| has_a_time(text)) else {
+    let Some(text) = value.as_str() else {
         return Err(bad_expiry(value.clone()));
     };
     marfa_rules::time::rfc3339(text, "expires_at")
@@ -301,6 +290,7 @@ mod tests {
     fn an_end_needs_a_date_and_a_time() {
         for (value, ok) in [
             (json!("2030-01-02T03:04:05Z"), true),
+            (json!("2030-01-02t03:04:05z"), true),
             (json!("2030-01-02T03:04"), false),
             (json!("2030-01-02T03:04:05"), false),
             (json!("2030-01-02"), false),

@@ -228,6 +228,16 @@ describe("a key minted with an expiry", () => {
     expect(await expiryOf(minted.id)).toBe(SOON);
   });
 
+  it("takes an expiry written with a lowercase t or z, as RFC 3339 allows, on a mint and on an update", async () => {
+    const minted = await mint("lowercase", "2999-01-01t00:00:00z");
+    expect(minted.expires_at).toBe(SOON);
+    const updated = await management.updateKey(minted.id, {
+      expires_at: "2998-12-01t02:00:00+02:00",
+    });
+    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    expect(await expiryOf(minted.id)).toBe("2998-12-01T00:00:00.000Z");
+  });
+
   it("is minted with a null expiry where the caller has none and the body names none", async () => {
     const minted = await mint("unnamed");
     expect(minted.expires_at).toBeNull();

@@ -564,9 +564,9 @@ When `PATCH /items/{id}` under `properties_mode: replace` names the version the 
 
 ### `items/property-order-index`
 
-The server MUST answer the properties of an item in the order their names were written, whatever the names are, including names that read as numbers.
+The server MUST give a property whose name reads as a number no place of its own, ordering it as it orders any other property under `items/property-order-create`, `items/property-order-merge` and `items/property-order-replace`.
 
-**Reason:** a client in any language gets the order the writer chose; no name moves ahead of another.
+**Reason:** a client in any language gets the order the rules give; no name moves ahead of another for reading as a number.
 
 **Tests:** `compliance/property-order.test.ts › answers the properties in the order they were written, names that read as numbers included`.
 

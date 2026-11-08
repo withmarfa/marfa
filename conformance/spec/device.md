@@ -5394,11 +5394,11 @@ While a device holds a create that the server has not answered, a device MUST ho
 
 **Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`.
 
-### `device/order-written`
+### `device/order-numeric-names`
 
-A device MUST hold the properties of an item in the order their names were written, whatever the names are, including names that read as numbers.
+A device MUST give a property whose name reads as a number no place of its own, ordering it as it orders any other property under `device/order-create`, `device/order-merge` and `device/order-replace`.
 
-**Reason:** the server answers them so (`items/property-order-index`), and a copy that held another order would move a person's fields as the queue drained.
+**Reason:** the server orders it so (`items/property-order-index`), and a copy that held another order would move a person's fields as the queue drained.
 
 **Tests:** `device/property-order-live.test.ts › holds a property named by a number in the order it was written, as the server answers it`.
 
