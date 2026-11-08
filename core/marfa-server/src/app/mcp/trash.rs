@@ -15,6 +15,7 @@ use crate::app::refusal::{Refusal, Result};
 pub const TOOL: &str = "marfa_delete";
 
 /// What trashing the named items would do, as the caller may see it.
+#[derive(Clone)]
 pub struct Preview {
     pub items: Vec<Value>,
     pub count: i64,
@@ -31,6 +32,10 @@ pub enum Confirmed {
     },
     /// The token does not cover what the trash would take now.
     Stale,
+}
+
+pub fn is_expired(app: &App, token: &str) -> bool {
+    confirm::parse(token).is_some_and(|parsed| parsed.expires_at_ms <= app.clock.now_ms())
 }
 
 pub async fn preview(app: &App, caller: &Caller, ids: Vec<String>) -> Result<Preview> {
