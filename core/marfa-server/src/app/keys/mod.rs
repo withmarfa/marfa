@@ -434,8 +434,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Key>> {
         .await
 }
 
-/// The key the caller holds, as it stands in the snapshot the caller's reach is judged in. An
-/// app's access token is not a key, and nor is a session or the local process.
+/// Only a key credential has a current-key answer.
 pub async fn current(app: &App, caller: &Caller) -> Result<Option<Map<String, Value>>> {
     reading(app, caller, |read| {
         Ok(match &read.caller {

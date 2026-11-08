@@ -80,8 +80,7 @@ impl Map {
         axis.level(self, name) >= Level::Read
     }
 
-    /// Wildcards from the shortest, then exact names; an entry stays only where the entries before it
-    /// would decide the name differently.
+    /// Redundant grants must not change a credential's reach.
     fn read_patterns(&self, axis: Axis) -> Value {
         let wild = |name: &str| name == "*" || name.ends_with(".*");
         let mut entries: Vec<(&String, bool)> = self
@@ -175,8 +174,7 @@ impl Axis {
         }
     }
 
-    /// What a map lets a credential read, and nothing else: a write level counts as a read level, and an
-    /// entry another entry already decides is left out, so two maps that read the same things are equal.
+    /// Equal read authority must yield equal forms regardless of write levels.
     pub fn read_form(self, map: &Map) -> Value {
         match self {
             Axis::Type | Axis::Edge => map.read_patterns(self),

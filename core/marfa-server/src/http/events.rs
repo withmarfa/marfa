@@ -153,8 +153,7 @@ fn copy_resume(uri: &Uri, headers: &HeaderMap) -> Result<Option<(i64, String)>> 
     }
 }
 
-/// `GET /events?edges=all&copy=1`. A request the grammar refuses is told 403 by a key that reads
-/// no type, a stale reach is told 409 before that, and the stream starts only after both.
+/// A stale reach takes precedence over a valid request's type denial.
 async fn copy(
     app: Arc<App>,
     caller: Caller,

@@ -86,8 +86,7 @@ pub struct Opening {
     pub reach: Option<String>,
 }
 
-/// What a copy stream certifies: the instance and the reach its markers carry, judged afresh in
-/// the snapshot of every page.
+/// Each page must satisfy the reach announced by the copy stream.
 struct Copying {
     judge: Reach,
     reach: Option<String>,

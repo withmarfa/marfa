@@ -1,5 +1,4 @@
-//! A read that presents a reach. The reach is judged before the read is, certified on the answers
-//! that tell the credential something about what it may read, and held to the read's own snapshot.
+//! Conditional reads must certify authority in the data's own snapshot.
 
 use std::sync::Arc;
 
@@ -84,8 +83,7 @@ fn untakable() -> Refusal {
     Refusal::validation("No operation at this path takes X-Marfa-Reach.")
 }
 
-/// A refusal or a missing thing that says what the credential may read is certified by the reach it
-/// answered under, so that a device holding the reach can tell it from a fault.
+/// Certified refusals let a device distinguish lost access from a fault.
 fn certifies(route: &str, response: &Response) -> bool {
     let status = response.status();
     if status.is_success() {

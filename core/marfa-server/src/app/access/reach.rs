@@ -1,7 +1,4 @@
-//! The reach: one credential's proof that what a working copy holds was read under the same limits.
-//! It is a keyed hash of the instance, the credential, what the credential may read and a counter that
-//! the writes which change who can read what raise, so a copy that presents it back is told at once
-//! if any of them moved.
+//! A credential's proof that its working copy was read under unchanged limits.
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
@@ -23,8 +20,7 @@ pub fn changed() -> Refusal {
 }
 
 impl Caller {
-    /// What this credential may read, in a form that is equal for equal reads. A write level and a
-    /// profile are not part of it.
+    /// Write levels and profile permissions do not change working-copy read authority.
     fn read_authority(&self) -> Value {
         let grants = self.whole_set();
         json!({
