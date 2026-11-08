@@ -108,6 +108,15 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "checks a public address before it is saved",
     ),
     (
+        "HEAD /blobs/{hash}",
+        "the headers of the published read, without its bytes",
+    ),
+    (
+        "GET /blobs/{hash}/fetch",
+        "the signed link GET /blobs/{hash}/url answers",
+    ),
+    ("HEAD /blobs/{hash}/fetch", "the headers of that link"),
+    (
         "GET /_control/setup/status",
         "the private control socket, outside the HTTP contract",
     ),
@@ -152,10 +161,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "DELETE /webhooks/{id}",
     "GET /attention",
     "GET /blobs/orphans",
-    "GET /blobs/stores",
-    "GET /blobs/{hash}",
-    "GET /blobs/{hash}/copies",
-    "GET /blobs/{hash}/url",
     "GET /connectors",
     "GET /connectors/{id}",
     "GET /connectors/{id}/agreements",
@@ -164,7 +169,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/endpoints",
     "GET /connectors/{id}/runs",
     "GET /connectors/{id}/state",
-    "GET /events",
     "GET /export",
     "GET /folders",
     "GET /folders/{id}/status",
@@ -172,14 +176,11 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /metrics",
     "GET /occurrences",
     "GET /overview",
-    "GET /owner/picture",
     "GET /webhooks",
     "GET /webhooks/{id}",
     "GET /webhooks/{id}/deliveries",
     "PATCH /folders/{id}",
-    "PATCH /profile",
     "PATCH /webhooks/{id}",
-    "POST /blobs",
     "POST /connectors",
     "POST /connectors/{id}/agreements",
     "POST /connectors/{id}/agreements/lookup",
@@ -198,8 +199,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
     "PUT /connectors/{id}/state",
     "PUT /folders/{id}/status",
-    "PUT /owner/picture",
-    "PUT /profile/picture",
 ];
 
 const METHODS: [&str; 8] = [

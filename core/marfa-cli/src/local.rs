@@ -56,38 +56,18 @@ fn verify(path: &Path) -> Result<(), CliError> {
         }
         current.push(component);
         let metadata = std::fs::symlink_metadata(&current)?;
-        let output = if cfg!(target_os = "macos") {
-            std::process::Command::new("/bin/ls")
-                .arg("-lde")
-                .arg(&current)
-                .output()?
-        } else {
-            std::process::Command::new("getfacl")
-                .args(["--absolute-names", "--omit-header"])
-                .arg(&current)
-                .output()?
-        };
-        if !output.status.success() {
-            return Err(CliError::Invalid(
-                "cannot verify the socket path ACL".into(),
-            ));
-        }
-        let acl = String::from_utf8_lossy(&output.stdout);
-        let unsafe_acl = if cfg!(target_os = "macos") {
-            acl.lines()
-                .skip(1)
-                .any(|line| line.split_whitespace().any(|word| word == "allow"))
-        } else {
-            acl.lines().any(|line| {
-                line.starts_with("default:")
-                    || (line.starts_with("user:") && !line.starts_with("user::"))
-                    || (line.starts_with("group:") && !line.starts_with("group::"))
-            })
-        };
-        if unsafe_acl {
-            return Err(CliError::Invalid(
-                "the socket path has an access ACL".into(),
-            ));
+        match marfa_acl::grants_by_acl(&current) {
+            Ok(false) => {}
+            Ok(true) => {
+                return Err(CliError::Invalid(
+                    "the socket path has an access ACL".into(),
+                ));
+            }
+            Err(error) => {
+                return Err(CliError::Invalid(format!(
+                    "cannot verify the socket path ACL: {error}"
+                )));
+            }
         }
 
         if metadata.file_type().is_symlink() {
@@ -473,5 +453,90 @@ mod tests {
     #[test]
     fn local_transport_never_falls_back_when_socket_is_absent() {
         assert!(Remote::local(Path::new("/no-such-marfa-control/control.sock")).is_err());
+    }
+
+    fn socket_folder(label: &str) -> (PathBuf, PathBuf, UnixListener) {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("marfa-verify-{}-{label}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("control.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        (root, path, listener)
+    }
+
+    // Returns false when the file system cannot store the test ACL.
+    fn let_another_account_in(folder: &Path) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            let status = std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone allow read"])
+                .arg(folder)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            true
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            // Version 2, then owner rwx, user 65534 rwx, group r-x, mask rwx and others none.
+            let mut value = 2u32.to_le_bytes().to_vec();
+            for (tag, permissions, id) in [
+                (0x01u16, 7u16, u32::MAX),
+                (0x02, 7, 65534),
+                (0x04, 5, u32::MAX),
+                (0x10, 7, u32::MAX),
+                (0x20, 0, u32::MAX),
+            ] {
+                value.extend_from_slice(&tag.to_le_bytes());
+                value.extend_from_slice(&permissions.to_le_bytes());
+                value.extend_from_slice(&id.to_le_bytes());
+            }
+            let name = std::ffi::CString::new(folder.as_os_str().as_bytes()).unwrap();
+            // SAFETY: the name and the buffer outlive the call, and the size is the buffer's.
+            let status = unsafe {
+                libc::setxattr(
+                    name.as_ptr(),
+                    c"system.posix_acl_access".as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
+            };
+            if status == 0 {
+                return true;
+            }
+            let error = std::io::Error::last_os_error();
+            assert!(
+                matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EPERM)),
+                "{error}"
+            );
+            false
+        }
+    }
+
+    #[test]
+    fn a_private_socket_path_is_accepted() {
+        let (root, path, _listener) = socket_folder("plain");
+        verify(&path).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_socket_folder_with_an_acl_for_another_account_is_refused() {
+        let (root, path, _listener) = socket_folder("acl");
+        if !let_another_account_in(&root) {
+            eprintln!("skipped: this file system keeps no POSIX ACLs");
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let said = verify(&path).unwrap_err().to_string();
+        assert!(said.contains("access ACL"), "{said}");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

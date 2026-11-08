@@ -9,13 +9,12 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
 use super::App;
+use super::blobs::MARKER;
 use super::faults::{FAIL_HEALTH_WRITE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
 use super::stored;
 use crate::db::{Write, volume};
-use crate::failure::Failure;
 
-const MARKER: &str = ".marfa-store";
 const PROBE_KEY: &str = "health_probe";
 const PROBE_WAIT: Duration = Duration::from_secs(2);
 const WRITE_REUSE: Duration = Duration::from_secs(10);
@@ -143,22 +142,6 @@ impl Health {
     fn set(&self, attempt: Attempt) {
         *self.attempt.lock().unwrap_or_else(PoisonError::into_inner) = attempt;
     }
-}
-
-/// Makes the blob folder and its marker, for a folder that has neither.
-pub fn prepare_blobs(path: &Path) -> Result<(), Failure> {
-    let refused = |error| {
-        Failure::start(format!(
-            "The blob folder {} could not be prepared: {error}",
-            path.display()
-        ))
-    };
-    std::fs::create_dir_all(path).map_err(refused)?;
-    let marker = path.join(MARKER);
-    if !marker.exists() {
-        std::fs::write(&marker, b"").map_err(refused)?;
-    }
-    Ok(())
 }
 
 async fn database(app: &App) -> Component {

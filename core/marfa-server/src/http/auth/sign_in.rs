@@ -33,8 +33,9 @@ pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     Ok(())
 }
 
-pub(super) fn signed_in(session: &Session, owner: &owner::Owner) -> Value {
-    json!({ "session": session.to_json(), "user": owner.to_json() })
+pub(super) fn signed_in(app: &App, session: &Session, owner: &owner::Owner) -> Value {
+    let origin = app.addresses().sign_in().origin().to_string();
+    json!({ "session": session.to_json(), "user": owner.to_json(&origin) })
 }
 
 pub async fn email(
@@ -61,7 +62,7 @@ pub async fn email(
         opened.session.remembered,
     )?;
     Ok(with_cookie(
-        json_answer(StatusCode::OK, &signed_in(&opened.session, &found)),
+        json_answer(StatusCode::OK, &signed_in(&app, &opened.session, &found)),
         cookie,
     ))
 }
@@ -146,7 +147,10 @@ pub async fn get_session(State(app): State<Arc<App>>, request: Request) -> Answe
     let Some(found) = owner::find(&app).await? else {
         return Ok(json_answer(StatusCode::OK, &Value::Null));
     };
-    Ok(json_answer(StatusCode::OK, &signed_in(session, &found)))
+    Ok(json_answer(
+        StatusCode::OK,
+        &signed_in(&app, session, &found),
+    ))
 }
 
 fn ended_cookie(app: &App) -> Result<axum::http::HeaderValue, Refusal> {

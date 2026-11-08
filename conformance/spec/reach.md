@@ -76,7 +76,7 @@ When a copy stream starts, the server MUST NOT carry `X-Marfa-Reach` on the resp
 
 When a copy stream starts, the server MUST send `stream_cursor` as its first event frame.
 
-**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`.
+**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`, `compliance/event-retention.test.ts › ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old`.
 
 ### `reach/marker-no-id`
 
@@ -134,7 +134,7 @@ When a copy stream has events to replay or hold, the server MUST send `stream_li
 
 **Reason:** only a live marker that follows complete replay certifies that a working copy holds everything up to its cursor.
 
-**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`.
+**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`, `compliance/stream-copy-opening-faults.test.ts › delivers what is written while it waits before it announces stream_live under the reach it opened with`.
 
 ### `reach/resume-same-reach`
 
@@ -160,13 +160,21 @@ If a copy stream resumes from a cursor past the head of the log, then the server
 
 **Tests:** `compliance/reach.test.ts › ends a copy stream resumed past the head with cursor_ahead and no live marker`.
 
+### `reach/resume-too-old`
+
+If a copy stream resumes from a cursor after which the log no longer holds the events, then the server MUST send `stream_cursor` before it sends `catchup_too_old`.
+
+**Reason:** a client reads the position and reach a copy stream was served under in `stream_cursor` before it learns that its cursor is gone, as it does for every other copy stream.
+
+**Tests:** `compliance/event-retention.test.ts › ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old`.
+
 ### `reach/opening-incomplete`
 
-If the server cannot read the head of the log within the bound of a copy stream's opening, then the server MUST send neither `stream_cursor` nor `stream_live` and end the stream with `stream_incomplete`.
+If the server cannot read the head of the log when a copy stream opens, then the server MUST send neither `stream_cursor` nor `stream_live` and end the stream with `stream_incomplete`.
 
 **Reason:** a marker invented without a head would certify a head the server did not read.
 
-**Tests:** `compliance/stream-opening-faults.test.ts › ends a copy stream with stream_incomplete, and sends neither stream_cursor nor stream_live`.
+**Tests:** `compliance/stream-copy-opening-faults.test.ts › ends a copy stream with stream_incomplete, and sends neither stream_cursor nor stream_live, when the read of the head fails`.
 
 ## What a reach is bound to
 
@@ -482,11 +490,11 @@ When a conditional read answers an edge, the server MUST NOT carry `listed` on i
 
 ### `reach/receipt-uncertified`
 
-When `POST /items`, `POST /edges` or `POST /folders` creates a row, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
+When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates a row, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
 
 **Reason:** a receipt says what the write did, and not what a key's reach covers, so a device reads under its reach again before it adopts what the write left.
 
-**Tests:** `compliance/reach.test.ts › returns item, edge and folder write receipts without a reach certificate`.
+**Tests:** `compliance/reach.test.ts › returns item, edge and view write receipts without a reach certificate`, `compliance/reach-folder-receipt.test.ts › returns a folder write receipt without a reach certificate`.
 
 ## A reach that changed
 
@@ -538,15 +546,17 @@ When the reach of a copy stream changes after the stream has started, the server
 
 ### `reach/terminal-races`
 
-While a copy stream replays, holds a frame, or is about to announce `stream_live`, if the reach changes, then the server MUST end the stream with `reach_changed`.
+While a copy stream replays, has a frame written while it opened still to send, or is about to announce `stream_live`, if the reach changes, then the server MUST end the stream with `reach_changed`.
 
-**Tests:** `compliance/copy-stream-races.test.ts › ends with reach_changed and sends no replayed frame and no stream_live`, `› ends with reach_changed and sends neither the held frame nor stream_live`, `› ends with reach_changed and does not announce stream_live`.
+**Reason:** a change counts once it has committed before the read of the page or the marker, because each is read in one snapshot under the reach that held there. A change committed after that read is caught by the next read, by a resume or by any conditional read.
+
+**Tests:** `compliance/copy-stream-races.test.ts › ends with reach_changed and sends no replayed frame and no stream_live`, `› ends with reach_changed and sends neither the frame written while it opened nor stream_live`, `› ends with reach_changed and does not announce stream_live`.
 
 ### `reach/terminal-races-silent`
 
-While a copy stream replays, holds a frame, or is about to announce `stream_live`, if the reach changes, then the server MUST send neither `stream_live` nor a frame of the changed data.
+While a copy stream replays, has a frame written while it opened still to send, or is about to announce `stream_live`, if the reach changes, then the server MUST send neither `stream_live` nor a frame of the changed data.
 
-**Tests:** `compliance/copy-stream-races.test.ts › ends with reach_changed and sends no replayed frame and no stream_live`, `› ends with reach_changed and sends neither the held frame nor stream_live`, `› ends with reach_changed and does not announce stream_live`.
+**Tests:** `compliance/copy-stream-races.test.ts › ends with reach_changed and sends no replayed frame and no stream_live`, `› ends with reach_changed and sends neither the frame written while it opened nor stream_live`, `› ends with reach_changed and does not announce stream_live`.
 
 ## What a copy stream says about each item
 

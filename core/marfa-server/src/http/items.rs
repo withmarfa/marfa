@@ -230,7 +230,7 @@ where
     match job(Some(claim.clone()), sent.uri, body).await {
         Ok(done) => Ok(finished(done)),
         Err(refusal) => {
-            idempotency::settle(app, claim, refusal.code.status(), refusal_body(&refusal)).await;
+            idempotency::settle(app, claim, refusal.code, refusal_body(&refusal)).await;
             Err(refusal.into())
         }
     }

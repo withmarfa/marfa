@@ -511,3 +511,97 @@ CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS auth_passkey_challenge_expiry ON auth_passkey_challenge (expires_at);
+
+-- A blob is bytes under the digest of their content. `hash` is `sha256:` and
+-- 64 lowercase hex characters; `mime_type` is the first type recorded.
+CREATE TABLE IF NOT EXISTS blobs (
+    hash TEXT PRIMARY KEY NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    recorded_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+-- Where bytes can be kept. `locator` is a disk store's folder or an object
+-- store's bucket and prefix.
+CREATE TABLE IF NOT EXISTS stores (
+    id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('disk', 's3')),
+    locator TEXT NOT NULL,
+    attached_at TEXT NOT NULL,
+    detached_at TEXT
+) STRICT, WITHOUT ROWID;
+
+-- A store holds the bytes of a blob only while a row here says so.
+CREATE TABLE IF NOT EXISTS blob_copies (
+    hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    store_id TEXT NOT NULL REFERENCES stores (id),
+    recorded_at TEXT NOT NULL,
+    verified_at TEXT,
+    PRIMARY KEY (hash, store_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS blob_copies_store ON blob_copies (store_id, verified_at);
+
+-- Who uploaded a blob: an API key's id, or the grant id of an app's tokens.
+CREATE TABLE IF NOT EXISTS blob_proofs (
+    hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    holder TEXT NOT NULL,
+    PRIMARY KEY (hash, holder)
+) STRICT, WITHOUT ROWID;
+
+-- Non-lending references retain bytes without granting access.
+CREATE TABLE IF NOT EXISTS blob_references (
+    hash TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version', 'owner')),
+    seq INTEGER NOT NULL,
+    namespace TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 0,
+    lends INTEGER NOT NULL CHECK (lends IN (0, 1)),
+    item_type TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
+    PRIMARY KEY (hash, kind, seq, namespace, version)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS blob_references_row ON blob_references (kind, seq);
+CREATE INDEX IF NOT EXISTS blob_lenders
+    ON blob_references (hash, kind, item_type, edge_type, namespace) WHERE lends = 1;
+
+CREATE TRIGGER IF NOT EXISTS blob_references_retyped AFTER UPDATE OF type ON items
+WHEN NEW.type IS NOT OLD.type
+BEGIN
+    UPDATE blob_references SET item_type = NEW.type
+    WHERE kind IN ('item', 'extension') AND seq = NEW.seq;
+    UPDATE blob_references SET item_type = NEW.type
+    WHERE kind = 'edge' AND seq IN (SELECT seq FROM edges WHERE source_id = NEW.id);
+END;
+CREATE TRIGGER IF NOT EXISTS blob_references_edge_moved AFTER UPDATE OF source_id, edge_type ON edges
+WHEN NEW.source_id IS NOT OLD.source_id OR NEW.edge_type IS NOT OLD.edge_type
+BEGIN
+    UPDATE blob_references
+    SET item_type = (SELECT type FROM items WHERE id = NEW.source_id), edge_type = NEW.edge_type
+    WHERE kind = 'edge' AND seq = NEW.seq;
+END;
+
+-- Blobs that nothing references, and when a run first found each.
+CREATE TABLE IF NOT EXISTS blob_orphans (
+    hash TEXT PRIMARY KEY NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    reported_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+-- Bytes a store still holds for a copy that left the copy record.
+CREATE TABLE IF NOT EXISTS blob_pending_deletions (
+    hash TEXT NOT NULL,
+    store_id TEXT NOT NULL REFERENCES stores (id),
+    queued_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    PRIMARY KEY (hash, store_id)
+) STRICT, WITHOUT ROWID;
+
+-- The digest omits the `sha256:` prefix used by `blobs.hash`.
+CREATE TABLE IF NOT EXISTS owner_picture (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+    updated_at TEXT NOT NULL
+) STRICT;

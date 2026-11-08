@@ -4,6 +4,7 @@ pub mod access;
 pub mod addresses;
 pub mod audit;
 pub mod auth;
+pub mod blobs;
 pub mod catalog;
 pub mod clock;
 pub mod config;
@@ -31,7 +32,7 @@ pub mod views;
 use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
@@ -40,6 +41,7 @@ use crate::settings::{Accepted, Settings};
 use crate::telemetry::Telemetry;
 use addresses::Addresses;
 use auth::password::Passwords;
+use blobs::Blobs;
 use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
@@ -61,9 +63,12 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub blobs: Blobs,
     pub telemetry: Telemetry,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
+    pub viewers: events::Viewers,
+    stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
     pub(crate) documents: oauth::clients::Documents,
@@ -89,9 +94,10 @@ impl App {
         settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
-        health::prepare_blobs(&start.blob_path)?;
+        let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
+        blobs.register(&db, at.clone()).await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
@@ -112,11 +118,14 @@ impl App {
             instance_id,
             cursor_secret,
             reindexing: Arc::new(Notify::new()),
+            viewers: events::Viewers::default(),
+            stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            blobs,
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),
@@ -127,6 +136,15 @@ impl App {
             .map_err(|refused| Failure::start(refused.to_string()))?;
         reindex::start(&app);
         Ok(app)
+    }
+
+    /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.
+    pub fn stopping(&self) -> watch::Receiver<bool> {
+        self.stop.subscribe()
+    }
+
+    pub fn begin_stop(&self) {
+        self.stop.send_replace(true);
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {

@@ -3,11 +3,13 @@
 pub mod answer;
 mod audit;
 mod auth;
+mod blobs;
 pub mod body;
 mod bulk;
 pub mod caller;
 mod caller_address;
 mod compression;
+mod conditional;
 mod config;
 mod control;
 #[cfg(test)]
@@ -15,6 +17,7 @@ mod document;
 mod doors;
 mod edge_types;
 mod edges;
+mod events;
 mod health;
 mod housekeeping;
 mod items;
@@ -25,6 +28,7 @@ mod lookup;
 mod oauth;
 pub mod observe;
 pub mod pages;
+mod profile;
 mod query;
 mod root;
 mod sources;
@@ -37,7 +41,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{MatchedPath, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
@@ -61,7 +65,7 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
         let mut empty = Response::new(Body::empty());
         *empty.status_mut() = StatusCode::NO_CONTENT;
         empty
-    } else if method == Method::GET && headers.contains_key("x-marfa-reach") {
+    } else if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
         refusal_answer(&Refusal::validation(
             "No operation at this path takes X-Marfa-Reach.",
         ))
@@ -70,34 +74,6 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     };
     response.extensions_mut().insert(Unmatched);
     response
-}
-
-const REACH_DOORS: [&str; 9] = [
-    "/items",
-    "/items/{id}",
-    "/items/{id}/edges",
-    "/edges",
-    "/edges/{id}",
-    "/types",
-    "/edge-types",
-    "/keys/current",
-    "/events",
-];
-
-async fn reach_where_taken(request: Request, next: Next) -> Response {
-    let takes_it = request
-        .extensions()
-        .get::<MatchedPath>()
-        .is_some_and(|route| REACH_DOORS.contains(&route.as_str()));
-    if request.method() == Method::GET
-        && request.headers().contains_key("x-marfa-reach")
-        && !takes_it
-    {
-        return refusal_answer(&Refusal::validation(
-            "No operation at this path takes X-Marfa-Reach.",
-        ));
-    }
-    next.run(request).await
 }
 
 fn key_doors(app: Arc<App>) -> Routes {
@@ -161,6 +137,7 @@ fn item_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items", post(items::create).get(listing::items))
         .route("/search", get(listing::search))
+        .route("/events", get(events::open))
         .route("/views", post(views::create))
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))
@@ -204,6 +181,19 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, within_a_map))
 }
 
+fn blob_doors() -> Routes {
+    Doors::new()
+        .route("/blobs", post(blobs::upload))
+        .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
+        .route("/blobs/{hash}/url", get(blobs::url))
+        .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route(
+            "/blobs/{hash}/fetch",
+            get(blobs::fetch).head(blobs::fetch_head),
+        )
+}
+
 fn owner_item_doors() -> Routes {
     Doors::new()
         .route("/items/summaries", get(trash::summaries))
@@ -212,6 +202,13 @@ fn owner_item_doors() -> Routes {
         .route("/items/summaries/{id}/purge", post(trash::owner_purge))
         .route("/trash", get(trash::bin))
         .route("/trash/empty", post(trash::empty))
+}
+
+fn profile_doors() -> Routes {
+    Doors::new()
+        .route("/owner/picture", get(profile::read).put(profile::put_owner))
+        .route("/profile", patch(profile::update))
+        .route("/profile/picture", put(profile::put_profile))
 }
 
 fn config_doors() -> Routes {
@@ -237,9 +234,11 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
+        .merge(blob_doors())
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
+        .merge(profile_doors())
         .merge(oauth::grant_doors())
         .merge(config_doors())
 }
@@ -253,7 +252,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
-        .route_layer(from_fn(reach_where_taken))
+        .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))

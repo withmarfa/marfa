@@ -2,10 +2,10 @@
 //! untrusted bytes, so a fault in them has to end something other than the program
 //! that holds the owner's database.
 //!
-//! The program starts itself. The child takes its limits before it reads a byte,
-//! takes a request on stdin, confines itself and says how far on stdout, and only then
-//! is given the file's bytes. It answers with one JSON document. The parent trusts
-//! nothing it says after the file reached it.
+//! The program starts itself. The child is given the open file as its stdin and the
+//! request as its last argument, takes its limits before it reads a byte, confines
+//! itself and says how far on stdout, and only then reads the file. It answers with one
+//! JSON document. The parent trusts nothing it says after the file reached it.
 
 #[cfg(target_os = "linux")]
 mod calls;
@@ -18,6 +18,7 @@ mod parent;
 mod wire;
 
 use std::ffi::OsStr;
+use std::fs::File;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -31,7 +32,7 @@ const CHILD_ARG: &str = "--marfa-enrichment-child";
 const EXIT_OVER_MEMORY: i32 = 71;
 /// A child's watchdog ended it at the deadline.
 const EXIT_DEADLINE: i32 = 72;
-/// A child found its parent gone, or stdin closed before the whole file arrived.
+/// A child found its parent gone.
 const EXIT_PARENT_GONE: i32 = 73;
 /// A child was started with arguments or a request it cannot read.
 const EXIT_BAD_REQUEST: i32 = 74;
@@ -55,8 +56,12 @@ pub fn serve_child_if_asked() {
     PROGRAM.get_or_init(own_path);
 }
 
-/// Reads `bytes` by the MIME type `mime`, in a process of its own; its parameters and
+/// Reads `file` by the MIME type `mime`, in a process of its own; its parameters and
 /// letter case do not matter, but a `charset` parameter is read as a hint for text.
+///
+/// The file must be a regular file, open for reading only, and opened for this
+/// reading alone. The child reads it by position, so the offset the caller holds
+/// does not move unless a taken-over child calls `lseek` on the shared file description.
 ///
 /// This blocks until the child answers or `Options::time_limit` passes, so an async
 /// caller runs it on a blocking thread. Several threads may call it at once.
@@ -65,14 +70,14 @@ pub fn serve_child_if_asked() {
 ///
 /// If the program did not call `serve_child_if_asked` first. Nothing is started or
 /// read then.
-pub fn read(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
+pub fn read(file: &File, mime: &str, options: &Options) -> Result<Reading, Refusal> {
     let Some(program) = PROGRAM.get() else {
         panic!(
             "marfa_enrichment::read needs marfa_enrichment::serve_child_if_asked() as the \
              first line of the program's main"
         );
     };
-    parent::read(program.as_ref(), bytes, mime, options)
+    parent::read(program.as_ref(), file, mime, options)
 }
 
 /// `/proc/self/exe` opens the program that is running, so a new file installed over

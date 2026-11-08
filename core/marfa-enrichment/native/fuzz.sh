@@ -46,7 +46,7 @@ mkdir -p "$F/seeds" "$findings"
 for file in "$OUT/verify/context/files/"* "$OUT/verify/context/files/corpus/"*; do
   [ -f "$file" ] || continue
   case "$(basename "$file")" in
-    big-text.png | deep.xml | empty.pdf | not-a-* | random.png | truncated* | sample.mp3 | good.txt | encrypted.pdf) continue ;;
+    big-text.png | deep.xml | empty.pdf | not-a-* | random.png | truncated* | good.txt | encrypted.pdf) continue ;;
   esac
   cp "$file" "$F/seeds/"
 done
@@ -70,7 +70,7 @@ case "$TARGET" in
     docker build --quiet --platform "$platform" -t "$image" "$F/context" >/dev/null || die "could not build $image"
     trap 'docker rmi "$image" >/dev/null 2>&1 || true' EXIT
     code=0
-    docker run --rm --platform "$platform" --read-only --user "$(id -u):$(id -g)" \
+    docker run --rm --platform "$platform" --read-only --tmpfs /tmp:rw,mode=1777 --user "$(id -u):$(id -g)" \
       -v "$findings:/findings" "$image" /marfa-enrichment-fuzz /seeds /findings \
       --seconds "$seconds" --jobs "$jobs" --seed "$seed" ${extra[@]+"${extra[@]}"} 2>&1 | tee "$F/run.log" || code=$?
     ;;

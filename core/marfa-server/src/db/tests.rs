@@ -574,3 +574,89 @@ fn a_database_locked_elsewhere_is_refused_within_its_budget() {
     drop(holder);
     drop(open(&place.file));
 }
+
+#[tokio::test]
+async fn a_commit_raises_the_watch_after_its_rows_can_be_read() {
+    let place = folder();
+    let db = open(&place.file);
+    let mut commits = db.commits();
+    let seen = *commits.borrow_and_update();
+    assert!(!commits.has_changed().unwrap());
+
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    commits.changed().await.unwrap();
+    assert!(*commits.borrow_and_update() > seen);
+    assert_eq!(ids(&db).await, [1]);
+}
+
+#[tokio::test]
+async fn a_commit_that_errors_raises_the_watch_all_the_same() {
+    let place = folder();
+    let db = open(&place.file);
+    let mut commits = db.commits();
+    commits.borrow_and_update();
+
+    let answer = db
+        .write(WRITE, |tx| {
+            add(tx, 1)?;
+            tx.execute("INSERT INTO child (parent) VALUES (99)", [])?;
+            Ok(())
+        })
+        .await;
+    assert!(answer.is_err());
+    assert!(
+        commits.has_changed().unwrap(),
+        "a stream would not look for a write that landed despite the error"
+    );
+}
+
+#[tokio::test]
+async fn a_write_that_rolls_back_raises_nothing() {
+    let place = folder();
+    let db = open(&place.file);
+    let mut commits = db.commits();
+    commits.borrow_and_update();
+
+    let refused = db
+        .write(WRITE, |tx| {
+            add(tx, 1)?;
+            Err::<(), _>(Refusal::validation("no"))
+        })
+        .await;
+    assert!(refused.is_err());
+    assert!(!commits.has_changed().unwrap());
+
+    db.write(WRITE, |tx| add(tx, 2)).await.unwrap();
+    assert!(commits.has_changed().unwrap());
+}
+
+#[tokio::test]
+async fn a_reader_woken_by_a_commit_never_misses_one_that_follows() {
+    let place = folder();
+    let db = Arc::new(open(&place.file));
+    let mut commits = db.commits();
+    let reader = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let mut seen = 0;
+            while seen < 40 {
+                commits.borrow_and_update();
+                let found = ids(&db).await.len();
+                assert!(found >= seen);
+                seen = found;
+                if seen < 40 {
+                    commits.changed().await.unwrap();
+                }
+            }
+            seen
+        })
+    };
+    for id in 0..40 {
+        db.write(WRITE, move |tx| add(tx, id)).await.unwrap();
+    }
+    let reached = tokio::time::timeout(Duration::from_secs(5), reader)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reached, 40);
+}
