@@ -10,7 +10,7 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use super::access::{Caller, Levers, Standing, report_unread};
+use super::access::{Caller, Levers, Permission, Standing, report_unread};
 use super::addresses;
 use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
@@ -500,6 +500,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
     stored::committing(app, async move {
         working
             .write(&caller, "config.update", move |unit| {
+                unit.caller.require(Permission::ConfigManage)?;
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);

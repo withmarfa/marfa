@@ -67,7 +67,7 @@ pub(super) fn alone(
 /// Whether what stopped a row says the store failed, and not that this row
 /// cannot go: a constraint holds that row back and leaves every other one free.
 fn is_actual_error(stopped: &Refusal) -> bool {
-    stopped.code.status() >= 500 && stopped.cause != Some("SQLITE_CONSTRAINT")
+    stopped.code.status() >= 500 && stopped.database_code() != Some("SQLITE_CONSTRAINT")
 }
 
 /// The rows a run could not take, as its one log line says them.

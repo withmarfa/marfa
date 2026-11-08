@@ -7,6 +7,7 @@ use url::Url;
 use super::Environment;
 use super::rule;
 use super::secrets::Given;
+use crate::control_socket;
 use crate::listener::{self, Declaration, Trust};
 
 const MAX_CLOCK_OFFSET_MS: u64 = 3_153_600_000_000;
@@ -244,7 +245,7 @@ impl Fixed {
         let control_socket = environment
             .get("MARFA_CONTROL_SOCKET")
             .map(PathBuf::from)
-            .unwrap_or_else(|| database.folder().join("control").join("marfa.sock"));
+            .unwrap_or_else(|| control_socket::default_path(&database.folder()));
         let failed = reader.failed;
         let fixed = Fixed {
             port,

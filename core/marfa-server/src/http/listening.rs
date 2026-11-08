@@ -31,7 +31,8 @@ const ACCEPT_PAUSE: Duration = Duration::from_millis(250);
 /// How long a connection may take to send one request head, from the moment
 /// the server waits for it. A connection waiting for its next request is held
 /// to the same time.
-const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub const PUBLIC_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub const CONTROL_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The network address at the far end of a connection, reaching each request
 /// as connect info. A private socket has none.
@@ -46,15 +47,7 @@ pub trait Source: Listener<Addr: Debug> {
 /// Serves `router` on `listener` until `stop`. A stop closes every connection
 /// with no request in flight, a partial head included, and waits only for the
 /// requests that are.
-pub async fn serve(
-    listener: impl Source,
-    router: Router,
-    stop: impl Future<Output = ()> + Send + 'static,
-) -> io::Result<()> {
-    serve_within(listener, router, stop, HEADER_READ_TIMEOUT).await
-}
-
-async fn serve_within<L: Source>(
+pub async fn serve<L: Source>(
     mut listener: L,
     router: Router,
     stop: impl Future<Output = ()> + Send + 'static,
@@ -335,6 +328,7 @@ mod tests {
             Memory(incoming),
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
         for (peer, answer) in [
             (Some("10.0.0.1"), "Some(203.0.113.9)"),
@@ -362,6 +356,7 @@ mod tests {
             Tcp::new(listener, "test"),
             router(&dir, "127.0.0.1/32").await,
             std::future::pending(),
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
         let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         let asked = answer_of(stream, &asking("203.0.113.9", false)).await;
@@ -381,6 +376,7 @@ mod tests {
             async move {
                 let _ = stopping.await;
             },
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
 
         let mut kept = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
@@ -432,7 +428,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(serve_within(
+        let server = tokio::spawn(serve(
             Tcp::new(listener, "test"),
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
@@ -464,6 +460,7 @@ mod tests {
             async move {
                 let _ = stopping.await;
             },
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
         let mut stalled = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         stalled.write_all(PARTIAL_HEAD).await.unwrap();
@@ -507,6 +504,7 @@ mod tests {
             async move {
                 let _ = stopping.await;
             },
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
         let mut open = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         open.write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
@@ -541,6 +539,7 @@ mod tests {
             Memory(incoming),
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
         let (mut near, far) = duplex(4096);
         connect.send((far, Peer(None))).unwrap();

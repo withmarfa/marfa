@@ -133,9 +133,6 @@ pub struct Refusal {
     /// What an answer carries beside `error`: the item states a conflict
     /// names, for the writer to merge from.
     pub members: Option<Box<Map<String, Value>>>,
-    /// The SQLite result code behind a failed statement, for those allowed to
-    /// read it. It never reaches the envelope.
-    pub cause: Option<&'static str>,
     /// What an unhandled fault is told to the outside as. Set on a refusal
     /// of `internal_error` and no other.
     pub fault: Option<Arc<Fault>>,
@@ -152,7 +149,6 @@ impl Refusal {
             message: message.into(),
             details: None,
             members: None,
-            cause: None,
             fault: None,
             commit_failed: false,
             row: None,
@@ -195,6 +191,12 @@ impl Refusal {
             .get_or_insert_default()
             .insert(name.to_string(), value.into());
         self
+    }
+
+    /// The SQLite result code behind a failed statement, for those allowed to
+    /// read it. It never reaches the envelope.
+    pub fn database_code(&self) -> Option<&'static str> {
+        self.fault.as_deref().and_then(Fault::database_code)
     }
 }
 
@@ -244,7 +246,6 @@ impl From<rusqlite::Error> for Refusal {
                 let name = code.map_or("SQLITE_ERROR", sqlite_code_name);
                 tracing::error!(sqlite_code = name, "Database operation failed");
                 let mut refusal = Refusal::new(Code::InternalError, INTERNAL_MESSAGE);
-                refusal.cause = Some(name);
                 refusal.fault = Some(Arc::new(Fault::database(name)));
                 refusal
             }
@@ -296,5 +297,18 @@ mod tests {
     fn a_rollback_answers_the_status_of_the_refusal_inside_it() {
         let code = Code::BulkAtomicRollback { status: 409 };
         assert_eq!((code.wire(), code.status()), ("bulk_atomic_rollback", 409));
+    }
+
+    #[test]
+    fn a_failed_statement_keeps_its_code_on_its_fault_alone() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1)")
+            .unwrap();
+        let refusal = Refusal::from(db.execute("INSERT INTO t VALUES (1)", []).unwrap_err());
+        assert_eq!(refusal.code, Code::InternalError);
+        assert_eq!(refusal.database_code(), Some("SQLITE_CONSTRAINT"));
+        let fault = refusal.fault.as_deref().unwrap();
+        assert_eq!(fault.database_code(), Some("SQLITE_CONSTRAINT"));
+        assert_eq!(Refusal::internal("context").database_code(), None);
     }
 }

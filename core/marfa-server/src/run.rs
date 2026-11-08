@@ -14,7 +14,9 @@ use crate::app::{App, housekeeping};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
-use crate::http::listening::{Socket, Tcp};
+use crate::http::listening::{
+    CONTROL_HEADER_READ_TIMEOUT, PUBLIC_HEADER_READ_TIMEOUT, Socket, Tcp,
+};
 use crate::listener::Declaration;
 use crate::settings::Accepted;
 use crate::telemetry::{Config, FLUSH_WITHIN};
@@ -88,18 +90,20 @@ fn listen(
             Tcp::new(listener, app.settings.start.public_listener.name),
             http::public(app.clone()),
             stopped(stop.clone()),
+            PUBLIC_HEADER_READ_TIMEOUT,
         ));
     }
     servers.spawn(http::serve(
         Socket::new(private, Declaration::control().name),
         http::control(app.clone()),
         stopped(stop.clone()),
+        CONTROL_HEADER_READ_TIMEOUT,
     ));
 }
 
 /// Runs until a stop signal, and returns the status to exit with.
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
-    let claim = Claim::take(&accepted.fixed().control_socket)?;
+    let mut claim = Claim::take(&accepted.fixed().control_socket)?;
     let app = App::start(accepted).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
     let mut signals = Signals::install()?;
