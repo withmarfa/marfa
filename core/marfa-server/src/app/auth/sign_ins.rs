@@ -151,24 +151,14 @@ fn no_such_sign_in() -> Refusal {
     Refusal::new(Code::SignInNotFound, "No live sign-in has this ID.")
 }
 
-fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<Named> {
+fn to_end(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Named> {
     match Named::read(tx, id, at)? {
         Named::Nothing => Err(no_such_sign_in()),
-        named @ Named::App(_) => Ok(named),
-        _ if with_keys => Err(Refusal::validation(
-            "revoke_keys applies only to an app; this ID names a browser or a key.",
-        )),
         named => Ok(named),
     }
 }
 
-pub async fn end(
-    app: &Arc<App>,
-    caller: &Caller,
-    id: String,
-    with_keys: bool,
-    visit: Visit,
-) -> Result<()> {
+pub async fn end(app: &Arc<App>, caller: &Caller, id: String, visit: Visit) -> Result<()> {
     let asking = caller.clone();
     let looked_for = id.clone();
     let at = app.clock.stamp();
@@ -176,7 +166,7 @@ pub async fn end(
         .db
         .read(move |tx| {
             asking.current(tx, &at)?;
-            Ok(match to_end(tx, &looked_for, with_keys, &at)? {
+            Ok(match to_end(tx, &looked_for, &at)? {
                 Named::Key(_) => keys::REVOKED,
                 Named::App(_) => grants::REVOKED,
                 _ => ENDED,
@@ -185,7 +175,7 @@ pub async fn end(
         .await?;
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
-        match to_end(unit.tx(), &id, with_keys, &unit.at)? {
+        match to_end(unit.tx(), &id, &unit.at)? {
             Named::Browser(session) => session::ended(
                 unit.tx(),
                 &unit.at,
@@ -195,7 +185,7 @@ pub async fn end(
                 &session.user_id,
                 false,
             ),
-            Named::App(consent) => grants::withdraw(unit, &cache, &consent, with_keys),
+            Named::App(consent) => grants::withdraw(unit, &cache, &consent),
             Named::Key(key) => keys::end_for_owner(unit, &key.id),
             Named::Nothing => Err(no_such_sign_in()),
         }

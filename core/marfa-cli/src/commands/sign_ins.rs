@@ -23,16 +23,11 @@ pub enum SignInsCommand {
         name: String,
     },
     /// End a sign-in at once: its next request is refused, and an app can't
-    /// refresh its tokens. What it wrote stays, and so do the keys an app
-    /// minted unless --revoke-keys is given. Needs direct local authority
-    /// (--socket).
+    /// refresh its tokens. Ending an app also revokes every key it minted.
+    /// What it wrote stays. Needs direct local authority (--socket).
     End {
         /// The sign-in's id.
         id: String,
-        /// For an app, also revoke every key it minted. Refused for a browser
-        /// or a key.
-        #[arg(long)]
-        revoke_keys: bool,
     },
 }
 
@@ -44,8 +39,8 @@ pub fn rename_request(id: &str, name: &str) -> Request {
     Request::patch(&["owner", "sign-ins", id]).json(json!({ "name": name }))
 }
 
-pub fn end_request(id: &str, revoke_keys: bool) -> Request {
-    Request::delete(&["owner", "sign-ins", id]).query_flag("revoke_keys", revoke_keys)
+pub fn end_request(id: &str) -> Request {
+    Request::delete(&["owner", "sign-ins", id])
 }
 
 pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -61,8 +56,8 @@ pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<()
                 format!("renamed sign-in {} to {}", printable(&id), printable(named))
             })
         }
-        SignInsCommand::End { id, revoke_keys } => {
-            let answer = remote.json(&end_request(&id, revoke_keys))?;
+        SignInsCommand::End { id } => {
+            let answer = remote.json(&end_request(&id))?;
             out.report(&answer, || format!("ended sign-in {}", printable(&id)))
         }
     }
@@ -130,16 +125,11 @@ mod tests {
         assert_eq!(rename.method, Method::Patch);
         assert_eq!(rename.segments, ["owner", "sign-ins", "g1"]);
         assert_eq!(rename.body, Body::Json(json!({ "name": "Work laptop" })));
-        let end = end_request("g1", false);
+        let end = end_request("g1");
         assert_eq!(end.method, Method::Delete);
         assert_eq!(end.segments, ["owner", "sign-ins", "g1"]);
         assert_eq!(end.body, Body::None);
         assert!(end.query.is_empty());
-        let with_keys = end_request("g1", true);
-        assert_eq!(
-            with_keys.query,
-            [("revoke_keys".to_string(), "true".to_string())]
-        );
     }
 
     #[test]

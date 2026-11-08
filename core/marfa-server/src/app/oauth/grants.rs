@@ -209,11 +209,11 @@ pub async fn narrow(
     .await
 }
 
+/// Ends the grant and, in the same write, every key the app minted and every key those minted.
 pub(crate) fn withdraw(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     consent: &Consent,
-    with_keys: bool,
 ) -> Result<()> {
     grant::end(unit, cache, &consent.client_id, &consent.user_id)?;
     unit.audit_also(
@@ -224,21 +224,17 @@ pub(crate) fn withdraw(
             "client_id": consent.client_id,
             "user_id": consent.user_id,
             "grant_item_id": consent.grant_id,
-            "revoke_keys": with_keys,
         })),
     )?;
-    if with_keys {
-        keys::end_all_of_app(unit, &consent.client_id)?;
-    }
-    Ok(())
+    keys::end_all_of_app(unit, &consent.client_id)
 }
 
-pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool) -> Result<()> {
+pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, REVOKED, move |unit| {
         unit.caller.require(Permission::GrantsManage)?;
         let consent = of_owner(unit.tx(), &id)?.ok_or_else(no_such_grant)?;
-        withdraw(unit, &cache, &consent, with_keys)
+        withdraw(unit, &cache, &consent)
     })
     .await
 }

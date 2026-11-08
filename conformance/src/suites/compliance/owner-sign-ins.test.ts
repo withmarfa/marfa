@@ -214,19 +214,30 @@ async function mintKey(label: string): Promise<{ id: string; key: string }> {
 }
 
 /** A key the app mints with its own token, which records the app. */
-async function mintAsApp(
+function mintAsApp(
   signedIn: SignedInApp,
   label: string,
+  permissions: string[] = [],
+): Promise<{ id: string; key: string }> {
+  return mintFrom(signedIn.accessToken, label, permissions);
+}
+
+/** A key that `bearer`, an app's token or a key, mints. */
+async function mintFrom(
+  bearer: string,
+  label: string,
+  permissions: string[] = [],
 ): Promise<{ id: string; key: string }> {
   const response = await fetch(`${server.apiUrl}/keys`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${signedIn.accessToken}`,
+      authorization: `Bearer ${bearer}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
       label,
       source: `owner-sign-ins-app-${label.replace(/\W+/g, "-")}`,
+      permissions,
       type_permissions: { "core.note": "read" },
     }),
   });
@@ -774,31 +785,21 @@ describe("the keys an app minted", () => {
     expect(rows.find((r) => r.id === own.id)?.minted_by).toBeNull();
     expect(rows.find((r) => r.id === id)?.minted_by).toBeNull();
     expect((await end(id)).status).toBe(200);
-    expect(
-      (await signIns()).find((r) => r.id === minted.id)?.minted_by,
-    ).toBeNull();
+    expect((await signIns()).map((r) => r.id)).not.toContain(minted.id);
   });
 
-  it("stay working when the app ends without revoke_keys", async () => {
-    const browser = await signIn();
-    const signedIn = await approveApp(browser, "app ended alone");
-    const minted = await mintAsApp(signedIn, "key outliving its app");
-    expect((await end(await appId("app ended alone"))).status).toBe(200);
-    expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
-    expect(await itemsStatus(server, minted.key)).toBe(200);
-  });
-
-  it("end with the app when revoke_keys is true, and no other key does", async () => {
+  it("end with the app, a key's descendant included, and no other key does", async () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "app ended with its keys");
-    const minted = await mintAsApp(signedIn, "key ending with its app");
+    const minted = await mintAsApp(signedIn, "key ending with its app", [
+      "keys.mint",
+    ]);
+    const descendant = await mintFrom(minted.key, "key its key minted");
     const other = await mintKey("key of the owner's own");
-    // The witness: the minted key works before the end.
+    // The witness: the minted keys work before the end.
     expect(await itemsStatus(server, minted.key)).toBe(200);
-    const response = await end(
-      await appId("app ended with its keys"),
-      "?revoke_keys=true",
-    );
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    const response = await end(await appId("app ended with its keys"));
     expect(response.status).toBe(200);
     await expectMatchesSchema(
       "DELETE",
@@ -808,23 +809,21 @@ describe("the keys an app minted", () => {
     );
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
     expect(await itemsStatus(server, minted.key)).toBe(401);
+    expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect(await itemsStatus(server, other.key)).toBe(200);
-    expect((await signIns()).map((r) => r.id)).not.toContain(minted.id);
+    const listed = (await signIns()).map((r) => r.id);
+    expect(listed).not.toContain(minted.id);
+    expect(listed).not.toContain(descendant.id);
   });
 
-  it("refuses revoke_keys on a browser and a key 400, and ends neither", async () => {
-    const other = await signIn();
-    const minted = await mintKey("key asked to revoke keys");
-    for (const id of [await idOf(other), minted.id]) {
-      const refused = await end(id, "?revoke_keys=true");
-      expect(refused.status, id).toBe(400);
-      expect(refused.headers.get("x-error-code")).toBe("validation_error");
-    }
-    expect(await session(other)).not.toBeNull();
-    expect(await itemsStatus(server, minted.key)).toBe(200);
-    // An id no sign-in has is still unknown.
-    const unknown = await end("no-such-sign-in", "?revoke_keys=true");
-    expect(unknown.status).toBe(404);
+  it("refuses a query parameter 400 and ends nothing", async () => {
+    const browser = await signIn();
+    await approveApp(browser, "app asked with a query");
+    const id = await appId("app asked with a query");
+    const refused = await end(id, "?revoke_keys=true");
+    expect(refused.status).toBe(400);
+    expect(refused.headers.get("x-error-code")).toBe("validation_error");
+    expect((await signIns()).map((r) => r.id)).toContain(id);
   });
 });
 

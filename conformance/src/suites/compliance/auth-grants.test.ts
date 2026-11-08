@@ -227,33 +227,8 @@ describe("GET /auth/grants", () => {
 });
 
 describe("DELETE /auth/grants/{id}", () => {
-  it("ends the app's tokens and the person's consent, and leaves the keys it minted working", async () => {
+  it("ends the app's tokens, the person's consent and every key the app minted, a key's descendant included", async () => {
     const { clientId, access, grant } = await approved();
-    const key = await mintedBy(access, "grant-survivor", {
-      permissions: ["keys.mint"],
-      type_permissions: { "core.note": "read" },
-    });
-    const descendant = await mintedBy(key.key, "grant-survivor-child");
-    expect(await itemsStatus(server, access)).toBe(200);
-
-    const revoked = await revokeGrant(grant.id, server.managementKey);
-    expect(revoked.status).toBe(204);
-    expect(await itemsStatus(server, access)).toBe(401);
-    expect(await itemsStatus(server, key.key)).toBe(200);
-    expect(await itemsStatus(server, descendant.key)).toBe(200);
-    const listed = (await (await grants(server.managementKey)).json()) as {
-      data: Grant[];
-    };
-    expect(listed.data.map((g) => g.id)).not.toContain(grant.id);
-    const asked = await sentTo(
-      server,
-      await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
-    );
-    expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
-  });
-
-  it("with revoke_keys=1 also revokes every key the app minted, a key's descendant included", async () => {
-    const { access, grant } = await approved();
     const key = await mintedBy(access, "grant-taken", {
       permissions: ["keys.mint"],
       type_permissions: { "core.note": "read" },
@@ -265,17 +240,39 @@ describe("DELETE /auth/grants/{id}", () => {
       baseUrl: server.apiUrl,
       apiKey: unrelated,
     });
+    expect(await itemsStatus(server, access)).toBe(200);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
 
-    const revoked = await revokeGrant(
-      grant.id,
-      server.managementKey,
-      "?revoke_keys=1",
-    );
+    const revoked = await revokeGrant(grant.id, server.managementKey);
     expect(revoked.status).toBe(204);
     expect(await itemsStatus(server, access)).toBe(401);
     expect(await itemsStatus(server, key.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect((await unrelatedClient.getCurrentKey()).status).toBe(200);
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(listed.data.map((g) => g.id)).not.toContain(grant.id);
+    const asked = await sentTo(
+      server,
+      await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
+    );
+    expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
+  });
+
+  it("refuses a query parameter 400 and revokes nothing", async () => {
+    const { access, grant } = await approved();
+    const refused = await revokeGrant(
+      grant.id,
+      server.managementKey,
+      "?revoke_keys=1",
+    );
+    expect(refused.status).toBe(400);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+    expect(await itemsStatus(server, access)).toBe(200);
   });
 });
 

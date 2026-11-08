@@ -1780,7 +1780,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke an app grant
-         * @description Revokes the app's tokens and consent. Requires `grants.manage` or local authority.
+         * @description Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage` or local authority.
          */
         delete: operations["revokeAppGrant"];
         options?: never;
@@ -1920,7 +1920,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the private local command.
+         * @description Ends a sign-in at once: it can't refresh or make another request. Ending an app also revokes every key it minted and every key those keys minted. Needs the private local command.
          */
         delete: operations["endSignIn"];
         options?: never;
@@ -27229,10 +27229,7 @@ export interface operations {
     };
     revokeAppGrant: {
         parameters: {
-            query?: {
-                /** @description `true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working. */
-                revoke_keys?: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 /** @description The ID of the app's grant. */
@@ -29027,10 +29024,7 @@ export interface operations {
     };
     endSignIn: {
         parameters: {
-            query?: {
-                /** @description For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it. */
-                revoke_keys?: "true" | "false";
-            };
+            query?: never;
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
                 "X-Marfa-Instance-Id"?: string;
@@ -29057,7 +29051,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key. */
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
