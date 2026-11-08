@@ -165,8 +165,6 @@ fn item_doors(app: Arc<App>) -> Routes {
         .admitting(app, Admission::Mapped)
 }
 
-/// Settings answer to a key or an app's token; the status takes a token or the private socket,
-/// which alone lists folders. A cookie is none of these.
 fn folder_doors(app: Arc<App>) -> Routes {
     let settings = Doors::new()
         .route("/folders", post(folders::create))
