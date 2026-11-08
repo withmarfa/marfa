@@ -4,8 +4,7 @@ use super::{Axis, Caller, Level, Permission};
 pub struct Described {
     pub app: bool,
     pub label: Option<String>,
-    /// Patterns of the type map by level: write, read, none. A stored level that is neither
-    /// `read` nor `write` denies, so it is listed with `none`.
+    /// Type patterns by level: write, read, none; unknown stored levels deny.
     pub types: [Vec<String>; 3],
     pub permissions: Vec<Permission>,
 }
