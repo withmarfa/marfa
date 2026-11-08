@@ -232,11 +232,10 @@ async fn database_write(app: &Arc<App>) -> Component {
 
 fn disk(app: &App) -> Component {
     let start = &app.settings.start;
-    let free =
-        |volume: Volume, path: &Path| match app.faults.free(volume) {
-            Some(set) => set,
-            None => volume::free_bytes(path),
-        };
+    let free = |volume: Volume, path: &Path| match app.faults.free(volume) {
+        Some(set) => set,
+        None => volume::free_bytes(path),
+    };
     let database = free(Volume::Database, &start.database.folder());
     let blobs = free(Volume::Blobs, &start.blob_path);
     let (Some(database), Some(blobs)) = (database, blobs) else {

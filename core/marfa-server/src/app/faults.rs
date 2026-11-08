@@ -576,6 +576,22 @@ mod tests {
     }
 
     #[test]
+    fn takes_the_points_the_fixtures_arm() {
+        for (name, arg) in [
+            ("hold:bulk-page", Some("2")),
+            ("fail:health-write", None),
+            ("refuse:read", None),
+            ("refuse:write", None),
+            ("refuse:write-lock", None),
+            ("refuse:blob-store", None),
+            ("free:database", Some("unknown")),
+        ] {
+            assert!(!refused(name, arg), "{name}");
+        }
+        assert!(refused("hold:bulk-page", Some("two")));
+    }
+
+    #[test]
     fn takes_every_form_of_a_write_argument() {
         for arg in [None, Some("3"), Some("item.create"), Some("item.create@2")] {
             assert!(!refused("fail:commit", arg));
