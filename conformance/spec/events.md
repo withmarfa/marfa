@@ -1539,7 +1539,7 @@ These rules hold where the instance does not allow private addresses, which is t
 
 ### `events/address-private`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is not public, such as loopback, private, link-local, unique-local, carrier-grade NAT, unspecified or multicast, then the server MUST answer `400 validation_error`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is not public, including loopback, private, link-local, unique-local, carrier-grade NAT, unspecified, multicast, documentation, benchmarking, discard-only, dummy, segment-routing, local-use translation, 6to4 or Teredo addresses, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address`.
 
@@ -1569,15 +1569,15 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 ### `events/address-ipv6-global`
 
-Where the instance does not allow private addresses, the server MUST treat an IPv6 address as public only if it lies in `2000::/3`, after an IPv4 address written as IPv6 has been read as the IPv4 address it carries.
+Where the instance does not allow private addresses, the server MUST treat a native IPv6 address as public only if it lies in `2000::/3` and its most specific entry in the IANA IPv6 Special-Purpose Address Registry, if any, marks it globally reachable.
 
-**Reason:** `2000::/3` is the block assigned to hosts on the internet. Any other block is reserved, local or a translation prefix, so a rule that named the blocks to refuse would accept whatever it did not name.
+**Reason:** the global unicast allocation contains special-purpose ranges, including both documentation blocks (`2001:db8::/32` and `3fff::/20`) and benchmarking (`2001:2::/48`). The `2001::/23` protocol allocation has globally reachable exceptions. 6to4 (`2002::/16`) and Teredo (`2001::/32`) are refused outright because an embedded IPv4 check alone does not establish the tunnel's route. The local-use NAT64 allocation (`64:ff9b:1::/48`) is not globally reachable regardless of its embedded address.
 
-**Tests:** `compliance/webhook-addresses.test.ts › refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one`.
+**Tests:** `compliance/webhook-addresses.test.ts › refuses non-global IPv6 and accepts global addresses and public IPv4 translations`, `› refuses special-purpose IPv6 %s at registration`, `› refuses special-purpose IPv6 at every delivery`.
 
 ### `events/address-mapped`
 
-Where the instance does not allow private addresses, the server MUST judge an IPv4 address written as IPv6 as the IPv4 address it carries.
+Where the instance does not allow private addresses, the server MUST judge an IPv4 address written in IPv4-compatible, IPv4-mapped or well-known NAT64 (`64:ff9b::/96`) form as the IPv4 address it carries.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`.
 
@@ -1625,6 +1625,12 @@ Where the instance does not allow private addresses, the server MUST connect to 
 
 ## When delivery starts
 
+### `events/webhook-position-created`
+
+When the server creates its database, the server MUST establish the webhook scheduling position at zero before any event can commit.
+
+**Tests:** `compliance/webhook-schedule-gap.test.ts › starts scheduling after a fresh control-only instance writes its first event`.
+
 ### `events/webhook-starts-after-creation`
 
 When a subscription is registered, the server MUST NOT deliver an event written before it.
@@ -1635,7 +1641,7 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 ### `events/schedule-fails-visibly`
 
-If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST report an unhandled fault and queue no delivery for any event past the position.
+If the log's position for scheduling webhooks is ahead of the log, missing, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST report an unhandled fault and queue no delivery for any event past the position.
 
 **Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
 

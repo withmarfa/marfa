@@ -26,9 +26,7 @@ pub enum Gap {
 impl Gap {
     pub fn describe(self) -> &'static str {
         match self {
-            Gap::Missing => {
-                "The webhook sender's place in the event log is missing, and the log holds events"
-            }
+            Gap::Missing => "The webhook sender's place in the event log is missing",
             Gap::Ahead => "The webhook sender's place in the event log is ahead of the log",
             Gap::Crossed => {
                 "The event log lacks an event between the webhook sender's place and the log's newest event"
@@ -105,16 +103,10 @@ pub fn pass(tx: &Transaction<'_>, context: &Context<'_>) -> Result<Pass> {
         store::position(tx)?
     };
     let Some(position) = position else {
-        if newest > 0 {
-            return Ok(Pass::Stuck {
-                gap: Gap::Missing,
-                at: None,
-            });
-        }
-        if !faults.hides_position() {
-            store::set_position(tx, 0)?;
-        }
-        return Ok(Pass::Caught);
+        return Ok(Pass::Stuck {
+            gap: Gap::Missing,
+            at: None,
+        });
     };
     if position > newest {
         return Ok(Pass::Stuck {

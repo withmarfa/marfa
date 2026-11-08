@@ -8,7 +8,11 @@ import { request } from "node:http";
 export function controlRequest(
   socketPath: string,
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const raw = init.body instanceof Uint8Array;
@@ -23,15 +27,17 @@ export function controlRequest(
         socketPath,
         path,
         method: init.method ?? "GET",
-        headers:
-          body === undefined
+        headers: {
+          ...init.headers,
+          ...(body === undefined
             ? {}
             : {
                 "content-type": raw
                   ? "application/octet-stream"
                   : "application/json",
                 "content-length": Buffer.byteLength(body),
-              },
+              }),
+        },
       },
       (res) => {
         let text = "";

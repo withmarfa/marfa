@@ -25,6 +25,32 @@ const SETTING = "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES";
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let receiver: Receiver;
+const special = [
+  "::",
+  "::1",
+  "fc00::1",
+  "fe80::1",
+  "ff02::1",
+  "4000::1",
+  "2001:100::1",
+  "2002:7f00:1::1",
+  "2002:a00:1::1",
+  "2002:808:808::1",
+  "2001::1",
+  "2001:2::1",
+  "2001:10::1",
+  "2001:db8::1",
+  "3fff::1",
+  "64:ff9b::7f00:1",
+  "64:ff9b::a00:1",
+  "64:ff9b:1::7f00:1",
+  "64:ff9b:1::808:808",
+  "::127.0.0.1",
+  "::ffff:10.0.0.1",
+  "100::1",
+  "100:0:0:1::1",
+  "5f00::1",
+];
 
 beforeAll(async () => {
   server = await bootFreshServer("webhook-addresses", {
@@ -43,6 +69,64 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 describe("webhook addresses", () => {
+  it.each(special)(
+    "refuses special-purpose IPv6 %s at registration",
+    async (ip) => {
+      const result = await working.createWebhook({
+        url: `http://[${ip}]/hook`,
+        events: ["item.created"],
+      });
+      try {
+        expect(result.status).toBe(400);
+      } finally {
+        if (result.status === 201) await working.deleteWebhook(result.data.id);
+      }
+    },
+  );
+
+  it(
+    "refuses special-purpose IPv6 at every delivery",
+    async () => {
+      await server!.restart({ env: { [SETTING]: "true" } });
+      working = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: server!.workingKey,
+      });
+      const ids: string[] = [];
+      for (const ip of special) {
+        const created = await working.createWebhook({
+          url: `http://[${ip}]/hook`,
+          events: ["item.created"],
+        });
+        expect(created.status).toBe(201);
+        ids.push(created.data.id);
+      }
+      await server!.restart();
+      working = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: server!.workingKey,
+      });
+      try {
+        expect((await working.createItem(createNote())).status).toBe(201);
+        for (const id of ids) {
+          await expect
+            .poll(
+              async () =>
+                (await working.listWebhookDeliveries(id)).data.data[0],
+              { timeout: 30000 },
+            )
+            .toMatchObject({
+              status: "dead_letter",
+              attempt: 1,
+              error: "The receiver's address is not public.",
+            });
+        }
+      } finally {
+        for (const id of ids) await working.deleteWebhook(id);
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
   it("refuses a subscription naming a loopback, private or link-local address", async () => {
     const port = new URL(receiver.url).port;
     for (const url of [
@@ -108,7 +192,7 @@ describe("webhook addresses", () => {
     await working.deleteWebhook(created.data.id);
   });
 
-  it("refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one", async () => {
+  it("refuses non-global IPv6 and accepts global addresses and public IPv4 translations", async () => {
     for (const url of [
       "http://[::10.0.0.1]/hook",
       "http://[::a00:1]/hook",
@@ -126,12 +210,26 @@ describe("webhook addresses", () => {
       expect(refused.error?.error.code, url).toBe("validation_error");
     }
     // The witness: a global address is accepted on the same door.
-    const accepted = await working.createWebhook({
-      url: "http://[2606:4700:4700::1111]/hook",
-      events: ["item.created"],
-    });
-    expect(accepted.status).toBe(201);
-    await working.deleteWebhook(accepted.data.id);
+    for (const ip of [
+      "2606:4700:4700::1111",
+      "2001:1::1",
+      "2001:1::2",
+      "2001:1::3",
+      "2001:3::1",
+      "2001:4:112::1",
+      "2001:20::1",
+      "2001:30::1",
+      "64:ff9b::808:808",
+      "::8.8.8.8",
+      "::ffff:8.8.8.8",
+    ]) {
+      const accepted = await working.createWebhook({
+        url: `http://[${ip}]/hook`,
+        events: ["item.created"],
+      });
+      expect(accepted.status, ip).toBe(201);
+      await working.deleteWebhook(accepted.data.id);
+    }
   });
 
   it("refuses to point a subscription at an address that is not public, leaving the stored url", async () => {

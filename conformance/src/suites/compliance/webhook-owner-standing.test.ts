@@ -28,11 +28,87 @@ let receiver: Receiver;
 /** Paths of the receiver that answer a delivery with a failure to retry. */
 const failing = new Set<string>();
 
+it.each(["create", "update", "delete", "delivery.redeliver"])(
+  "rechecks webhooks.manage inside %s",
+  async (action) => {
+    for (const narrow of [false, true]) {
+      const admin = client(server!.workingKey);
+      const key = await admin.createKey({
+        label: `webhook-race-${action}-${String(narrow)}`,
+        source: `webhook-race-${action}-${String(narrow)}`,
+        permissions: ["webhooks.manage"],
+        type_permissions: { "core.note": "write" },
+      });
+      expect(key.status).toBe(201);
+      const maker = client(key.data.key);
+      const hook = await maker.createWebhook({
+        url: receiver.hookUrl("race"),
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      let delivery = "";
+      if (action === "delivery.redeliver") {
+        await maker.updateWebhook(hook.data.id, {
+          url: receiver.hookUrl("race-failed"),
+        });
+        await note("redelivery race");
+        delivery = await waitFor("failed delivery", async () => {
+          const rows = await maker.listWebhookDeliveries(hook.data.id);
+          return rows.data.data.find((row) => row.status === "dead_letter")?.id;
+        });
+      }
+      const send = () =>
+        action === "create"
+          ? maker.createWebhook({
+              url: "http://receiver.invalid/hook",
+              events: ["item.created"],
+            })
+          : action === "update"
+            ? maker.updateWebhook(hook.data.id, { active: false })
+            : action === "delete"
+              ? maker.deleteWebhook(hook.data.id)
+              : fetch(
+                  `${server!.apiUrl}/webhooks/${hook.data.id}/deliveries/${delivery}/redeliver`,
+                  {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${key.data.key}` },
+                  },
+                );
+      await server!.setFault(`hold:write=webhook.${action}@1`);
+      const pending = send();
+      try {
+        await server!.waitForHold("hold:write");
+        if (narrow)
+          expect(
+            (await admin.updateKey(key.data.id, { permissions: [] })).status,
+          ).toBe(200);
+      } finally {
+        await server!.clearFault("hold:write");
+      }
+      expect((await pending).status).toBe(
+        narrow
+          ? 403
+          : action === "create"
+            ? 201
+            : action === "delivery.redeliver"
+              ? 202
+              : 200,
+      );
+      await admin.revokeKey(key.data.id);
+    }
+  },
+);
+
 beforeAll(async () => {
   server = await bootFreshServer("webhook-owner-standing");
   clock = movedClock(server);
   receiver = await startReceiver({
-    status: (received) => (failing.has(received.path) ? 503 : 200),
+    status: (received) =>
+      received.path === "/hook/race-failed"
+        ? 400
+        : failing.has(received.path)
+          ? 503
+          : 200,
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 

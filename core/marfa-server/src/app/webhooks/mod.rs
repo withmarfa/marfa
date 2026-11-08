@@ -149,7 +149,7 @@ fn read_answer(tx: &Transaction<'_>, subscription: &Subscription) -> Result<Valu
 }
 
 pub async fn create(app: &App, caller: &Caller, request: Create) -> Result<Value> {
-    let maker = caller.webhook_maker()?;
+    caller.webhook_maker()?;
     check_address(app, &request.url).await?;
     let secret = match request.secret {
         Some(secret) => secret,
@@ -161,6 +161,7 @@ pub async fn create(app: &App, caller: &Caller, request: Create) -> Result<Value
     let type_filter = request.type_filter;
     let subscription = app
         .write(caller, "webhook.create", move |unit| {
+            let maker = unit.caller.webhook_maker()?;
             let tx = unit.tx();
             let subscription = Subscription {
                 id,
@@ -206,7 +207,7 @@ pub async fn get(app: &App, caller: &Caller, id: String) -> Result<Value> {
 }
 
 pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> Result<Value> {
-    let maker = caller.webhook_maker()?;
+    caller.webhook_maker()?;
     if let Some(address) = &request.url {
         check_address(app, address).await?;
     }
@@ -222,6 +223,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     let cache = app.catalog_handle();
     let subscription = app
         .write(caller, "webhook.update", move |unit| {
+            let maker = unit.caller.webhook_maker()?;
             let tx = unit.tx();
             let existing = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
             let mut next = existing.clone();
@@ -264,8 +266,9 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
 }
 
 pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
-    let maker = caller.webhook_maker()?;
+    caller.webhook_maker()?;
     app.write(caller, "webhook.delete", move |unit| {
+        let maker = unit.caller.webhook_maker()?;
         let tx = unit.tx();
         store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
         store::delete(tx, &id)?;
@@ -338,10 +341,11 @@ pub async fn redeliver(
     id: String,
     delivery_id: String,
 ) -> Result<Value> {
-    let reach = caller.webhook_reach()?;
+    caller.webhook_reach()?;
     let cutoff = housekeeping::cutoff(app, AUDIT_RETENTION_DAYS, DAY_MS);
     let clock = app.clock.clone();
     app.write(caller, "webhook.delivery.redeliver", move |unit| {
+        let reach = unit.caller.webhook_reach()?;
         let tx = unit.tx();
         let subscription = store::by_id(tx, &id, reach.as_ref())?.ok_or_else(not_found)?;
         let delivery = store::delivery(tx, &id, &delivery_id)?.ok_or_else(not_found)?;

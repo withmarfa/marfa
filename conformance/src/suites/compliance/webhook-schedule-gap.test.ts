@@ -9,6 +9,104 @@ import {
 import { streamHead } from "../../utils/stream-tap.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  bootControlServer,
+  bootServer,
+  stopServer,
+} from "../../../scripts/marfa-server.js";
+import { controlRequest } from "../../utils/control-request.js";
+import { TEST_OWNER, parseEnvFile, renderEnvFile } from "../../utils/target.js";
+
+it(
+  "starts scheduling after a fresh control-only instance writes its first event",
+  async () => {
+    const state = mkdtempSync(join(tmpdir(), "marfa-webhook-control-"));
+    const receiver = await startReceiver();
+    try {
+      const local = await bootControlServer({ state });
+      expect(
+        (
+          await controlRequest(local.controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
+      ).toBe(201);
+      const credential = await controlRequest(local.controlSocket, "/keys", {
+        method: "POST",
+        body: {
+          label: "hook",
+          source: "hook",
+          permissions: ["webhooks.manage"],
+          type_permissions: { "core.note": "write" },
+        },
+      });
+      expect(credential.status).toBe(201);
+      writeFileSync(
+        join(state, "env"),
+        renderEnvFile("", {
+          apiKey: credential.body.key as string,
+          managementKey: credential.body.key as string,
+          controlSocket: local.controlSocket,
+        }),
+      );
+      const note = await controlRequest(local.controlSocket, "/items", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${String(credential.body.key)}` },
+        body: {
+          type: "core.note",
+          properties: { body: "before public start" },
+        },
+      });
+      expect(note.status, JSON.stringify(note.body)).toBe(201);
+      await stopServer({ state });
+      await bootServer({ state });
+      const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
+      const url = env.MARFA_API_URL;
+      expect(url).toBeTruthy();
+      const maker = new MarfaClient({
+        baseUrl: url!,
+        apiKey: credential.body.key as string,
+      });
+      const hook = await maker.createWebhook({
+        url: receiver.hookUrl("control-start"),
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      expect(
+        (
+          await controlRequest(env.MARFA_CONTROL_SOCKET, "/items", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${String(credential.body.key)}` },
+            body: {
+              type: "core.note",
+              properties: { body: "after public start" },
+            },
+          })
+        ).status,
+      ).toBe(201);
+      await expect
+        .poll(
+          () =>
+            receiver.received.filter((r) => r.path === "/hook/control-start")
+              .length,
+          { timeout: 10000 },
+        )
+        .toBe(1);
+      expect(readFileSync(join(state, "server.log"), "utf8")).not.toContain(
+        "The webhook sender's place in the event log is missing",
+      );
+    } finally {
+      await stopServer({ state });
+      await receiver.close();
+      rmSync(state, { recursive: true, force: true });
+    }
+  },
+  2 * FRESH_SERVER_TIMEOUT_MS,
+);
 
 /**
  * The server keeps its place in the event log as it queues webhook

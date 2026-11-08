@@ -446,11 +446,12 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_newest ON webhook_deliveries (webh
 CREATE INDEX IF NOT EXISTS webhook_deliveries_settled
     ON webhook_deliveries (created_at) WHERE status <> 'pending';
 
--- A missing position with retained events is a scheduling fault.
+-- A missing position is a scheduling fault.
 CREATE TABLE IF NOT EXISTS webhook_position (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
     event_id INTEGER NOT NULL
 ) STRICT;
+INSERT OR IGNORE INTO webhook_position (id, event_id) VALUES (1, 0);
 
 -- The redirect URIs a person approved. Only an approval adds a row, so a later
 -- change to the client's own list reaches nothing here. `page_origin` is what
