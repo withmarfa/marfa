@@ -90,7 +90,7 @@ impl Reply {
     }
 
     pub fn into_response(self) -> Response {
-        let bytes = marfa_rules::js::to_vec(&self.body).unwrap_or_default();
+        let bytes = marfa_rules::number::to_vec(&self.body).unwrap_or_default();
         let mut response = Response::new(Body::from(bytes));
         *response.status_mut() = self.status;
         response.headers_mut().insert(
