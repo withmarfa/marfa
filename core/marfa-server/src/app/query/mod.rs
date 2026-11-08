@@ -4,6 +4,7 @@
 
 mod compile;
 mod cursor;
+mod events;
 mod listing;
 mod order;
 mod reach;
@@ -14,6 +15,7 @@ mod views;
 pub(crate) use compile::judge_type;
 pub use compile::{Ask, Filter, States};
 pub use cursor::{SECRET_KEY, Secret};
+pub(crate) use events::{Event, Recurrence, events, parents};
 pub use listing::{By, Listing, list, stats};
 pub use order::Sort;
 pub use search::{Search, search};

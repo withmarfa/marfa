@@ -11,6 +11,14 @@ fn iso(ms: i64) -> String {
         .to_string()
 }
 
+/// A start, a rule, the end of the window and the occurrences expected in it.
+struct Case(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+);
+
 fn series<'a>(starts_at: &'a str, zone: Option<&'a str>, lines: &'a [&'a str]) -> Schedule {
     compile(&Input {
         starts_at,
@@ -35,65 +43,71 @@ fn between(schedule: &Schedule, from: &str, to: &str) -> Vec<String> {
 
 #[test]
 fn every_frequency_with_its_parts() {
-    let cases: [(&str, &str, &[&str], &str, &[&str]); 8] = [
-        (
+    let cases: [Case; 8] = [
+        Case(
             "2026-01-31T09:00:00Z",
             "RRULE:FREQ=MONTHLY;BYDAY=-1FR",
-            &[],
             "2026-05-01T00:00:00Z",
             &["2026-03-27T09:00:00Z", "2026-04-24T09:00:00Z"],
         ),
-        (
+        Case(
             "2026-01-01T09:00:00Z",
             "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
-            &[],
             "2029-01-01T00:00:00Z",
             &["2028-02-29T09:00:00Z"],
         ),
-        (
+        Case(
             "2026-11-02T09:00:00Z",
             "RRULE:FREQ=WEEKLY;BYDAY=MO,WE",
-            &[],
             "2026-11-10T00:00:00Z",
             &["2026-11-04T09:00:00Z", "2026-11-09T09:00:00Z"],
         ),
-        (
+        Case(
             "2026-11-02T09:00:00Z",
             "RRULE:FREQ=DAILY;INTERVAL=3",
-            &[],
             "2026-11-10T00:00:00Z",
             &["2026-11-05T09:00:00Z", "2026-11-08T09:00:00Z"],
         ),
-        (
+        Case(
             "2026-11-02T09:00:00Z",
             "RRULE:FREQ=HOURLY;INTERVAL=5;BYMINUTE=15,45",
-            &[],
             "2026-11-02T15:00:00Z",
-            &["2026-11-02T09:45:00Z", "2026-11-02T14:15:00Z", "2026-11-02T14:45:00Z"],
+            &[
+                "2026-11-02T09:45:00Z",
+                "2026-11-02T14:15:00Z",
+                "2026-11-02T14:45:00Z",
+            ],
         ),
-        (
+        Case(
             "2026-11-02T09:00:00Z",
             "RRULE:FREQ=MINUTELY;INTERVAL=20;BYSECOND=0,30",
-            &[],
             "2026-11-02T09:41:00Z",
-            &["2026-11-02T09:00:30Z", "2026-11-02T09:20:00Z", "2026-11-02T09:20:30Z", "2026-11-02T09:40:00Z", "2026-11-02T09:40:30Z"],
+            &[
+                "2026-11-02T09:00:30Z",
+                "2026-11-02T09:20:00Z",
+                "2026-11-02T09:20:30Z",
+                "2026-11-02T09:40:00Z",
+                "2026-11-02T09:40:30Z",
+            ],
         ),
-        (
+        Case(
             "2026-11-02T09:00:00Z",
             "RRULE:FREQ=SECONDLY;INTERVAL=7",
-            &[],
             "2026-11-02T09:00:22Z",
-            &["2026-11-02T09:00:07Z", "2026-11-02T09:00:14Z", "2026-11-02T09:00:21Z"],
+            &[
+                "2026-11-02T09:00:07Z",
+                "2026-11-02T09:00:14Z",
+                "2026-11-02T09:00:21Z",
+            ],
         ),
-        (
+        Case(
             "2026-01-01T09:00:00Z",
             "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
-            &[],
             "2026-03-01T00:00:00Z",
             &["2026-01-30T09:00:00Z", "2026-02-27T09:00:00Z"],
         ),
     ];
-    for (start, rule, _, to, expected) in cases {
+    for Case(start, rule, to, expected) in cases {
         let lines = [rule];
         let schedule = series(start, None, &lines);
         let got = between(&schedule, "2026-01-02T00:00:00Z", to);
@@ -137,7 +151,14 @@ fn count_until_and_the_week_start() {
     let in_utc = ["RRULE:FREQ=DAILY;UNTIL=20261104T090000Z"];
     let zoned = series("2026-11-02T18:00:00+09:00", Some("Asia/Tokyo"), &in_utc);
     let got = between(&zoned, "2026-11-01T00:00:00Z", "2026-12-01T00:00:00Z");
-    assert_eq!(got, ["2026-11-02T09:00:00Z", "2026-11-03T09:00:00Z", "2026-11-04T09:00:00Z"]);
+    assert_eq!(
+        got,
+        [
+            "2026-11-02T09:00:00Z",
+            "2026-11-03T09:00:00Z",
+            "2026-11-04T09:00:00Z"
+        ]
+    );
 
     let floating = ["RRULE:FREQ=DAILY;UNTIL=20261103T180000"];
     let got = between(
@@ -148,8 +169,22 @@ fn count_until_and_the_week_start() {
     assert_eq!(got.len(), 2);
 
     for (wkst, expected) in [
-        ("MO", ["2026-11-02T09:00:00Z", "2026-11-08T09:00:00Z", "2026-11-16T09:00:00Z"]),
-        ("SU", ["2026-11-02T09:00:00Z", "2026-11-15T09:00:00Z", "2026-11-16T09:00:00Z"]),
+        (
+            "MO",
+            [
+                "2026-11-02T09:00:00Z",
+                "2026-11-08T09:00:00Z",
+                "2026-11-16T09:00:00Z",
+            ],
+        ),
+        (
+            "SU",
+            [
+                "2026-11-02T09:00:00Z",
+                "2026-11-15T09:00:00Z",
+                "2026-11-16T09:00:00Z",
+            ],
+        ),
     ] {
         let line = format!("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,MO;WKST={wkst}");
         let lines = [line.as_str()];
@@ -187,7 +222,11 @@ fn a_series_crosses_both_clock_changes_in_the_north_and_the_south() {
     );
 
     // Sydney leaves daylight time in April and enters it in October.
-    let sydney = series("2026-04-02T02:30:00+11:00", Some("Australia/Sydney"), &daily);
+    let sydney = series(
+        "2026-04-02T02:30:00+11:00",
+        Some("Australia/Sydney"),
+        &daily,
+    );
     assert_eq!(
         between(&sydney, "2026-04-04T00:00:00Z", "2026-04-07T00:00:00Z"),
         [
@@ -197,7 +236,11 @@ fn a_series_crosses_both_clock_changes_in_the_north_and_the_south() {
             "2026-04-06T16:30:00Z"
         ]
     );
-    let spring = series("2026-10-03T02:30:00+10:00", Some("Australia/Sydney"), &daily);
+    let spring = series(
+        "2026-10-03T02:30:00+10:00",
+        Some("Australia/Sydney"),
+        &daily,
+    );
     assert_eq!(
         between(&spring, "2026-10-03T00:00:00Z", "2026-10-06T00:00:00Z"),
         [
@@ -244,7 +287,13 @@ fn no_zone_advances_in_utc_and_a_whole_day_spans_local_days() {
     .unwrap();
     let mut meter = Meter::new(WORK_LIMIT);
     let days = all_day
-        .unfold(ms("2026-03-28T12:00:00Z"), ms("2026-03-30T12:00:00Z"), &mut meter, 10, &[])
+        .unfold(
+            ms("2026-03-28T12:00:00Z"),
+            ms("2026-03-30T12:00:00Z"),
+            &mut meter,
+            10,
+            &[],
+        )
         .unwrap();
     let spans: Vec<(String, String)> = days
         .iter()
@@ -274,13 +323,23 @@ fn a_rule_that_never_produces_is_found_and_a_walk_that_cannot_finish_is_stopped(
     let busy = ["RRULE:FREQ=SECONDLY"];
     let schedule = series("1990-01-01T00:00:00Z", None, &busy);
     let mut meter = Meter::new(WORK_LIMIT);
-    let stopped = schedule.starts(ms("2041-01-01T00:00:00Z"), ms("2041-01-02T00:00:00Z"), &mut meter, usize::MAX);
+    let stopped = schedule.starts(
+        ms("2041-01-01T00:00:00Z"),
+        ms("2041-01-02T00:00:00Z"),
+        &mut meter,
+        usize::MAX,
+    );
     assert_eq!(stopped, Err(Stop::Candidates));
     assert_eq!(meter.spent(), WORK_LIMIT + 1);
 
     let expired = || true;
     let mut meter = Meter::with_clock(WORK_LIMIT, &expired);
-    let stopped = schedule.starts(ms("2041-01-01T00:00:00Z"), ms("2041-01-02T00:00:00Z"), &mut meter, usize::MAX);
+    let stopped = schedule.starts(
+        ms("2041-01-01T00:00:00Z"),
+        ms("2041-01-02T00:00:00Z"),
+        &mut meter,
+        usize::MAX,
+    );
     assert_eq!(stopped, Err(Stop::Time));
 }
 
@@ -305,7 +364,13 @@ fn removed_added_and_moved_instances() {
     let mut meter = Meter::new(WORK_LIMIT);
     let moved = [ms("2026-11-05T09:00:00Z")];
     let occurrences = schedule
-        .unfold(ms("2026-11-05T00:00:00Z"), ms("2026-11-06T00:00:00Z"), &mut meter, 10, &moved)
+        .unfold(
+            ms("2026-11-05T00:00:00Z"),
+            ms("2026-11-06T00:00:00Z"),
+            &mut meter,
+            10,
+            &moved,
+        )
         .unwrap();
     assert_eq!(occurrences.len(), 1);
     assert_eq!(occurrences[0].replaced_by, Some(0));
@@ -322,19 +387,38 @@ fn a_write_is_judged_by_its_schedule() {
     assert!(event_issues(&ok).is_empty());
     for (change, field) in [
         (serde_json::json!({"timezone": "europe/berlin"}), "timezone"),
-        (serde_json::json!({"end_timezone": "+01:00"}), "end_timezone"),
+        (
+            serde_json::json!({"end_timezone": "+01:00"}),
+            "end_timezone",
+        ),
         (serde_json::json!({"duration": -1}), "duration"),
         (serde_json::json!({"duration": 3_162_240_001.0}), "duration"),
-        (serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY;COUNT=2;UNTIL=20270101"]}), "recurrence"),
-        (serde_json::json!({"recurrence": ["EXRULE:FREQ=DAILY"]}), "recurrence"),
-        (serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=1MO"]}), "recurrence"),
-        (serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY", "RRULE:FREQ=DAILY"]}), "recurrence"),
+        (
+            serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY;COUNT=2;UNTIL=20270101"]}),
+            "recurrence",
+        ),
+        (
+            serde_json::json!({"recurrence": ["EXRULE:FREQ=DAILY"]}),
+            "recurrence",
+        ),
+        (
+            serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=1MO"]}),
+            "recurrence",
+        ),
+        (
+            serde_json::json!({"recurrence": ["RRULE:FREQ=WEEKLY", "RRULE:FREQ=DAILY"]}),
+            "recurrence",
+        ),
         (serde_json::json!({"starts_at": null}), "recurrence"),
     ] {
         let mut changed = ok.clone();
         changed.extend(event(change));
         let issues = event_issues(&changed);
-        assert_eq!(issues.first().map(|held| held.field), Some(field), "{changed:?}");
+        assert_eq!(
+            issues.first().map(|held| held.field),
+            Some(field),
+            "{changed:?}"
+        );
     }
     let task = event(serde_json::json!({"title": "t", "recurrence": ["RRULE:FREQ=DAILY"]}));
     assert_eq!(task_issues(&task).len(), 1);

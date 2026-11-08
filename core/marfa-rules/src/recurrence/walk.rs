@@ -3,8 +3,8 @@
 use std::ops::ControlFlow;
 
 use super::calendar::{
-    DAY, LAST_YEAR, ceil_div, civil_from_days, days_from_civil, days_in_month, is_leap, week_number,
-    week_start, weekday,
+    DAY, LAST_YEAR, ceil_div, civil_from_days, days_from_civil, days_in_month, is_leap,
+    week_number, week_start, weekday,
 };
 use super::rule::{DAILY, HOURLY, MINUTELY, MONTHLY, Rule, SECONDLY, WEEKLY, YEARLY};
 
@@ -57,7 +57,7 @@ impl<'a> Meter<'a> {
         if self.spent > self.limit {
             return Err(Stop::Candidates);
         }
-        if self.spent % 256 == 0 && self.expired.is_some_and(|expired| expired()) {
+        if self.spent.is_multiple_of(256) && self.expired.is_some_and(|expired| expired()) {
             return Err(Stop::Time);
         }
         Ok(())
@@ -201,6 +201,15 @@ fn positions(bysetpos: &Option<Vec<i64>>, size: usize) -> Box<dyn Iterator<Item 
     Box::new(picked.into_iter())
 }
 
+/// The days one step of a daily, weekly, monthly or yearly rule covers.
+struct Period<'a> {
+    first: i64,
+    last: i64,
+    /// The ranges a numbered BYDAY counts within.
+    ranges: Vec<(i64, i64)>,
+    months: Option<&'a Vec<i64>>,
+}
+
 pub type Emit<'a> = &'a mut dyn FnMut(i64) -> Result<ControlFlow<()>, Stop>;
 
 /// Every reading `walk` produces at or after `start_wall`, ascending, in wall-clock seconds,
@@ -246,48 +255,72 @@ fn walk_days(
     let start_week = week_start(start_day, rule.wkst);
     let mut k: i64 = 0;
     loop {
-        let (first, last, ranges, months): (i64, i64, Vec<(i64, i64)>, Option<&Vec<i64>>) =
-            match rule.freq {
-                YEARLY => {
-                    let y = start_year + k * rule.interval;
-                    if y > LAST_YEAR {
-                        return Ok(());
-                    }
-                    let first = days_from_civil(y, 1, 1);
-                    let last = days_from_civil(y, 12, 31);
-                    let ranges = match (&rule.bymonth, &rule.bynweekday) {
-                        (Some(months), Some(_)) => months
-                            .iter()
-                            .map(|m| {
-                                (
-                                    days_from_civil(y, *m, 1),
-                                    days_from_civil(y, *m, days_in_month(y, *m)),
-                                )
-                            })
-                            .collect(),
-                        _ => vec![(first, last)],
-                    };
-                    (first, last, ranges, rule.bymonth.as_ref())
+        let Period {
+            first,
+            last,
+            ranges,
+            months,
+        } = match rule.freq {
+            YEARLY => {
+                let y = start_year + k * rule.interval;
+                if y > LAST_YEAR {
+                    return Ok(());
                 }
-                MONTHLY => {
-                    let index = start_year * 12 + (start_month - 1) + k * rule.interval;
-                    let (y, m) = (index.div_euclid(12), index.rem_euclid(12) + 1);
-                    if y > LAST_YEAR {
-                        return Ok(());
-                    }
-                    let first = days_from_civil(y, m, 1);
-                    let last = days_from_civil(y, m, days_in_month(y, m));
-                    (first, last, vec![(first, last)], None)
+                let first = days_from_civil(y, 1, 1);
+                let last = days_from_civil(y, 12, 31);
+                let ranges = match (&rule.bymonth, &rule.bynweekday) {
+                    (Some(months), Some(_)) => months
+                        .iter()
+                        .map(|m| {
+                            (
+                                days_from_civil(y, *m, 1),
+                                days_from_civil(y, *m, days_in_month(y, *m)),
+                            )
+                        })
+                        .collect(),
+                    _ => vec![(first, last)],
+                };
+                Period {
+                    first,
+                    last,
+                    ranges,
+                    months: rule.bymonth.as_ref(),
                 }
-                WEEKLY => {
-                    let first = start_week + k * rule.interval * 7;
-                    (first, first + 6, Vec::new(), None)
+            }
+            MONTHLY => {
+                let index = start_year * 12 + (start_month - 1) + k * rule.interval;
+                let (y, m) = (index.div_euclid(12), index.rem_euclid(12) + 1);
+                if y > LAST_YEAR {
+                    return Ok(());
                 }
-                _ => {
-                    let first = start_day + k * rule.interval;
-                    (first, first, Vec::new(), None)
+                let first = days_from_civil(y, m, 1);
+                let last = days_from_civil(y, m, days_in_month(y, m));
+                Period {
+                    first,
+                    last,
+                    ranges: vec![(first, last)],
+                    months: None,
                 }
-            };
+            }
+            WEEKLY => {
+                let first = start_week + k * rule.interval * 7;
+                Period {
+                    first,
+                    last: first + 6,
+                    ranges: Vec::new(),
+                    months: None,
+                }
+            }
+            _ => {
+                let first = start_day + k * rule.interval;
+                Period {
+                    first,
+                    last: first,
+                    ranges: Vec::new(),
+                    months: None,
+                }
+            }
+        };
         if first > stop_day {
             return Ok(());
         }
@@ -382,7 +415,11 @@ fn walk_clock(
             continue;
         }
         let hour = tod / 3600;
-        if rule.byhour.as_ref().is_some_and(|held| !held.contains(&hour)) {
+        if rule
+            .byhour
+            .as_ref()
+            .is_some_and(|held| !held.contains(&hour))
+        {
             skip_to(day * DAY + (hour + 1) * 3600, &mut k);
             continue;
         }

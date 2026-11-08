@@ -16,6 +16,8 @@ const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
 const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
+/// The time one series may take to unfold in a read of occurrences.
+const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
 
@@ -238,6 +240,15 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
+    arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
+        .ok_or_else(|| {
+            format!("{UNFOLD_DEADLINE} takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}")
+        })
+}
+
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
@@ -276,9 +287,10 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        UNFOLD_DEADLINE if rest.is_empty() => unfold_deadline_of(arg).map(|ms| (None, Some(ms))),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job> or free:<volume>"
+             deadline:<job>, unfold-deadline or free:<volume>"
                 .to_string(),
         ),
     }
@@ -442,6 +454,14 @@ impl Faults {
         self.armed()
             .iter()
             .find(|fault| fault.name == name)
+            .and_then(|fault| fault.number)
+            .map(Duration::from_millis)
+    }
+
+    pub fn unfold_deadline(&self) -> Option<Duration> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == UNFOLD_DEADLINE)
             .and_then(|fault| fault.number)
             .map(Duration::from_millis)
     }

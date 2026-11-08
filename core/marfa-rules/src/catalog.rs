@@ -954,12 +954,16 @@ impl Catalog {
             .map(|issue| format!("{}: {}", issue.field, issue.message))
             .collect::<Vec<_>>()
             .join("; ");
-        Err(RuleError::new(Code::InvalidProperties, summary).with_fields(
-            issues
-                .into_iter()
-                .map(|issue| FieldError::new(issue.field, field_code::INVALID_VALUE, issue.message))
-                .collect(),
-        ))
+        Err(
+            RuleError::new(Code::InvalidProperties, summary).with_fields(
+                issues
+                    .into_iter()
+                    .map(|issue| {
+                        FieldError::new(issue.field, field_code::INVALID_VALUE, issue.message)
+                    })
+                    .collect(),
+            ),
+        )
     }
 
     /// Merged root to leaf. A type the copy does not hold declares none.

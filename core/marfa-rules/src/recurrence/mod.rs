@@ -17,7 +17,7 @@ mod walk;
 mod tests;
 
 pub use issues::{Issue, event_issues, is_event_time_zone, task_issues};
-pub use schedule::{Input, Occurrence, Schedule, compile};
+pub use schedule::{Input, Occurrence, Schedule, compile, span};
 pub use walk::{Meter, Stop};
 
 /// Candidates one unfolding may consider: a day of a daily, weekly, monthly or yearly rule, a

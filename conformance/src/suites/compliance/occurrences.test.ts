@@ -56,7 +56,10 @@ describe("occurrences", () => {
     expect(hit?.starts_at).toBe("2031-03-10T10:00:00.000Z");
     expect(hit?.ends_at).toBe("2031-03-10T11:00:00.000Z");
     expect(r.data.window.from).toBe("2031-03-10T00:00:00.000Z");
-    expect(r.data.scan.events_read).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(r.data.scan).sort()).toEqual([
+      "series_errors",
+      "series_unexpanded",
+    ]);
   });
 
   it("orders the window by starts_at ascending, not by write order", async () => {

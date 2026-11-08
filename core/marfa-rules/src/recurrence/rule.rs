@@ -274,11 +274,16 @@ fn read_days(rule: &mut Rule, raw: &str) -> Result<(), Refusal> {
         };
         let prefix = &entry[..entry.len() - 2];
         if prefix.is_empty() {
-            rule.byweekday.get_or_insert_with(BTreeSet::new).insert(day as i64);
+            rule.byweekday
+                .get_or_insert_with(BTreeSet::new)
+                .insert(day as i64);
             continue;
         }
         let digits = prefix.strip_prefix(['+', '-']).unwrap_or(prefix);
-        if digits.is_empty() || digits.len() > 2 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        if digits.is_empty()
+            || digits.len() > 2
+            || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        {
             return Err(unreadable());
         }
         let n = read_int(prefix, "BYDAY", -53, 53)?;
@@ -286,7 +291,9 @@ fn read_days(rule: &mut Rule, raw: &str) -> Result<(), Refusal> {
             return Err("BYDAY may not number a weekday 0".to_string());
         }
         if seen.insert((n, day)) {
-            rule.bynweekday.get_or_insert_with(Vec::new).push((day as i64, n));
+            rule.bynweekday
+                .get_or_insert_with(Vec::new)
+                .push((day as i64, n));
         }
     }
     Ok(())

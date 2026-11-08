@@ -83,7 +83,12 @@ impl Zone {
         let Some(at) = DateTime::from_timestamp_millis(ms) else {
             return seconds;
         };
-        seconds + i64::from(tz.offset_from_utc_datetime(&at.naive_utc()).fix().local_minus_utc())
+        seconds
+            + i64::from(
+                tz.offset_from_utc_datetime(&at.naive_utc())
+                    .fix()
+                    .local_minus_utc(),
+            )
     }
 
     /// The instant, in milliseconds, at which the zone reads `wall`. A reading a clock change
@@ -103,7 +108,8 @@ impl Zone {
             }
             LocalResult::None => {
                 let before = naive - TimeDelta::days(1);
-                let offset = i64::from(tz.offset_from_utc_datetime(&before).fix().local_minus_utc());
+                let offset =
+                    i64::from(tz.offset_from_utc_datetime(&before).fix().local_minus_utc());
                 (wall - offset) * 1000
             }
         }
@@ -145,7 +151,7 @@ mod tests {
     fn a_skipped_reading_lands_later_by_the_gap_and_a_repeated_one_takes_its_first() {
         let london = Zone::named("Europe/London").unwrap();
         let gap = days_from_civil(2026, 3, 29) * DAY + 3600 + 1800;
-        assert_eq!(london.instant_of(gap), (gap + 0) * 1000);
+        assert_eq!(london.instant_of(gap), gap * 1000);
         assert_eq!(london.wall_of(london.instant_of(gap)), gap + 3600);
         let twice = days_from_civil(2026, 10, 25) * DAY + 3600 + 1800;
         assert_eq!(london.instant_of(twice), (twice - 3600) * 1000);

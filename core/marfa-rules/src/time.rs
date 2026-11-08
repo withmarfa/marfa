@@ -14,7 +14,9 @@ pub fn normalize(value: &str, field: &str) -> Result<String> {
 /// Milliseconds since the epoch of a value [`normalize`] reads.
 pub fn epoch_ms(value: &str) -> Option<i64> {
     let instant = parse(value)?;
-    (0..=9999).contains(&instant.year()).then(|| instant.and_utc().timestamp_millis())
+    (0..=9999)
+        .contains(&instant.year())
+        .then(|| instant.and_utc().timestamp_millis())
 }
 
 pub fn invalid(field: &str, reason: &str) -> RuleError {

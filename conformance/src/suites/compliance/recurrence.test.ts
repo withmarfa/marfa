@@ -1064,6 +1064,16 @@ describe("what a write may store", () => {
       { end_timezone: "UTC+1" },
       "end_timezone",
     ],
+    [
+      "a zone name in another case",
+      { timezone: "europe/berlin" },
+      "timezone",
+    ],
+    [
+      "an end zone given as an offset",
+      { end_timezone: "+01:00" },
+      "end_timezone",
+    ],
   ])("refuses %s, naming the field", async (_label, bad, field) => {
     const r = await client.createItem({
       type: "core.event",

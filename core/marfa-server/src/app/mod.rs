@@ -20,6 +20,7 @@ pub mod instance;
 pub mod items;
 pub mod keys;
 pub mod oauth;
+pub mod occurrences;
 pub mod query;
 pub mod refusal;
 mod reindex;

@@ -4,9 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::ops::ControlFlow;
 
 use super::calendar::{DAY, Zone};
-use super::rule::{
-    DAILY, DateValue, Refusal, Rule, read_date_value, read_rule, split_line,
-};
+use super::rule::{DAILY, DateValue, Refusal, Rule, read_date_value, read_rule, split_line};
 use super::walk::{Meter, Stop, prepare, walk_rule};
 use super::{MAX_CHARACTERS, MAX_DATES, MAX_DURATION_SECONDS};
 use crate::time;
@@ -73,13 +71,37 @@ fn day_of_value(value: &str, zone: Zone) -> Option<i64> {
     }
 }
 
+/// The span an event occupies, in milliseconds: a whole-day event from midnight of its first day
+/// to midnight of the day its end names, any other from its start to its end, or to its start
+/// plus its duration. The input's `recurrence` is not read.
+pub fn span(input: &Input<'_>) -> Result<(i64, i64), Refusal> {
+    if input.all_day {
+        return Ok(compile(&Input {
+            recurrence: &[],
+            ..*input
+        })?
+        .span());
+    }
+    let start =
+        time::epoch_ms(input.starts_at).ok_or_else(|| "starts_at cannot be read".to_string())?;
+    let end = match (input.ends_at.and_then(time::epoch_ms), input.duration) {
+        (Some(end), _) => end,
+        (None, Some(duration)) if is_duration(duration) => {
+            start + (duration * 1000.0).round() as i64
+        }
+        _ => start,
+    };
+    Ok((start, end.max(start)))
+}
+
 /// Reads a schedule against its start, refusing what cannot be read or would not be applied as
 /// written.
 pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
     let zone = match input.timezone {
         None => Zone::UTC,
-        Some(name) => Zone::named(name)
-            .ok_or_else(|| format!("the timezone does not resolve: {name}"))?,
+        Some(name) => {
+            Zone::named(name).ok_or_else(|| format!("the timezone does not resolve: {name}"))?
+        }
     };
     let parsed_start =
         time::epoch_ms(input.starts_at).ok_or_else(|| "starts_at cannot be read".to_string())?;
@@ -207,7 +229,10 @@ pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
 
     let end = input.ends_at.and_then(time::epoch_ms);
     let length = if input.all_day {
-        let days = match (input.ends_at.and_then(|end| day_of_value(end, zone)), input.duration) {
+        let days = match (
+            input.ends_at.and_then(|end| day_of_value(end, zone)),
+            input.duration,
+        ) {
             (Some(end_day), _) => end_day - start_wall / DAY,
             (None, Some(duration)) => (duration / DAY as f64).ceil() as i64,
             (None, None) => 1,
@@ -329,28 +354,22 @@ impl Schedule {
             let walk = prepare(rule, self.start_wall);
             let mut produced: i64 = 1;
             let stop_wall = high_wall.min(self.until_stop(rule.until));
-            walk_rule(
-                &walk,
-                self.start_wall,
-                stop_wall,
-                meter,
-                &mut |wall| {
-                    if wall == self.start_wall {
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    if rule.count.is_some_and(|count| produced >= count) {
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    if rule.until.is_some_and(|until| self.past_until(until, wall)) {
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    produced += 1;
-                    if wall >= low_wall {
-                        consider(self.anchor_wall(wall))?;
-                    }
-                    Ok(ControlFlow::Continue(()))
-                },
-            )?;
+            walk_rule(&walk, self.start_wall, stop_wall, meter, &mut |wall| {
+                if wall == self.start_wall {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if rule.count.is_some_and(|count| produced >= count) {
+                    return Ok(ControlFlow::Break(()));
+                }
+                if rule.until.is_some_and(|until| self.past_until(until, wall)) {
+                    return Ok(ControlFlow::Break(()));
+                }
+                produced += 1;
+                if wall >= low_wall {
+                    consider(self.anchor_wall(wall))?;
+                }
+                Ok(ControlFlow::Continue(()))
+            })?;
         }
         for ms in &self.rdates {
             consider(*ms)?;
