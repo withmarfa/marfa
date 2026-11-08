@@ -9,6 +9,8 @@
 #   <target>   aarch64-apple-darwin, aarch64-unknown-linux-musl or x86_64-unknown-linux-musl
 #   --full     also run the whole matrix of native/verify.sh (every format, OCR in six
 #              languages, damaged files, injected faults, the memory limit)
+#   --server   build the libraries and the server with them linked in
+#              (out/<target>/marfa-server, native/server.sh), and nothing else
 #   --needs    print what the runner must have, and stop
 #
 # The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa-enrichment-read (what ships),
@@ -56,9 +58,11 @@ EOF
 select_target "${1:-}"
 shift
 full=
+server=
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) full=1; shift ;;
+    --server) server=1; shift ;;
     --needs) needs; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
@@ -84,6 +88,11 @@ case "$TARGET" in
     need git curl python3 tar patch cmake ninja cargo rustc xcrun otool vtool codesign
     stage "build the libraries (native/build.sh)"
     "$NATIVE_DIR/build.sh" "$TARGET"
+    if [ -n "$server" ]; then
+      stage "build the server (native/server.sh)"
+      "$NATIVE_DIR/server.sh" "$TARGET"
+      exit 0
+    fi
     stage "build, link and check the programs (native/program.sh)"
     "$NATIVE_DIR/program.sh" "$TARGET"
     stage "gather the licences (native/licenses.sh)"
@@ -110,6 +119,12 @@ case "$TARGET" in
     here=/core/marfa-enrichment/native
     stage "build the libraries (native/build.sh), in the image"
     inside "$here/build.sh" "$TARGET"
+    if [ -n "$server" ]; then
+      stage "build the server (native/server.sh), in the image"
+      inside "$here/server.sh" "$TARGET"
+      inside chown -R "$(id -u):$(id -g)" /native-root
+      exit 0
+    fi
     stage "build, link and check the programs (native/program.sh), in the image"
     inside "$here/program.sh" "$TARGET"
     stage "gather the licences (native/licenses.sh), in the image"

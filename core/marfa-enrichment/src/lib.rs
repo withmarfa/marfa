@@ -94,6 +94,23 @@ pub const DEFAULT_OCR_LANGUAGES: &str = "eng+deu+fra+spa";
 /// Whether this build can read text from pictures and PDFs.
 pub const NATIVE: bool = cfg!(feature = "native");
 
+/// Whether a file of this type is held whole in memory to be read, so that its size
+/// matters. A sound or a video is read from its headers and is held in no memory.
+pub fn loads_whole_file(mime: &str) -> bool {
+    Kind::of(mime).is_none_or(Kind::loads_whole_file)
+}
+
+/// Whether OCR can give text for a file of this type: an image of a type it decodes, or
+/// a PDF.
+pub fn ocr_applies(mime: &str) -> bool {
+    matches!(Kind::of(mime), Some(Kind::Image { ocr: true } | Kind::Pdf))
+}
+
+/// Whether the type is that of an image, whatever its bytes are.
+pub fn is_image(mime: &str) -> bool {
+    matches!(Kind::of(mime), Some(Kind::Image { .. }))
+}
+
 /// How OCR reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OcrOptions {
