@@ -1368,7 +1368,7 @@ Telemetry has two parts, each with settings of its own. Traces and log records a
 
 When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, the effective reporting preference `error_reporting_enabled` is on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
 
-**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The effective preference is the stored `error_reporting_enabled` choice where there is one, otherwise `error_reporting_enabled`, which is on by default.
+**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The stored `error_reporting_enabled` choice defaults to on.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are sent with the PostHog host and project token alone, and no trace or log record`.
 
