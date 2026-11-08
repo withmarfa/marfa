@@ -749,18 +749,28 @@ impl App {
         Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
     }
 
-    /// Places the bytes on the disk. Nothing serves them until a record names them.
+    /// Places the bytes on the disk. Nothing serves them until a record names them. A refusal
+    /// is answered only once the staged file is gone, wherever the failure dropped it.
     async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
-        let Some(mut staged) = intake.staged.take() else {
+        let Some(staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
+        let spooled = staged.path().to_path_buf();
+        let placed = self.place_staged(staged, &intake.mime_type).await;
+        if placed.is_err() {
+            let _ = tokio::task::spawn_blocking(move || disk::unspool(&spooled)).await;
+        }
+        placed
+    }
+
+    async fn place_staged(&self, staged: Staged, mime_type: &str) -> Result<Placed> {
         if staged.size() == 0 {
-            let _ = tokio::task::spawn_blocking(move || staged.discard()).await;
             return Err(
                 Refusal::validation("The body is empty; send the bytes to keep.")
                     .with_detail("field", "body"),
             );
         }
+        let mut staged = staged;
         let (staged, hash) = joined(
             tokio::task::spawn_blocking(move || staged.seal().map(|hash| (staged, hash))).await,
         )?
@@ -798,7 +808,7 @@ impl App {
             recording: Recording {
                 blob: Blob {
                     hash,
-                    mime_type: intake.mime_type.clone(),
+                    mime_type: mime_type.to_string(),
                     size_bytes: size,
                 },
                 store_id: self.blobs.disk.id().to_string(),

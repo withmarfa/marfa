@@ -275,6 +275,10 @@ impl Staged {
         self.size
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Writes and hashes `bytes`. It blocks.
     pub fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
         let Some(file) = self.file.as_mut() else {
@@ -311,9 +315,14 @@ impl Staged {
     fn remove(&mut self) {
         if !self.published {
             self.published = true;
-            let _ = fs::remove_file(&self.path);
+            unspool(&self.path);
         }
     }
+}
+
+/// Removes a staged file; one already placed or removed is not there. It blocks.
+pub fn unspool(path: &Path) {
+    let _ = fs::remove_file(path);
 }
 
 impl Drop for Staged {
@@ -326,13 +335,9 @@ impl Drop for Staged {
         let path = std::mem::take(&mut self.path);
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
-                runtime.spawn_blocking(move || {
-                    let _ = fs::remove_file(path);
-                });
+                runtime.spawn_blocking(move || unspool(&path));
             }
-            Err(_) => {
-                let _ = fs::remove_file(path);
-            }
+            Err(_) => unspool(&path),
         }
     }
 }
