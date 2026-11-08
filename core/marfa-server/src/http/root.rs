@@ -37,7 +37,7 @@ async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
         StatusCode::OK,
         &json!({
             "name": name,
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": instance::VERSION,
             "instance_id": app.instance_id,
             "contract": app.contract(),
             "features": [],
