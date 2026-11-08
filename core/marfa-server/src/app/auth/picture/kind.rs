@@ -183,58 +183,115 @@ fn jpeg(bytes: &[u8]) -> Found {
     }
 }
 
-/// A `RIFF` that declares the file's size less eight, and chunks that fill it.
-fn webp(bytes: &[u8]) -> Found {
-    let declared = le32(bytes, 4).ok_or(Fault::Damaged)?;
-    if usize::try_from(declared).ok() != bytes.len().checked_sub(8) {
-        return Err(Fault::Damaged);
+fn limited(sides: (u32, u32)) -> Found {
+    let (width, height) = sides;
+    if (1..=MAX_SIDE).contains(&width) && (1..=MAX_SIDE).contains(&height) {
+        Ok(sides)
+    } else {
+        Err(Fault::Side(width, height))
     }
-    let (mut next, mut sides) = (12, None);
+}
+
+/// Walks sibling chunks to the end of `bytes`; each chunk and its padding byte must fit.
+fn chunks<'a>(
+    bytes: &'a [u8],
+    mut visit: impl FnMut(&[u8; 4], &'a [u8]) -> Result<(), Fault>,
+) -> Result<(), Fault> {
+    let mut next = 0;
     while next < bytes.len() {
         let name: [u8; 4] = at(bytes, next).ok_or(Fault::Damaged)?;
         let size = usize::try_from(le32(bytes, next + 4).ok_or(Fault::Damaged)?)
             .map_err(|_| Fault::Damaged)?;
         let start = next + 8;
-        let end = start
-            .checked_add(size)
-            .filter(|end| *end <= bytes.len())
+        let end = start.checked_add(size).ok_or(Fault::Damaged)?;
+        let padded = end
+            .checked_add(size & 1)
+            .filter(|padded| *padded <= bytes.len())
             .ok_or(Fault::Damaged)?;
-        if sides.is_none() {
-            sides = Some(webp_sides(
-                &name,
-                bytes.get(start..end).ok_or(Fault::Damaged)?,
-            )?);
-        }
-        next = end + (size & 1);
+        visit(&name, bytes.get(start..end).ok_or(Fault::Damaged)?)?;
+        next = padded;
     }
-    sides.ok_or(Fault::Damaged)
+    Ok(())
 }
 
-fn webp_sides(name: &[u8; 4], data: &[u8]) -> Found {
-    let damaged = || Fault::Damaged;
-    match name {
-        b"VP8X" => {
-            let width = le24(data, 4).ok_or_else(damaged)? + 1;
-            let height = le24(data, 7).ok_or_else(damaged)? + 1;
-            Ok((width, height))
-        }
-        b"VP8L" => {
-            if data.first() != Some(&0x2f) {
-                return Err(Fault::Damaged);
+/// A `RIFF` that declares the file's size less eight, and chunks that fill it. Every image
+/// header must be within the limit and agree with the canvas.
+fn webp(bytes: &[u8]) -> Found {
+    let declared = le32(bytes, 4).ok_or(Fault::Damaged)?;
+    if usize::try_from(declared).ok() != bytes.len().checked_sub(8) {
+        return Err(Fault::Damaged);
+    }
+    let (mut canvas, mut extended, mut first, mut images) = (None, false, true, 0);
+    chunks(bytes.get(12..).ok_or(Fault::Damaged)?, |name, data| {
+        match name {
+            b"VP8X" if first => {
+                canvas = Some(limited(webp_canvas(data)?)?);
+                extended = true;
             }
-            let bits = le32(data, 1).ok_or_else(damaged)?;
-            Ok(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
-        }
-        b"VP8 " => {
-            if at::<3>(data, 3) != Some([0x9d, 0x01, 0x2a]) {
-                return Err(Fault::Damaged);
+            b"VP8 " | b"VP8L" => {
+                let sides = limited(webp_bitstream(name, data)?)?;
+                if *canvas.get_or_insert(sides) != sides {
+                    return Err(Fault::Damaged);
+                }
+                images += 1;
             }
-            let width = le16(data, 6).ok_or_else(damaged)? & 0x3fff;
-            let height = le16(data, 8).ok_or_else(damaged)? & 0x3fff;
-            Ok((u32::from(width), u32::from(height)))
+            b"ANMF" if extended => {
+                webp_frame(data, canvas.ok_or(Fault::Damaged)?)?;
+                images += 1;
+            }
+            _ if first || matches!(name, b"VP8X" | b"ANMF") => return Err(Fault::Damaged),
+            _ => {}
         }
+        first = false;
+        Ok(())
+    })?;
+    match canvas {
+        Some(sides) if images > 0 => Ok(sides),
         _ => Err(Fault::Damaged),
     }
+}
+
+fn webp_canvas(data: &[u8]) -> Found {
+    let width = le24(data, 4).ok_or(Fault::Damaged)? + 1;
+    let height = le24(data, 7).ok_or(Fault::Damaged)? + 1;
+    Ok((width, height))
+}
+
+fn webp_bitstream(name: &[u8; 4], data: &[u8]) -> Found {
+    if name == b"VP8L" {
+        if data.first() != Some(&0x2f) {
+            return Err(Fault::Damaged);
+        }
+        let bits = le32(data, 1).ok_or(Fault::Damaged)?;
+        return Ok(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1));
+    }
+    if at::<3>(data, 3) != Some([0x9d, 0x01, 0x2a]) {
+        return Err(Fault::Damaged);
+    }
+    let width = le16(data, 6).ok_or(Fault::Damaged)? & 0x3fff;
+    let height = le16(data, 8).ok_or(Fault::Damaged)? & 0x3fff;
+    Ok((u32::from(width), u32::from(height)))
+}
+
+/// An animation frame holds one image, as large as the frame says, placed inside the canvas.
+fn webp_frame(data: &[u8], canvas: (u32, u32)) -> Result<(), Fault> {
+    let at24 = |from| le24(data, from).ok_or(Fault::Damaged);
+    let (x, y) = (at24(0)? * 2, at24(3)? * 2);
+    let sides = limited((at24(6)? + 1, at24(9)? + 1))?;
+    let mut image = None;
+    chunks(data.get(16..).ok_or(Fault::Damaged)?, |name, inner| {
+        if matches!(name, b"VP8 " | b"VP8L") {
+            if image.is_some() {
+                return Err(Fault::Damaged);
+            }
+            image = Some(limited(webp_bitstream(name, inner)?)?);
+        }
+        Ok(())
+    })?;
+    if image != Some(sides) || x + sides.0 > canvas.0 || y + sides.1 > canvas.1 {
+        return Err(Fault::Damaged);
+    }
+    Ok(())
 }
 
 fn kind_of(bytes: &[u8]) -> Option<Kind> {
@@ -252,14 +309,12 @@ fn kind_of(bytes: &[u8]) -> Option<Kind> {
 /// Checks container markers and dimensions without decoding pixels.
 pub fn of(bytes: &[u8]) -> Result<Kind, Refusal> {
     let kind = kind_of(bytes).ok_or(Fault::Unknown)?;
-    let (width, height) = match kind {
+    let sides = match kind {
         Kind::Png => png(bytes),
         Kind::Jpeg => jpeg(bytes),
         Kind::Webp => webp(bytes),
     }?;
-    if !(1..=MAX_SIDE).contains(&width) || !(1..=MAX_SIDE).contains(&height) {
-        return Err(Fault::Side(width, height).into());
-    }
+    limited(sides)?;
     Ok(kind)
 }
 
@@ -376,6 +431,92 @@ mod tests {
         ] {
             assert!(of(bytes).is_err());
         }
+    }
+
+    fn riff(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut body = b"WEBP".to_vec();
+        body.extend(chunks.concat());
+        let mut out = b"RIFF".to_vec();
+        out.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    fn riff_chunk(name: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut out = name.to_vec();
+        out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            out.push(0);
+        }
+        out
+    }
+
+    fn lossless(width: u32, height: u32) -> Vec<u8> {
+        let bits = (width - 1) | ((height - 1) << 14);
+        let mut data = vec![0x2f];
+        data.extend_from_slice(&bits.to_le_bytes());
+        riff_chunk(b"VP8L", &data)
+    }
+
+    fn canvas(width: u32, height: u32) -> Vec<u8> {
+        let mut data = vec![0; 4];
+        data.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
+        data.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
+        riff_chunk(b"VP8X", &data)
+    }
+
+    fn frame(at: (u32, u32), width: u32, height: u32, inside: &[Vec<u8>]) -> Vec<u8> {
+        let mut data = Vec::new();
+        for value in [at.0 / 2, at.1 / 2, width - 1, height - 1, 0] {
+            data.extend_from_slice(&value.to_le_bytes()[..3]);
+        }
+        data.push(0);
+        data.extend(inside.concat());
+        riff_chunk(b"ANMF", &data)
+    }
+
+    #[test]
+    fn a_webp_canvas_and_every_image_in_it_agree_and_stay_within_the_limit() {
+        assert!(of(&riff(&[canvas(8, 8), lossless(8, 8)])).is_ok());
+        for bytes in [
+            riff(&[canvas(1, 1), lossless(4097, 1)]),
+            riff(&[canvas(8, 8), lossless(4, 4)]),
+            riff(&[canvas(8, 8), lossless(8, 8), lossless(4097, 1)]),
+            riff(&[canvas(8, 8)]),
+            riff(&[lossless(8, 8), lossless(4, 4)]),
+        ] {
+            assert!(of(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn every_webp_animation_frame_stays_inside_the_canvas() {
+        let ok = frame((2, 0), 6, 8, &[lossless(6, 8)]);
+        assert!(of(&riff(&[canvas(8, 8), ok.clone()])).is_ok());
+        for bad in [
+            frame((4, 0), 6, 8, &[lossless(6, 8)]),
+            frame((0, 0), 6, 8, &[lossless(4097, 1)]),
+            frame((0, 0), 6, 8, &[lossless(6, 7)]),
+            frame((0, 0), 6, 8, &[]),
+            frame((0, 0), 6, 8, &[lossless(6, 8), lossless(6, 8)]),
+        ] {
+            assert!(of(&riff(&[canvas(8, 8), ok.clone(), bad])).is_err());
+        }
+        assert!(of(&riff(&[ok])).is_err());
+    }
+
+    #[test]
+    fn an_odd_final_webp_chunk_needs_its_padding_byte() {
+        let mut data = vec![0x2f];
+        data.extend_from_slice(&(7u32 | (7 << 14)).to_le_bytes());
+        let padded = riff(&[riff_chunk(b"VP8L", &data)]);
+        assert!(of(&padded).is_ok());
+        let mut bytes = padded.clone();
+        bytes.pop();
+        let declared = u32::try_from(bytes.len() - 8).unwrap();
+        bytes[4..8].copy_from_slice(&declared.to_le_bytes());
+        assert!(of(&bytes).is_err());
     }
 
     #[test]
