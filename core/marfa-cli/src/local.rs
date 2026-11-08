@@ -24,6 +24,19 @@ pub fn http(path: &Path) -> Result<marfa_core::http::Http, CliError> {
     )?)
 }
 
+/// Whether a folder on the way to something private belongs to neither the
+/// account that relies on it nor root.
+pub(crate) fn foreign_owner(metadata: &std::fs::Metadata, uid: u32) -> bool {
+    metadata.uid() != uid && metadata.uid() != 0
+}
+
+/// Whether group or others can write to a folder, so that they could swap
+/// what is below it. A sticky folder of root's, such as `/tmp`, lets nobody
+/// replace what is not theirs.
+pub(crate) fn open_to_others(metadata: &std::fs::Metadata) -> bool {
+    metadata.mode() & 0o022 != 0 && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)
+}
+
 fn verify(path: &Path) -> Result<(), CliError> {
     if !path.is_absolute() {
         return Err(CliError::Invalid(
@@ -87,10 +100,7 @@ fn verify(path: &Path) -> Result<(), CliError> {
             if metadata.uid() != uid || metadata.mode() & 0o777 != expected {
                 return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
             }
-        } else if metadata.uid() != uid && metadata.uid() != 0
-            || metadata.mode() & 0o022 != 0
-                && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)
-        {
+        } else if foreign_owner(&metadata, uid) || open_to_others(&metadata) {
             return Err(CliError::Invalid(
                 "the socket path is writable by another account".into(),
             ));
