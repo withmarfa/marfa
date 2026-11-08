@@ -485,8 +485,9 @@ jobs:
             grep -q "$part" "$notices" || { echo "::error::NOTICES.txt does not name $part"; exit 1; }
           done
           wc -c "$notices"
-      # `release.sh --full` does not fuzz. Every run uses the same seed, so a
-      # file that harms a reader is found again by the run that follows.
+      # `release.sh --full` does not fuzz. Every run uses the same seed and job
+      # count, so it reads the files of the run before it, up to where that run
+      # stopped.
       - name: Fuzz the reader
         run: core/marfa-enrichment/native/fuzz.sh "$TARGET" 300 --jobs 2 --seed 1
       - name: Save the downloads and the PDFium library

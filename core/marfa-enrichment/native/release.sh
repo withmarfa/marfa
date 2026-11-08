@@ -29,7 +29,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 needs() {
   cat <<'EOF'
 Every target:
-  - the network (GitHub, googlesource.com, musl.cc or its mirrors, static.rust-lang.org, raw.githubusercontent.com)
+  - the network (GitHub, googlesource.com, static.rust-lang.org, raw.githubusercontent.com, and
+    musl.cc or, when it is out of reach, owncast-infra.nyc3.cdn.digitaloceanspaces.com or web.archive.org)
   - 40 GB of free disk space for the first build of a target (a PDFium checkout is 6 GB;
     it is deleted once the library is saved), then about 1.5 GB per target
   - bash, curl, git, python3, tar, patch, and a sha256 tool (sha256sum or shasum)
