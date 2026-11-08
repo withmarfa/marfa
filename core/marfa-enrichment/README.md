@@ -112,6 +112,8 @@ MARFA_NATIVE_ROOT=/path/to/cache native/release.sh x86_64-unknown-linux-musl --f
 
 `release.sh` fetches and verifies every source, builds the libraries and the programs, checks what it made, writes `out/<target>/NOTICES.txt` with the licences, and reads a picture with the finished program and nothing else installed. `--full` adds the whole matrix of `native/verify.sh`, and `--needs` prints what the runner must have. A second run builds only what changed.
 
+`--server` builds the libraries and then `marfa-server` with the `native` feature, as `out/<target>/marfa-server` (`native/server.sh`), and builds and checks nothing else. The Rust contract jobs run that server.
+
 | Target | Where it builds |
 | --- | --- |
 | `aarch64-apple-darwin` | A Mac with Apple silicon, Xcode's command line tools, cmake and ninja. |

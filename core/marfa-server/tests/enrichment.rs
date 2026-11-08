@@ -221,6 +221,69 @@ async fn offers_a_skipped_file_again_when_its_limit_is_raised() {
     );
 }
 
+#[cfg(feature = "native")]
+const SENTENCE: &[u8] = include_bytes!("../../marfa-enrichment/fixtures/sentence.png");
+
+#[cfg(feature = "native")]
+async fn picture_item(one: &Instance, bytes: &[u8]) -> String {
+    let hash = one.upload(bytes).await;
+    let made = json!({ "type": "core.file.image", "properties": {
+        "blob_ref": hash, "mime_type": "image/png", "title": "a picture" } });
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/items")
+        .header(header::AUTHORIZATION, format!("Bearer {}", one.token))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(made.to_string()))
+        .unwrap();
+    let (status, body) = send(&one.public, request).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    body["item"]["id"].as_str().unwrap().to_string()
+}
+
+#[cfg(feature = "native")]
+async fn reads_a_picture_for_its_size_and_again_for_its_words_once_ocr_is_on() {
+    let one = Instance::start(&[]).await;
+    let id = picture_item(&one, SENTENCE).await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    let item = one.item(&id).await;
+    assert!(item["properties"]["width"].as_u64().unwrap() > 0);
+    assert!(item["properties"].get("extracted_text").is_none());
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    let (status, body) = one
+        .local(
+            Method::PATCH,
+            "/config",
+            json!({ "enrichment_ocr_enabled": true }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    let text = one.item(&id).await["properties"]["extracted_text"].clone();
+    assert!(
+        text.as_str()
+            .unwrap()
+            .contains("Marfa reads this sentence upright."),
+        "{text}"
+    );
+}
+
+#[cfg(feature = "native")]
+async fn counts_a_damaged_picture_when_ocr_is_on() {
+    let one = Instance::start(&[("MARFA_ENRICHMENT_OCR_ENABLED", "true")]).await;
+    let mut damaged = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    damaged.extend_from_slice(&[0x5a; 4096]);
+    let broken = picture_item(&one, &damaged).await;
+    let good = picture_item(&one, SENTENCE).await;
+    assert_eq!(one.sweep().await, counts(1, 0, 1));
+    assert!(one.item(&broken).await["properties"].get("width").is_none());
+    assert!(
+        one.item(&good).await["properties"]
+            .get("extracted_text")
+            .is_some()
+    );
+}
+
 async fn leaves_a_disabled_sweep_with_its_files_waiting() {
     let one = Instance::start(&[("MARFA_ENRICHMENT_ENABLED", "false")]).await;
     let id = one.file(b"waiting text", "text/plain", json!({})).await;
@@ -278,5 +341,17 @@ fn main() {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())
         }),
     ];
+    #[cfg(feature = "native")]
+    let trials = {
+        let mut trials = trials;
+        trials.push(trial(
+            "reads_a_picture_for_its_size_and_again_for_its_words_once_ocr_is_on",
+            || Box::pin(reads_a_picture_for_its_size_and_again_for_its_words_once_ocr_is_on()),
+        ));
+        trials.push(trial("counts_a_damaged_picture_when_ocr_is_on", || {
+            Box::pin(counts_a_damaged_picture_when_ocr_is_on())
+        }));
+        trials
+    };
     libtest_mimic::run(&arguments, trials).exit();
 }
