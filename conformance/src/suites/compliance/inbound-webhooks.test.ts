@@ -1378,8 +1378,7 @@ describe("retained inbound capacity", () => {
   it("counts query metadata when every retained body has zero bytes", async () => {
     const owner = await own("retained-metadata");
     const made = await endpoint(owner);
-    // The retained bytes are 4096: one query of this length fits, and two
-    // do not, though no body holds a byte.
+    // Two queries exceed 4096 bytes even with empty bodies.
     const heavy = `${made.path}?metadata=${"x".repeat(2500)}`;
     idOf(await send(server!.apiUrl, heavy, ""));
     const refused = await send(server!.apiUrl, heavy, "");

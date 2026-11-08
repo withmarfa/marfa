@@ -150,8 +150,7 @@ fn declared_length(request: &Request) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
-/// The headers as the request carried them, a name's repeats in the order they arrived, less the
-/// identity a tailnet's proxy adds.
+/// Excludes proxy identity headers while preserving each name's repeat order.
 fn headers_of(request: &Request) -> Vec<(String, String)> {
     request
         .headers()

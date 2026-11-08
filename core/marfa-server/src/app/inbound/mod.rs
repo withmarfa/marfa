@@ -1,5 +1,4 @@
-//! Inbound endpoints and deliveries. A source's are reached through the registration its
-//! current key made, and a sender reaches an endpoint by its address alone.
+//! Source-owned endpoints and deliveries, bound to the current registration.
 
 mod cleanup;
 mod receive;
@@ -347,8 +346,7 @@ fn unescaped(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A path as it may be written to a log. An inbound address is a credential, so everything after
-/// the prefix but its last four characters goes, in whatever case and escaping it came.
+/// Redacts address credentials regardless of case or URL escaping.
 pub fn loggable(path: &str) -> String {
     let decoded = unescaped(path);
     let lowered = decoded.to_ascii_lowercase();

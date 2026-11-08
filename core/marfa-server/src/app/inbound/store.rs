@@ -137,8 +137,7 @@ pub fn holds(tx: &Transaction<'_>, source: &str, connector_id: &str) -> Result<b
         .exists(params![source, connector_id])?)
 }
 
-/// The live endpoint at an address, with its registration's key: revoked keys are left out here
-/// and the caller judges the expiry.
+/// Excludes retired endpoints and revoked keys; the caller checks expiry.
 pub fn target(tx: &Transaction<'_>, token_hash: &str) -> Result<Option<(Target, Option<String>)>> {
     Ok(tx
         .prepare_cached(
@@ -343,8 +342,7 @@ pub struct Expired {
     pub charge: i64,
 }
 
-/// The oldest deliveries past their retention, by the time each is aged from. A kept class
-/// (a `None` cutoff) is left out.
+/// A `None` cutoff keeps that class regardless of age.
 pub fn expired(
     tx: &Transaction<'_>,
     handled_before: Option<&str>,

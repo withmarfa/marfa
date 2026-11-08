@@ -341,8 +341,7 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
-/// A sender posts here with no credential: the address is the credential. It sits in a group of
-/// its own so nothing a credentialed door is held to reaches it.
+/// Address credentials need a separate route group from authenticated doors.
 fn sender_doors() -> Routes {
     Doors::new().route("/inbound/{token}", post(inbound::receive))
 }

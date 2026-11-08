@@ -75,9 +75,6 @@ describe("the server's log", () => {
     const unknown = `/inbound/${randomBytes(32).toString("base64url")}`;
     const shouted = `/INBOUND/${randomBytes(32).toString("base64url")}`;
 
-    // A receipt, and each refusal a receipt meets: an address nothing holds
-    // in two spellings, one that was retired, a declared length and a body
-    // read over the limit, and a backlog that is full.
     idOf(await send(server.apiUrl, named(roomy.endpoint.path), body, headers));
     expect(
       (await send(server.apiUrl, named(unknown), body, headers)).status,

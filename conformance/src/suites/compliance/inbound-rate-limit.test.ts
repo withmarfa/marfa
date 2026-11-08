@@ -246,8 +246,7 @@ describe("the inbound rate window against the checks around it", () => {
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
     idOf(await send(order.apiUrl, first.data.path, "x"));
-    // The backlog is full from here, and this one spends the second place in
-    // the window.
+    // Refused receipts still consume the endpoint's window.
     const full = await send(order.apiUrl, first.data.path, "x");
     expect(full.status).toBe(503);
     expect(codeOf(full)).toBe("inbound_unavailable");
@@ -255,8 +254,7 @@ describe("the inbound rate window against the checks around it", () => {
     const spent = await send(order.apiUrl, first.data.path, "x");
     expect(spent.status).toBe(429);
     expect(codeOf(spent)).toBe("rate_limited");
-    // The witness: another endpoint of the registration has a window of its
-    // own and meets the backlog that was full all along.
+    // A fresh endpoint witnesses the full backlog independently of the window.
     const witness = await send(order.apiUrl, second.data.path, "x");
     expect(witness.status).toBe(503);
     expect(codeOf(witness)).toBe("inbound_unavailable");

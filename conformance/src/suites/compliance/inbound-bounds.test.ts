@@ -285,8 +285,6 @@ describe("the retained bytes of a registration, to the byte", () => {
     await server.stop();
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  /** The charge of a receipt: its body, its query and each stored header's
-   *  name and value, in bytes. */
   function charge(row: InboundDeliveryRow, body: Buffer) {
     const headers = row.headers.reduce(
       (sum, [name, value]) =>

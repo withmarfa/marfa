@@ -516,7 +516,7 @@ If a receipt's charge would take the bytes a registration retains past `MARFA_IN
 
 When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of its query string, plus the UTF-8 lengths of the name and the value of each header it stores.
 
-**Reason:** the charge is what the delivery stores, so a registration's retained bytes bound what it holds. A mark made later changes no stored length, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
+**Reason:** the charge counts the retained body, query and header bytes. Handling changes none of those fields, so it needs no additional capacity. The charge does not measure the database file or server memory.
 
 **Tests:** `compliance/inbound-bounds.test.ts › takes a second receipt at exactly twice the charge of the first and refuses it one byte under`, `compliance/inbound-webhooks.test.ts › counts query metadata when every retained body has zero bytes`.
 

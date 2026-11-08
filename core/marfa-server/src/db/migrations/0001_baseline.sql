@@ -786,8 +786,7 @@ BEGIN
     DELETE FROM enrichment_files WHERE item_seq = OLD.seq AND hash = OLD.hash;
 END;
 
--- The registration that holds a source's inbound endpoints and deliveries. A successor key moves the
--- binding to its own registration, and removing the bound registration removes both.
+-- Source takeover changes the binding without deleting endpoints or deliveries.
 CREATE TABLE IF NOT EXISTS inbound_sources (
     source TEXT PRIMARY KEY CHECK (length(source) > 0),
     connector_id TEXT NOT NULL UNIQUE REFERENCES connectors (id) ON DELETE CASCADE

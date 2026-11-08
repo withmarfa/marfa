@@ -204,8 +204,7 @@ impl Run {
                 return Err(invalid("outcome", "outcome is succeeded or failed."));
             }
         };
-        // A time of the wrong shape is refused with the body's shape; one whose UTC year is out of
-        // range is judged with the other checks that follow the key.
+        // UTC range checks follow authorization; syntax checks precede it.
         let moment = |name: &str| -> Result<Stamp> {
             let held = required(fields, name, name)?
                 .as_str()

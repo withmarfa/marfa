@@ -1,5 +1,4 @@
-//! The door a sender posts to. The address is the credential: it is judged before the body is
-//! read and again in the write that stores the body.
+//! Address-authorized receipts, checked again in the storage transaction.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +16,6 @@ use crate::settings::registry::{
     INBOUND_RETAINED_DELIVERIES,
 };
 
-/// Long enough for a backlog to drain or a burst to pass.
 const RETRY_AFTER_SECONDS: i64 = 60;
 
 /// The bytes of the bodies arriving now, across every endpoint.
@@ -77,8 +75,7 @@ pub struct Place {
     connector_id: String,
 }
 
-/// A live endpoint's address is the only thing a sender is told of the instance's state, and only
-/// after the address is known.
+/// Checks the address before exposing capacity refusals.
 pub async fn admit(app: &App, token: &str) -> Result<Place> {
     let token_hash = super::hash_token(token);
     let looked = token_hash.clone();
@@ -137,9 +134,7 @@ fn charge(sent: &Sent) -> i64 {
         .saturating_add(headers)
 }
 
-/// Stores a delivery in one write that judges the address again, so an endpoint retired, a key
-/// revoked or a source taken over while the body arrived is told `404`, and a limit is checked on
-/// what the write commits.
+/// Rechecks authority and capacity in the receipt's transaction.
 pub async fn receive(app: &App, place: Place, sent: Sent) -> Result<Landed> {
     let live = app.settings.live();
     let clock = app.clock.clone();

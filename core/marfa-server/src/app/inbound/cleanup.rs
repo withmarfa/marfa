@@ -15,8 +15,7 @@ use crate::settings::registry::{INBOUND_HANDLED_RETENTION_DAYS, INBOUND_PENDING_
 const BATCH: i64 = 500;
 const CHARGE_TARGET: i64 = 32 * 1024 * 1024;
 
-/// The oldest deliveries past their retention, up to a count and the charge they hold, with the
-/// first always taken so that one larger than the target is still removed.
+/// Always takes the first delivery so an oversized one cannot block cleanup.
 fn chosen(expired: Vec<store::Expired>) -> Vec<i64> {
     let mut seqs = Vec::new();
     let mut held: i64 = 0;

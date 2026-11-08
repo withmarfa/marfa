@@ -1,5 +1,4 @@
-//! What the inbound doors take in a body. A top-level field the door does not declare is
-//! refused once the registration and the caller are judged.
+//! Undeclared fields are refused after registration and caller checks.
 
 use std::collections::HashSet;
 

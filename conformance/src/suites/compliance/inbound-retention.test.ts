@@ -344,8 +344,6 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
   const MIB = 1024 * 1024;
   const TARGET = 32 * MIB;
 
-  /** The charge of a delivery: its body, its query and each stored header's
-   *  name and value, in bytes. */
   function charge(row: InboundDeliveryRow, size: number) {
     const headers = row.headers.reduce(
       (sum, [name, value]) =>
@@ -355,9 +353,7 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     return size + Buffer.byteLength(row.query) + headers;
   }
 
-  /** A size at which one delivery charges exactly `total` bytes. What is
-   *  stored beside a body is as long for one size as for another with as many
-   *  digits, so one measurement of it settles the size. */
+  /** Content-Length has the same width for sizes with the same digit count. */
   async function sizeCharging(total: number): Promise<number> {
     const probe = await world();
     try {
