@@ -1,6 +1,6 @@
 //! The only SQL of the blob tables.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use rusqlite::types::ValueRef;
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::Blob;
 use super::hash::Hash;
+use super::references::Row;
 use crate::app::refusal::{Refusal, Result};
 
 /// A row that names a blob through a reference that lends, with the types the read rule asks.
@@ -103,6 +104,90 @@ pub fn lenders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Lender>> {
         });
     }
     Ok(lenders)
+}
+
+fn keyed(row: Row<'_>) -> (&'static str, i64, &str, i64) {
+    match row {
+        Row::Item(seq) => ("item", seq, "", 0),
+        Row::Edge(seq) => ("edge", seq, "", 0),
+        Row::Extension(seq, namespace) => ("extension", seq, namespace, 0),
+        Row::Version(seq, version) => ("version", seq, "", version),
+    }
+}
+
+/// Each digest the row names, and whether it lends.
+pub fn references(tx: &Transaction<'_>, row: Row<'_>) -> Result<BTreeMap<String, bool>> {
+    let (kind, seq, namespace, version) = keyed(row);
+    let mut statement = tx.prepare_cached(
+        "SELECT hash, lends FROM blob_references \
+         WHERE kind = ?1 AND seq = ?2 AND namespace = ?3 AND version = ?4",
+    )?;
+    let rows = statement.query_map(params![kind, seq, namespace, version], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// A reference added takes its blob off the orphan report.
+pub fn reference(tx: &Transaction<'_>, row: Row<'_>, hash: &str, lends: bool) -> Result<()> {
+    let (kind, seq, namespace, version) = keyed(row);
+    tx.prepare_cached(
+        "INSERT INTO blob_references (hash, kind, seq, namespace, version, lends) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?
+    .execute(params![hash, kind, seq, namespace, version, lends])?;
+    tx.prepare_cached("DELETE FROM blob_orphans WHERE hash = ?1")?
+        .execute([hash])?;
+    Ok(())
+}
+
+pub fn unreference(tx: &Transaction<'_>, row: Row<'_>, hash: &str) -> Result<()> {
+    let (kind, seq, namespace, version) = keyed(row);
+    tx.prepare_cached(
+        "DELETE FROM blob_references \
+         WHERE hash = ?1 AND kind = ?2 AND seq = ?3 AND namespace = ?4 AND version = ?5",
+    )?
+    .execute(params![hash, kind, seq, namespace, version])?;
+    Ok(())
+}
+
+pub fn forget(tx: &Transaction<'_>, row: Row<'_>) -> Result<()> {
+    let (kind, seq, namespace, version) = keyed(row);
+    tx.prepare_cached(
+        "DELETE FROM blob_references \
+         WHERE kind = ?1 AND seq = ?2 AND namespace = ?3 AND version = ?4",
+    )?
+    .execute(params![kind, seq, namespace, version])?;
+    Ok(())
+}
+
+/// The item, each of its namespaces and each of its versions.
+pub fn forget_item(tx: &Transaction<'_>, seq: i64) -> Result<()> {
+    tx.prepare_cached(
+        "DELETE FROM blob_references WHERE kind IN ('item', 'extension', 'version') AND seq = ?1",
+    )?
+    .execute([seq])?;
+    Ok(())
+}
+
+/// The version an item leaves behind names what the item named, and lends nothing.
+pub fn keep_version(tx: &Transaction<'_>, seq: i64) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO blob_references (hash, kind, seq, namespace, version, lends) \
+         SELECT r.hash, 'version', r.seq, '', i.version, 0 \
+         FROM blob_references r JOIN items i ON i.seq = r.seq \
+         WHERE r.kind = 'item' AND r.seq = ?1",
+    )?
+    .execute([seq])?;
+    Ok(())
+}
+
+pub fn proved(tx: &Transaction<'_>, hash: &str, holder: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM blob_proofs WHERE hash = ?1 AND holder = ?2)",
+        )?
+        .query_row(params![hash, holder], |row| row.get(0))?)
 }
 
 /// Records what an upload landed: the blob if it is new, the copy if none is recorded, and

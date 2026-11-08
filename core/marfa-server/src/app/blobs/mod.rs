@@ -6,6 +6,7 @@ mod disk;
 mod hash;
 pub mod link;
 pub mod range;
+pub mod references;
 mod rows;
 mod s3;
 mod store;

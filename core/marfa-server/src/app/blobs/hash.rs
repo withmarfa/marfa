@@ -19,6 +19,13 @@ impl Hash {
         }
     }
 
+    /// A whole hash: the `sha256:` form alone.
+    pub fn whole(text: &str) -> Option<Hash> {
+        text.starts_with(PREFIX)
+            .then(|| Hash::parse(text).ok())
+            .flatten()
+    }
+
     pub fn from_digest(digest: &[u8]) -> Hash {
         Hash(format!("{PREFIX}{}", hex::encode(digest)))
     }
@@ -44,6 +51,13 @@ mod tests {
         assert_eq!(prefixed, Hash::parse(HEX).unwrap());
         assert_eq!(prefixed.as_str(), format!("sha256:{HEX}"));
         assert_eq!(prefixed.hex(), HEX);
+    }
+
+    #[test]
+    fn takes_only_the_prefixed_form_as_a_whole_hash() {
+        assert!(Hash::whole(&format!("sha256:{HEX}")).is_some());
+        assert!(Hash::whole(HEX).is_none());
+        assert!(Hash::whole(&format!("sha256:{}", &HEX[1..])).is_none());
     }
 
     #[test]

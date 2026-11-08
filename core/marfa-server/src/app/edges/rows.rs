@@ -4,6 +4,7 @@ use marfa_rules::edges::{Graph, Link, OnDelete};
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
 
 use super::Edge;
+use crate::app::blobs::references;
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Refusal, Result};
 
@@ -107,6 +108,7 @@ pub(super) fn advance(tx: &Transaction<'_>, edge: &Edge, next: &Landed<'_>) -> R
 }
 
 pub(super) fn delete(tx: &Transaction<'_>, edge: &Edge) -> Result<()> {
+    references::forget(tx, references::Row::Edge(edge.seq))?;
     tx.prepare_cached("DELETE FROM edges WHERE seq = ?1")?
         .execute([edge.seq])?;
     Ok(())

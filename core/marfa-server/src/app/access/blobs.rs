@@ -30,6 +30,38 @@ impl Caller {
         }
     }
 
+    /// Whether a digest this caller writes into a row lends, on the state its write commits: the
+    /// bytes are held, and the caller uploaded them or may read them now. A write for no
+    /// credential proves nothing.
+    pub fn proves_blob(
+        &self,
+        held: bool,
+        uploaded: impl FnOnce() -> Result<bool>,
+        lenders: impl FnOnce() -> Result<Vec<Lender>>,
+    ) -> Result<bool> {
+        if matches!(self, Caller::Server) || !held {
+            return Ok(false);
+        }
+        if self.reads_every_blob() || uploaded()? {
+            return Ok(true);
+        }
+        Ok(self.may_read_blob(&lenders()?))
+    }
+
+    /// A working credential may not name as a file's bytes a blob it did not prove. The answer
+    /// is the same whether or not the bytes are held.
+    pub fn require_file_bytes(&self, proved: bool) -> Result<()> {
+        if proved || !matches!(self, Caller::Key(_) | Caller::App { .. }) {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::BlobNotFound,
+            "blob_ref names bytes this credential has not uploaded and may not read. Upload \
+             them with this credential, then write the item again.",
+        )
+        .with_detail("field", "blob_ref"))
+    }
+
     pub fn reads_every_blob(&self) -> bool {
         self.holds(Permission::BlobsManage)
     }
@@ -52,5 +84,30 @@ impl Caller {
                 item_type,
             } => self.may_read_extension(namespace) && self.may_read_type(item_type),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::access::Standing;
+
+    fn asked() -> Result<bool> {
+        panic!("not asked")
+    }
+
+    #[test]
+    fn a_write_for_no_credential_proves_nothing_whatever_it_holds() {
+        let proved = Caller::Server.proves_blob(true, || Ok(true), || Ok(Vec::new()));
+        assert!(!proved.unwrap());
+        assert!(Caller::Server.require_file_bytes(false).is_ok());
+    }
+
+    #[test]
+    fn a_local_caller_proves_every_held_blob_and_none_that_is_not_held() {
+        let local = Caller::Local(Standing::default());
+        assert!(local.proves_blob(true, asked, || Ok(Vec::new())).unwrap());
+        assert!(!local.proves_blob(false, asked, || Ok(Vec::new())).unwrap());
+        assert!(local.require_file_bytes(false).is_ok());
     }
 }
