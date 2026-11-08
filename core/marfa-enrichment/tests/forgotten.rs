@@ -1,7 +1,9 @@
 //! A program that never called `serve_child_if_asked`. It has to stop at its first
-//! `read`, and neither start a child nor read the file in itself. The bytes would
+//! `read`, and neither start a child nor read the file in itself. The file would
 //! read as text, so an answer would show that one of those had happened.
 
+use std::fs::File;
+use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -9,7 +11,12 @@ use marfa_enrichment::{Options, read};
 
 fn read_stops_and_starts_nothing() -> Result<(), Failed> {
     let options = Options::default();
-    let outcome = catch_unwind(AssertUnwindSafe(|| read(b"words", "text/plain", &options)));
+    let mut named = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    named
+        .write_all(b"words")
+        .map_err(|error| error.to_string())?;
+    let file = File::open(named.path()).map_err(|error| error.to_string())?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| read(&file, "text/plain", &options)));
     let Err(panic) = outcome else {
         return Err("read went ahead without serve_child_if_asked".into());
     };

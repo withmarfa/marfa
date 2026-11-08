@@ -87,18 +87,21 @@ fn read_one(file: &Path, mime: Option<&str>, options: &Options) -> Result<bool, 
         eprintln!("cannot tell the type of {}: use --type", file.display());
         return Err(MISUSED);
     };
-    let bytes = match std::fs::read(file) {
-        Ok(bytes) => bytes,
+    let file_handle = match std::fs::File::open(file) {
+        Ok(handle) => handle,
         Err(error) => {
             eprintln!("cannot read {}: {error}", file.display());
             return Err(MISUSED);
         }
     };
-    match read(&bytes, mime, options) {
+    match read(&file_handle, mime, options) {
         Ok(reading) => {
             println!("{}", reading.text);
             if let Some(size) = reading.dimensions {
                 eprintln!("size: {} x {}", size.width, size.height);
+            }
+            if let Some(seconds) = reading.duration {
+                eprintln!("duration: {seconds} seconds");
             }
             if reading.truncated {
                 eprintln!("truncated: the file holds more text");

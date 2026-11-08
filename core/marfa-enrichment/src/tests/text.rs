@@ -65,7 +65,7 @@ fn a_pdf_is_unsupported_without_the_native_feature() {
 
 #[test]
 fn a_type_with_no_reader_is_unsupported() {
-    for mime in ["application/octet-stream", "audio/mpeg"] {
+    for mime in ["application/octet-stream", "audio/x-unknown", "video/x-flv"] {
         assert_eq!(
             refusal(b"MZ", mime, &options()),
             Refusal::Unsupported,
