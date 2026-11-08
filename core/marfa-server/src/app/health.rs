@@ -9,13 +9,12 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
 use super::App;
-use super::faults::Volume;
+use super::blobs::MARKER;
+use super::faults::{FAIL_HEALTH_WRITE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
 use super::stored;
 use crate::db::{Write, volume};
-use crate::failure::Failure;
 
-const MARKER: &str = ".marfa-store";
 const PROBE_KEY: &str = "health_probe";
 const PROBE_WAIT: Duration = Duration::from_secs(2);
 const WRITE_REUSE: Duration = Duration::from_secs(10);
@@ -82,8 +81,10 @@ impl Component {
 }
 
 fn because(refusal: &Refusal) -> String {
-    let why = refusal.database_code().unwrap_or(refusal.code.wire());
-    format!("the database refused: {why}")
+    match refusal.database_code() {
+        Some(code) => format!("Database operation failed ({code})"),
+        None => format!("the database refused: {}", refusal.code.wire()),
+    }
 }
 
 /// What `GET /health` found.
@@ -143,22 +144,6 @@ impl Health {
     }
 }
 
-/// Makes the blob folder and its marker, for a folder that has neither.
-pub fn prepare_blobs(path: &Path) -> Result<(), Failure> {
-    let refused = |error| {
-        Failure::start(format!(
-            "The blob folder {} could not be prepared: {error}",
-            path.display()
-        ))
-    };
-    std::fs::create_dir_all(path).map_err(refused)?;
-    let marker = path.join(MARKER);
-    if !marker.exists() {
-        std::fs::write(&marker, b"").map_err(refused)?;
-    }
-    Ok(())
-}
-
 async fn database(app: &App) -> Component {
     let started = Instant::now();
     let read = app.db.read(|tx| {
@@ -179,10 +164,13 @@ async fn database(app: &App) -> Component {
 async fn attempt_write(app: Arc<App>, result: watch::Sender<Option<Component>>) {
     let started = Instant::now();
     let stamp = app.clock.stamp();
-    let written = app
-        .db
-        .write(Write::own(), move |tx| stored::put(tx, PROBE_KEY, &stamp))
-        .await;
+    let written = if app.faults.fail(FAIL_HEALTH_WRITE, None) {
+        Err(crate::db::io_refusal())
+    } else {
+        app.db
+            .write(Write::own(), move |tx| stored::put(tx, PROBE_KEY, &stamp))
+            .await
+    };
     let component = match written {
         Ok(()) => Component::ok(Some(started.elapsed().as_millis() as u64)),
         Err(refusal) if refusal.code == Code::WriteContention => {
@@ -227,8 +215,10 @@ async fn database_write(app: &Arc<App>) -> Component {
 
 fn disk(app: &App) -> Component {
     let start = &app.settings.start;
-    let free =
-        |volume: Volume, path: &Path| app.faults.free(volume).or_else(|| volume::free_bytes(path));
+    let free = |volume: Volume, path: &Path| match app.faults.free(volume) {
+        Some(set) => set,
+        None => volume::free_bytes(path),
+    };
     let database = free(Volume::Database, &start.database.folder());
     let blobs = free(Volume::Blobs, &start.blob_path);
     let (Some(database), Some(blobs)) = (database, blobs) else {
@@ -250,7 +240,7 @@ fn disk(app: &App) -> Component {
 
 fn blob_storage(app: &App) -> Component {
     let folder = &app.settings.start.blob_path;
-    if folder.is_dir() && folder.join(MARKER).is_file() {
+    if !app.faults.refusing(REFUSE_BLOB_STORE) && folder.is_dir() && folder.join(MARKER).is_file() {
         Component::ok(None)
     } else {
         Component::not_ok(Status::Down, "the blob folder or its marker is missing")

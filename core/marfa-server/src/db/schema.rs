@@ -33,14 +33,6 @@ fn columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
         .collect()
 }
 
-pub fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get(0),
-    )
-}
-
 /// `name` comes from `sqlite_schema` or a declared list, never from a caller.
 pub fn holds_rows(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     let quoted = table.replace('"', "\"\"");

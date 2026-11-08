@@ -193,12 +193,12 @@ export async function startFaultSinks(): Promise<FaultSinks> {
 /** Polls `read` until it answers something other than `undefined`. */
 export async function until<T>(
   what: string,
-  read: () => T | undefined,
+  read: () => T | undefined | Promise<T | undefined>,
   budgetMs = 15_000,
 ): Promise<T> {
   const deadline = Date.now() + budgetMs;
   for (;;) {
-    const found = read();
+    const found = await read();
     if (found !== undefined) return found;
     if (Date.now() > deadline) throw new Error(`${what} never arrived`);
     await new Promise((resolve) => setTimeout(resolve, 100));

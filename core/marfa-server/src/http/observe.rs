@@ -108,8 +108,17 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     });
 
     let span = observed.app.telemetry.begin(request.headers(), &method);
+    let upload = super::blobs::is_upload(&request);
     let mut response = next.run(request).await;
-    body.finish();
+    if upload && !body.is_whole() {
+        // An upload has no size cap, so its unread rest is dropped with the connection, not
+        // read and thrown away.
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    } else {
+        body.finish();
+    }
 
     if wants_html {
         offer_page(&observed.app, &mut response).await;

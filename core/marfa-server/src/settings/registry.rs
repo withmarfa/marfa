@@ -238,7 +238,10 @@ const INTERVAL: Rule = Rule::Whole {
 
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", Some("MARFA_MAX_REQUEST_BYTES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1048576", "The largest request body the server accepts, in bytes.";
-    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space below which health reports the disk as degraded, in bytes.";
+    DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", Some("MARFA_DISK_RESERVE_BYTES"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
+    UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", Some("MARFA_UPLOAD_IDLE_TIMEOUT_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
+    BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", Some("MARFA_BLOB_READ_IDLE_TIMEOUT_MS"), Rule::Whole { min: 1, max: 2_147_483_647 }, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
+    BLOB_MIN_COPIES: u64 = "blob_min_copies", Some("MARFA_BLOB_MIN_COPIES"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "1", "The fewest live copies the server keeps of each blob.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Some("RATE_LIMIT_ENABLED"), Rule::Boolean, "true", "Whether requests made with a key, app registrations, device code requests and passkey sign-in challenges are limited.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", Some("RATE_LIMIT_KEYS_REQUESTS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "200", "How many requests one key may make in each window.";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", Some("RATE_LIMIT_WINDOW_MS"), Rule::Whole { min: 1, max: rule::SAFE_INTEGER }, "60000", "How long one rate-limit window lasts, in milliseconds.";

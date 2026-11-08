@@ -1,6 +1,6 @@
-//! Reads the text and the size out of a file's bytes, so search can find the
-//! file. It knows nothing of items, a database or HTTP: bytes and a MIME type
-//! go in, and text, a size or the reason it could not read come out.
+//! Reads the text, the size and the length out of a file, so search can find the
+//! file. It knows nothing of items, a database or HTTP: an open file and a MIME type
+//! go in, and text, a size, a duration or the reason it could not read come out.
 //!
 //! Every file is read in a process of its own. A program that uses this crate calls
 //! [`serve_child_if_asked`] as the first line of `main`, and then [`read`].
@@ -12,6 +12,8 @@ mod html;
 mod image;
 mod isolated;
 mod kind;
+mod matroska;
+mod media;
 #[cfg(feature = "native")]
 mod ocr;
 mod odf;
@@ -22,11 +24,13 @@ mod pdf;
 mod pixels;
 mod sheet;
 mod sink;
+mod source;
 mod xml;
 
 #[cfg(test)]
 mod tests;
 
+use std::fs::File;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -34,6 +38,7 @@ use std::time::{Duration, Instant};
 use kind::{Document, Kind};
 use serde::{Deserialize, Serialize};
 use sink::Sink;
+use source::Source;
 
 pub use isolated::{read, serve_child_if_asked};
 
@@ -47,8 +52,10 @@ pub struct Options {
     /// The most bytes a document may inflate to, all of its parts together.
     pub max_inflated_bytes: u64,
     /// The most memory the process that reads may hold. A reading that needs more is
-    /// `OverLimit`. A picture is read for text only if decoding and scaling it fit in
-    /// three quarters of what is left here once the file is held.
+    /// `OverLimit`. A file is held whole except a sound or a video, which is read
+    /// from the file by its headers, so a file larger than this is `OverLimit` unless
+    /// it is one of those. A picture is read for text only if decoding and scaling it
+    /// fit in three quarters of what is left here once the file is held.
     pub max_memory_bytes: u64,
     /// Reads text from pictures: images, and pages of a PDF that hold no text.
     /// `None` leaves OCR off, and an image then gives its size only. Without the
@@ -109,7 +116,7 @@ impl Default for OcrOptions {
 }
 
 /// What a file held.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
     /// The text, trimmed and cut to `Options::max_text_chars` without splitting
     /// a character. Empty when the file holds none.
@@ -119,8 +126,10 @@ pub struct Reading {
     /// Whether `Options::time_budget` ran out before every picture was read, so
     /// that more text may be in the file than `text` holds.
     pub cut_short: bool,
-    /// The size of an image.
+    /// The size of an image, or of a video's picture.
     pub dimensions: Option<Dimensions>,
+    /// The length in seconds of a sound or a video, when the file states it.
+    pub duration: Option<f64>,
     /// Why OCR read nothing from an image whose size is in `dimensions`. The size is
     /// good and `text` is empty, and the file is to be treated as this refusal says.
     /// An image with no readable size is a plain refusal instead.
@@ -149,7 +158,7 @@ pub enum Sandbox {
     Off,
 }
 
-/// An image's size in pixels, as its header states it.
+/// A picture's size in pixels, as the file's header states it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dimensions {
     pub width: u32,
@@ -194,15 +203,23 @@ pub enum Refusal {
     ReaderUnavailable(String),
 }
 
-/// Reads `bytes` in this process, by the MIME type `mime`; its parameters and
-/// letter case do not matter, but a `charset` parameter is read as a hint for
-/// text.
+/// Reads `file`, which holds `len` bytes, in this process, by the MIME type `mime`; its
+/// parameters and letter case do not matter, but a `charset` parameter is read as a
+/// hint for text.
 ///
 /// A parser that panics on a file it was not built for is a malformed file, not
 /// a reason to end the caller.
-pub(crate) fn read_here(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
+pub(crate) fn read_here(
+    file: &File,
+    len: u64,
+    mime: &str,
+    options: &Options,
+) -> Result<Reading, Refusal> {
     let clock = Clock::start(options.time_budget);
-    catch_unwind(|| read_kind(bytes, mime, options, &clock)).unwrap_or_else(|_| Err(panicked()))
+    catch_unwind(AssertUnwindSafe(|| {
+        read_file(file, len, mime, options, &clock)
+    }))
+    .unwrap_or_else(|_| Err(panicked()))
 }
 
 fn panicked() -> Refusal {
@@ -229,13 +246,43 @@ impl Clock {
     }
 }
 
-fn read_kind(
-    bytes: &[u8],
+fn read_file(
+    file: &File,
+    len: u64,
     mime: &str,
     options: &Options,
     clock: &Clock,
 ) -> Result<Reading, Refusal> {
     let kind = Kind::of(mime).ok_or(Refusal::Unsupported)?;
+    let source = Source::new(file, len);
+    if let Kind::Media { matroska } = kind {
+        let media = media::read(source, matroska)?;
+        return Ok(Reading {
+            text: String::new(),
+            truncated: false,
+            cut_short: false,
+            dimensions: media
+                .size
+                .map(|(width, height)| Dimensions { width, height }),
+            duration: media.duration,
+            text_refused: None,
+            sandbox: Sandbox::Off,
+        });
+    }
+    let bytes = source
+        .read_all()
+        .map_err(|error| Refusal::Malformed(format!("the file cannot be read: {error}")))?
+        .ok_or_else(|| Refusal::OverLimit(format!("no memory to hold a file of {len} bytes")))?;
+    read_bytes(&bytes, kind, mime, options, clock)
+}
+
+fn read_bytes(
+    bytes: &[u8],
+    kind: Kind,
+    mime: &str,
+    options: &Options,
+    clock: &Clock,
+) -> Result<Reading, Refusal> {
     let mut sink = Sink::new(options.max_text_chars);
     let mut dimensions = None;
     let mut cut_short = false;
@@ -265,6 +312,7 @@ fn read_kind(
             }
         }
         Kind::Pdf => cut_short = pdf::read(bytes, options, clock, &mut sink)?,
+        Kind::Media { .. } => return Err(Refusal::Unsupported),
     }
     let (text, truncated) = sink.finish(options.max_text_chars);
     Ok(Reading {
@@ -272,6 +320,7 @@ fn read_kind(
         truncated,
         cut_short,
         dimensions,
+        duration: None,
         text_refused,
         sandbox: Sandbox::Off,
     })

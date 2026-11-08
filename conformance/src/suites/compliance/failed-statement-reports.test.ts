@@ -1,10 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * A failed database statement reported where a client can read the report:
@@ -13,14 +12,13 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * the statement, the driver's own message or the values it was bound to.
  *
  * **A fault the fixture makes, on a server of its own.** No request reaches a
- * failed statement, so a table the statement names is renamed in the stored
- * file while the server runs and renamed back afterward, as
- * `internal-error.test.ts` does.
+ * failed statement, so the target fails one: the probe write of the health
+ * answer, the first statement of a housekeeping run and the first statement
+ * of a bulk action's row, as `internal-error.test.ts` does for a write.
  *
- * **What a fixture cannot show.** The values are not readable over HTTP, so
- * the witness that the report could have carried one is the value the
- * failing write was given: a row the same write stored before the fault, read
- * back from the file.
+ * **What a fixture shows of the values.** The witness that the report could
+ * have carried one is the value the failing write was given, read back over
+ * HTTP from the rows the same write stored before the fault.
  */
 let server: FreshServer | undefined;
 
@@ -28,28 +26,13 @@ beforeAll(async () => {
   server = await bootFreshServer("failed-statement-reports");
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
+afterEach(async () => {
+  await server?.clearFault();
+});
+
 afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
-
-function renameTable(from: string, to: string): void {
-  withInstanceDatabase(server!.sqlitePath, (db) => {
-    db.exec(`ALTER TABLE ${from} RENAME TO ${to}`);
-  });
-}
-
-/** Runs `use` with `table` gone from the stored file, and puts it back. */
-async function withoutTable<T>(
-  table: string,
-  use: () => Promise<T>,
-): Promise<T> {
-  renameTable(table, `${table}_gone`);
-  try {
-    return await use();
-  } finally {
-    renameTable(`${table}_gone`, table);
-  }
-}
 
 function operator(path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${server!.apiUrl}${path}`, {
@@ -61,9 +44,9 @@ function operator(path: string, init: RequestInit = {}): Promise<Response> {
   });
 }
 
-/** What a renamed table makes a report say, and nothing of the statement or the driver's message. */
+/** What a failed statement makes a report say, and nothing of the statement or the driver's message. */
 function expectFixedFailure(reported: string | null | undefined): void {
-  expect(reported).toBe("Database operation failed (SQLITE_ERROR)");
+  expect(reported).toBe("Database operation failed (SQLITE_IOERR)");
 }
 
 describe("the health answer to a write that fails", () => {
@@ -83,20 +66,18 @@ describe("the health answer to a write that fails", () => {
     expect(before.httpStatus).toBe(200);
     expect(before.components.database_write?.status).toBe("ok");
 
-    const down = await withoutTable("settings", async () => {
-      // A committed probe answers for the callers after it for a few
-      // seconds, so the fault is waited for rather than assumed.
-      const deadline = Date.now() + 30_000;
-      let seen = await health();
-      while (
-        seen.components.database_write?.status === "ok" &&
-        Date.now() < deadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        seen = await health();
-      }
-      return seen;
-    });
+    await server!.setFault("fail:health-write");
+    // A committed probe answers for the callers after it for a few seconds,
+    // so the fault is waited for rather than assumed.
+    const deadline = Date.now() + 30_000;
+    let down = await health();
+    while (
+      down.components.database_write?.status === "ok" &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      down = await health();
+    }
 
     const write = down.components.database_write;
     expect(down.status).toBe("down");
@@ -114,9 +95,10 @@ describe("a housekeeping run whose statement fails", () => {
     expect(clean.status).toBe(200);
     expect(((await clean.json()) as { outcome: string }).outcome).toBe("ok");
 
-    const failed = await withoutTable("rate_limit_windows", () =>
-      operator("/housekeeping/rate-limit-cleanup/run", { method: "POST" }),
-    );
+    await server!.setFault("fail:housekeeping:rate-limit-cleanup");
+    const failed = await operator("/housekeeping/rate-limit-cleanup/run", {
+      method: "POST",
+    });
     expect(failed.status).toBe(200);
     const run = (await failed.json()) as {
       outcome: string;
@@ -194,27 +176,28 @@ describe("a bulk action whose writes fail", () => {
       ids.push(((await created.json()) as { item: { id: string } }).item.id);
     }
 
-    // The witness: with the table there the action lands, and the log row its
-    // write stores carries the tag and the item's properties, which are what
-    // the failing write is bound to.
+    // The witness: with no fault the action lands, and the items it tagged
+    // carry the tag and the properties, which are what the failing write is
+    // bound to.
     const tagged = `tagged-${marker}`;
     const landed = (await act(tagged, marker)) as {
       succeeded: number;
       errored: number;
     };
     expect(landed).toMatchObject({ succeeded: 2, errored: 0 });
-    const stored = withInstanceDatabase(server!.sqlitePath, (db) =>
-      db
-        .prepare("SELECT payload FROM event_log ORDER BY id DESC LIMIT 1")
-        .get(),
-    ) as { payload: string };
-    expect(stored.payload).toContain(tagged);
-    expect(stored.payload).toContain(body);
+    const listed = await fetch(
+      `${server!.apiUrl}/items?tags=${encodeURIComponent(tagged)}`,
+      { headers: { Authorization: `Bearer ${server!.workingKey}` } },
+    );
+    const { data } = (await listed.json()) as {
+      data: { id: string; properties: { body: string } }[];
+    };
+    expect(data.map((item) => item.id).sort()).toEqual([...ids].sort());
+    for (const item of data) expect(item.properties.body).toBe(body);
 
     const refused = `refused-${marker}`;
-    const failed = (await withoutTable("event_log", () =>
-      act(refused, marker),
-    )) as {
+    await server!.setFault("fail:job-row");
+    const failed = (await act(refused, marker)) as {
       succeeded: number;
       errored: number;
       result: { errors: { id: string; code: string; message: string }[] };

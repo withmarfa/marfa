@@ -26,6 +26,7 @@ use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
+use crate::app::faults::HOLD_BULK_PAGE;
 use crate::app::idempotency::{self, Claim, Need};
 use crate::app::instance;
 use crate::app::query::VIEW_TYPE;
@@ -1524,6 +1525,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             retype,
             operation,
             pulse,
+            faults,
         } = page;
         for (index, entry) in entries.iter().enumerate() {
             entry
@@ -1536,6 +1538,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let mut counts = Counts::default();
         let mut results = Vec::with_capacity(total);
         for (index, entry) in entries.into_iter().enumerate() {
+            faults.hold_beating(HOLD_BULK_PAGE, &pulse);
             let entered = entry
                 .and_then(|entry| self.entry(entry, retype))
                 .map_err(|refusal| rollback(index, &refusal))?;

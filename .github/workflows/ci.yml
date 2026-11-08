@@ -335,8 +335,6 @@ jobs:
             core
             core/bindings/swift
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install socket ACL inspection
-        run: sudo apt-get update && sudo apt-get install -y acl
       - name: Check the core workspace
         working-directory: core
         run: |

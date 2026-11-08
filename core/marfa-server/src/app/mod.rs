@@ -4,6 +4,7 @@ pub mod access;
 pub mod addresses;
 pub mod audit;
 pub mod auth;
+pub mod blobs;
 pub mod catalog;
 pub mod clock;
 pub mod config;
@@ -40,6 +41,7 @@ use crate::settings::{Accepted, Settings};
 use crate::telemetry::Telemetry;
 use addresses::Addresses;
 use auth::password::Passwords;
+use blobs::Blobs;
 use catalog::Catalog;
 use clock::Clock;
 use faults::Faults;
@@ -61,6 +63,7 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub blobs: Blobs,
     pub telemetry: Telemetry,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
@@ -79,8 +82,6 @@ impl App {
             busy_budget: start.busy_budget,
             readers: READERS,
             migrations: MIGRATIONS,
-            migration_fault: start.migration_fault,
-            free_disk_bytes: start.free_disk_bytes,
         };
         let opening = faults.clone();
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
@@ -91,9 +92,10 @@ impl App {
         settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
-        health::prepare_blobs(&start.blob_path)?;
+        let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
+        blobs.register(&db, at.clone()).await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
@@ -119,6 +121,7 @@ impl App {
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            blobs,
             telemetry: Telemetry::default(),
             catalog,
             bound_port: OnceLock::new(),

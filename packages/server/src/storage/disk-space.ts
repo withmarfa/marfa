@@ -73,6 +73,8 @@ export class DiskReserve {
 
   private free(): Promise<number> {
     const set = freeFault(this.kind);
+    if (set === null)
+      return Promise.reject(new Error("free space cannot be read"));
     return set === undefined
       ? this.available(this.volume.path)
       : Promise.resolve(set);

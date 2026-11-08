@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use marfa_enrichment::{OcrOptions, Options, Refusal, read, serve_child_if_asked};
+use marfa_enrichment::{OcrOptions, Options, Reading, Refusal, serve_child_if_asked};
 
 mod common;
 
@@ -121,6 +121,23 @@ fn position(rng: &mut Rng, length: usize) -> usize {
     } else {
         rng.below(length)
     }
+}
+
+/// Reads `bytes` as a file that exists only for the reading: the reader is given a
+/// file, and the name is gone before it starts.
+fn read_bytes(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let unavailable = |error: std::io::Error| Refusal::ReaderUnavailable(error.to_string());
+    let path = std::env::temp_dir().join(format!(
+        "marfa-enrichment-fuzz-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, bytes).map_err(unavailable)?;
+    let file = std::fs::File::open(&path);
+    let _ = std::fs::remove_file(&path);
+    marfa_enrichment::read(&file.map_err(unavailable)?, mime, options)
 }
 
 /// One to eight stacked changes to the bytes.
@@ -326,7 +343,7 @@ fn main() -> ExitCode {
     // Each seed is read once unchanged first. One that does not read would turn
     // every finding into noise.
     for seed in seeds.iter() {
-        let result = read(&seed.bytes, seed.mime, &options);
+        let result = read_bytes(&seed.bytes, seed.mime, &options);
         if let Err(refusal) = &result
             && !matches!(refusal, Refusal::Encrypted | Refusal::Unsupported)
         {
@@ -377,7 +394,7 @@ fn main() -> ExitCode {
                         bytes
                     };
                     let began = Instant::now();
-                    let result = read(&mutated, seed.mime, &options);
+                    let result = read_bytes(&mutated, seed.mime, &options);
                     let took = began.elapsed();
                     let kind = kind_of(&result);
                     let harmful = kind.chars().all(|c| c.is_ascii_uppercase() || c == '-');
@@ -411,7 +428,7 @@ fn main() -> ExitCode {
                             .findings
                             .push(format!("{name} ({kind}, {took:?}) {why} {saved:?}"));
                         // The parent must still read an ordinary file afterwards.
-                        if let Err(refusal) = read(&seed.bytes, seed.mime, &options)
+                        if let Err(refusal) = read_bytes(&seed.bytes, seed.mime, &options)
                             && !matches!(refusal, Refusal::Encrypted)
                         {
                             tally.lock().unwrap().findings.push(format!(
