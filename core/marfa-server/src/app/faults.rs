@@ -248,7 +248,7 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
 fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
-        .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
+        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
         .ok_or_else(|| {
             format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
         })
@@ -310,7 +310,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
-        UNFOLD_DEADLINE if rest.is_empty() => unfold_deadline_of(arg).map(|ms| (None, Some(ms))),
+        UNFOLD_DEADLINE if rest.is_empty() => unfold_deadline_of(arg).map(|check| (None, Some(check))),
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
                 return Err(format!(
