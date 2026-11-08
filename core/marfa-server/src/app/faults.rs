@@ -74,6 +74,7 @@ points! {
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
     HOLD_STREAM_DRAIN = Hold "stream-drain" None;
     HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
+    HOLD_INBOUND_RESERVED = Hold "inbound-reserved" Nth;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;

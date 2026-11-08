@@ -9,12 +9,11 @@ import {
   codeOf,
   idOf,
   answerToUnfinished,
-  openBody,
+  openCounted,
   send,
   sendChunked,
   type OpenBody,
 } from "../../utils/inbound-sender.js";
-import { waitFor } from "../../utils/wait.js";
 
 /**
  * Where one receipt meets two refusals, which of the two the sender is told.
@@ -240,46 +239,31 @@ describe("a receipt that meets two refusals", () => {
   it("answers a body read past the limit 413 before the bytes in flight's 503", async () => {
     const owner = await registration();
     const made = await endpoint(owner);
-    // Three times the limit, and past the half of the bytes in flight that
-    // one source may hold, however the transport cuts it into parts.
-    const over = await sendChunked(server.apiUrl, made.path, [
-      Buffer.alloc(3 * MAX_BYTES, 0x61),
-    ]);
-    expect(over.status).toBe(413);
-    expect(codeOf(over)).toBe("request_too_large");
-
-    // The witness: four sources each hold a body, 3700 bytes in all of the
-    // 4096, and a body under the limit that does not fit in the rest is
-    // refused for the bytes in flight.
     const bodies: OpenBody[] = [];
     for (const declared of [1000, 1000, 900, 800]) {
       const holder = await registration();
       const held = await endpoint(holder);
       bodies.push(
-        openBody(
-          server.apiUrl,
+        await openCounted(
+          server,
           held.path,
           declared,
           "h".repeat(declared - 100),
         ),
       );
     }
-    // A source of its own for each probe: a taken probe fills its backlog.
-    // The bodies are given time to be counted before a probe takes room.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await waitFor(
-      "the bytes of the bodies in progress to be counted",
-      async () => {
-        const probing = await registration();
-        const at = await endpoint(probing);
-        return (await send(server.apiUrl, at.path, "p".repeat(400))).status ===
-          503
-          ? true
-          : undefined;
-      },
-      10_000,
-      25,
-    );
+    // Four sources each hold a body, 3700 bytes in all of the 4096, so that
+    // the room left is less than the limit and than the bodies below.
+    // A body one byte over the limit would also fail the bytes in flight,
+    // and is told the limit's 413.
+    const over = await sendChunked(server.apiUrl, made.path, [
+      Buffer.alloc(MAX_BYTES + 1, 0x61),
+    ]);
+    expect(over.status).toBe(413);
+    expect(codeOf(over)).toBe("request_too_large");
+
+    // The witness: a body under the limit that does not fit in the rest is
+    // refused for the bytes in flight.
     const flight = await sendChunked(server.apiUrl, made.path, [
       Buffer.alloc(700, 0x61),
     ]);

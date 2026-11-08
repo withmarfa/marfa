@@ -11,6 +11,7 @@ import {
   codeOf,
   idOf,
   openBody,
+  openCounted,
   send,
   sendChunked,
   type RawAnswer,
@@ -176,35 +177,6 @@ describe("the bytes in flight, across bodies", () => {
    *  against a limit by a margin and not to the byte. */
   const MARGIN = 150;
 
-  /** Time for a body that has begun to be counted before a probe can take
-   *  the room it asked for. */
-  const SETTLE_MS = 300;
-
-  /** Waits until the request a source holds open is counted, which a receipt
-   *  from the same source that would pass its half is the one answer to.
-   *  Answers `ended` if the body was answered first: a probe that got there
-   *  before it took its room. */
-  async function untilHeld(
-    path: string,
-    declared: number,
-    ended: () => boolean = () => false,
-  ): Promise<"held" | "ended"> {
-    const probe = PER_SOURCE - declared + MARGIN;
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-    return waitFor<"held" | "ended">(
-      "the bytes of the request in progress to be counted",
-      async () => {
-        if (ended()) return "ended";
-        return (await send(server.apiUrl, path, "p".repeat(probe))).status ===
-          503
-          ? "held"
-          : undefined;
-      },
-      10_000,
-      25,
-    );
-  }
-
   interface Held {
     owner: Registration;
     made: Awaited<ReturnType<typeof endpoint>>;
@@ -218,30 +190,21 @@ describe("the bytes in flight, across bodies", () => {
   async function hold(label: string, declared: number): Promise<Held> {
     const owner = await register(server, label);
     const made = await endpoint(owner);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const body = openBody(
-        server.apiUrl,
-        made.path,
-        declared,
-        "x".repeat(declared - 100),
-      );
-      let answered = false;
-      void body.answer.then(() => {
-        answered = true;
-      });
-      if ((await untilHeld(made.path, declared, () => answered)) === "held") {
-        return {
-          owner,
-          made,
-          body,
-          end() {
-            body.finish("y".repeat(100));
-            return body.answer;
-          },
-        };
-      }
-    }
-    throw new Error(`${label}: the body was refused every time it began`);
+    const body = await openCounted(
+      server,
+      made.path,
+      declared,
+      "x".repeat(declared - 100),
+    );
+    return {
+      owner,
+      made,
+      body,
+      end() {
+        body.finish("y".repeat(100));
+        return body.answer;
+      },
+    };
   }
 
   async function sizes(owner: Registration): Promise<number[]> {
@@ -273,13 +236,12 @@ describe("the bytes in flight, across bodies", () => {
     idOf(await first.end());
 
     // A body that breaks off gives back what it had read.
-    const broken = openBody(
-      server.apiUrl,
+    const broken = await openCounted(
+      server,
       first.made.path,
       1800,
       "c".repeat(1700),
     );
-    await untilHeld(first.made.path, 1800);
     broken.abandon();
     await waitFor(
       "the bytes of a broken body to be given back",

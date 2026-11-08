@@ -15,6 +15,7 @@ use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::connectors::Window;
+use crate::app::faults::HOLD_INBOUND_RESERVED;
 use crate::app::inbound::{self, Arrival, Listing, Mark, NewEndpoint, Sent};
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::{
@@ -260,6 +261,7 @@ pub async fn receive(
     if let Err(full) = reservation.take(held, flight) {
         return refused(&full.refusal());
     }
+    app.faults.hold(HOLD_INBOUND_RESERVED, None).await;
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = headers_of(&request);
     let deadline = tokio::time::sleep(Duration::from_millis(live.get(INBOUND_READ_TIMEOUT_MS)));

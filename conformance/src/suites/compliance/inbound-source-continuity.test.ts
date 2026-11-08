@@ -6,7 +6,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { idOf, openBody, send } from "../../utils/inbound-sender.js";
+import { idOf, openCounted, send } from "../../utils/inbound-sender.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let server: FreshServer;
@@ -328,22 +328,18 @@ describe("source-owned inbound continuity", () => {
     });
     const { source, oldKey, old, endpoint } = await fixture();
     expect((await send(server.apiUrl, endpoint.path, "x")).status).toBe(202);
-    const held = openBody(server.apiUrl, endpoint.path, 1900, "h".repeat(1800));
+    const held = await openCounted(
+      server,
+      endpoint.path,
+      1900,
+      "h".repeat(1800),
+    );
     // The source may hold half of the 4096, which 1900 and 300 pass, so the
-    // probe is refused once the body is counted. A probe sent earlier is taken.
-    let taken = 1;
-    let probeStatus = 0;
-    // The body is given time to be counted before a probe takes room.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    for (let attempt = 0; attempt < 40; attempt++) {
-      probeStatus = (await send(server.apiUrl, endpoint.path, "x".repeat(300)))
-        .status;
-      if (probeStatus === 503) break;
-      expect(probeStatus).toBe(202);
-      taken += 1;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    expect(probeStatus).toBe(503);
+    // probe is refused now the body is counted.
+    expect(
+      (await send(server.apiUrl, endpoint.path, "x".repeat(300))).status,
+    ).toBe(503);
+    const taken = 1;
     expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
     const successor = await register((await mint(source)).key);
     expect(successor.status).toBe(201);
