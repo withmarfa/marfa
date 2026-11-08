@@ -1,5 +1,7 @@
 //! Pages are cut like `items::bulk`'s; every edge goes through [`write::write`].
 
+use std::sync::Arc;
+
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -8,6 +10,7 @@ use super::write::{self as edges, By, Create, Op, Update, Writing};
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Snapshot as Reading};
+use crate::app::faults::{Faults, HOLD_BULK_PAGE};
 use crate::app::idempotency::Need;
 use crate::app::items::bulk::{Counts, Entered, refused_entry, rollback};
 use crate::app::items::{self, Reader, reading};
@@ -120,6 +123,7 @@ struct Atomic {
     create_only: bool,
     operation: String,
     pulse: Pulse,
+    faults: Arc<Faults>,
 }
 
 fn atomic_page(writing: &Writing<'_, '_, '_>, page: Atomic) -> Result<String> {
@@ -128,6 +132,7 @@ fn atomic_page(writing: &Writing<'_, '_, '_>, page: Atomic) -> Result<String> {
         create_only,
         operation,
         pulse,
+        faults,
     } = page;
     for (index, entry) in entries.iter().enumerate() {
         if let Err(refusal) = entry {
@@ -145,6 +150,7 @@ fn atomic_page(writing: &Writing<'_, '_, '_>, page: Atomic) -> Result<String> {
     let mut counts = Counts::default();
     let mut results = Vec::with_capacity(total);
     for (index, entry) in entries.into_iter().enumerate() {
+        faults.hold_beating(HOLD_BULK_PAGE, &pulse);
         let entered = entry
             .and_then(|entry| writing.entry(entry, create_only))
             .map_err(|refusal| rollback(index, &refusal))?;
@@ -189,6 +195,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             create_only,
             operation,
             pulse: app.db.pulse(),
+            faults: app.faults.clone(),
         };
         return app
             .write(caller, ACTION, move |unit| {
@@ -204,6 +211,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     let mut results = Vec::with_capacity(total);
     let mut landed = false;
     for (index, entry) in entries.into_iter().enumerate() {
+        app.faults.hold(HOLD_BULK_PAGE, None).await;
         let result = match entry {
             Err(refusal) => refused_entry(index, &refusal, landed)?,
             Ok(entry) => {

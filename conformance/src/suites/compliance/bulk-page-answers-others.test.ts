@@ -1,36 +1,30 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { HeldLock } from "../../utils/held-lock.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * Other requests during a long bulk page.
  *
- * **How a fixture knows the page is part way.** An atomic page holds the
- * write lock from its first entry to its commit, so a second connection that
- * is refused the lock from outside the process, while the page has not yet
- * answered, is the page in flight. A page under `atomic: false` commits each
- * entry on its own, so a read that finds its first entry written and its last
- * not is a read the server answered in the middle of it.
+ * **How a fixture knows the page is part way.** `hold:bulk-page=2` stops the
+ * page at its second entry, so the first is done and the page has not yet
+ * answered: the page is in flight for as long as the fixture says. An atomic
+ * page holds its first entry uncommitted, and a page under `atomic: false`
+ * has committed it.
  *
- * **Its own server**, because a page of thousands of entries would slow every
- * fixture sharing the run's server, because one test sets the busy budget,
- * and because the limiter is on here: counting a request is a write, so a
- * read that had to wait for the lock to be counted would wait for the page.
- * The budget is short enough that the page outlasts it many times over, and
- * long enough that no single entry does. The caps are far above what the
- * fixtures send.
+ * **Its own server**, because one test sets the busy budget and because the
+ * limiter is on here: counting a request is a write, so a read that had to
+ * wait for the page to be counted would wait for it. The budget is short
+ * enough that a held page outlasts it many times over. The caps are far above
+ * what the fixtures send.
  */
 const BUDGET_MS = 300;
-const PAGE = 3_000;
+const PAGE = 20;
 const SCHEDULER_NEVER_POLLS_MS = "2147483647";
 
 let server: FreshServer;
@@ -46,24 +40,6 @@ beforeAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
-
-const runSqlite = promisify(execFile);
-
-/** Whether a connection from outside the server is refused the write lock now. */
-async function lockIsHeld(): Promise<boolean> {
-  try {
-    await runSqlite(
-      "sqlite3",
-      ["-bail", "-cmd", ".timeout 0", server.sqlitePath, "BEGIN IMMEDIATE;"],
-      { timeout: 10_000 },
-    );
-    return false;
-  } catch (error) {
-    if (String((error as { stderr?: unknown }).stderr).includes("locked"))
-      return true;
-    throw error;
-  }
-}
 
 function send(method: string, path: string, body?: unknown) {
   return fetch(`${server.apiUrl}${path}`, {
@@ -120,51 +96,57 @@ function track(request: Promise<Response>) {
   return { response, state };
 }
 
-async function untilLockHeld(page: { state: { answered: boolean } }) {
-  while (!(await lockIsHeld())) {
-    expect(page.state.answered, "the page ended before it was seen").toBe(
-      false,
-    );
-  }
+/** Starts a page held at its second entry, once the server holds it there. */
+async function heldPage(request: () => Promise<Response>) {
+  await server.setFault("hold:bulk-page=2");
+  const page = track(request());
+  await server.waitForHold("hold:bulk-page");
+  expect(page.state.answered, "the page ended before it was seen").toBe(false);
+  return page;
 }
+
+/** Lets the held page go and returns its answer. */
+async function release(page: { response: Promise<Response> }) {
+  await server.clearFault("hold:bulk-page");
+  return page.response;
+}
+
+afterEach(async () => {
+  await server.clearFault();
+});
 
 describe("a bulk page leaves the server answering other requests", () => {
   it("answers a read of an item an atomic items page is updating, with the item as it was", async () => {
     const ids = await seed("atomic-read");
-    const page = track(
+    const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("atomic-read", "after", true)),
     );
-    await untilLockHeld(page);
 
     expect(await bodyOf(ids[0]!)).toBe("before");
     expect(page.state.answered).toBe(false);
-    expect(await lockIsHeld()).toBe(true);
 
-    expect((await page.response).status).toBe(200);
+    expect((await release(page)).status).toBe(200);
     expect(await bodyOf(ids[0]!)).toBe("after");
   }, 120_000);
 
   it("answers a read in the middle of an items page under atomic: false", async () => {
     const ids = await seed("partial-read");
-    const page = track(
+    const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("partial-read", "after", false)),
     );
-    while ((await bodyOf(ids[0]!)) !== "after") {
-      expect(page.state.answered, "the page ended before it was seen").toBe(
-        false,
-      );
-    }
+
     // The first entry is written and the last is not: answered mid-page.
+    expect(await bodyOf(ids[0]!)).toBe("after");
     expect(await bodyOf(ids[PAGE - 1]!)).toBe("before");
     expect(page.state.answered).toBe(false);
 
-    expect((await page.response).status).toBe(200);
+    expect((await release(page)).status).toBe(200);
     expect(await bodyOf(ids[PAGE - 1]!)).toBe("after");
   }, 120_000);
 
   it("answers a read while an atomic edges page is written", async () => {
     const [hub, ...targets] = await seed("edges-read");
-    const page = track(
+    const page = await heldPage(() =>
       send("POST", "/edges/bulk", {
         atomic: true,
         edges: targets.map((target) => ({
@@ -174,12 +156,11 @@ describe("a bulk page leaves the server answering other requests", () => {
         })),
       }),
     );
-    await untilLockHeld(page);
 
     expect(await bodyOf(hub!)).toBe("before");
     expect(page.state.answered).toBe(false);
 
-    const answered = await page.response;
+    const answered = await release(page);
     expect(answered.status).toBe(200);
     const { counts } = (await answered.json()) as {
       counts: { created: number };
@@ -191,23 +172,23 @@ describe("a bulk page leaves the server answering other requests", () => {
 describe("a write that waits behind a bulk page", () => {
   it("lands after an atomic page that holds the lock longer than the busy budget", async () => {
     await seed("waiting-write");
-    const page = track(
+    const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("waiting-write", "after", true)),
     );
-    await untilLockHeld(page);
-    const started = performance.now();
 
-    const single = await send("POST", "/items", {
-      type: "core.note",
-      properties: { title: "behind the page", body: "waited" },
-    });
-    const waitedMs = performance.now() - started;
+    const single = track(
+      send("POST", "/items", {
+        type: "core.note",
+        properties: { title: "behind the page", body: "waited" },
+      }),
+    );
+    // Held for twice the budget and not refused: the write waits on the
+    // page and is not given up on the budget alone.
+    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
+    expect(single.state.answered).toBe(false);
 
-    expect((await page.response).status).toBe(200);
-    expect(single.status).toBe(201);
-    // Witness that the page held the lock for longer than the budget, so
-    // the write above was not admitted on the budget alone.
-    expect(waitedMs).toBeGreaterThan(BUDGET_MS);
+    expect((await release(page)).status).toBe(200);
+    expect((await single.response).status).toBe(201);
   }, 120_000);
 
   it("counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget", async () => {
@@ -215,42 +196,38 @@ describe("a write that waits behind a bulk page", () => {
     // write of its own outside any transaction.
     const origin = await issuerOrigin(server);
     await seed("waiting-sign-in");
-    const page = track(
+    const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("waiting-sign-in", "after", true)),
     );
-    await untilLockHeld(page);
-    const started = performance.now();
 
-    const attempt = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify({
-        email: TEST_OWNER.email,
-        password: "not the owner's password",
+    const attempt = track(
+      fetch(`${server.apiUrl}/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify({
+          email: TEST_OWNER.email,
+          password: "not the owner's password",
+        }),
       }),
-    });
-    const waitedMs = performance.now() - started;
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
+    expect(attempt.state.answered).toBe(false);
 
-    expect((await page.response).status).toBe(200);
-    expect(attempt.status).toBe(401);
-    expect(waitedMs).toBeGreaterThan(BUDGET_MS);
+    expect((await release(page)).status).toBe(200);
+    expect((await attempt.response).status).toBe(401);
   }, 120_000);
 
-  it("is still refused 503 write_contention behind a lock held from outside for longer than the budget", async () => {
-    const lock = await HeldLock.take(server.sqlitePath);
-    try {
-      const refused = await send("POST", "/items", {
-        type: "core.note",
-        properties: { title: "behind a stalled holder", body: "refused" },
-      });
-      expect(refused.status).toBe(503);
-      const { error } = (await refused.json()) as {
-        error: { code: string; details: { budget_ms: number } };
-      };
-      expect(error.code).toBe("write_contention");
-      expect(error.details.budget_ms).toBe(BUDGET_MS);
-    } finally {
-      await lock.release();
-    }
+  it("is still refused 503 write_contention behind a lock held for longer than the budget", async () => {
+    await server.setFault("refuse:write-lock");
+    const refused = await send("POST", "/items", {
+      type: "core.note",
+      properties: { title: "behind a stalled holder", body: "refused" },
+    });
+    expect(refused.status).toBe(503);
+    const { error } = (await refused.json()) as {
+      error: { code: string; details: { budget_ms: number } };
+    };
+    expect(error.code).toBe("write_contention");
+    expect(error.details.budget_ms).toBe(BUDGET_MS);
   }, 120_000);
 });

@@ -2,7 +2,8 @@ import { statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Storage } from "../storage/interface.js";
 import * as clock from "../clock.js";
-import { freeFault, type Volume } from "../control/faults.js";
+import { failAt, freeFault, type Volume } from "../control/faults.js";
+import { injectedDatabaseError } from "../storage/sqlite/injected-failure.js";
 
 /**
  * What `/health` asks of the machine beyond reading a row: whether a write
@@ -46,8 +47,14 @@ export function storageProbes(
     if (monotonicMs() - settledAt < WRITE_PROBE_REUSE_MS) {
       return refusal ? Promise.reject(refusal) : Promise.resolve();
     }
-    const attempt = storage.settings
-      .set(WRITE_PROBE_KEY, new Date(clock.nowMs()).toISOString())
+    const attempt = (
+      failAt("health-write")
+        ? Promise.reject(injectedDatabaseError("SQLITE_IOERR"))
+        : storage.settings.set(
+            WRITE_PROBE_KEY,
+            new Date(clock.nowMs()).toISOString(),
+          )
+    )
       .then(
         () => {
           refusal = undefined;
@@ -75,6 +82,7 @@ export function storageProbes(
       const free = await Promise.all(
         volumes.map(async ([name, path]) => {
           const set = freeFault(name);
+          if (set === null) throw new Error("free space cannot be read");
           if (set !== undefined) return set;
           const stats = await statfs(path);
           return stats.bavail * stats.bsize;

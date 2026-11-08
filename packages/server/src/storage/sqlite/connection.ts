@@ -51,7 +51,14 @@ import {
   transactionControl,
 } from "./transaction-control.js";
 import * as clock from "../../clock.js";
-import { commitFailure, takeStatementFault } from "./injected-failure.js";
+import {
+  commitFailure,
+  refusedStatements,
+  refusedTransaction,
+  takeStatementFault,
+  writesDatabase,
+} from "./injected-failure.js";
+import { faultsArmed, refuseArmed, refusing } from "../../control/faults.js";
 
 /**
  * What an operator can do about a database this build will not open and
@@ -266,6 +273,37 @@ export function lockNotFree(): MarfaError {
   return contention(writeWaitBudget.getStore() ?? busyBudgetMs);
 }
 
+/**
+ * Applies the `refuse` faults to a call that reads or writes through
+ * `statements`: the call fails as a failing database does, or a write waits
+ * as for a lock held elsewhere until the busy budget is spent, then fails as
+ * a lock that did not free, or goes ahead once the fault is cleared.
+ */
+async function refuseUnderFaults(
+  statements: readonly (InStatement | string | [string, InArgs?])[],
+): Promise<void> {
+  if (!faultsArmed()) return;
+  const sqls = statements.map((s) =>
+    typeof s === "string" ? s : Array.isArray(s) ? s[0] : s.sql,
+  );
+  const failure = refusedStatements(sqls);
+  if (failure) throw failure;
+  if (sqls.some(writesDatabase)) await waitOutRefusedLock();
+}
+
+async function waitOutRefusedLock(): Promise<void> {
+  if (!refuseArmed("write-lock")) return;
+  refusing("write-lock");
+  const budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs;
+  const deadline = clock.monotonicMs() + budgetMs;
+  while (refuseArmed("write-lock")) {
+    if (clock.monotonicMs() >= deadline) throw contention(budgetMs);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 5);
+    });
+  }
+}
+
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs,
@@ -358,8 +396,9 @@ function waitingForTheLock(url: string): {
     get protocol() {
       return client.protocol;
     },
-    execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
-      behindWriters(() =>
+    execute: async (stmtOrSql: InStatement | string, args?: InArgs) => {
+      await refuseUnderFaults([stmtOrSql]);
+      return behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
@@ -367,20 +406,29 @@ function waitingForTheLock(url: string): {
             ? client.execute(stmtOrSql, args)
             : client.execute(stmtOrSql);
         }),
-      ),
-    batch: (stmts, mode) =>
-      behindWriters(() =>
+      );
+    },
+    batch: async (stmts, mode) => {
+      await refuseUnderFaults(stmts);
+      return behindWriters(() =>
         one(() => {
           const injected = takeStatementFault();
           if (injected) return Promise.reject(injected.error);
           return client.batch(stmts, mode);
         }),
-      ),
+      );
+    },
     migrate: (stmts) => behindWriters(() => one(() => client.migrate(stmts))),
     // Implementing the interface includes its deprecated no-argument overload.
     // eslint-disable-next-line @typescript-eslint/no-deprecated
-    transaction: (mode: TransactionMode = "write") =>
-      untilNotBusy(() => transactions.begin(mode)),
+    transaction: async (mode: TransactionMode = "write") => {
+      if (faultsArmed()) {
+        const failure = refusedTransaction(mode);
+        if (failure) throw failure;
+        if (mode === "write") await waitOutRefusedLock();
+      }
+      return untilNotBusy(() => transactions.begin(mode));
+    },
     executeMultiple: (sql) =>
       behindWriters(() => one(() => client.executeMultiple(sql))),
     sync: () => client.sync(),
