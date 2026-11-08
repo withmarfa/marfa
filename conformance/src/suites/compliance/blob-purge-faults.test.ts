@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -9,10 +8,10 @@ import {
 import {
   bytesOf,
   clientsFor,
-  diskPath,
   DISK_ONLY,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { diskHolds } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -111,11 +110,11 @@ async function listed(hash: string): Promise<boolean> {
 describe("an orphan purge that nothing stops", () => {
   it("purges the blob on the run after the report, from the registry and from the disk, which is the witness for the cases below", async () => {
     const blob = await reportedBlob("purged without a fault");
-    expect(existsSync(diskPath(server, blob.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
     const run = await runJob<{ purged: number }>(operator, "blob-orphans");
     expect(run.result.purged).toBe(1);
     expect(await listed(blob.hash)).toBe(false);
-    expect(existsSync(diskPath(server, blob.hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
   });
 });
 
@@ -130,10 +129,10 @@ describe("an orphan purge cut short after the blob left the registry", () => {
     // The registry has let go of the blob and the store has not.
     expect(await listed(blob.hash)).toBe(false);
     expect(await reported()).not.toContain(blob.hash);
-    expect(existsSync(diskPath(server, blob.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
 
     await runJob(operator, "blob-orphans");
-    expect(existsSync(diskPath(server, blob.hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
     expect(await listed(blob.hash)).toBe(false);
   });
 
@@ -141,7 +140,7 @@ describe("an orphan purge cut short after the blob left the registry", () => {
     const blob = await reportedBlob("purge cut short, then sent again");
     await server.setFault("fail:blob-delete");
     await runJob(operator, "blob-orphans");
-    expect(existsSync(diskPath(server, blob.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
 
     // The same bytes are sent before the next run finishes the purge. That
     // run reports the blob again and has no purge left to finish.
@@ -163,7 +162,7 @@ describe("an orphan purge that is cut short", () => {
     await runJob(operator, "blob-orphans");
     expect(await fired("fail:audit")).toBe(1);
     expect(await listed(before.hash)).toBe(true);
-    expect(existsSync(diskPath(server, before.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, before.hash)).toBe(true);
     const read = await operator.downloadBlob(before.hash);
     expect(new Uint8Array(read.data)).toEqual(before.data);
     const link = await operator.getBlobUrl(before.hash);
@@ -176,7 +175,7 @@ describe("an orphan purge that is cut short", () => {
     await runJob(operator, "blob-orphans");
     expect(await fired("fail:blob-delete")).toBe(1);
     expect(await listed(after.hash)).toBe(false);
-    expect(existsSync(diskPath(server, after.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, after.hash)).toBe(true);
 
     // The next run, with nothing in its way, purges both.
     await server.clearFault();
@@ -184,7 +183,7 @@ describe("an orphan purge that is cut short", () => {
     await runJob(operator, "blob-orphans");
     for (const blob of [before, after]) {
       expect(await listed(blob.hash)).toBe(false);
-      expect(existsSync(diskPath(server, blob.hash))).toBe(false);
+      expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
     }
   });
 });
@@ -206,11 +205,11 @@ describe("an orphan purge that a write names the blob under", () => {
     const blob = await reportedBlob("reported and left alone");
     const result = await runHeldAt(async () => {
       // Chosen for the purge, and waiting.
-      expect(existsSync(diskPath(server, blob.hash))).toBe(true);
+      expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
     });
     expect(result.purged).toBe(1);
     expect(await listed(blob.hash)).toBe(false);
-    expect(existsSync(diskPath(server, blob.hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
   });
 
   it("keeps the blob when a write that names it commits after the run chose it and before the run purges it", async () => {
@@ -229,7 +228,7 @@ describe("an orphan purge that a write names the blob under", () => {
     const read = await operator.downloadBlob(blob.hash);
     expect(read.status).toBe(200);
     expect(new Uint8Array(read.data)).toEqual(blob.data);
-    expect(existsSync(diskPath(server, blob.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
     expect((await working.getItem(itemId)).status).toBe(200);
     // The report no longer holds it, and a later run keeps it too.
     expect(await reported()).not.toContain(blob.hash);

@@ -1,5 +1,3 @@
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -14,13 +12,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { clientsFor, DISK_ONLY, runJob } from "../../utils/own-blob-server.js";
 import {
-  blobFolder,
-  clientsFor,
-  diskPath,
-  DISK_ONLY,
-  runJob,
-} from "../../utils/own-blob-server.js";
+  diskHolds,
+  loseBlobs,
+  spooled as spooledOn,
+} from "../../utils/store-faults.js";
 import { parseSse, type SseEvent } from "../../utils/sse.js";
 import {
   baselineEventId,
@@ -242,9 +239,8 @@ async function expectNoEventsOf(rows: Carried, eventId: string): Promise<void> {
 }
 
 /** What is in the folder the restore spools into. */
-function spooled(): string[] {
-  const folder = join(blobFolder(server), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
+function spooled(): Promise<string[]> {
+  return spooledOn(server.controlSocket);
 }
 
 /** The events a stream has delivered, each with when it arrived. */
@@ -283,7 +279,7 @@ describe("a restore that does not finish", () => {
     const done = await ownerClient().restoreArchive(rows.archive);
     expect(done.status, JSON.stringify(done.error)).toBe(200);
     await expectAllOf(rows);
-    expect(existsSync(diskPath(server, rows.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
   });
 
   it.each([
@@ -307,8 +303,8 @@ describe("a restore that does not finish", () => {
       await server.clearFault();
 
       await expectNothingOf(rows, since);
-      expect(existsSync(diskPath(server, rows.hash))).toBe(false);
-      expect(spooled()).toEqual([]);
+      expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
+      expect(await spooled()).toEqual([]);
 
       await expectNoEventsOf(rows, eventId);
 
@@ -332,7 +328,7 @@ describe("a restore that does not finish", () => {
     await server.waitForHold("hold:restore:before-commit");
     // The witness that there is something to leave: the bytes are in place
     // before the rows are committed.
-    expect(existsSync(diskPath(server, rows.hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
 
     await server.restart({ signal: "SIGKILL" });
     // A restore the process died under is never answered.
@@ -343,8 +339,8 @@ describe("a restore that does not finish", () => {
     await expectNoEventsOf(rows, eventId);
     // No row names the bytes, so the cleanup of the next run removes them.
     await runJob(operator, "blob-integrity");
-    expect(existsSync(diskPath(server, rows.hash))).toBe(false);
-    expect(spooled()).toEqual([]);
+    expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
+    expect(await spooled()).toEqual([]);
 
     const again = await ownerClient().restoreArchive(rows.archive);
     expect(again.status, JSON.stringify(again.error)).toBe(200);
@@ -366,7 +362,7 @@ describe("a restore that is still writing", () => {
       await server.waitForHold("hold:restore:before-commit");
 
       // Every row is written, and the bytes are in place, and none of it shows.
-      expect(existsSync(diskPath(server, rows.hash))).toBe(true);
+      expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
       await expectNothingOf(rows, since);
       const listed = await working.listItems({ source: rows.source });
       expect(listed.status).toBe(200);
@@ -412,8 +408,8 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     const keptHash = blobHash(kept);
     const upload = await working.uploadBlob(kept, "application/octet-stream");
     expect(upload.status, JSON.stringify(upload.error)).toBe(201);
-    expect(existsSync(diskPath(server, keptHash))).toBe(true);
-    unlinkSync(diskPath(server, keptHash));
+    expect(await diskHolds(server.controlSocket, keptHash)).toBe(true);
+    await loseBlobs(server, [keptHash]);
 
     const rows = carrying();
     const both = carryingBoth(rows, kept);
@@ -422,12 +418,13 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     expect(refused.status, JSON.stringify(refused.error)).toBe(500);
 
     // The witness that bytes are taken back: the restore's own were.
-    expect(existsSync(diskPath(server, rows.hash))).toBe(false);
-    expect(existsSync(diskPath(server, keptHash))).toBe(true);
-    await server.clearFault();
+    expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
+    expect(await diskHolds(server.controlSocket, keptHash)).toBe(true);
+    // Placing the bytes again ended the loss, so the store reads them now.
     const read = await operator.downloadBlob(keptHash);
     expect(read.status).toBe(200);
     expect(new Uint8Array(read.data)).toEqual(kept);
+    await server.clearFault();
   });
 
   it("keeps the bytes of an upload requested while the failed restore ran", async () => {
@@ -438,18 +435,18 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     await server.setFault("fail:commit=restore_archive");
     const restoring = ownerClient().restoreArchive(rows);
     await server.waitForHold("hold:restore:before-commit");
-    expect(existsSync(diskPath(server, sharedHash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, sharedHash)).toBe(true);
 
     // The upload meets the bytes the restore placed, and waits for the restore
     // as it does for any request for the same bytes.
     // The held restore's own spool files are already in the folder, so the
     // upload is the one that adds a file.
-    const restoreSpools = new Set(spooled());
+    const restoreSpools = new Set(await spooled());
     const uploading = working.uploadBlob(shared, "application/octet-stream");
-    await waitFor("the upload to be spooled behind the restore", () =>
-      Promise.resolve(
-        spooled().some((name) => !restoreSpools.has(name)) ? true : undefined,
-      ),
+    await waitFor("the upload to be spooled behind the restore", async () =>
+      (await spooled()).some((name) => !restoreSpools.has(name))
+        ? true
+        : undefined,
     );
     await server.clearFault("hold:restore:before-commit");
 

@@ -15,6 +15,8 @@ import {
   standingRule,
   requireReadableRow,
 } from "../middleware/auth.js";
+import { faultsArmed } from "../control/faults.js";
+import { failRead } from "../storage/sqlite/injected-failure.js";
 import { readFolderStatus } from "../folder-status-read.js";
 import { requestWriter, resolveWriter } from "../auth/version-writer.js";
 import { VersionWriterSchema } from "./_schemas.js";
@@ -381,11 +383,13 @@ export function folderStatusRoutes(storage: Storage) {
           ErrorCode.FORBIDDEN,
           "A local command has no sign-in to report under",
         );
-      return await storage.folderStatus.put(
+      const stored = await storage.folderStatus.put(
         id,
         { ...signIn, kind: signIn.kind },
         report,
       );
+      if (faultsArmed()) failRead("folder-status-report");
+      return stored;
     });
     return c.json(result, 200);
   });

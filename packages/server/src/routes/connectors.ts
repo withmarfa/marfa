@@ -872,6 +872,8 @@ export function connectorRoutes(storage: Storage) {
         resource_id: connector.id,
         details: { name: connector.name, created },
       }),
+      {},
+      "connector.register",
     );
     return c.json(connector, created ? 201 : 200);
   });

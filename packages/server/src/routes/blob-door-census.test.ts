@@ -103,6 +103,8 @@ const BYTE_TYPES =
 
 const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "app.ts": "wiring: hands the layer to the routes below",
+  "control/test-routes.ts":
+    "the private socket's test hook that lists the stores, with test hooks on",
   "index.ts": "wiring: builds the layer at boot",
   "openapi-published.ts": "wiring: builds an app to read its document",
   "enrichment/sweeper.ts":

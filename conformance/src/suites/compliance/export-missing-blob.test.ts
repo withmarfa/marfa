@@ -1,13 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname } from "node:path";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -18,7 +10,6 @@ import {
 import {
   bytesOf,
   clientsFor,
-  diskPath,
   DISK_ONLY,
   ownObjectStore,
   runJob,
@@ -29,6 +20,11 @@ import {
   listTarGzEntries,
   readTarGzEntry,
 } from "../../utils/archive.js";
+import {
+  damageBlobs,
+  loseBlobs,
+  unreadBlobs,
+} from "../../utils/store-faults.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -118,7 +114,7 @@ describe("an archive export on an instance with one disk store", () => {
     expect(before.manifest.missing_blobs).toEqual({});
     expect(before.entries).toContain(`blobs/${lost}`);
 
-    unlinkSync(diskPath(server!, lost));
+    await loseBlobs(server!, [lost]);
     const { manifest, entries } = await archiveOf(working);
     expect(manifest.blob_count).toBe(1);
     expect(manifest.blobs).toEqual({
@@ -136,10 +132,7 @@ describe("an archive export on an instance with one disk store", () => {
     const hash = await upload(working, content);
     await noteNaming(working, hash);
     // The same length, so only the digest can tell.
-    writeFileSync(
-      diskPath(server!, hash),
-      new Uint8Array(content.length).fill(0x41),
-    );
+    await damageBlobs(server!, [hash]);
     const struck = await runJob(operator, "blob-integrity");
     expect(struck.result.struck).toBeGreaterThanOrEqual(1);
     expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
@@ -164,10 +157,7 @@ describe("an archive export on an instance with one disk store", () => {
     expect(sound.status).toBe(200);
     expect((await sound.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
-    writeFileSync(
-      diskPath(server!, hash),
-      new Uint8Array(content.length).fill(0x42),
-    );
+    await damageBlobs(server!, [hash]);
     const res = await read();
     expect(res.status).toBe(200);
     await expect(res.arrayBuffer()).rejects.toThrow();
@@ -184,7 +174,6 @@ describe("an archive export on an instance with one disk store", () => {
     const content = bytesOf("a blob behind a folder that cannot be read", 150);
     const hash = await upload(working, content);
     await noteNaming(working, hash);
-    const folder = dirname(diskPath(server!, hash));
     const id = uuidv7();
     // An archive that names the blob and does not carry it, so the restore
     // asks the disk whether the instance holds it.
@@ -205,11 +194,8 @@ describe("an archive export on an instance with one disk store", () => {
       }),
     );
 
-    chmodSync(folder, 0o000);
+    await unreadBlobs(server!, [hash]);
     try {
-      // The witness: the folder really cannot be read by this user.
-      expect(() => statSync(diskPath(server!, hash))).toThrow();
-
       const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
         headers: { Authorization: `Bearer ${server!.workingKey}` },
       });
@@ -223,7 +209,7 @@ describe("an archive export on an instance with one disk store", () => {
       expect(restored.error?.error.code).toBe("blob_store_unavailable");
       expect((await working.getItem(id)).status).toBe(404);
     } finally {
-      chmodSync(folder, 0o755);
+      await server!.clearFault("damage:blob-unreadable");
     }
 
     // The same archive restores once the disk answers, and the blob is held.
@@ -296,7 +282,7 @@ describe("an archive export on an instance with one disk store", () => {
 
     // Once the bytes are uploaded again the instance holds them, and the
     // same archive no longer answers them as missing.
-    expect(existsSync(diskPath(server!, lost))).toBe(false);
+    expect((await working.downloadBlob(lost)).status).toBe(404);
     expect(await upload(working, lostBytes)).toBe(lost);
     const again = await owner.restoreArchive(archive);
     expect(again.status, JSON.stringify(again.error)).toBe(200);
@@ -396,12 +382,23 @@ describe("an archive export on an instance with one disk store", () => {
     const whole = await archiveOf(working);
     expect(whole.entries).toContain(`blobs/${last}`);
 
-    const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
+    // The export waits at its first read of a blob's bytes, with the
+    // manifest already written, while the last blob's file goes.
+    await server!.setFault("hold:blob-read");
+    const sent = fetch(`${server!.apiUrl}/export?format=archive`, {
       headers: { Authorization: `Bearer ${server!.workingKey}` },
     });
+    await server!.waitForHold("hold:blob-read");
+    await loseBlobs(server!, [last]);
+    await server!.clearFault("hold:blob-read");
+    const res = await sent;
     expect(res.status).toBe(200);
-    unlinkSync(diskPath(server!, last));
-    await expect(res.arrayBuffer()).rejects.toThrow();
+    await res.arrayBuffer().then(
+      () => {
+        throw new Error("the archive ended without the blob it listed");
+      },
+      () => undefined,
+    );
   });
 });
 
@@ -431,7 +428,7 @@ describe("an archive export on an instance with an object store", () => {
       .sort();
     expect(kinds).toEqual(["disk", "s3"]);
 
-    unlinkSync(diskPath(server!, hash));
+    await loseBlobs(server!, [hash]);
     const { archive, manifest } = await archiveOf(working);
     expect(manifest.missing_blobs).toEqual({});
     expect(Object.keys(manifest.blobs)).toEqual([hash]);
@@ -472,19 +469,15 @@ describe("an archive export on an instance with an object store", () => {
       }),
     );
 
-    const folder = dirname(diskPath(server!, hash));
-    chmodSync(folder, 0o000);
+    // The disk cannot be read for the blob; the object store answers for it.
+    await unreadBlobs(server!, [hash]);
     try {
-      // The witness: the folder really cannot be read by this user, which
-      // on a server with the disk alone answers 503.
-      expect(() => statSync(diskPath(server!, hash))).toThrow();
-
       const restored = await owner.restoreArchive(lacking);
       expect(restored.status, JSON.stringify(restored.error)).toBe(200);
       expect(restored.data.blobs_missing).toEqual([]);
       expect((await working.getItem(id)).status).toBe(200);
     } finally {
-      chmodSync(folder, 0o755);
+      await server!.clearFault("damage:blob-unreadable");
     }
   });
 });

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -9,11 +8,11 @@ import {
 import {
   bytesOf,
   clientsFor,
-  diskPath,
   ownObjectStore,
   replicationIdle,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { diskHolds } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -96,7 +95,7 @@ async function replicated(words: string): Promise<string> {
       : undefined,
   );
   await replicationIdle(operator);
-  expect(existsSync(diskPath(server, hash))).toBe(true);
+  expect(await diskHolds(server.controlSocket, hash)).toBe(true);
   return hash;
 }
 
@@ -115,7 +114,7 @@ async function dropWithTheStoreFailing(hash: string): Promise<void> {
   const copies = (await operator.listBlobCopies(hash)).data.data;
   expect(copies.map((copy) => copy.kind)).toEqual(["s3"]);
   // The copy is out of the copy record and its bytes are still on the disk.
-  expect(existsSync(diskPath(server, hash))).toBe(true);
+  expect(await diskHolds(server.controlSocket, hash)).toBe(true);
 }
 
 describe("the bytes of a copy that was dropped", () => {
@@ -123,7 +122,7 @@ describe("the bytes of a copy that was dropped", () => {
     const hash = await replicated("dropped without a fault");
     const dropped = await operator.deleteBlobCopy(hash, diskStoreId);
     expect(dropped.status).toBe(200);
-    expect(existsSync(diskPath(server, hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(false);
   });
 
   it("are deleted on a later run once the store can, when it could not delete them at the drop", async () => {
@@ -131,7 +130,7 @@ describe("the bytes of a copy that was dropped", () => {
     await dropWithTheStoreFailing(hash);
 
     await runJob(operator, "blob-integrity");
-    expect(existsSync(diskPath(server, hash))).toBe(false);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(false);
     expect(await fired()).toBe(1);
   });
 });
@@ -148,18 +147,18 @@ describe("the bytes of other copies, while a store keeps failing to delete one",
     await server.setFault("fail:blob-delete");
     await runJob(operator, "blob-integrity");
     expect(await fired()).toBe(1);
-    expect(existsSync(diskPath(server, stuck))).toBe(true);
-    expect(existsSync(diskPath(server, other))).toBe(true);
+    expect(await diskHolds(server.controlSocket, stuck)).toBe(true);
+    expect(await diskHolds(server.controlSocket, other)).toBe(true);
 
     // A restart forgets nothing the next run needs to know.
     await server.restart();
     ({ operator, working } = clientsFor(server));
     await jobsIdle();
     await runJob(operator, "blob-integrity");
-    expect(existsSync(diskPath(server, other))).toBe(false);
-    expect(existsSync(diskPath(server, stuck))).toBe(true);
+    expect(await diskHolds(server.controlSocket, other)).toBe(false);
+    expect(await diskHolds(server.controlSocket, stuck)).toBe(true);
 
     await runJob(operator, "blob-integrity");
-    expect(existsSync(diskPath(server, stuck))).toBe(false);
+    expect(await diskHolds(server.controlSocket, stuck)).toBe(false);
   });
 });
