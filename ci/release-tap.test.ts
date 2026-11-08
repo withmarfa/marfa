@@ -1,5 +1,5 @@
 /**
- * The Homebrew formula for the `marfa` command line is written from the
+ * The Homebrew formula for the `marfa` command line and `marfa-server` is written from the
  * checksum file of a release, and pushed to the tap only after the release is
  * public. A formula that names a hash the archive does not have, or an archive
  * the release does not carry, fails for every person who installs it.
@@ -17,6 +17,7 @@ const FORMULA = join(ROOT, "scripts", "release", "write-formula.sh");
 
 interface Step {
   name?: string;
+  if?: string;
   uses?: string;
   run?: string;
   env?: Record<string, string>;
@@ -33,13 +34,13 @@ const jobs = (
   ) as { jobs: Record<string, Job> }
 ).jobs;
 
-const ARM = "a".repeat(64);
-const INTEL = "b".repeat(64);
+const MAC = "a".repeat(64);
+const INTEL = "c".repeat(64);
+const ARM = "d".repeat(64);
 const SUMS = [
-  `${ARM}  marfa-0.0.23-darwin-arm64.tar.gz`,
-  `${INTEL}  marfa-0.0.23-darwin-x86_64.tar.gz`,
-  `${"c".repeat(64)}  marfa-0.0.23-linux-x86_64.tar.gz`,
-  `${"d".repeat(64)}  marfa-0.0.23-linux-aarch64.tar.gz`,
+  `${MAC}  marfa-0.0.23-darwin-arm64.tar.gz`,
+  `${INTEL}  marfa-0.0.23-linux-x86_64.tar.gz`,
+  `${ARM}  marfa-0.0.23-linux-aarch64.tar.gz`,
 ].join("\n");
 
 function formula(version: string, sums: string) {
@@ -60,42 +61,66 @@ function formula(version: string, sums: string) {
 }
 
 describe("the formula is written from the release's checksum file", () => {
-  it("names each macOS archive with its own hash, and no Linux archive", () => {
+  it("names each archive with its own hash, for Apple silicon and both Linux architectures", () => {
     const { status, out } = formula("0.0.23", SUMS);
     expect(status).toBe(0);
     const base = "https://github.com/withmarfa/marfa/releases/download/v0.0.23";
     expect(out).toContain(
-      `url "${base}/marfa-0.0.23-darwin-arm64.tar.gz"\n      sha256 "${ARM}"`,
+      `url "${base}/marfa-0.0.23-darwin-arm64.tar.gz"\n    sha256 "${MAC}"`,
     );
-    expect(out).toContain(
-      `url "${base}/marfa-0.0.23-darwin-x86_64.tar.gz"\n      sha256 "${INTEL}"`,
+    expect(out).toMatch(
+      new RegExp(
+        `on_arm do\\n\\s+url "${base}/marfa-0.0.23-linux-aarch64.tar.gz"\\n\\s+sha256 "${ARM}"`,
+      ),
     );
-    expect(out).not.toContain("linux");
-    expect(out).toContain("depends_on :macos");
-    expect(out).toContain('bin.install "marfa"');
+    expect(out).toMatch(
+      new RegExp(
+        `on_intel do\\n\\s+url "${base}/marfa-0.0.23-linux-x86_64.tar.gz"\\n\\s+sha256 "${INTEL}"`,
+      ),
+    );
+  });
+
+  it("offers no Intel Mac archive and does not tie the formula to a macOS release", () => {
+    const { out } = formula("0.0.23", SUMS);
+    expect(out).not.toContain("darwin-x86_64");
+    expect(out).not.toContain("depends_on :macos");
+    expect(out).toContain("depends_on arch: :arm64");
+  });
+
+  it("installs both programs and checks both versions", () => {
+    const { out } = formula("0.0.23", SUMS);
+    expect(out).toContain('bin.install "marfa", "marfa-server"');
+    expect(out).toContain('doc.install "NOTICES.txt"');
     expect(out).toContain("marfa server install");
+    expect(out).toContain('"marfa #{version}"');
+    expect(out).toContain('"marfa-server #{version}"');
   });
 
   it("refuses what it cannot vouch for", () => {
     const lines = SUMS.split("\n");
+    const without = (what: string) =>
+      lines.filter((line) => !line.includes(what)).join("\n");
     const cases: [string, string, string][] = [
       ["0.0", SUMS, "not a release version"],
       ["latest", SUMS, "not a release version"],
       [
         "0.0.23",
-        lines.filter((l) => !l.includes("arm64")).join("\n"),
+        without("darwin-arm64"),
         "no line for marfa-0.0.23-darwin-arm64",
       ],
       [
         "0.0.23",
-        lines
-          .filter((l) => !l.includes("x86_64.tar.gz") || l.includes("linux"))
-          .join("\n"),
-        "no line for marfa-0.0.23-darwin-x86_64",
+        without("linux-x86_64"),
+        "no line for marfa-0.0.23-linux-x86_64",
+      ],
+      [
+        "0.0.23",
+        without("linux-aarch64"),
+        "no line for marfa-0.0.23-linux-aarch64",
       ],
       ["0.0.23", [SUMS, ...lines.slice(0, 1)].join("\n"), "more than once"],
-      ["0.0.23", SUMS.replace(ARM, "A".repeat(64)), "64 lowercase hexadecimal"],
-      ["0.0.23", SUMS.replace(ARM, "a".repeat(63)), "64 lowercase hexadecimal"],
+      ["0.0.23", SUMS.replace(MAC, "A".repeat(64)), "64 lowercase hexadecimal"],
+      ["0.0.23", SUMS.replace(MAC, "a".repeat(63)), "64 lowercase hexadecimal"],
       ["0.0.24", SUMS, "no line for marfa-0.0.24-darwin-arm64"],
     ];
     for (const [version, sums, said] of cases) {
@@ -115,14 +140,40 @@ describe("the workflow pushes the formula only after the release is public", () 
     expect(tap?.if).toBe("github.event_name == 'push'");
   });
 
-  it("stops with the secret's name when it is not set, before anything is fetched", () => {
+  it("writes and shows the formula for every tag, and pushes it only when HOMEBREW_TAP is publish", () => {
+    const steps = tap?.steps ?? [];
+    const gate = steps.find((s) => s.name?.startsWith("Say whether"));
+    expect(gate?.env?.HOMEBREW_TAP).toBe("${{ vars.HOMEBREW_TAP }}");
+    expect(gate?.run).toContain('"$HOMEBREW_TAP" = publish');
+    expect(gate?.run).toContain("is not 'publish'");
+    const write = steps.find((s) => s.run?.includes("write-formula.sh"));
+    expect(write).toBeDefined();
+    expect(write?.if).toBeUndefined();
+    expect(write?.run).toContain("cat ");
+    const gated = steps.filter(
+      (s) => s.if === "steps.gate.outputs.push == 'true'",
+    );
+    expect(gated.map((s) => s.name ?? s.uses)).toEqual([
+      "Require the tap token",
+      "actions/checkout@v7",
+      "Commit and push the formula",
+    ]);
+    for (const step of steps) {
+      if (gated.includes(step)) continue;
+      expect(JSON.stringify(step), step.name).not.toContain(
+        "HOMEBREW_TAP_TOKEN",
+      );
+    }
+  });
+
+  it("stops with the secret's name when it is not set, before anything is fetched from the tap", () => {
     const steps = tap?.steps ?? [];
     const guard = steps.findIndex((s) => s.name === "Require the tap token");
-    const fetch = steps.findIndex(
-      (s) => s.name === "Get the release's checksums",
+    const checkout = steps.findIndex(
+      (s) => s.with?.repository === "withmarfa/homebrew-tap",
     );
     expect(guard).toBeGreaterThanOrEqual(0);
-    expect(guard).toBeLessThan(fetch);
+    expect(guard).toBeLessThan(checkout);
     expect(steps[guard]?.run).toContain("HOMEBREW_TAP_TOKEN");
     expect(steps[guard]?.env?.HOMEBREW_TAP_TOKEN).toBe(
       "${{ secrets.HOMEBREW_TAP_TOKEN }}",

@@ -73,7 +73,36 @@ describe("the server image in a release", () => {
   });
 
   it("waits for the version to be read and held to the tag grammar", () => {
-    expect(needs(image)).toContain("build");
+    expect(needs(image)).toContain("version");
+  });
+
+  it("is built from the release's own Linux archives, so the image holds the bytes a person downloads", () => {
+    expect(needs(image)).toContain("programs-linux");
+    const download = imageSteps.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
+    );
+    expect(download?.with?.pattern).toBe(
+      "linux-${{ needs.version.outputs.version }}-*",
+    );
+    const layout = indexOfStep(imageSteps, "Lay out the build context");
+    expect(imageSteps[layout]?.run).toContain("image-context.sh");
+    const built = imageSteps.find((step) =>
+      step.uses?.startsWith("docker/build-push-action@"),
+    );
+    expect(imageSteps.indexOf(built!)).toBeGreaterThan(layout);
+    expect(built?.with?.file).toBe("deploy/Dockerfile");
+  });
+
+  it("describes the image as the Marfa server, in both builds", () => {
+    const builds = imageSteps.filter((step) =>
+      step.uses?.startsWith("docker/build-push-action@"),
+    );
+    expect(builds).toHaveLength(2);
+    for (const build of builds) {
+      expect(String(build.with?.labels)).toContain(
+        "org.opencontainers.image.description=The Marfa server.",
+      );
+    }
   });
 
   it("boots what it built before it pushes anything", () => {

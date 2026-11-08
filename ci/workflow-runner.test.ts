@@ -18,7 +18,7 @@ const WORKFLOWS = resolve(
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "core-live.yml:live",
-  "release.yml:build",
+  "release.yml:programs-macos",
   "release.yml:sign",
   "ci.yml:control-socket",
 ]);
@@ -38,11 +38,11 @@ const NIGHTLY_MAC_JOBS = new Set([
   "ci.yml:cli-scenarios",
 ]);
 
-// The server image and the Linux command line are built on a runner of each
-// architecture they ship for, and both are standard GitHub-hosted runners.
+// The server image is built, and each Linux archive is run, on a runner of
+// each architecture they ship for, and both are standard GitHub-hosted runners.
 const PER_ARCHITECTURE_JOBS = new Set([
   "release.yml:image",
-  "release.yml:cli-linux",
+  "release.yml:run-linux",
 ]);
 const PER_ARCHITECTURE_RUNNER = "${{ matrix.runner }}";
 const PER_ARCHITECTURE_RUNNERS = new Set(["ubuntu-latest", "ubuntu-24.04-arm"]);
