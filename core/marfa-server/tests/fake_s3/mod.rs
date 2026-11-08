@@ -22,6 +22,8 @@ pub enum Mode {
     AllNotFound,
     /// A body is sent in this many pieces, one a second.
     Trickle(u64),
+    /// The next marker read answers as normal, and every request after it `404`.
+    NotFoundAfterMarker,
 }
 
 #[derive(Default)]
@@ -97,6 +99,9 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
         let mut held = held.lock().unwrap();
         held.requests.push((method.clone(), key.clone()));
         let mode = held.mode.unwrap_or(Mode::Normal);
+        if mode == Mode::NotFoundAfterMarker && key.ends_with("/.marfa-store") {
+            held.mode = Some(Mode::AllNotFound);
+        }
         let refused = held.refused.iter().any(|prefix| key.starts_with(prefix));
         (mode, refused)
     };

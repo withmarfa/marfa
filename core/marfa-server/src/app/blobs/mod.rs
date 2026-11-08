@@ -12,7 +12,6 @@ mod s3;
 mod store;
 pub mod upkeep;
 
-use std::collections::HashSet;
 use std::future::Future;
 use std::io;
 use std::path::Path;
@@ -406,23 +405,19 @@ impl Blobs {
         }
     }
 
-    /// A marker check distinguishes an unavailable bucket from a missing copy.
-    async fn is_itself(&self, store: &Store, confirmed: &mut HashSet<String>) -> bool {
+    /// Whether the store answers now with its own marker. Asked again before each strike, made
+    /// after the answer that found the copy missing, so an endpoint that stopped being the
+    /// store since an earlier answer strikes nothing.
+    async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;
         };
-        if confirmed.contains(s3.id()) {
-            return true;
-        }
         let answer = match tokio::time::timeout(self.check(), s3.is_itself()).await {
             Ok(answer) => answer,
             Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "no answer in time")),
         };
         match answer {
-            Ok(()) => {
-                confirmed.insert(s3.id().to_string());
-                true
-            }
+            Ok(()) => true,
             Err(error) => {
                 tracing::warn!(%error, "The object store did not answer as itself; nothing is struck there");
                 false

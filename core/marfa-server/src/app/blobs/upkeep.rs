@@ -344,7 +344,6 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
         .await?;
     let (mut verified, mut struck, mut bytes, mut checked) = (0u64, 0u64, 0u64, 0u64);
     let mut seen = HashSet::new();
-    let mut itself = HashSet::new();
     'run: loop {
         let left_out: Vec<String> = unreachable.iter().cloned().collect();
         let limit = batch.saturating_add(seen.len() as u64);
@@ -376,9 +375,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                 continue;
             }
             let mut checked_now = check(&app, &store, &copy).await;
-            if matches!(checked_now, Checked::Damaged)
-                && !app.blobs.is_itself(&store, &mut itself).await
-            {
+            if matches!(checked_now, Checked::Damaged) && !app.blobs.is_itself(&store).await {
                 checked_now = Checked::Silent;
             }
             match checked_now {

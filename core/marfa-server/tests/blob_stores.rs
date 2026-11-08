@@ -823,3 +823,30 @@ async fn a_deletion_that_lands_after_the_server_gave_it_up_leaves_the_copy_made_
     assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
     assert_eq!(fetched.bytes, bytes);
 }
+
+#[tokio::test]
+async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more_struck() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let mut hashes = [
+        instance.replicated(&s3, b"one copy truly gone").await,
+        instance.replicated(&s3, b"one copy still there").await,
+    ];
+    hashes.sort();
+    let (gone, kept) = (hashes[0].clone(), hashes[1].clone());
+    s3.remove_object(&object_key(&s3, "blobs", &gone));
+
+    s3.set_mode(Mode::NotFoundAfterMarker);
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 1, "{result}");
+    assert_eq!(result["unreachable"], 1, "{result}");
+    assert_eq!(instance.copies(&gone).await.len(), 1);
+    assert_eq!(instance.copies(&kept).await.len(), 2);
+
+    // The witness: once the store answers as itself again, the copy that is there is kept.
+    s3.set_mode(Mode::Normal);
+    let result = instance.run("blob-integrity").await;
+    assert_eq!(result["struck"], 0, "{result}");
+    assert_eq!(instance.copies(&kept).await.len(), 2);
+}
