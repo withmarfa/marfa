@@ -1,0 +1,10 @@
+[package]
+name = "marfa-acl"
+description = "Reads a path's access control list natively, so the command line and the server judge a private socket's path the same way without a helper program."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc = "0.2"
