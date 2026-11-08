@@ -1,7 +1,6 @@
-//! The one way an item is written. Every door describes its write as a
-//! [`Change`], and [`apply`] makes each access check on the state the
-//! transaction commits, writes the rows, keeps the version left behind, leaves
-//! the audit entry and adds the event, all in the write's transaction.
+//! [`apply`] is the one way an item is written: it makes each access check on the state the
+//! transaction commits, writes the rows, keeps the version left behind, and leaves the audit
+//! entry and the event, all in that transaction.
 
 use std::sync::Arc;
 
@@ -38,7 +37,6 @@ const COPY_TAG: &str = "conflicted-copy";
 const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
 const MAX_EXTENSION_UNITS: usize = 102_400;
 
-/// What `POST /items` asks for.
 #[derive(Debug, Default)]
 pub struct Put {
     pub type_id: String,
@@ -57,7 +55,6 @@ pub struct Put {
     pub edges: Option<Inline>,
 }
 
-/// How a stale write that collides is settled.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Settle {
     #[default]
@@ -65,16 +62,13 @@ pub enum Settle {
     Automatically,
 }
 
-/// What `PATCH /items/{id}` asks for.
 #[derive(Debug, Default)]
 pub struct Update {
     pub id: String,
     pub properties: Option<Map<String, Value>>,
     pub clear: Vec<String>,
     pub replace: bool,
-    /// The type the body declares.
     pub type_id: Option<String>,
-    /// Whether the declared type is where the item moves.
     pub retype: bool,
     pub version: i64,
     pub exact: bool,
@@ -85,7 +79,6 @@ pub struct Update {
     pub edges: Option<Inline>,
 }
 
-/// A write to a `system.view`, which only the view doors make.
 #[derive(Debug)]
 pub enum ViewChange {
     Create {
@@ -102,7 +95,6 @@ pub enum ViewChange {
     },
 }
 
-/// A write to an item, by the door's description of it.
 #[derive(Debug)]
 pub enum Change {
     View(ViewChange),
@@ -163,16 +155,13 @@ pub enum Change {
         keys: Keys,
         settled_at: String,
     },
-    /// A bulk page under `atomic: true`, as one write.
     Page(Box<Page>),
-    /// One entry of a bulk page under `atomic: false`, as one write.
     Entry {
         entry: Box<Entry>,
         note: Note,
     },
 }
 
-/// What the owner does to an item through its summary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerAct {
     Trash,
@@ -216,11 +205,8 @@ impl Change {
     }
 }
 
-/// What a settled collision leaves: the properties to land, how it was
-/// settled, and a copy this attempt wrote.
 type Outcome = (Map<String, Value>, Option<Value>, Option<Item>);
 
-/// The answer a write gives, as it would be recorded for a replay.
 #[derive(Debug)]
 pub struct Done {
     pub status: u16,
@@ -234,8 +220,7 @@ fn done_ok() -> Done {
     }
 }
 
-/// Runs `change` as one write. With a `claim`, the answer is recorded under it
-/// in the same transaction.
+/// With a `claim`, the answer is recorded under it in the same transaction.
 pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, change: Change) -> Result<Done> {
     let cache = app.catalog_handle();
     let action = change.action();
@@ -249,7 +234,6 @@ pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, change: Chang
     .await
 }
 
-/// The one function every item write goes through.
 pub fn apply(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
@@ -281,7 +265,6 @@ pub(crate) fn apply_server_own(
     job.run(change)
 }
 
-/// A rule's refusal, as a write answers it.
 pub fn ruled(error: RuleError) -> Refusal {
     use marfa_rules::error::Code as Rule;
     let code = match error.code {
@@ -436,7 +419,6 @@ fn collision(
     .with_member("merge_policy", policy.to_json()))
 }
 
-/// What a write to a row it resolved asks for.
 #[derive(Default)]
 struct Writing {
     properties: Option<Map<String, Value>>,
@@ -451,7 +433,6 @@ struct Writing {
     settle: Settle,
     tags: Option<Vec<String>>,
     edges: Option<Inline>,
-    /// Landing on the row is the write, whatever it carries.
     upsert: bool,
 }
 
@@ -479,7 +460,6 @@ impl Writing {
     }
 }
 
-/// What a stale write settled on, beside the properties.
 struct Settled {
     properties: Map<String, Value>,
     fields: ItemFields,
@@ -520,8 +500,6 @@ pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec
         .collect()
 }
 
-/// Sends a part just written to a host in the bin after it, where that leaves
-/// it with no host out of the bin.
 pub(crate) fn settle_late_part(
     unit: &Unit<'_, '_>,
     catalog: &Catalog,
@@ -611,8 +589,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         EdgeWriting::of(self.unit, &self.catalog, self.claim)
     }
 
-    /// Makes `item`'s edges what `writing` lists, and answers the row as that
-    /// leaves it, since a part written to a host in the bin follows it there.
+    /// A part written to a host in the bin follows it there.
     fn with_inline(&self, item: Item, inline: Option<&Inline>) -> Result<Item> {
         let Some(inline) = inline else {
             return Ok(item);
@@ -625,8 +602,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.unit.caller.writer()
     }
 
-    /// The source a write stands under: the one it names, which the caller
-    /// must hold, or the caller's own.
     fn source_of(&self, named: Option<&str>) -> Result<String> {
         let Some(name) = named else {
             return Ok(self.caller().own_source().to_string());
@@ -709,7 +684,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             .unwrap_or(0)
     }
 
-    /// The merge policy of `type_id`, laid root to leaf down its chain.
     fn policy_of(&self, type_id: &str) -> MergePolicy {
         let mut chain = Vec::new();
         let mut at = Some(type_id);
@@ -736,7 +710,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         )
     }
 
-    /// The answer to a create or an update, which carries the item's edges.
     fn answer_edges(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
         let shown = item.hydrated(self.unit.tx(), self.caller(), &self.catalog)?;
         self.answer_with(status, shown, item, also)
@@ -775,9 +748,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    /// A view is written by the platform on the caller's word: the item doors
-    /// fence `system.*` off from every key, and write on `system.view` is what
-    /// these doors ask instead.
+    /// Item doors fence `system.*` off from every key, so view doors ask write on `system.view`.
     fn view(&self, change: ViewChange) -> Result<Done> {
         self.caller().require_view_write()?;
         match change {
@@ -880,8 +851,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.create(put, &source)
     }
 
-    /// What a create or an upsert asks of the caller before any row, and the
-    /// source it stands under.
     fn put_gates(&self, put: &Put) -> Result<String> {
         self.gate().type_gate(&put.type_id)?;
         let source = self.source_of(put.source.as_deref())?;
@@ -1073,8 +1042,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.answer_edges(200, &item, &also)
     }
 
-    /// What a write asks after the row's own gate, in the order the contract
-    /// answers it.
     fn judge_change(&self, row: &Item, writing: &Writing) -> Result<()> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
@@ -1124,8 +1091,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(())
     }
 
-    /// Writes what `writing` leaves on `row`, with its events, and answers the
-    /// row and how a stale write settled.
     fn landed(&self, row: &Item, writing: &Writing) -> Result<(Item, Option<Value>)> {
         if !self.catalog.rules.known(&row.type_id) {
             return Err(unknown_row(row));
@@ -1149,8 +1114,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok((item, settled.resolution))
     }
 
-    /// What the row holds once the write lands, at its own version or merged
-    /// from a stale one.
     fn settled(&self, row: &Item, resulting: &str, writing: &Writing) -> Result<Settled> {
         let rules = &self.catalog.rules;
         let current = parsed(&row.properties)?;
@@ -1233,8 +1196,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    /// Settles a collision under `conflict=auto`, writing the copy its merge
-    /// policy keeps.
     fn resolved(
         &self,
         row: &Item,
@@ -1277,8 +1238,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok((plan.merged, Some(resolution), copy))
     }
 
-    /// Writes the copy a stale write's losing values go to, unless this
-    /// attempt wrote it already. Answers whether it is new, and the copy.
     fn conflicted_copy(
         &self,
         row: &Item,
@@ -1405,9 +1364,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(rules.coerced_properties(resulting, &result))
     }
 
-    /// The link `properties` give an item of `type_id`, refused where another
-    /// row than `own` holds it. Each row-writing path comes through here, so
-    /// the rule cannot differ by door.
+    /// Each row-writing path comes through here, so the link rule cannot differ by door.
     fn held_link(
         &self,
         type_id: &str,
@@ -1434,7 +1391,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(Some(link.to_string()))
     }
 
-    /// Keeps the version the row leaves and writes the one it reaches.
     fn land(&self, row: &Item, resulting: &str, settled: &Settled) -> Result<Item> {
         let rules = &self.catalog.rules;
         let at = self.unit.at.as_str();
@@ -1560,8 +1516,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.extensions_landed(&row, namespace)
     }
 
-    /// Writes a page as one transaction, so any refusal undoes all of it. What
-    /// an entry names is judged across the page before any row is looked up.
+    /// One transaction, so any refusal undoes all of it.
     fn page(&self, page: Page) -> Result<Done> {
         let Page {
             entries,
@@ -1614,7 +1569,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.put_gates(put).map(|_| ())
     }
 
-    /// Writes an entry that stands alone, answered as its place in the page.
     fn lone_entry(&self, entry: Entry, note: &Note) -> Result<Done> {
         let entered = self.entry(entry, note.retype)?;
         if let Some(id) = entered.written() {
@@ -1689,7 +1643,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             .map_err(|refusal| refusal.naming_row(&id))
     }
 
-    /// An entry under `create_only`, which writes only what no row holds.
     fn entry_once(
         &self,
         put: Put,
@@ -1764,7 +1717,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         )
     }
 
-    /// Brings back what `row`'s leaving the bin brings with it.
     fn brought_back(&self, row: &Item) -> Result<()> {
         for back in plan::returning(&self.gate(), row)? {
             let item = self.moved_out(&back.item, "active")?;
@@ -1786,7 +1738,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(())
     }
 
-    /// The row and its gate, for a door that reaches it in or out of the bin.
     fn lifecycle_row(&self, id: &str, version: Option<i64>) -> Result<Item> {
         let gate = self.gate();
         let row = gate.readable_row(id)?;
@@ -1901,8 +1852,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(done_ok())
     }
 
-    /// What the owner does through a summary, answered with the summary alone
-    /// so that nothing of the item's content leaves through this door.
+    /// Answers with the summary alone, so nothing of the item's content leaves through this door.
     fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<Done> {
         self.caller().require_direct()?;
         self.caller().require_recent(&self.unit.at)?;
@@ -1938,7 +1888,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    /// Moves what `keys` left under `type_id` to `settled_at`, where later.
     fn settle(&self, type_id: &str, keys: &Keys, settled_at: &str) -> Result<Done> {
         check_keys(&self.catalog, type_id, Some(keys))?;
         self.gate().type_gate(type_id)?;

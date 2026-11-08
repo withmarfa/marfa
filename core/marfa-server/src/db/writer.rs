@@ -31,8 +31,7 @@ enum Message {
     Stop(oneshot::Sender<()>),
 }
 
-/// When a long job last got something done. A write queued behind that job
-/// goes on waiting for as long as it hears from it.
+/// A write queued behind a long job keeps waiting while it hears from it.
 #[derive(Clone)]
 pub struct Pulse {
     origin: Instant,
@@ -176,11 +175,9 @@ impl Writer {
         self.pulse.clone()
     }
 
-    /// Queues a job and waits for its answer. A wait past `budget` before the
-    /// job starts withdraws it, so a caller told to try again can be sure it
-    /// never ran, unless the queue is held by a job whose [`Pulse`] beats
-    /// within the budget. A job that has started always finishes, whether or
-    /// not anyone is left to read its answer.
+    /// A wait past `budget` before the job starts withdraws it, so a caller told to try again
+    /// can be sure it never ran, unless the queue is held by a job whose [`Pulse`] beats within
+    /// the budget. A started job always finishes, whether or not anyone reads its answer.
     pub async fn submit<T, F>(&self, write: Write, budget: Duration, job: F) -> Result<T>
     where
         T: Send + 'static,
@@ -235,14 +232,11 @@ impl Writer {
         }
     }
 
-    /// How much longer a write out of `budget` goes on waiting, if a long job
-    /// has got something done within it.
     fn waiting_on(&self, budget: Duration) -> Option<Instant> {
         let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
         (until > Instant::now()).then_some(until)
     }
 
-    /// Runs what is queued, then checkpoints and closes the database.
     pub async fn stop(&self) {
         let (done, stopped) = oneshot::channel();
         if self.queue.send(Message::Stop(done)).await.is_ok() {

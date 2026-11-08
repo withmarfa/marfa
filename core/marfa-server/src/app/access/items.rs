@@ -1,5 +1,3 @@
-//! What a caller may do to items and what hangs from them.
-
 use marfa_rules::catalog::Catalog as Rules;
 use serde_json::json;
 
@@ -10,8 +8,6 @@ use crate::app::refusal::{Code, Refusal, Result};
 
 const MAX_WRITER_NAME: usize = 200;
 
-/// A name held to what a history or a page may show: text a client chose
-/// loses what would not print or would turn the line around it.
 pub fn printable(name: &str) -> String {
     name.chars()
         .filter(|at| {
@@ -26,8 +22,6 @@ impl Caller {
         self.level_on(Axis::Type, name) >= Level::Read
     }
 
-    /// Who a version written by this caller names. The server's own work names
-    /// no one, since no request asked for it.
     pub fn writer(&self) -> Option<Writer> {
         let writer = match self {
             Caller::Server => return None,
@@ -55,8 +49,7 @@ impl Caller {
         Some(writer)
     }
 
-    /// What an `Idempotency-Key` is held under: tokens of one app and person
-    /// are one credential.
+    /// Tokens of one app and person are one credential.
     pub fn credential_handle(&self) -> String {
         match self {
             Caller::Local(_) => "local".to_string(),
@@ -68,8 +61,7 @@ impl Caller {
         }
     }
 
-    /// Refuses a caller whose type map reaches no type, so that a read says
-    /// nothing about what exists.
+    /// Refused so that a read says nothing about what exists.
     pub fn require_reach(&self) -> Result<()> {
         match self {
             Caller::Key(key) | Caller::App { key, .. }
@@ -85,7 +77,6 @@ impl Caller {
         }
     }
 
-    /// Refuses a caller whose type map does not reach `system.view` at write.
     pub fn require_view_write(&self) -> Result<()> {
         self.require_reach()?;
         self.require_type_map("system.view", Level::Write)
@@ -112,7 +103,6 @@ impl Caller {
         ))
     }
 
-    /// The source a write that names none is stamped with.
     pub fn own_source(&self) -> &str {
         match self {
             Caller::Local(_) | Caller::Owner(_) => "unknown",
@@ -125,8 +115,7 @@ impl Caller {
         self.key().map(|key| key.default_tier.as_str())
     }
 
-    /// What this caller is held to. The server's own work answers to no lever:
-    /// a job that could not see a row could never clear it.
+    /// The server's own work answers to no lever: a job that could not see a row could never clear it.
     fn holding(&self) -> &Holding {
         const NOTHING: &Holding = &Holding::NOTHING;
         match self {
@@ -137,35 +126,26 @@ impl Caller {
         }
     }
 
-    /// Whether strict mode holds items of exactly `type_id` to what they
-    /// declare.
     pub fn strict_on(&self, type_id: &str) -> bool {
         self.holding().strict_on(type_id)
     }
 
-    /// The sources a write of exactly `type_id` is held to, where a list is.
     pub fn allowed_sources(&self, type_id: &str) -> Option<Vec<String>> {
         self.holding()
             .allowed_sources(type_id)
             .map(<[String]>::to_vec)
     }
 
-    /// The sources a read that returns a set shows items of `type_id` under,
-    /// where it is held to a list: a filter leaves out what its types cover
-    /// and its sources do not name.
     pub fn listed_sources(&self, rules: &Rules, type_id: &str) -> Option<Vec<String>> {
         self.holding()
             .listed_sources(rules, type_id)
             .map(<[String]>::to_vec)
     }
 
-    /// Whether a read that returns a set can pass over rows for their source.
     pub fn filters_sources(&self) -> bool {
         self.holding().filters_sources()
     }
 
-    /// Whether a read that returns a set shows an item of `type_id` under
-    /// `source`.
     pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
         self.holding()
             .listed_sources(rules, type_id)

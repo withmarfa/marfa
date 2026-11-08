@@ -1,5 +1,4 @@
-//! Signed links: an authorization's query, carried through the sign-in and
-//! consent pages so that none of it can be changed on the way.
+//! An authorization's query carried through sign-in and consent so none of it can change.
 
 use std::collections::HashSet;
 
@@ -27,22 +26,19 @@ const UNSIGNED: &str = "return_to";
 /// the instance's secret.
 const CONTEXT: &str = "marfa-signed-link\n";
 
-/// The parameters of a link, in order.
 pub type Params = Vec<(String, String)>;
 
 /// Why a link is not honored. The pages say different things for each, so an
 /// edited link must never read as a merely old one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Refused {
-    /// `keys-and-oauth/link-unverified`: not ours, or edited.
+    /// Not ours, or edited.
     Unverified,
-    /// `keys-and-oauth/link-expired`: ours, unedited, and too old.
+    /// Ours, unedited, and too old.
     Expired,
 }
 
-/// A link that passed: its signed parameters, without `sig`, `exp` or any
-/// parameter added after signing, and when it ends. Read the authorization
-/// from here and never from the query again.
+/// Read the authorization from here and never from the query again.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Verified {
     pub params: Params,
@@ -63,7 +59,6 @@ impl Verified {
         }
     }
 
-    /// Every value of a parameter a link may repeat.
     pub fn values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
         self.params
             .iter()
@@ -72,7 +67,6 @@ impl Verified {
     }
 }
 
-/// Whether a parameter other than `resource` appears twice.
 pub fn has_repeat(params: &[(String, String)]) -> bool {
     let mut seen = HashSet::new();
     params
@@ -99,8 +93,7 @@ fn signature(params: &[(String, String)], secret: &str) -> Result<String> {
     Ok(BASE64_URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
 }
 
-/// The query of a link good until `exp`, in seconds since the epoch. A
-/// parameter named `sig`, `exp` or `return_to` among `params` is left out.
+/// A parameter named `sig`, `exp` or `return_to` among `params` is left out.
 pub fn sign(params: &[(String, String)], exp: i64, secret: &str) -> Result<String> {
     let mut signed: Params = params
         .iter()
@@ -116,10 +109,7 @@ pub fn sign(params: &[(String, String)], exp: i64, secret: &str) -> Result<Strin
     Ok(serialize(&signed))
 }
 
-/// Judge a link's query at `now`, in seconds since the epoch.
-///
-/// The signature comes first: a link edited to look expired reads as edited,
-/// not as old, and nothing about its `exp` is trusted before then.
+/// The signature comes first: a link edited to look expired reads as edited, not as old.
 pub fn verify(query: &str, now: i64, secret: &str) -> std::result::Result<Verified, Refused> {
     let mut sigs = Vec::new();
     let mut signed = Params::new();
@@ -303,7 +293,6 @@ mod tests {
             Err(Refused::Unverified)
         );
 
-        // The witness: the same forge with `resource` repeated verifies.
         let mut resources = params();
         resources.push((
             "resource".to_string(),

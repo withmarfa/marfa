@@ -4,12 +4,10 @@ use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
 use crate::app::refusal::Result;
 
-/// What the code entry form's redirect said went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceProblem {
     /// Unknown, or expired and already removed: the page cannot tell which.
     InvalidCode,
-    /// The server still holds the code and knows it ended.
     ExpiredCode,
     TooManyAttempts(Option<Wait>),
     Other,
@@ -46,7 +44,6 @@ impl DeviceProblem {
 #[derive(Debug, Clone)]
 pub struct DeviceEntry {
     pub instance_name: String,
-    /// A code already known, from the link a device shows.
     pub user_code: String,
     pub problem: Option<DeviceProblem>,
 }

@@ -1,6 +1,5 @@
-//! Where connections come from, and how one is held. [`serve`] takes any source
-//! of streams through axum's `Listener`, so nothing above it owns a socket: a
-//! source plugs in by implementing that trait and [`Source`].
+//! [`serve`] takes any source of streams through axum's `Listener`; a source plugs in by
+//! implementing that trait and [`Source`].
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -24,28 +23,22 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tower::ServiceExt;
 
-/// Long enough for a server out of file descriptors not to spin, and short
-/// enough to serve again soon after one frees.
+/// Long enough for a server out of file descriptors not to spin.
 const ACCEPT_PAUSE: Duration = Duration::from_millis(250);
 
-/// How long a connection may take to send one request head, from the moment
-/// the server waits for it. A connection waiting for its next request is held
-/// to the same time.
+/// From the moment the server waits for a request head; a connection waiting for its next
+/// request is held to the same time.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The network address at the far end of a connection, reaching each request
-/// as connect info. A private socket has none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Peer(pub Option<IpAddr>);
 
-/// A listener that can say who is at the far end of what it accepts.
 pub trait Source: Listener<Addr: Debug> {
     fn peer(address: &Self::Addr) -> Peer;
 }
 
-/// Serves `router` on `listener` until `stop`. A stop closes every connection
-/// with no request in flight, a partial head included, and waits only for the
-/// requests that are.
+/// A stop closes every connection with no request in flight, a partial head included, and
+/// waits only for the requests that are.
 pub async fn serve(
     listener: impl Source,
     router: Router,

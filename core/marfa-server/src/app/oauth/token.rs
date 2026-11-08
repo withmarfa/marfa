@@ -1,6 +1,5 @@
-//! `POST /auth/oauth2/token`, and the one check of a client it shares with
-//! revocation. Each exchange is one write: the check and the spending of what
-//! is exchanged commit together, so two uses at once cannot both win.
+//! Each exchange is one write: the check and the spending of what is exchanged commit together,
+//! so two uses at once cannot both win.
 
 use std::sync::Arc;
 
@@ -27,11 +26,9 @@ use crate::app::unit::Unit;
 
 const TOKEN_ISSUED: &str = "auth.token.issued";
 
-/// A form as a token door read it.
 #[derive(Clone, Debug, Default)]
 pub struct Form {
     pub pairs: Vec<(String, String)>,
-    /// The request carried an `Authorization` header.
     pub authorization: bool,
 }
 
@@ -57,8 +54,7 @@ fn invalid_grant(description: &str) -> Problem {
     Problem::new("invalid_grant", description)
 }
 
-/// The client a form speaks for, proved as its registration says it proves
-/// itself. A public client proves nothing, so it may present no secret.
+/// A public client proves nothing, so it may present no secret.
 pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Client>> {
     let Some(id) = form.get("client_id").map(str::to_string) else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
@@ -80,8 +76,8 @@ pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Cl
     }
 }
 
-/// `keys-and-oauth/token-no-client`: a public client's proof is what its grant
-/// presents, so a request lacking it is judged before its `client_id` is.
+/// A public client's proof is what its grant presents, so a request lacking it is judged before
+/// its `client_id` is.
 fn unproved(grant: GrantType, form: &Form) -> Option<Problem> {
     let (fields, description): (&[&str], _) = match grant {
         GrantType::AuthorizationCode => (
@@ -97,7 +93,6 @@ fn unproved(grant: GrantType, form: &Form) -> Option<Problem> {
         .then(|| Problem::new("invalid_request", description))
 }
 
-/// Answers a token request.
 pub async fn exchange(
     app: &Arc<App>,
     form: Form,
@@ -156,14 +151,12 @@ pub async fn exchange(
     }
 }
 
-/// What a set of tokens is for.
 struct Issue<'i> {
     client: &'i Client,
     user_id: &'i str,
     chain_id: &'i str,
     scopes: &'i ScopeSet,
-    /// What the refresh token keeps, which a narrower access token leaves
-    /// whole.
+    /// A narrower access token leaves it whole.
     keeps: &'i ScopeSet,
     audience: Option<&'i str>,
     refresh: bool,

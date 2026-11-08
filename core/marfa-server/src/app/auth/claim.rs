@@ -1,5 +1,5 @@
-//! How an instance gets its owner: a setup code, a handoff link or a setup
-//! session proves the caller may claim it, and the claim spends them all.
+//! A setup code, a handoff link or a setup session proves the caller may claim the instance,
+//! and the claim spends them all.
 
 use std::net::IpAddr;
 
@@ -73,7 +73,6 @@ fn normalized(code: &str) -> String {
         .collect()
 }
 
-/// What the claim state says, for the private socket.
 pub struct Status {
     pub claimed: bool,
     pub owner_id: Option<String>,
@@ -109,7 +108,6 @@ fn require_unclaimed(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Whether a live proof of `kind` has this digest, compared in constant time.
 fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now_ms: i64) -> Result<bool> {
     let mut statement = tx.prepare(
         "SELECT digest FROM setup_proof \
@@ -145,7 +143,6 @@ fn add(
     Ok(())
 }
 
-/// A fresh setup code, in place of every earlier code, link and setup session.
 pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> {
     let code = new_code()?;
     let digest = digest_of(&app.settings.start.api_key_salt, &normalized(&code))?;
@@ -165,8 +162,6 @@ pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> 
     Ok((code, generation))
 }
 
-/// Replaces the setup code when an unclaimed instance starts, and says it on
-/// the server's own output and nowhere else.
 pub async fn announce_at_start(app: &App) -> Result<()> {
     if status(app).await?.claimed {
         return Ok(());
@@ -178,7 +173,6 @@ pub async fn announce_at_start(app: &App) -> Result<()> {
     Ok(())
 }
 
-/// A handoff link's ticket and when it ends, in milliseconds.
 pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
     let ticket = hex::encode(random::<TOKEN_BYTES>()?);
     let digest = digest_of(&app.settings.start.api_key_salt, &ticket)?;
@@ -199,7 +193,6 @@ pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
     Ok((ticket, expires_at))
 }
 
-/// A setup session's token and when it ends, in milliseconds.
 pub struct SetupSession {
     pub token: String,
     pub expires_at: i64,
@@ -211,7 +204,6 @@ fn add_session(tx: &Transaction<'_>, digest: &str, now_ms: i64) -> Result<i64> {
     Ok(now_ms + SESSION_MS)
 }
 
-/// Counts one use of a setup code from `address`.
 async fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
     let lanes = limits::setup_code_lanes(address);
     let clock = app.clock.clone();
@@ -272,7 +264,6 @@ async fn exchange(
     Ok(SetupSession { token, expires_at })
 }
 
-/// Spends a handoff ticket on a setup session.
 pub async fn exchange_ticket(app: &App, ticket: &str, visit: Visit) -> Result<SetupSession> {
     let digest = digest_of(&app.settings.start.api_key_salt, ticket)?;
     exchange(
@@ -285,7 +276,6 @@ pub async fn exchange_ticket(app: &App, ticket: &str, visit: Visit) -> Result<Se
     .await
 }
 
-/// Trades a setup code for a setup session, and leaves the code good.
 pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupSession> {
     if is_claimed(app).await? {
         return Err(already_claimed());
@@ -295,7 +285,6 @@ pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupS
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
 }
 
-/// What lets a caller claim.
 #[derive(Clone, Debug)]
 pub enum Proof {
     Local,
@@ -303,7 +292,6 @@ pub enum Proof {
     Session(String),
 }
 
-/// `(kind, digest)` of the row a proof must find.
 fn sought(app: &App, proof: &Proof) -> Result<Option<(&'static str, String)>> {
     let salt = &app.settings.start.api_key_salt;
     Ok(match proof {
@@ -325,8 +313,6 @@ fn proof_stands(
     }
 }
 
-/// Whether a setup session's token is still good, for the page that shows
-/// the owner's details form.
 pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
     let digest = digest_of(&app.settings.start.api_key_salt, token)?;
     let clock = app.clock.clone();
@@ -339,9 +325,8 @@ pub async fn is_claimed(app: &App) -> Result<bool> {
     app.db.read(instance::is_claimed).await
 }
 
-/// Makes `details` the owner. The proof is judged before the password's hash
-/// is paid for and again in the transaction, which is what lets one of two
-/// claims at once through.
+/// The proof is judged before the password's hash is paid for and again in the transaction,
+/// so only one of two claims at once gets through.
 pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> Result<Owner> {
     if is_claimed(app).await? {
         return Err(already_claimed());

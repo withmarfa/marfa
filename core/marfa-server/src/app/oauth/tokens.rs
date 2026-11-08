@@ -7,8 +7,7 @@ const REFRESH_PREFIX: &str = "marfa_rt_";
 const SECRET_BYTES: usize = 32;
 const SECRET_HEX_LEN: usize = SECRET_BYTES * 2;
 
-/// No `I`, `O`, `0` or `1`, which a person reading a code can confuse. Its 32
-/// letters divide a byte evenly, so a modulo leaves no letter likelier.
+/// No `I`, `O`, `0` or `1`. 32 letters divide a byte evenly, so a modulo is unbiased.
 const USER_CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const USER_CODE_LEN: usize = 8;
 
@@ -65,8 +64,6 @@ pub fn looks_like_code(text: &str) -> bool {
     is_secret(text)
 }
 
-/// A user code as a person may type it, as the one code it stands for: any
-/// case, with dashes and spaces.
 pub fn normalize_user_code(typed: &str) -> String {
     typed
         .chars()

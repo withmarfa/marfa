@@ -1,5 +1,4 @@
-//! What the sign-in server must survive that the contract's fixtures cannot
-//! stage.
+//! The sign-in server end to end, with a software browser.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +29,6 @@ const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS: u64 = 86_400_000;
 const AN_APPROVED_PAGE: &str = "https://approved.example";
 
-/// Runs a job through the scheduler's door, and answers how many it took.
 async fn swept(app: &Arc<App>, job: &str) -> u64 {
     let ended = housekeeping::run_now(app, job).await.unwrap();
     assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
@@ -207,7 +205,6 @@ impl Instance {
         .await
     }
 
-    /// The signed link of the consent screen a request lands on.
     async fn consent_link(&self, client: &str, scope: &str) -> String {
         self.consent_link_to(client, scope, CALLBACK).await
     }
@@ -231,7 +228,6 @@ impl Instance {
         .await
     }
 
-    /// A code for `scope`, approved in full if a consent screen asks.
     async fn code(&self, client: &str, scope: &str) -> String {
         let reply = self.authorize(client, scope, CALLBACK).await;
         if let Some(code) = code_in(&reply) {
@@ -278,7 +274,6 @@ impl Instance {
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
     }
 
-    /// The tokens of a new grant of `scope`.
     async fn tokens(&self, client: &str, scope: &str) -> Value {
         let code = self.code(client, scope).await;
         let reply = self.exchange(client, &code).await;
@@ -315,7 +310,6 @@ impl Instance {
         .await
     }
 
-    /// What a device is given to show and to poll with.
     async fn device_asked(&self, client: &str, scope: &str) -> Value {
         let fields = [("client_id", client), ("scope", scope)];
         let asked = self
@@ -325,13 +319,11 @@ impl Instance {
         asked.json()
     }
 
-    /// A device code nobody has answered.
     async fn device_requested(&self, client: &str, scope: &str) -> String {
         let asked = self.device_asked(client, scope).await;
         text_at(&asked, "device_code").to_string()
     }
 
-    /// A device code the person has approved in full.
     async fn device_approved(&self, client: &str, scope: &str) -> String {
         let asked = self.device_asked(client, scope).await;
         let mut fields = vec![
@@ -360,7 +352,6 @@ impl Instance {
             .await
     }
 
-    /// Changes the database behind the server's back.
     async fn stage(&self, statement: &'static str) {
         self.app
             .db
@@ -398,8 +389,6 @@ impl Instance {
         panic!("no write reached the hold");
     }
 
-    /// The app's grant stands and the person is still signed in: the next
-    /// authorization gets a code with no consent screen.
     async fn grant_and_browser_stand(&self, client: &str, scope: &str) {
         let session = self
             .send(get("/auth/get-session", Some(&self.cookie)))
@@ -1471,7 +1460,6 @@ fn from_token(method: Method, path: &str, token: &str) -> Request<Body> {
 }
 
 impl Instance {
-    /// The grant the owner's listing shows for `client`.
     async fn grant_of(&self, client: &str) -> Value {
         let listed = self
             .send(from_owner(Method::GET, "/auth/grants", &self.cookie, None))
@@ -1515,7 +1503,6 @@ impl Instance {
             .await
     }
 
-    /// A key holding `permissions`, as the local command mints one.
     async fn key_holding(&self, permissions: &[&str]) -> Value {
         let body = json!({ "label": "a key", "source": "a-key", "permissions": permissions });
         let minted = send(control(self.app.clone()), post_json("/keys", &body)).await;
@@ -1545,8 +1532,7 @@ impl Instance {
         panic!("no use was recorded");
     }
 
-    /// A new session in another browser. Whoever holds the instance's own
-    /// cookie stays signed in.
+    /// Whoever holds the instance's own cookie stays signed in.
     async fn sign_in_again(&self) -> String {
         let claim = json!({ "email": EMAIL, "password": PASSWORD });
         let signed_in = self.send(post_json("/auth/sign-in/email", &claim)).await;
@@ -1570,8 +1556,6 @@ impl Instance {
     }
 }
 
-/// The request a sign-in comes back to, from a reply that sent a browser to
-/// sign in because its request named `prompt=login`.
 fn way_back(reply: &Reply) -> String {
     assert_eq!(reply.status, StatusCode::FOUND, "{}", reply.text);
     let sent = reply.location().unwrap();
@@ -1617,12 +1601,10 @@ async fn an_ended_grant_keeps_no_destination_and_a_narrowed_one_keeps_them() {
     assert_eq!(instance.count(destinations).await, 0);
 }
 
-/// `url` as a request's target on the instance.
 fn target_of(url: &Url) -> String {
     format!("{}?{}", url.path(), url.query().unwrap_or_default())
 }
 
-/// The value of the hidden form field `name` on `page`.
 fn hidden_field(page: &str, name: &str) -> Option<String> {
     let opening = format!("name=\"{name}\" value=\"");
     let (_, rest) = page.split_once(&opening)?;
@@ -1748,7 +1730,6 @@ async fn a_new_sign_in_signs_only_what_the_server_read_of_the_request() {
     let refused = instance.decide(link, &[NOTES]).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
 
-    // The witness: the same decision on the link the consent screen was given.
     let approved = instance.decide(&genuine, &[NOTES]).await;
     assert!(code_in(&approved).is_some(), "{}", approved.text);
 }
@@ -2920,7 +2901,6 @@ async fn a_server_with_limits_off_holds_no_registration_or_device_code() {
 
 const AN_ADDED_PAGE: &str = "https://added.example";
 
-/// The approved page's client, its row changed to name a second page.
 async fn an_approved_client_naming_another_page(instance: &Instance) -> (String, Value) {
     let approved = an_approved_page(instance).await;
     instance
@@ -3167,10 +3147,8 @@ async fn a_device_approval_stands_only_for_the_destinations_asked_about() {
     assert_eq!(instance.count(consents).await, 0);
 }
 
-/// Each a field and the value it takes, or nothing to leave the field out.
 type Changes<'a> = &'a [(&'a str, Option<&'a str>)];
 
-/// The authorization path of a request that is valid but for `changes`.
 fn request_with(client: &str, changes: Changes<'_>) -> String {
     let challenge = challenge();
     let valid = [
@@ -3194,7 +3172,6 @@ fn request_with(client: &str, changes: Changes<'_>) -> String {
     format!("/auth/oauth2/authorize?{}", encoded(&fields))
 }
 
-/// Each request one rule refuses, and the error it is refused with.
 const REFUSED: [(Changes<'_>, &str); 4] = [
     (
         &[("response_type", Some("token"))],

@@ -1,14 +1,6 @@
-//! The listing grammar's `filter` as values, so an app builds a filter, and
-//! edits a saved one, without writing the server's grammar by hand. Text is
-//! read with the parser `narrow` answers from, so the model takes exactly
-//! what the server takes and refuses the rest with its message.
+//! The listing grammar's `filter` as values, so an app builds and edits a filter without writing the grammar by hand.
 //!
-//! `FilterExpression::decode(&expression.encode()?)` gives back the same
-//! expression, but for the join of an expression of one condition, which the
-//! text does not carry and which reads back as `All`. `encode` of a decoded
-//! text is its canonical form: one space between tokens, a string quoted with
-//! every quote and backslash escaped, and a number in its shortest decimal
-//! spelling.
+//! `FilterExpression::decode(&expression.encode()?)` gives back the same expression, except that a one-condition expression's join is not in the text and reads back as `All`. `encode` of decoded text is canonical: one space between tokens, quotes and backslashes escaped, numbers in their shortest decimal spelling.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,16 +8,13 @@ use super::{Compare, Condition, Field, Literal, Op, Term, parse, refused, system
 use crate::error::Result;
 use crate::js;
 
-/// The conditions of a filter and the one word that joins them: the grammar
-/// joins every condition with `AND` or every one with `OR`, never both, and
-/// has no grouping or negation of a group.
+/// The grammar joins every condition with `AND` or every one with `OR`, never both, and has no grouping or negation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterExpression {
     pub join: FilterJoin,
     pub conditions: Vec<FilterCondition>,
 }
 
-/// `All` joins the conditions with `AND`, `Any` with `OR`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterJoin {
@@ -33,8 +22,7 @@ pub enum FilterJoin {
     Any,
 }
 
-/// One condition. `value` is `None` exactly where the operator takes none,
-/// as `exists` and `not_exists` do.
+/// `value` is `None` exactly where the operator takes none (`exists`, `not_exists`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterCondition {
     pub field: FilterField,
@@ -43,32 +31,25 @@ pub struct FilterCondition {
     pub value: Option<FilterValue>,
 }
 
-/// What a condition reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FilterField {
-    /// A column every item has.
     System {
         name: SystemField,
     },
-    /// `properties.<name>`, read from the stored value whatever the type
-    /// declares.
+    /// `properties.<name>`, read from the stored value whatever the type declares.
     Property {
         name: String,
     },
-    /// `properties.<field>.<member>`: a member of the objects in the list
-    /// `<field>` holds, compared with `eq` only.
+    /// `properties.<field>.<member>`: a member of the objects in the list `<field>` holds, compared with `eq` only.
     Member {
         field: String,
         member: String,
     },
     Tags,
-    /// The group of the word in the item's status field.
     StatusGroup,
-    /// Whether the item is a part of another: out of the bin, with a host
-    /// out of the bin. Compared with `eq` or `neq` and a boolean.
+    /// Out of the bin, with a host out of the bin. Compared with `eq` or `neq` and a boolean.
     Part,
-    /// `edge[<edge_type>]` or `backref[<edge_type>]`.
     Edge {
         edge_type: String,
         direction: EdgeDirection,
@@ -90,7 +71,6 @@ pub enum SystemField {
     SourceId,
 }
 
-/// `Outbound` for the edges an item draws, `Backref` for those drawn to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeDirection {
@@ -137,10 +117,7 @@ const OPERATORS: [FilterOperator; 10] = [
 ];
 
 impl FilterExpression {
-    /// The expression's text in the listing grammar, refused with the
-    /// server's `validation_error` where the server would refuse it: empty,
-    /// longer than 2,048 UTF-16 code units, more than 10 conditions, or a
-    /// field and operator it does not take together.
+    /// Refused with `validation_error` where empty, longer than 2,048 UTF-16 code units, over 10 conditions, or a field and operator it does not take together.
     pub fn encode(&self) -> Result<String> {
         let mut parts = Vec::with_capacity(self.conditions.len());
         for condition in &self.conditions {
@@ -162,8 +139,7 @@ impl FilterExpression {
         Ok(text)
     }
 
-    /// The expression a text in the listing grammar holds, refused with the
-    /// server's `validation_error` and message where the server refuses it.
+    /// Refused with `validation_error` and its message where the grammar refuses it.
     pub fn decode(text: &str) -> Result<FilterExpression> {
         let expression = parse(text)?;
         let conditions = expression
@@ -267,8 +243,7 @@ impl FilterCondition {
 }
 
 impl FilterField {
-    /// The operators the grammar takes on this field, in the order the
-    /// server's message lists them.
+    /// In the order the refusal message lists them.
     pub fn operators(&self) -> Vec<FilterOperator> {
         OPERATORS
             .into_iter()
@@ -320,8 +295,6 @@ impl FilterField {
     }
 }
 
-/// A property or member name as the grammar takes it, refused with the
-/// server's message otherwise.
 fn property_name(name: &str) -> Result<&str> {
     let mut chars = name.chars();
     let valid = chars
@@ -372,8 +345,6 @@ impl SystemField {
 }
 
 impl FilterOperator {
-    /// Whether the operator compares with a value: all but `exists` and
-    /// `not_exists` do.
     pub fn takes_value(self) -> bool {
         matches!(self.op(), Op::Compare(_))
     }
@@ -412,9 +383,7 @@ impl FilterValue {
                 "\"{}\"",
                 text.replace('\\', "\\\\").replace('"', "\\\"")
             )),
-            // Rust writes a float in fixed notation with the fewest digits
-            // that read back as the same double, which the grammar's
-            // number, with no exponent, takes.
+            // Rust writes the fewest digits that read back as the same double, in fixed notation: the grammar takes no exponent.
             FilterValue::Number(number) => {
                 if !number.is_finite() {
                     return Err(refused(format!(

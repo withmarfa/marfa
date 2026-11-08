@@ -1,5 +1,3 @@
-//! A JSON body, read only once the handler has checked what comes before it.
-
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
@@ -32,12 +30,9 @@ const PLAIN_JSON: &str = "application/json";
 const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
 const CONFIG_PATH: &str = "/config";
 
-/// A request's body, held on both sides of the routes.
-///
-/// A socket closed with bytes still arriving resets, and a reset can take an
-/// answer already sent with it, so a refusal that leaves a body unread would
-/// reach a client as a failed connection. `finish` keeps reading in the
-/// background, which leaves the answer free to go out at once.
+/// A socket closed with bytes still arriving resets, which can take an answer already
+/// sent with it. `finish` keeps reading in the background so a refusal that leaves a
+/// body unread still arrives.
 #[derive(Clone)]
 pub struct Shared(Arc<Mutex<Body>>);
 
@@ -190,8 +185,6 @@ impl JsonBody {
             .is_some_and(is_json)
     }
 
-    /// Whether the body is declared as `application/json` itself, where
-    /// [`Self::read`] takes any JSON type.
     pub fn declares_plain_json(&self) -> bool {
         self.headers
             .get(header::CONTENT_TYPE)
@@ -210,7 +203,6 @@ impl JsonBody {
             })
     }
 
-    /// A browser form's fields, the first of any sent twice.
     pub async fn form(self) -> Result<Map<String, Value>, Stopped> {
         let mut fields = Map::new();
         for (name, value) in form_urlencoded::parse(&self.bytes().await?) {
@@ -221,8 +213,6 @@ impl JsonBody {
         Ok(fields)
     }
 
-    /// The body as it was sent, for an operation that must see it before it
-    /// judges it.
     pub async fn read(self) -> Result<ReadBody, Stopped> {
         let declared = self.declares_json();
         Ok(ReadBody {
@@ -231,8 +221,6 @@ impl JsonBody {
         })
     }
 
-    /// A form's fields in order, with every repeat kept. Any other body has
-    /// none.
     pub async fn form_pairs(self) -> Result<Vec<(String, String)>, Stopped> {
         if !self.declares_form() {
             return Ok(Vec::new());
@@ -241,13 +229,10 @@ impl JsonBody {
         Ok(form_urlencoded::parse(&bytes).into_owned().collect())
     }
 
-    /// The body as a JSON object holding no key outside `allowed`.
     pub async fn object(self, allowed: &[&str]) -> Result<Map<String, Value>, Stopped> {
         Ok(only_declared(self.open_object().await?, allowed)?)
     }
 
-    /// The body as a JSON object, whatever keys it holds, for an operation
-    /// that judges the keys itself.
     pub async fn open_object(self) -> Result<Map<String, Value>, Stopped> {
         if !self.declares_json() {
             return Err(not_json().into());
@@ -260,7 +245,6 @@ fn not_json() -> Refusal {
     Refusal::validation("Send the body as JSON, with Content-Type: application/json.")
 }
 
-/// Refuses a key of `object` outside `allowed`.
 pub fn only_declared(
     object: Map<String, Value>,
     allowed: &[&str],
@@ -303,11 +287,9 @@ fn parsed_object(bytes: &[u8], bag: Option<Bag>) -> Result<Map<String, Value>, R
     }
 }
 
-/// Where a body carries values kept as sent.
 #[derive(Clone, Copy, Debug)]
 pub enum Bag {
     Properties,
-    /// The properties of each entry of the list the body names.
     Entries(&'static str),
     Whole,
 }
@@ -328,7 +310,6 @@ impl Bag {
     }
 }
 
-/// A body already taken off the wire.
 #[derive(Debug)]
 pub struct ReadBody {
     declared: bool,
@@ -344,7 +325,6 @@ impl ReadBody {
         &self.bytes
     }
 
-    /// The JSON object sent, whatever keys it holds.
     pub fn object(&self, bag: Bag) -> Result<Map<String, Value>, Refusal> {
         if !self.declared {
             return Err(not_json());
@@ -352,7 +332,6 @@ impl ReadBody {
         parsed_object(&self.bytes, Some(bag))
     }
 
-    /// Refuses a number in `bag` that would not come back as it was sent.
     pub fn refuse_inexact_numbers(&self, bag: Bag) -> Result<(), Refusal> {
         match std::str::from_utf8(&self.bytes) {
             Ok(text) => bag.refuse_inexact_numbers(text),
@@ -371,9 +350,8 @@ fn ill_formed(pointer: String) -> Refusal {
         .with_detail("errors", json!([{ "path": pointer, "message": message }]))
 }
 
-/// Refuses a body too deep or too ill-formed for anything to read, whoever
-/// sent it and under whatever `Content-Type`. A body declared over the cap is
-/// left to its operation, which answers the credential first.
+/// Refuses a body too deep or ill-formed to read, under any `Content-Type`. A body over
+/// the cap is left to its operation, which answers the credential first.
 pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let limit = cap_on(&app, request.uri().path(), request.extensions());
     if request.body().is_end_stream() || declared_length(request.headers()) > Some(limit) {

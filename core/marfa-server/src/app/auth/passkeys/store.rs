@@ -1,17 +1,13 @@
-//! The table of the owner's passkeys.
-
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 use webauthn_rs::prelude::Passkey;
 
 use crate::app::refusal::{Refusal, Result};
 
-/// A passkey as the owner sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listed {
     pub id: String,
     pub name: Option<String>,
-    /// The relying party it was made for. It stays off the wire.
     pub host: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
@@ -28,7 +24,6 @@ impl Listed {
     }
 }
 
-/// A passkey as a sign-in needs it.
 pub struct Held {
     pub id: String,
     pub user_id: String,
@@ -36,7 +31,6 @@ pub struct Held {
     pub passkey: Passkey,
 }
 
-/// A passkey to record.
 pub struct New<'a> {
     pub id: &'a str,
     pub user_id: &'a str,
@@ -71,8 +65,6 @@ pub fn all(tx: &Transaction<'_>) -> Result<Vec<Listed>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Every credential ID made for `host`, which a browser is asked not to
-/// register twice.
 pub fn credentials_of(tx: &Transaction<'_>, host: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare("SELECT credential_id FROM auth_passkey WHERE host = ?1")?;
     let rows = statement.query_map(params![host], |row| row.get(0))?;
@@ -127,8 +119,6 @@ pub fn insert(tx: &Transaction<'_>, new: &New<'_>) -> Result<Option<Listed>> {
     }))
 }
 
-/// Keeps what a sign-in changed: the counter and backup state the library
-/// folded into `passkey`, and the instant.
 pub fn record_use(tx: &Transaction<'_>, id: &str, passkey: &Passkey, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE auth_passkey SET credential = ?2, last_used_at = ?3 WHERE id = ?1",
@@ -151,7 +141,6 @@ pub fn remove(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.execute("DELETE FROM auth_passkey WHERE id = ?1", params![id])? == 1)
 }
 
-/// How many passkeys were made for a host other than `host`.
 pub fn count_beyond(tx: &Transaction<'_>, host: &str) -> Result<i64> {
     Ok(tx.query_row(
         "SELECT count(*) FROM auth_passkey WHERE host <> ?1",

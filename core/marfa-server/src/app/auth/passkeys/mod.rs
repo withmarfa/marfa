@@ -1,11 +1,6 @@
-//! The owner's passkeys: adding one, signing in with one, and looking after
-//! them. Each ceremony's check and what it writes are one transaction, so the
-//! challenge goes whatever the verdict, and a passkey removed or used while an
-//! assertion waited for the writer is judged as it now stands.
-//!
-//! The relying party is the sign-in address as it stands in that transaction,
-//! never the request's `Host`. A challenge remembers the origin it was issued
-//! for, and each passkey the host it was made for.
+//! Each ceremony's check and what it writes are one transaction, so the challenge goes whatever
+//! the verdict. The relying party is the sign-in address as it stands in that transaction, never
+//! the request's `Host`.
 
 mod challenge;
 mod store;
@@ -78,8 +73,7 @@ fn no_domain() -> Refusal {
     )
 }
 
-/// The relying party at one address. A browser refuses a passkey without a
-/// domain, and so does the library, so an IP address has none to offer.
+/// A browser refuses a passkey without a domain, and so does webauthn-rs, so an IP address has none to offer.
 struct Party {
     webauthn: Webauthn,
     origin: String,
@@ -128,7 +122,6 @@ impl<T> Verdict<T> {
     }
 }
 
-/// A ceremony a browser can now carry out.
 #[derive(Debug)]
 pub struct Begun {
     pub options: Value,
@@ -147,10 +140,9 @@ fn encoded(credential_id: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(credential_id)
 }
 
-/// The library asks only for a key the authenticator may discard, and it
-/// checks an excluded credential with an error that says something else. Both
-/// are matters of what the browser is asked, so they are set here, and a
-/// duplicate is caught where it is written.
+/// webauthn-rs asks only for a key the authenticator may discard, and reports an excluded
+/// credential with an error that says something else. Both are set here; a duplicate is
+/// caught where it is written.
 fn ask_for_a_resident_key(options: &mut Value, excluded: Vec<String>) {
     options["authenticatorSelection"]["residentKey"] = json!("required");
     options["authenticatorSelection"]["requireResidentKey"] = json!(true);
@@ -160,7 +152,6 @@ fn ask_for_a_resident_key(options: &mut Value, excluded: Vec<String>) {
         .collect();
 }
 
-/// Starts adding a passkey, for a session made within the last five minutes.
 pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
     caller.require_direct()?;
     let salt = app.settings.start.api_key_salt.clone();
@@ -193,20 +184,16 @@ pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
     .await
 }
 
-/// The name a passkey may carry, by the rule of `PATCH /owner/passkeys/{id}`.
 fn passkey_name(text: &str) -> Result<String> {
     checked_name(text)?.ok_or_else(|| Refusal::validation("Give the passkey a name."))
 }
 
-/// A registration to finish.
 pub struct Adding {
     pub token: Option<String>,
     pub name: Option<String>,
     pub response: Value,
 }
 
-/// Finishes adding a passkey. A refused name leaves the challenge, which the
-/// browser's answer can still meet with a better name.
 pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Listed> {
     caller.require_direct()?;
     let name = adding.name.as_deref().map(passkey_name).transpose()?;
@@ -262,8 +249,6 @@ pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Liste
     .settled()
 }
 
-/// Starts a passkey sign-in or confirmation. It names no account and lists no
-/// credential: the browser finds what it holds for this address.
 pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
     hold_to(
         &app,
@@ -297,7 +282,6 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
         .await
 }
 
-/// A browser's assertion and the token of the ceremony it answers.
 pub struct Assertion {
     pub token: Option<String>,
     pub response: Value,
@@ -345,19 +329,16 @@ impl Unproven {
     }
 }
 
-/// What a sign-in by passkey established.
 struct Proven {
     owner: Owner,
     passkey_id: String,
 }
 
-/// The moment an assertion is judged in.
 struct Judging<'a> {
     at: &'a str,
     now_ms: i64,
     party: &'a Party,
     salt: &'a str,
-    /// Set when only this user's passkey will do.
     user_id: Option<&'a str>,
 }
 
@@ -425,8 +406,6 @@ fn prove(
     }))
 }
 
-/// Opens a browser session for whoever holds a passkey of the owner's. Password
-/// limits take no part, so a passkey signs in while they are locked.
 pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Result<Opened> {
     let salt = app.settings.start.api_key_salt.clone();
     let now_app = app.clone();
@@ -479,8 +458,6 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
         .settled()
 }
 
-/// Replaces a stale browser session with one made now, on a passkey of the
-/// owner's. A refusal leaves the session as it was and spends the challenge.
 pub async fn confirm(
     app: Arc<App>,
     caller: &Caller,
@@ -540,8 +517,6 @@ pub async fn confirm(
     .settled()
 }
 
-/// Every passkey of the owner's, oldest first. One made for another host
-/// stays here so the owner can remove it.
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Listed>> {
     caller.require_direct()?;
     app.db.read(store::all).await
@@ -571,8 +546,6 @@ pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
     .await
 }
 
-/// How many passkeys could not sign in if the sign-in address's host became
-/// `host`: a passkey answers only the host it was made for.
 pub fn stranded_by(tx: &Transaction<'_>, host: &str) -> Result<i64> {
     store::count_beyond(tx, host)
 }

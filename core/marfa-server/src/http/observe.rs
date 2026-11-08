@@ -1,6 +1,5 @@
-//! What every answer gets, whatever gave it: a request id, the contract
-//! version, a page for a browser in place of a refusal's body, and one record
-//! on stdout.
+//! Every answer gets a request id, the `x-marfa-contract` header, a page for a browser in
+//! place of a refusal's body, and one record on stdout.
 
 use std::net::IpAddr;
 use std::sync::{Arc, OnceLock};
@@ -24,11 +23,9 @@ use crate::log;
 use crate::settings::registry::ERROR_REPORTING_ENABLED;
 use crate::telemetry::Finished;
 
-/// What a request learns about itself on the way in, for its record.
 #[derive(Default)]
 pub struct Notes {
     pub key_id: OnceLock<String>,
-    /// The cookie that carries on a session whose use this request recorded.
     pub renewal: OnceLock<HeaderValue>,
     route: OnceLock<String>,
 }
@@ -36,13 +33,10 @@ pub struct Notes {
 #[derive(Clone)]
 pub struct RequestContext {
     pub transport: Transport,
-    /// `None` on a connection with no network address, such as the control
-    /// socket.
     pub caller_address: Option<IpAddr>,
     pub notes: Arc<Notes>,
 }
 
-/// Left on the answer to a request no route serves.
 #[derive(Clone, Copy)]
 pub struct Unmatched;
 

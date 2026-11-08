@@ -1,5 +1,3 @@
-//! `/owner`: who the owner is, and the claim that first says so.
-
 use std::sync::Arc;
 
 use axum::extract::State;

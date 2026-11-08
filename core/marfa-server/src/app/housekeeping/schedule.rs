@@ -1,5 +1,4 @@
-//! The `housekeeping_jobs` table, and what is decided from it. Deciding takes
-//! the rows and the time and touches nothing, so that a moved clock, a changed
+//! Deciding takes the rows and the time and touches nothing, so that a moved clock, a changed
 //! interval and an unreadable row are all one question.
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -32,7 +31,6 @@ fn row_of(row: &Sql<'_>) -> rusqlite::Result<Row> {
     })
 }
 
-/// Every row, a job's or not. A row of a job this build lacks is left alone.
 pub fn rows(tx: &Transaction<'_>) -> Result<Vec<Row>> {
     let mut statement = tx.prepare_cached(
         "SELECT name, next_run_at, running_since, last_started_at, last_finished_at, \
@@ -59,7 +57,6 @@ fn stamp_of(ms: i64) -> String {
         .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-/// A job as this instance wants it now.
 #[derive(Clone, Debug)]
 pub struct Wanted {
     pub name: &'static str,
@@ -69,11 +66,8 @@ pub struct Wanted {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// A job with no row yet.
     Enter { name: &'static str, next_ms: i64 },
-    /// A row whose `next_run_at` must come sooner.
     Bring { name: &'static str, next_ms: i64 },
-    /// A row that is due. `seen` is the `next_run_at` it was due by.
     Claim { name: &'static str, seen: String },
 }
 
@@ -128,8 +122,6 @@ pub fn claim(tx: &Transaction<'_>, name: &str, seen: Option<&str>, at: &str) -> 
     Ok(changed == 1)
 }
 
-/// Makes the changes `plan` chose, and answers the claims that won. `started`
-/// is the instant a claim is made at; with none, nothing is claimed.
 pub fn apply(
     tx: &Transaction<'_>,
     steps: &[Step],
@@ -184,7 +176,6 @@ fn next_after(held: Option<i64>, started: i64, finished: i64, interval: i64, aga
     }
 }
 
-/// A run as it is recorded.
 #[derive(Debug)]
 pub struct Finish<'a> {
     pub name: &'a str,

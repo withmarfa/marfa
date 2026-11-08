@@ -1,5 +1,4 @@
-//! Where an item write's transaction ends, and what a retry sees. The
-//! contract's fixtures hold the rest.
+//! Where an item write's transaction ends, and what a retry sees.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -48,7 +47,6 @@ impl Reply {
     }
 }
 
-/// What a transaction leaves behind, row by row.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 struct Written {
     items: i64,
@@ -120,7 +118,6 @@ impl Instance {
         send(self.control.clone(), sent).await
     }
 
-    /// A key that writes under its own source, as `(id, secret)`.
     async fn key(&self, source: &str, types: Value) -> (String, String) {
         self.key_with(source, json!({ "type_permissions": types }))
             .await
@@ -203,7 +200,7 @@ impl Instance {
         db.query_row(sql, [], |row| row.get(0)).unwrap()
     }
 
-    /// Every table's rows, named from the schema so a table added later is read.
+    /// Named from the schema so a table added later is read.
     fn tables(&self) -> BTreeMap<String, i64> {
         let file = self.dir.path().join("marfa.db");
         let db = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -227,8 +224,6 @@ impl Instance {
             .collect()
     }
 
-    /// Sends one write through a hold, lands `between` while it waits, and
-    /// answers what the held write met.
     async fn held(
         self: &Arc<Self>,
         action: &str,
@@ -351,7 +346,6 @@ async fn a_stale_write_under_another_source_is_refused_before_its_merge() {
     assert_eq!(refused.json()["error"]["details"]["source"], "owner");
     assert_eq!(instance.written(), before);
 
-    // The witness: the same stale write merges for a key that may make it.
     let merged = instance.call(&owner, Method::PATCH, &path, stale).await;
     assert_eq!(merged.status, StatusCode::OK, "{}", merged.text);
     assert_eq!(merged.json()["item"]["properties"]["title"], "merged");
@@ -474,7 +468,6 @@ async fn a_failed_commit_leaves_no_row_event_audit_or_version() {
     let read = instance.get(&token, &path).await.json();
     assert_eq!(read["item"]["properties"]["body"], "kept");
 
-    // The witness: the same write, with no fault, leaves each of them.
     let before = instance.written();
     let answer = instance.call(&token, Method::PATCH, &path, update).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
@@ -1036,7 +1029,6 @@ async fn a_digest_made_stale_after_its_preview_bins_nothing() {
     assert_eq!(refused.code(), "trash_plan_changed", "{}", refused.text);
     assert_eq!(instance.get(&token, &path).await.status, StatusCode::OK);
 
-    // The witness: the digest the refusal names takes the row.
     let fresh = json!({ "ids": [id], "digest": refused.json()["error"]["details"]["digest"] });
     let taken = instance
         .call(&token, Method::POST, "/items/trash", fresh)
@@ -1260,7 +1252,6 @@ async fn a_key_that_may_only_read_and_a_state_nothing_has_move_nothing() {
     }
     assert_eq!(instance.written(), before);
 
-    // The witness: the same transition lands for a key that may write.
     let moved = instance.call(&writer, Method::POST, &moving, binning).await;
     assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
 }

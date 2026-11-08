@@ -1,7 +1,3 @@
-//! What changing the instance's addresses does to people and apps, said before
-//! it is done. The words are the app's to show, so they follow Apple's
-//! writing guidelines: plain, short, and about what a person will see.
-
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
@@ -10,12 +6,10 @@ use super::auth::{passkeys, session};
 use super::oauth::grants;
 use super::refusal::Result;
 
-/// One thing a change of address does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Consequence {
     pub code: &'static str,
     pub sentence: String,
-    /// How many people, sessions or apps it reaches, when something counts them.
     pub count: Option<u64>,
 }
 
@@ -25,8 +19,6 @@ impl Consequence {
     }
 }
 
-/// A count an area registers where it owns the table, of what a move to the
-/// address it is given reaches at the time in milliseconds it is given.
 type Counter = fn(&Transaction<'_>, &Address, i64) -> Result<i64>;
 
 struct Registered {
@@ -47,7 +39,6 @@ fn connected_apps(tx: &Transaction<'_>, _: &Address, _: i64) -> Result<i64> {
     Ok(i64::try_from(grants::all_of_owner(tx)?.len()).unwrap_or(i64::MAX))
 }
 
-/// What a change of the sign-in address does, and where each is counted.
 const SIGN_IN_CHANGED: &[Registered] = &[
     Registered {
         code: "browser_sessions_end",
@@ -68,7 +59,6 @@ const SIGN_IN_CHANGED: &[Registered] = &[
 
 pub const ADDRESS_REMOVED: &str = "address_removed";
 
-/// What moving from `before` to `after` at `now_ms` does.
 pub fn of_change(
     tx: &Transaction<'_>,
     before: &Addresses,

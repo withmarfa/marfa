@@ -50,7 +50,6 @@ use query::Secret;
 
 const READERS: usize = 4;
 
-/// The state every request shares.
 pub struct App {
     pub db: Db,
     pub clock: Arc<Clock>,
@@ -71,7 +70,6 @@ pub struct App {
 }
 
 impl App {
-    /// Opens the secrets and the database, and takes in what it holds.
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
@@ -137,19 +135,15 @@ impl App {
         self.catalog.clone()
     }
 
-    /// The instance's addresses as they stand now. `app.addresses().sign_in()`
-    /// is the parsed sign-in address.
     pub fn addresses(&self) -> Addresses {
         Addresses::read(&self.settings, self.bound_port.get().copied())
     }
 
-    /// The addresses `snapshot` would give, judged as the live ones are.
     pub fn addresses_in(&self, snapshot: Arc<crate::settings::Snapshot>) -> Addresses {
         Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
-    /// Records the public port the server bound, which `PORT=0` leaves to the
-    /// operating system.
+    /// `PORT=0` leaves the port to the operating system.
     pub fn record_bound_port(&self, port: u16) {
         let _ = self.bound_port.set(port);
     }

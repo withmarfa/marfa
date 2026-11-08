@@ -1,10 +1,6 @@
-//! What a sign-in is called.
-
 const NAME_LIMIT: usize = 40;
 const MOST_NAME_CHARS: usize = 200;
 
-/// `name` trimmed, or nothing where no sign-in can be shown by it: whoever
-/// chose it may not be whoever reads it.
 pub fn usable(name: Option<&str>) -> Option<&str> {
     let name = name?.trim();
     let shown = !name.is_empty()
@@ -13,7 +9,6 @@ pub fn usable(name: Option<&str>) -> Option<&str> {
     shown.then_some(name)
 }
 
-/// Whether `word` starts a word of `text`.
 fn says(text: &str, word: &str) -> bool {
     text.match_indices(word).any(|(at, _)| {
         !text[..at]
@@ -59,7 +54,6 @@ fn system(text: &str) -> Option<&'static str> {
     .map(|(_, name)| name)
 }
 
-/// The first product a `User-Agent` names, such as `curl`.
 fn product(text: &str) -> Option<String> {
     let name: String = text
         .chars()
@@ -70,7 +64,6 @@ fn product(text: &str) -> Option<String> {
     (starts_well && name != "Mozilla").then_some(name)
 }
 
-/// "Safari on macOS", made from the `User-Agent` a session signed in with.
 pub fn browser_name(user_agent: Option<&str>) -> String {
     const NO_NAME: &str = "A browser";
     let text = user_agent.unwrap_or("").trim();

@@ -1,9 +1,5 @@
-//! The jobs the server runs on itself. `jobs::JOBS` lists them, one entry each;
-//! the `housekeeping_jobs` table holds when each is next due and what its last
-//! run did; `scheduler` claims what is due and runs it.
-//!
-//! A run belongs to the server. It runs as [`Caller::Server`], on a task of its
-//! own, so nothing about a request that asked for it can stop it.
+//! The jobs the server runs on itself. A run belongs to the server: it runs as `Caller::Server`
+//! on a task of its own, so nothing about a request that asked for it can stop it.
 
 mod cleanups;
 mod heartbeat;
@@ -31,16 +27,11 @@ use jobs::JOBS;
 pub const HOUR_MS: i64 = 3_600_000;
 pub const DAY_MS: i64 = 86_400_000;
 
-/// How long a stop leaves a run it has given up on to answer, before the stop's
-/// own wait ends.
 const CUT_BEFORE_END: Duration = Duration::from_secs(1);
-/// What a health answer waits for the table, as its probes wait for theirs.
 const ATTENTION_WAIT: Duration = Duration::from_secs(2);
 
 type Body = fn(Arc<App>, Run) -> Pin<Box<dyn Future<Output = Result<Report>> + Send>>;
 
-/// How often a job runs: by a stored setting, or at a pace the contract gives
-/// it no setting for.
 #[derive(Clone, Copy)]
 enum Interval {
     Stored(Setting<u64>),
@@ -56,14 +47,11 @@ impl Interval {
     }
 }
 
-/// One housekeeping job.
 pub struct Job {
     pub name: &'static str,
     interval: Interval,
-    /// How long after a fresh start its first run comes, within its interval.
     first_run_ms: u64,
     deadline: Duration,
-    /// A machine setting that leaves this job out of the instance altogether.
     switch: Option<fn(&App) -> bool>,
     /// Whether a run reaches the database, which `fail:housekeeping:<job>` needs.
     statements: bool,
@@ -136,11 +124,9 @@ impl Job {
     }
 }
 
-/// What a run finished with.
 #[derive(Debug)]
 pub struct Report {
     pub result: Value,
-    /// Work is left that should not wait for the interval.
     pub again: bool,
 }
 
@@ -153,28 +139,24 @@ impl Report {
     }
 }
 
-/// What a job asks of the run it is in.
 pub struct Run {
     given_up: Arc<AtomicBool>,
     stopping: watch::Receiver<bool>,
 }
 
 impl Run {
-    /// Asked between two batches. Gives the runtime a turn, and answers false
-    /// once the run should end with what it has done: the server is stopping,
-    /// or the run has outlived its deadline.
+    /// Asked between two batches. Answers false once the run should end with what it has done:
+    /// the server is stopping, or the run has outlived its deadline.
     pub async fn go_on(&self) -> bool {
         tokio::task::yield_now().await;
         !self.given_up.load(Ordering::Acquire) && !*self.stopping.borrow()
     }
 
-    /// Finishes once the server is stopping.
     pub async fn stopped(&self) {
         let _ = self.stopping.clone().wait_for(|stopping| *stopping).await;
     }
 }
 
-/// A run that counts as work in progress until this drops.
 struct Active(watch::Sender<usize>);
 
 impl Drop for Active {
@@ -183,12 +165,10 @@ impl Drop for Active {
     }
 }
 
-/// What the scheduler shares with the rest of the server.
 #[derive(Debug)]
 pub struct Housekeeping {
     wake: Notify,
     stopping: watch::Sender<bool>,
-    /// A stop has run out of patience: what is still running is left behind.
     cut: watch::Sender<bool>,
     running: watch::Sender<usize>,
 }
@@ -210,15 +190,12 @@ impl Housekeeping {
         Active(self.running.clone())
     }
 
-    /// Starts no more runs, and tells those running to end at their next batch.
     pub fn stop(&self) {
         self.stopping.send_replace(true);
     }
 
-    /// Waits for runs to end, for no longer than `budget`. A run that has not
-    /// ended by a moment before then is left where it stands, so that a request
-    /// waiting on it can answer inside the stop's wait. Its schedule is
-    /// untouched, so it runs again at the next start.
+    /// A run that has not ended by a moment before `budget` is left where it stands, so that a request
+    /// waiting on it can answer inside the stop's wait. Its schedule is untouched, so it runs again at the next start.
     pub async fn settle(&self, budget: Duration) {
         let mut running = self.running.subscribe();
         let patience = budget.saturating_sub(CUT_BEFORE_END);
@@ -232,8 +209,6 @@ impl Housekeeping {
     }
 }
 
-/// Whether this build has a job of this name, whatever this instance's
-/// machine settings say of it.
 pub fn is_job(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name)
 }
@@ -250,8 +225,6 @@ pub fn cutoff(app: &App, retention: Setting<u64>, unit_ms: i64) -> Option<String
     (kept > 0).then(|| ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms))
 }
 
-/// The instant `amount` units back. A span past what a date can hold gives the
-/// earliest date, which nothing is older than.
 pub fn ago(app: &App, amount: i64, unit_ms: i64) -> String {
     app.clock.stamp_ago(amount.saturating_mul(unit_ms))
 }
@@ -280,12 +253,10 @@ pub async fn prepare(app: &Arc<App>) -> Result<()> {
     Ok(())
 }
 
-/// Starts the scheduler, which ends when `Housekeeping::stop` is called.
 pub fn start(app: &Arc<App>) {
     scheduler::start(app.clone());
 }
 
-/// One job as the listing answers it.
 fn listed(app: &App, job: &Job, row: &schedule::Row) -> Value {
     json!({
         "name": job.name,
@@ -302,8 +273,6 @@ fn listed(app: &App, job: &Job, row: &schedule::Row) -> Value {
     })
 }
 
-/// Every job this instance runs. A row of a job it does not run stays out of
-/// the answer, and stays in the table.
 pub async fn list(app: &App) -> Result<Vec<Value>> {
     let rows = app.db.read(schedule::rows).await?;
     Ok(JOBS
@@ -316,7 +285,6 @@ pub async fn list(app: &App) -> Result<Vec<Value>> {
         .collect())
 }
 
-/// What a finished run answers.
 #[derive(Debug)]
 pub struct Ended {
     pub name: &'static str,
@@ -375,8 +343,6 @@ pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
     .map_err(|_| Refusal::internal("a housekeeping run's task ended early"))?
 }
 
-/// What `/health` adds for a caller who may read why: each job whose last run
-/// failed, and each stored setting that no longer reads.
 pub async fn attention(app: &App) -> Value {
     let read = app
         .db

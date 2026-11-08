@@ -1,5 +1,3 @@
-//! The doors of signing in, of setup and of the owner.
-
 pub mod cookies;
 pub(super) mod origin;
 mod owner;
@@ -65,7 +63,6 @@ fn with_cookie(mut response: Response, cookie: HeaderValue) -> Response {
     response
 }
 
-/// Refuses a door a browser could only use unsafely at this address.
 fn require_safe_transport(app: &App) -> Result<(), Refusal> {
     if carries_sessions(&app.addresses().sign_in()) {
         return Ok(());
@@ -76,20 +73,17 @@ fn require_safe_transport(app: &App) -> Result<(), Refusal> {
     ))
 }
 
-/// Refuses a door that takes a credential, for this address and this caller.
 fn require_safe_caller(app: &App, visit: &Visit) -> Result<(), Refusal> {
     require_safe_transport(app)?;
     require_set_address(app, visit)
 }
 
-/// A field a door requires as text.
 fn text_field<'b>(body: &'b Map<String, Value>, field: &str) -> Result<&'b str, Refusal> {
     body.get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| Refusal::validation(format!("Provide `{field}` as text.")))
 }
 
-/// The doors of the owner, on the public and the private socket.
 pub fn owner_doors() -> Routes {
     Router::new()
         .route(
@@ -109,7 +103,6 @@ pub fn owner_doors() -> Routes {
         .route_layer(from_fn(no_store))
 }
 
-/// The doors a browser signs in and sets up through.
 pub fn doors() -> Routes {
     Router::new()
         .route("/auth/sign-in", get(pages::sign_in).post(sign_in::form))

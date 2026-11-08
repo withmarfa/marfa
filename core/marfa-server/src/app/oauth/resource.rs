@@ -2,8 +2,7 @@
 
 pub const MCP_PATHS: [&str; 3] = ["/mcp", "/mcp/schema", "/mcp/admin"];
 
-/// How a request's `resource` goes wrong at the token endpoint or at
-/// authorization. The answer is `invalid_target` either way.
+/// Answered as `invalid_target`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Refused {
     #[error("The resource is not this server or one of its MCP endpoints.")]
@@ -16,11 +15,8 @@ fn without_slash(origin: &str) -> &str {
     origin.trim_end_matches('/')
 }
 
-/// Whether `value` names this server: its origin, with or without one
-/// trailing slash, or an MCP endpoint exactly as spelled. The scheme and host
-/// compare without case (RFC 3986 section 6.2.2.1), the path exactly. It
-/// compares text and parses nothing, so an encoded path, a query, a fragment
-/// or userinfo is simply not equal.
+/// An origin with or without a trailing slash, or an MCP endpoint exactly. Scheme and host
+/// compare without case (RFC 3986 section 6.2.2.1), the path exactly; nothing is parsed.
 pub fn is_accepted(origin: &str, value: &str) -> bool {
     let origin = without_slash(origin);
     if origin.is_empty() {
@@ -33,18 +29,13 @@ pub fn is_accepted(origin: &str, value: &str) -> bool {
         && (rest.is_empty() || rest == "/" || MCP_PATHS.contains(&rest))
 }
 
-/// The audience a token names for a `resource` the server accepted: spelled
-/// as the server spells itself, so a differently cased request and the
-/// instance compare equal later.
+/// Spelled as the server spells itself, so differently cased requests compare equal.
 pub fn audience(origin: &str, value: &str) -> String {
     let origin = without_slash(origin);
     let rest = value.get(origin.len()..).unwrap_or_default();
     format!("{origin}{}", rest.trim_end_matches('/'))
 }
 
-/// `keys-and-oauth/resource-one-value` and `resource-other-server`: every
-/// `resource` of a token request, as many times as it came. Answers the
-/// audience the token will name, if the request named one.
 pub fn at_token(origin: &str, values: &[String]) -> Result<Option<String>, Refused> {
     match values {
         [] => Ok(None),
@@ -54,10 +45,8 @@ pub fn at_token(origin: &str, values: &[String]) -> Result<Option<String>, Refus
     }
 }
 
-/// Every `resource` of an authorization request. Where this refuses, the door
-/// sends the browser back only if the redirect URI is the client's
-/// (`resource-authorize-refused`), and otherwise answers `400`
-/// (`resource-authorize-unregistered`).
+/// A refusal goes back to the browser only when the redirect URI is the client's;
+/// otherwise the door answers `400`.
 pub fn at_authorize(origin: &str, values: &[String]) -> Result<Vec<String>, Refused> {
     values
         .iter()

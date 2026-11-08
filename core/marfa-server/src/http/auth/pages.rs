@@ -1,6 +1,3 @@
-//! The pages a browser reads at the sign-in, setup, device and error
-//! addresses, and the pages a refused setup form is answered with.
-
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
@@ -26,8 +23,7 @@ use crate::http::pages::{
 };
 use crate::http::query;
 
-/// Long enough for any address a person types, short enough that a link
-/// cannot fill a page with it.
+/// Short enough that a link cannot fill a page with an address.
 const SHOWN_CHARS: usize = 320;
 
 fn first<'p>(pairs: &'p [(String, String)], name: &str) -> Option<&'p str> {
@@ -45,19 +41,16 @@ fn shown(text: Option<&str>) -> String {
         .collect()
 }
 
-/// Whether the request asks for a page, which a browser's form post does and
-/// a script's does not.
+/// A browser's form post asks for a page; a script's does not.
 pub fn wants_page(headers: &HeaderMap) -> bool {
     asks_for_html(headers.get(ACCEPT).and_then(|value| value.to_str().ok()))
 }
 
-/// The authorization this instance signed, if `link` is one.
 fn authorization(app: &App, link: &str) -> Option<Verified> {
     let now = app.clock.now_ms().div_euclid(1000);
     signed_link::verify(link, now, &app.settings.start.auth_secret).ok()
 }
 
-/// `GET /auth/sign-in`.
 pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     require_safe_transport(&app)?;
     let name = instance::name(&app).await?;
@@ -102,8 +95,6 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     Ok(pages::sign_in(&view)?.into_response())
 }
 
-/// `GET /setup`: the code to enter, or, with a live setup session, the
-/// owner's details.
 pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap) -> Answer {
     require_safe_transport(&app)?;
     let name = instance::name(&app).await?;
@@ -131,7 +122,6 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap) -> Answer {
     Ok(page.into_response())
 }
 
-/// `GET /auth/error`.
 pub async fn error(State(app): State<Arc<App>>, uri: Uri) -> Answer {
     let pairs = query::pairs(&uri)?;
     let view = AuthError {
@@ -141,8 +131,6 @@ pub async fn error(State(app): State<Arc<App>>, uri: Uri) -> Answer {
     Ok(pages::auth_error(&view)?.into_response())
 }
 
-/// `GET /auth/device`: where a code from a device is typed. The lookup is
-/// the POST's.
 pub async fn device(State(app): State<Arc<App>>, uri: Uri) -> Answer {
     let pairs = query::pairs(&uri)?;
     let view = DeviceEntry {
@@ -153,8 +141,7 @@ pub async fn device(State(app): State<Arc<App>>, uri: Uri) -> Answer {
     Ok(pages::device_entry(&view)?.into_response())
 }
 
-/// The refusal as it is sent, with `page` for its body. Its status, code and
-/// `Retry-After` stay, and nothing replaces the page afterwards.
+/// The refusal's status, code and `Retry-After` stay; only the body is `page`.
 fn refused_with(refusal: &Refusal, page: pages::Page) -> Response {
     let mut response = refusal_answer(refusal);
     response.extensions_mut().remove::<RefusalMark>();
@@ -167,9 +154,6 @@ fn wait_of(refusal: &Refusal) -> Option<Wait> {
     Wait::from_query(Some(&seconds.to_string()))
 }
 
-/// What a setup form's refusal says to a person, when a page of the form's
-/// own can say it better than the refusal's generic page. `None` leaves the
-/// refusal as it is.
 async fn exchange_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Page>> {
     let name = instance::name(app).await?;
     let problem = match refusal.code {
@@ -189,7 +173,6 @@ async fn exchange_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Pag
     Ok(Some(pages::setup_code(&view)?))
 }
 
-/// The page for a refused code entry form.
 pub async fn exchange_refused(app: &App, refusal: &Refusal) -> Result<Response> {
     Ok(match exchange_page(app, refusal).await? {
         Some(page) => refused_with(refusal, page),
@@ -214,7 +197,6 @@ impl Typed {
     }
 }
 
-/// The field a validation refusal names, with its message.
 fn field_errors(refusal: &Refusal) -> Option<SetupFieldErrors> {
     let errors = refusal.details.as_ref()?.get("errors")?.as_array()?;
     let mut found = SetupFieldErrors::default();
@@ -263,7 +245,6 @@ async fn details_page(app: &App, refusal: &Refusal, typed: Typed) -> Result<Opti
     Ok(Some(pages::setup_details(&view)?))
 }
 
-/// The page for a refused details form.
 pub async fn claim_refused(app: &App, refusal: &Refusal, typed: Typed) -> Result<Response> {
     Ok(match details_page(app, refusal, typed).await? {
         Some(page) => refused_with(refusal, page),

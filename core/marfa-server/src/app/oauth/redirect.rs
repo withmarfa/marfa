@@ -1,12 +1,10 @@
-//! Redirect URIs: which a client may register, which a request may name, and
-//! the origin of one.
+//! Redirect URIs: what a client may register, what a request may name, and their origins.
 
 use std::net::IpAddr;
 
 use url::{Host, Url};
 
-/// A client's `application_type` (OpenID Connect Dynamic Client Registration,
-/// which RFC 7591 clients send).
+/// OpenID Connect Dynamic Client Registration's `application_type`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppKind {
     Web,
@@ -22,7 +20,6 @@ impl AppKind {
     }
 }
 
-/// Why a redirect URI does not register. Each is `invalid_redirect_uri`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Refused {
     #[error("The redirect URI is not a valid URI.")]
@@ -46,9 +43,8 @@ pub enum Refused {
     Unreachable,
 }
 
-/// Text a browser and this parser could read differently, or that `Url`
-/// would quietly repair: a backslash is a slash to WHATWG, and tabs, newlines
-/// and edge spaces are stripped before parsing.
+/// Text a browser and this parser could read differently: a backslash is a slash to WHATWG,
+/// and tabs, newlines and edge spaces are stripped before parsing.
 pub(super) fn is_plain(text: &str) -> bool {
     !text.is_empty()
         && text
@@ -56,7 +52,7 @@ pub(super) fn is_plain(text: &str) -> bool {
             .all(|byte| byte > 0x20 && byte != 0x7f && byte != b'\\')
 }
 
-/// A loopback IP address, as RFC 8252 section 7.3 means it.
+/// RFC 8252 section 7.3.
 pub fn is_loopback_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(v4) => v4.is_loopback(),
@@ -74,9 +70,7 @@ fn ip_of(url: &Url) -> Option<IpAddr> {
     }
 }
 
-/// Whether a registration's host is on the loopback. Wider than the port
-/// rule's test: it refuses a web client, so it takes `localhost` too, with
-/// any trailing dots.
+/// Wider than the port rule's test: takes `localhost` too, with any trailing dots.
 fn on_the_loopback(url: &Url) -> bool {
     match url.host() {
         Some(Host::Domain(name)) => {
@@ -114,9 +108,7 @@ fn is_reverse_domain(scheme: &str) -> bool {
         && labels.all(label)
 }
 
-/// `keys-and-oauth/register-native-private-use`: the single slash is checked
-/// on the text as sent, since an empty authority (`scheme:///path`) leaves
-/// the same path once parsed.
+/// Checked on the text as sent: an empty authority (`scheme:///path`) leaves the same path once parsed.
 fn is_private_use_form(uri: &str, url: &Url) -> bool {
     let after_scheme = uri.split_once(':').map_or("", |(_, rest)| rest);
     is_reverse_domain(url.scheme())
@@ -125,9 +117,6 @@ fn is_private_use_form(uri: &str, url: &Url) -> bool {
         && !after_scheme.starts_with("//")
 }
 
-/// Whether a redirect URI of this form could ever register for a client that
-/// says nothing of its kind: a loopback or private-use URI only a native app
-/// can receive.
 pub fn only_native_receives(uri: &str) -> bool {
     Url::parse(uri).is_ok_and(|url| match url.scheme() {
         "http" | "https" => on_the_loopback(&url),
@@ -135,7 +124,6 @@ pub fn only_native_receives(uri: &str) -> bool {
     })
 }
 
-/// Judge one redirect URI for registration.
 pub fn check_registered(kind: AppKind, uri: &str) -> Result<(), Refused> {
     if !is_plain(uri) {
         return Err(Refused::Unparseable);
@@ -161,11 +149,9 @@ pub fn check_registered(kind: AppKind, uri: &str) -> Result<(), Refused> {
     }
 }
 
-/// Whether a request's `redirect_uri` is one the client registered: the same
-/// text, or for a registered loopback host the same text with only the port
-/// changed, since a native app binds an ephemeral one. The comparison is of
-/// text because a browser goes where the text says: two spellings the parser
-/// makes equal are not the URI the client registered.
+/// The same text, or for a registered loopback host the same text with only the port changed,
+/// since a native app binds an ephemeral one. Text, not the parsed form, because a browser goes
+/// where the text says.
 pub fn is_registered(registered: &[String], requested: &str) -> bool {
     registered.iter().any(|entry| entry == requested) || {
         let bare = (is_plain(requested) && !requested.contains('#'))
@@ -182,8 +168,7 @@ pub fn is_registered(registered: &[String], requested: &str) -> bool {
     }
 }
 
-/// `uri` with its port taken out, for a URI with an authority. A colon with
-/// no digits after it is no port, so it stays.
+/// A colon with no digits after it is no port, so it stays.
 fn without_port(uri: &str) -> Option<String> {
     let (scheme, rest) = uri.split_once("://")?;
     let end = rest.find(['/', '?']).unwrap_or(rest.len());
@@ -201,19 +186,13 @@ fn without_port(uri: &str) -> Option<String> {
     Some(format!("{scheme}://{host}{tail}"))
 }
 
-/// RFC 9700 section 4.1.3 lets the port vary for "native apps using a
-/// localhost URI". RFC 8252 section 7.3, which it points to, names only IP
-/// addresses, but real clients redirect to the name: Claude Code's metadata
-/// document lists `http://localhost/callback` and it listens at
-/// `http://localhost:<ephemeral port>/callback`. The port adds no exposure the
-/// registered name did not already have, and only a native client can register
-/// that name. Only the name exactly: not a subdomain and not a trailing dot.
+/// RFC 9700 section 4.1.3 lets the port vary for localhost URIs. RFC 8252 section 7.3 names only
+/// IP addresses, but real clients register `http://localhost/callback` and listen on an ephemeral
+/// port. Only the name exactly: not a subdomain and not a trailing dot.
 fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
 }
 
-/// A redirect URI that [`is_registered`] passed, and so the only thing an
-/// authorization answer may send a browser to.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Destination(String);
 
@@ -226,8 +205,7 @@ impl Destination {
         &self.0
     }
 
-    /// The address that carries `pairs` and, by RFC 9207, the `issuer`, to
-    /// the app. A registered URI may hold a query of its own, which stays.
+    /// Adds `pairs` and the `issuer` (RFC 9207). A query on the registered URI stays.
     pub fn with(&self, pairs: &[(&str, &str)], issuer: &str) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
         query.extend_pairs(pairs);
@@ -237,9 +215,7 @@ impl Destination {
     }
 }
 
-/// Where a redirect URI sends a person, as a page may name it: the host the
-/// parser read, never the text, or the scheme of a private-use URI. A loopback
-/// URI goes nowhere but this machine, so it names none.
+/// The host the parser read, never the text or a private-use scheme. A loopback URI names none.
 pub fn shown_destination(uri: &str) -> Option<String> {
     let url = Url::parse(uri).ok()?;
     if on_the_loopback(&url) {
@@ -248,15 +224,12 @@ pub fn shown_destination(uri: &str) -> Option<String> {
     Some(url.host_str().unwrap_or(url.scheme()).to_string())
 }
 
-/// `keys-and-oauth/page-origin-serialized`: scheme, lowercase host and port,
-/// with the scheme's default port left out. Only a web page has one, so
-/// anything but `https` answers none.
+/// Scheme, lowercase host and port, with the scheme's default port left out. Only `https` has one.
 pub fn origin(uri: &str) -> Option<String> {
     let url = Url::parse(uri).ok()?;
     (url.scheme() == "https").then(|| url.origin().ascii_serialization())
 }
 
-/// The origins a client's approval allows, each once, in registration order.
 /// A native app's redirect URI is where a program listens, not a page.
 pub fn web_origins(kind: AppKind, uris: &[String]) -> Vec<String> {
     if kind == AppKind::Native {
@@ -577,7 +550,6 @@ mod tests {
         ]
     }
 
-    /// A host that is the loopback, spelled as URLs allow.
     fn loopback_host() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("localhost".to_string()),

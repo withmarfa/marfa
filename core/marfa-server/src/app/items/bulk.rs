@@ -1,13 +1,5 @@
-//! A page of `POST /items/bulk`. Its entries are written by the item write
-//! itself; this module says how a page is cut into writes and what each came
-//! to.
-//!
-//! An atomic page is one transaction, because a refusal of its last entry has
-//! to undo the first and no reader may see it part written, so it cannot
-//! commit in chunks. It beats the writer's pulse after each entry, which holds
-//! the writes queued behind it until it ends. A best-effort page is one
-//! transaction for each entry, taking its turn in the writer's queue with
-//! everyone else's writes.
+//! An atomic page is one transaction, so a refused last entry undoes the first; a best-effort
+//! page is one transaction per entry.
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -24,15 +16,12 @@ const UNKNOWN_OUTCOME: &str = "The entry may have been written, but its commit c
                                not resend the whole page.";
 const NOT_WRITTEN: &str = "The entry could not be written, and nothing of it was";
 
-/// One entry of a page.
 #[derive(Debug)]
 pub struct Entry {
     pub put: Put,
     pub replace: bool,
 }
 
-/// What `POST /items/bulk` asks for. An entry the door could not read is held
-/// as its refusal, so that `atomic` decides what becomes of the rest.
 #[derive(Debug)]
 pub struct Asked {
     pub entries: Vec<Result<Entry>>,
@@ -41,7 +30,6 @@ pub struct Asked {
     pub retype: bool,
 }
 
-/// A page written as one transaction.
 pub struct Page {
     pub entries: Vec<Result<Entry>>,
     pub mode: &'static str,
@@ -59,7 +47,6 @@ impl std::fmt::Debug for Page {
     }
 }
 
-/// An entry's place in a page written entry by entry.
 #[derive(Debug)]
 pub struct Note {
     pub index: usize,
@@ -69,7 +56,6 @@ pub struct Note {
     pub operation: String,
 }
 
-/// What an entry came to.
 pub enum Entered {
     Created(String),
     Updated(String),
@@ -88,7 +74,6 @@ impl Entered {
         }
     }
 
-    /// The row a write landed on.
     pub fn written(&self) -> Option<&str> {
         match self {
             Entered::Created(id) | Entered::Updated(id) => Some(id),
@@ -130,8 +115,7 @@ impl Counts {
     }
 }
 
-/// The refusal a page rolls back with. A fault is no verdict on an entry, and
-/// answers as it is.
+/// A fault is no verdict on an entry, and answers as it is.
 pub fn rollback(index: usize, refused: &Refusal) -> Refusal {
     let status = refused.code.status();
     if status >= 500 {
@@ -167,8 +151,7 @@ fn error_of(refusal: &Refusal) -> Value {
     error
 }
 
-/// What a refusal of an entry makes of it, or of the page: before anything has
-/// landed, what is no verdict on the entry answers for the whole page.
+/// Before anything has landed, what is no verdict on the entry answers for the whole page.
 pub(crate) fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Result<Value> {
     if refusal.commit_failed {
         let error = json!({
@@ -192,7 +175,6 @@ pub(crate) fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Re
     Ok(errored(index, None, error_of(refusal)))
 }
 
-/// Writes a page and answers its body.
 pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     let Asked {
         entries,

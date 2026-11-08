@@ -1,13 +1,8 @@
-//! What a request body is refused for before anything reads its meaning:
-//! nesting past the limit, and text UTF-8 cannot carry. Both are judged on
-//! the bytes, since neither survives a parse.
-
 use serde::de::IgnoredAny;
 
 const MAX_DEPTH: usize = 64;
 
-/// Whether `bytes` nests deeper than the limit, counting no bracket inside a
-/// string. The bytes need not be JSON.
+/// Whether `bytes` nests deeper than the limit; brackets inside strings do not count.
 pub fn too_deep(bytes: &[u8]) -> bool {
     let mut depth = 0usize;
     let mut in_string = false;
@@ -37,9 +32,7 @@ pub fn too_deep(bytes: &[u8]) -> bool {
     false
 }
 
-/// A string as JSON escapes it, with U+FFFD for each lone surrogate, and
-/// whether it held one. `at` is just past the opening quote; also answers
-/// where the string ends.
+/// A string as JSON escapes it, U+FFFD for each lone surrogate, and whether it held one.
 fn decoded(bytes: &[u8], mut at: usize) -> (String, bool, usize) {
     let hex = |at: usize| -> Option<u32> {
         let digits = bytes.get(at..at + 4)?;
@@ -100,8 +93,7 @@ fn pointer<'a>(path: impl Iterator<Item = &'a String>) -> String {
         .collect()
 }
 
-/// The JSON pointer of the first string or object key in `bytes` that holds a
-/// surrogate with no partner, where `bytes` is JSON at all.
+/// JSON pointer of the first string or key holding a lone surrogate.
 pub fn ill_formed_at(bytes: &[u8]) -> Option<String> {
     if !bytes
         .windows(3)
@@ -109,7 +101,6 @@ pub fn ill_formed_at(bytes: &[u8]) -> Option<String> {
     {
         return None;
     }
-    // One frame per open container: its current member name or index.
     let mut frames: Vec<(bool, String)> = Vec::new();
     let mut expecting_key = false;
     let mut at = 0;

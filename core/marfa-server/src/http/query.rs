@@ -1,11 +1,8 @@
-//! A query string holds only what an operation declares.
-
 use axum::extract::Query;
 use axum::http::Uri;
 
 use crate::app::refusal::{Refusal, Result};
 
-/// The query's names and values, decoded.
 pub fn pairs(uri: &Uri) -> Result<Vec<(String, String)>> {
     let Query(pairs) = Query::<Vec<(String, String)>>::try_from_uri(uri)
         .map_err(|_| Refusal::validation("The query string could not be read."))?;
@@ -18,7 +15,6 @@ pub fn only(uri: &Uri, allowed: &[&str]) -> Result<()> {
     only_where(uri, |key| allowed.contains(&key))
 }
 
-/// As [`only`], for an operation whose keys follow a pattern.
 pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
     let pairs = pairs(uri)?;
     let mut unknown: Vec<&str> = pairs
@@ -38,7 +34,6 @@ pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
     .with_detail("unknown_parameters", unknown))
 }
 
-/// A parameter that is `true` or `false`, where the query names it.
 pub fn flag(uri: &Uri, name: &str) -> Result<Option<bool>> {
     let Some((_, value)) = pairs(uri)?.into_iter().find(|(key, _)| key == name) else {
         return Ok(None);

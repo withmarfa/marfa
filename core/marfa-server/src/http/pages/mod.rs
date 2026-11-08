@@ -1,7 +1,5 @@
-//! The pages the server draws itself: sign-in, device codes, setup and the
-//! pages that tell a person a request was refused. Each page is a function
-//! from a view struct to a [`Page`]. Nothing here reads a request or the
-//! database.
+//! Each page is a function from a view struct to a [`Page`]; nothing here reads a request
+//! or the database.
 
 mod consent;
 mod device;
@@ -33,7 +31,6 @@ pub use wait::Wait;
 const STYLE: &str = include_str!("assets/page.css");
 const SCRIPT: &str = include_str!("assets/page.js");
 
-/// A finished HTML page, ready to answer with.
 pub struct Page {
     status: StatusCode,
     html: String,
@@ -54,8 +51,7 @@ impl Page {
         &self.policy
     }
 
-    /// Makes `response` this page and leaves its status as it is. A page sent
-    /// in place of a refusal keeps the refusal's status and headers.
+    /// A page sent in place of a refusal keeps the refusal's status and headers.
     pub fn write_over(self, response: &mut Response) {
         *response.body_mut() = Body::from(self.html);
         let headers = response.headers_mut();
@@ -84,11 +80,8 @@ impl IntoResponse for Page {
     }
 }
 
-/// What a page needs of the browser beyond showing itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Needs {
-    /// The page's script asks the server for something: a passkey, a setup
-    /// link or a confirmation.
     pub connect: bool,
     /// The page can open the "Confirm it's you" dialog. It implies `connect`.
     pub confirm_dialog: bool,
@@ -112,7 +105,6 @@ fn new_nonce() -> Result<String> {
     Ok(hex::encode(bytes))
 }
 
-/// Puts a page's body in the one layout, under a nonce of its own.
 fn document(title: &str, instance_name: &str, body: &str, needs: Needs) -> Result<Page> {
     let nonce = new_nonce()?;
     let connect = needs.connect || needs.confirm_dialog;

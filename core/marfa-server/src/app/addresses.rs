@@ -1,5 +1,4 @@
-//! The instance's addresses. Each is stored, so nothing here or anywhere else
-//! builds one from a request's `Host` header.
+//! Each address is stored; nothing builds one from a request's `Host` header.
 
 use std::fmt;
 use std::sync::Arc;
@@ -22,7 +21,6 @@ pub struct Address {
 }
 
 impl Address {
-    /// Reads an origin, or gives the rule it breaks.
     pub fn parse(text: &str) -> Result<Address, String> {
         let refuse = |rule: &str| Err(format!("must {rule}"));
         if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
@@ -83,12 +81,10 @@ impl Address {
         self.scheme
     }
 
-    /// The host, with an IPv6 address in its brackets.
     pub fn host(&self) -> &str {
         &self.host
     }
 
-    /// The port, which is the scheme's default when the origin names none.
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -108,8 +104,7 @@ impl fmt::Display for Address {
     }
 }
 
-/// Reads a JSON array of origins, keeping the first of any that normalize to
-/// the same one.
+/// Keeps the first of any origins that normalize to the same one.
 pub fn parse_list(text: &str) -> Result<Vec<Address>, String> {
     let texts: Vec<String> = serde_json::from_str(text)
         .map_err(|_| "must be a JSON array of origins such as https://marfa.example")?;
@@ -123,7 +118,6 @@ pub fn parse_list(text: &str) -> Result<Vec<Address>, String> {
     Ok(list)
 }
 
-/// The instance's addresses at one moment.
 pub struct Addresses {
     live: Arc<Snapshot>,
     loopback_host: &'static str,
@@ -131,12 +125,10 @@ pub struct Addresses {
 }
 
 impl Addresses {
-    /// `bound_port` is the port the server really bound, once it has.
     pub fn read(settings: &Settings, bound_port: Option<u16>) -> Addresses {
         Addresses::in_snapshot(settings, settings.live(), bound_port)
     }
 
-    /// The addresses the settings in `snapshot` would give.
     pub fn in_snapshot(
         settings: &Settings,
         snapshot: Arc<Snapshot>,
@@ -153,14 +145,12 @@ impl Addresses {
         }
     }
 
-    /// The address the issuer, cookies, passkeys and discovery use.
     pub fn sign_in(&self) -> Address {
         self.live
             .get(SIGN_IN_ADDRESS)
             .unwrap_or_else(|| Address::loopback(self.loopback_host, self.port))
     }
 
-    /// The stored addresses, and the sign-in address if they do not name it.
     pub fn all(&self) -> Vec<Address> {
         let mut list = self.live.get(ADDRESSES);
         let sign_in = self.sign_in();

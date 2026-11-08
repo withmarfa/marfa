@@ -1,6 +1,3 @@
-//! Opening the database: judging a file without changing it, then the
-//! connections.
-
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
@@ -16,7 +13,6 @@ use crate::settings::start::MigrationFault;
 
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-/// How the database is opened.
 #[derive(Debug)]
 pub struct Options {
     pub path: DatabasePath,
@@ -27,7 +23,6 @@ pub struct Options {
     pub free_disk_bytes: Option<u64>,
 }
 
-/// Connections ready for use.
 pub struct Opened {
     pub writer: Connection,
     pub readers: Vec<Connection>,
@@ -67,7 +62,6 @@ impl Target {
     }
 }
 
-/// A `file:` URI for a path, with what a URI reserves escaped.
 fn file_uri(path: &Path, query: &str) -> String {
     let mut uri = String::from("file:");
     for &byte in path.as_os_str().as_bytes() {
@@ -97,9 +91,8 @@ fn refused_open(label: &str, error: rusqlite::Error) -> Failure {
     }
 }
 
-/// Reads an existing file for what a start must do, leaving its bytes and its
-/// folder as they were: with no log to apply, SQLite is told not to look for
-/// one, since otherwise a reader of a WAL file makes side files.
+/// Leaves the file's bytes and folder as they were: with no log to apply, SQLite is told
+/// not to look for one, since a reader of a WAL file would make side files.
 fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Standing, Failure> {
     let unreadable =
         |error: std::io::Error| Failure::start(format!("{label} could not be read: {error}"));
@@ -148,8 +141,7 @@ fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     Ok(())
 }
 
-/// Judges what is on disk, brings it up to this build's schema and opens the
-/// connections. Nothing is written until the judgment has passed.
+/// Nothing is written until the judgment has passed.
 pub fn open(options: &Options) -> Result<Opened, Failure> {
     let target = Target::of(&options.path);
     let label = target.label();

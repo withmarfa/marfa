@@ -1,5 +1,3 @@
-//! A server's life, from settings to exit.
-
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,8 +19,7 @@ use crate::telemetry::{Config, FLUSH_WITHIN};
 
 /// Leaves room inside the ten seconds a container runtime gives a stop.
 const STOP_WAIT: Duration = Duration::from_secs(7);
-/// A stop that used all of the wait still has this long to send telemetry,
-/// which keeps the whole inside the contract's eight seconds.
+/// A stop that used all of the wait still has this long to send telemetry.
 const FLUSH_AFTER_WAIT: Duration = Duration::from_millis(500);
 
 async fn bind_public(app: &App) -> Result<TcpListener, Failure> {
@@ -97,7 +94,6 @@ fn listen(
     ));
 }
 
-/// Runs until a stop signal, and returns the status to exit with.
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let claim = Claim::take(&accepted.fixed().control_socket)?;
     let app = App::start(accepted).await?;

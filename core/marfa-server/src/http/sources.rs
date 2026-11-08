@@ -1,5 +1,3 @@
-//! `GET /sources`, and `GET` and `PATCH /source`.
-
 use std::sync::Arc;
 
 use axum::extract::State;

@@ -1,5 +1,3 @@
-//! A listing's `WHERE`, from what a caller asked and what it may reach.
-
 use marfa_rules::catalog::StatusField;
 use marfa_rules::filter::{Compare, Condition, Expression, Literal, Op, Term, system_literal};
 use marfa_rules::query::escape_like;
@@ -15,7 +13,6 @@ use crate::app::refusal::Result;
 
 const PARENT_OF: &str = "parent-of";
 
-/// SQL with its values in the order its `?` stand.
 #[derive(Clone, Debug, Default)]
 pub struct Sql {
     pub text: String,
@@ -54,7 +51,6 @@ impl Sql {
     }
 }
 
-/// Which states a read selects.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum States {
     #[default]
@@ -62,14 +58,12 @@ pub enum States {
     Named(Vec<String>),
 }
 
-/// A parsed filter, with the text a cursor is bound to.
 #[derive(Clone, Debug)]
 pub struct Filter {
     pub text: String,
     pub expression: Expression,
 }
 
-/// What a caller narrows a read to.
 #[derive(Clone, Debug, Default)]
 pub struct Ask {
     pub types: Vec<String>,
@@ -87,17 +81,14 @@ pub struct Ask {
 }
 
 impl Ask {
-    /// Whether a type, a source or a state with no active rows narrows this
-    /// ask before any row is read. A page of anything else reads fewer rows
-    /// by one walk of its order than by a walk for each type.
+    /// Whether a type, a source or a state with no active rows narrows this ask before any row is
+    /// read; anything else reads fewer rows by one walk of its order than by a walk for each type.
     pub(super) fn leaves_few(&self) -> bool {
         let rare = matches!(&self.states, States::Named(states)
             if states.iter().all(|state| state != "active"));
         !self.types.is_empty() || self.source.is_some() || rare
     }
 
-    /// Everything that decides which rows this selects, spelled one way
-    /// however the request spelled it.
     pub fn scope(&self) -> Json {
         let sorted = |list: &[String]| {
             let mut sorted = list.to_vec();
@@ -126,8 +117,6 @@ impl Ask {
     }
 }
 
-/// Refuses what this caller may not ask, on the state its read sees: a type
-/// it cannot read with none readable under it, and what [`judge_terms`] asks.
 pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
     let rules = &read.catalog.rules;
     for entry in &ask.types {
@@ -145,7 +134,6 @@ pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
     judge_terms(read, ask)
 }
 
-/// Refuses a term or a walk over an edge type the caller cannot read.
 pub fn judge_terms(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
     if let Some(filter) = &ask.filter {
         for condition in &filter.expression.conditions {
@@ -160,8 +148,6 @@ pub fn judge_terms(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
     Ok(())
 }
 
-/// The condition that selects the rows `ask` names, within `reach`. The row is
-/// `i`.
 pub fn selection(reach: &Reach, ask: &Ask, catalog: &Catalog, walked: bool) -> Result<Sql> {
     let rules = &catalog.rules;
     let rows = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
@@ -212,8 +198,8 @@ pub fn selection(reach: &Reach, ask: &Ask, catalog: &Catalog, walked: bool) -> R
     Ok(sql)
 }
 
-/// The rows at `root` and under it. The walk leaves only a row in `reach`, so
-/// a row the caller cannot read joins no path, and `UNION` ends it on a cycle.
+/// The walk leaves only a row in `reach`, so a row the caller cannot read joins no path, and
+/// `UNION` ends it on a cycle.
 fn beneath(sql: &mut Sql, root: &str, reach: &Reach) {
     sql.push("i.id IN (WITH RECURSIVE beneath(id) AS (SELECT ");
     sql.bind(root.to_string());
@@ -358,8 +344,7 @@ fn property(sql: &mut Sql, name: &str, op: Op, value: &Literal) {
     }
 }
 
-/// Some entry of the list `field` is an object whose `member` equals the
-/// value. `CASE` keeps `json_extract` off an entry that is not an object.
+/// `CASE` keeps `json_extract` off an entry that is not an object.
 fn entry(sql: &mut Sql, field: &str, member: &str, value: &Literal) {
     let list = format!("$.{field}");
     let path = format!("$.{member}");
@@ -386,9 +371,8 @@ fn entry(sql: &mut Sql, field: &str, member: &str, value: &Literal) {
     sql.push(")");
 }
 
-/// Every number, a boolean included, goes in as a REAL, which is how the
-/// working copy binds it: read otherwise, a condition answers one set of rows
-/// on a device and another here.
+/// Every number, a boolean included, binds as a REAL, as the working copy binds it: bound otherwise,
+/// a condition answers one set of rows on a device and another here.
 fn bound(literal: &Literal) -> Value {
     match literal {
         Literal::Text(text) => Value::Text(text.clone()),
@@ -398,9 +382,7 @@ fn bound(literal: &Literal) -> Value {
     }
 }
 
-/// A row out of the bin with an edge of a `with-hosts` type to a host out of
-/// the bin. Judged over every host, whatever the caller reads, because the
-/// answer says what the row is and names none of them.
+/// Judged over every host, whatever the caller reads, because the answer names none of them.
 fn part(sql: &mut Sql, catalog: &Catalog) {
     sql.push(
         "(i.state <> 'trashed' AND EXISTS (SELECT 1 FROM edges e \
@@ -410,10 +392,8 @@ fn part(sql: &mut Sql, catalog: &Catalog) {
     sql.push(") AND h.state <> 'trashed'))");
 }
 
-/// A `status_group` term, through each type's status field: the row's type
-/// picks the field and its words, and the words pick the group. A row whose
-/// type has no status field, or whose value is no word its type declares, is
-/// in no group, so `eq` and `neq` both pass it by and `not_exists` takes it.
+/// A row whose type has no status field, or whose value is no word its type declares, is in no
+/// group, so `eq` and `neq` both pass it by and `not_exists` takes it.
 fn status_group(sql: &mut Sql, op: Op, value: &Literal, statuses: &[StatusField]) {
     let wanted = |group: &str| match (op, value) {
         (Op::Compare(Compare::Eq), Literal::Text(asked)) => group == asked,

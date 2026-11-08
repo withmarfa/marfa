@@ -1,6 +1,4 @@
-//! The server's listing grammar as a tree. A port, not a lookalike: the
-//! parser refuses what the server's refuses, with its code. A compiler walks
-//! the tree; this module names no table and no engine.
+//! The listing grammar as a tree. The parser refuses what the server refuses, with its code. This module names no table and no engine.
 
 use crate::catalog::STATUS_GROUPS;
 use crate::error::{Result, RuleError};
@@ -13,7 +11,7 @@ pub use model::{
     FilterValue, SystemField,
 };
 
-/// Measured in UTF-16 code units, which is what the server's `length` counts.
+/// Measured in UTF-16 code units.
 const MAX_INPUT_LENGTH: usize = 2048;
 const MAX_CONDITIONS: usize = 10;
 
@@ -30,25 +28,18 @@ pub const SYSTEM_FIELDS: [&str; 10] = [
     "source_id",
 ];
 
-/// The term that selects by the group of each item's status word.
 pub const STATUS_GROUP: &str = "status_group";
 
-/// The term that selects parts: items out of the bin with a host out of it.
 pub const PART: &str = "part";
 
-/// What an expression reads beyond the row's own columns, properties and tags.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Reads {
-    /// The catalog's status field of each type.
     pub status: bool,
-    /// Edges, or the state of another row: a term the row alone cannot answer.
     pub relational: bool,
-    /// A column a move between states changes: `state`, `updated_at` or
-    /// `version`.
+    /// `state`, `updated_at` or `version`: a column a move between states changes.
     pub moved: bool,
 }
 
-/// The system fields a move between states writes.
 const MOVED_FIELDS: [&str; 3] = ["state", "updated_at", "version"];
 
 pub fn reads(filter: &str) -> Result<Reads> {
@@ -74,14 +65,12 @@ pub enum Literal {
     Text(String),
     Number(f64),
     Bool(bool),
-    /// No value: the operator takes none. A `null` in the expression is
-    /// refused, never read as this.
+    /// No value: the operator takes none. A `null` in the expression is refused, never read as this.
     Null,
 }
 
 impl Literal {
-    /// The text a pattern operator matches, as JavaScript's `String()` gives
-    /// it.
+    /// The text a pattern operator matches.
     pub fn text(&self) -> String {
         match self {
             Literal::Text(text) => text.clone(),
@@ -144,8 +133,6 @@ impl Op {
     }
 }
 
-/// What a condition asks, with the operators each field refuses already
-/// refused.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {
     System {
@@ -156,7 +143,6 @@ pub enum Term {
         name: String,
         op: Op,
     },
-    /// `properties.<field>.<member> eq <value>`, the only operator it takes.
     Entry {
         field: String,
         member: String,
@@ -169,16 +155,13 @@ pub enum Term {
         negated: bool,
         to_item: bool,
     },
-    /// The value, where the operator takes one, is one of `STATUS_GROUPS`.
     StatusGroup(Op),
-    /// `eq` or `neq`, with a boolean value.
     Part(Compare),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
     pub term: Term,
-    /// `Null` where the operator takes no value.
     pub value: Literal,
 }
 
@@ -189,7 +172,6 @@ pub struct Expression {
 }
 
 impl Expression {
-    /// Whether some condition reads a status group.
     pub fn reads_status(&self) -> bool {
         self.conditions
             .iter()
@@ -197,9 +179,7 @@ impl Expression {
     }
 }
 
-/// The literal a system field is compared with: a time column compared as
-/// an instant takes a timestamp, which is normalized, and refuses anything
-/// else as the server's SQL builder refuses it.
+/// A time column compared as an instant takes a timestamp, which is normalized; anything else is refused.
 pub fn system_literal(column: &str, compare: Compare, value: &Literal) -> Result<Literal> {
     if !matches!(column, "created_at" | "updated_at" | "occurred_at")
         || matches!(compare, Compare::Contains | Compare::StartsWith)
@@ -232,8 +212,7 @@ struct Token {
     pos: usize,
 }
 
-/// `edge[<type>]` or `backref[<type>]`, whole: the type is anything but a
-/// closing bracket or whitespace, and not nothing.
+/// The type is anything but a closing bracket or whitespace, and not nothing.
 fn edge_ref(word: &str) -> Option<(bool, &str)> {
     let (backref, rest) = if let Some(rest) = word.strip_prefix("edge[") {
         (false, rest)
@@ -249,7 +228,7 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
 
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
-    // Positions in UTF-16 code units, as the server's string index counts.
+    // Positions in UTF-16 code units.
     let at: Vec<usize> = chars
         .iter()
         .scan(0, |units, ch| {
@@ -311,7 +290,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 }
             }
             let text = raw(start, i);
-            // Enough digits read as infinity, which the server refuses.
+            // Enough digits read as infinity, which is refused.
             let number = text
                 .parse::<f64>()
                 .ok()
@@ -541,8 +520,7 @@ pub(crate) fn term(field: Field, op: Op) -> Result<Term> {
     })
 }
 
-/// A comparison with null is unknown in SQL and never matches, so the server
-/// refuses the literal and names the operator that asks the question.
+/// A comparison with null is unknown in SQL and never matches, so the literal is refused and the operator that asks the question is named.
 fn refuse_null(token: &Token, term: &Term, op: Op) -> RuleError {
     let never = format!(
         "Null is not a value to compare with, so \"{} null\" never matches at position {}.",
@@ -597,7 +575,7 @@ fn expect<'a>(tokens: &'a [Token], pos: usize, context: &str) -> Result<&'a Toke
 }
 
 pub fn parse(input: &str) -> Result<Expression> {
-    // JavaScript's `trim`, which takes U+FEFF and leaves U+0085.
+    // Blank means whitespace as `js::is_space` reads it: U+FEFF counts, U+0085 does not.
     if input.chars().all(js::is_space) {
         return Err(refused("Filter expression cannot be empty"));
     }
@@ -779,8 +757,6 @@ mod tests {
             };
             assert!(message.contains(advice), "{input}: {message}");
         }
-        // The word is text when it is quoted, and the presence test is
-        // still how absence is asked for.
         assert_eq!(
             parse("properties.note eq \"null\"").unwrap().conditions[0].value,
             Literal::Text("null".into())

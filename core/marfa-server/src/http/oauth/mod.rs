@@ -1,5 +1,3 @@
-//! The doors of the OAuth server. What each one decides is in `app::oauth`.
-
 mod authorize;
 mod device;
 mod discovery;
@@ -31,8 +29,7 @@ use crate::app::oauth::Problem;
 use crate::app::oauth::offer::Post;
 use crate::app::refusal::Refusal;
 
-/// The owner a browser's session names, if it does. A form another site's
-/// page posted is refused before the session is read, so it has not used it.
+/// A cross-site form is refused before the session is read.
 struct Browser(Option<Caller>);
 
 impl FromRequestParts<Arc<App>> for Browser {
@@ -52,8 +49,7 @@ fn problem_answer(problem: &Problem) -> Answer {
     Ok(json_answer(status, &problem.to_json()))
 }
 
-/// Refuses a form another site's page posted. A browser says where a post
-/// came from, so a form that says nothing came from no page at all.
+/// A post that names no origin came from no page, so it is let through.
 fn require_own_form(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     match origin::said_by_form(headers, &form_origins(app)) {
         Source::Elsewhere => Err(origin::not_our_page()),
@@ -61,7 +57,6 @@ fn require_own_form(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     }
 }
 
-/// A form's fields, repeats and all.
 struct Fields(Vec<(String, String)>);
 
 impl Fields {
@@ -80,7 +75,6 @@ impl Fields {
             .collect()
     }
 
-    /// What an approval page's controls posted.
     fn post(&self) -> Post {
         Post {
             access: self.get("access").map(str::to_string),
@@ -102,7 +96,6 @@ async fn any_origin(request: Request, next: Next) -> Response {
     response
 }
 
-/// The doors of a person's grants, on the public and the private socket.
 pub fn grant_doors() -> Routes {
     Router::new()
         .route("/auth/grants", get(grants::list))

@@ -1,6 +1,5 @@
-//! What the server tells a receiver about an unhandled fault, and that a
-//! receiver which is slow or silent changes nothing for a request. The
-//! receivers are sockets of this test; nothing leaves the machine.
+//! What the server tells a receiver about an unhandled fault, and that a slow or silent
+//! receiver changes nothing for a request.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -19,11 +18,8 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// What a receiver was sent: the path and the body of each post.
 type Received = Arc<Mutex<Vec<(String, String)>>>;
 
-/// A receiver that answers every post `200`, or, when `silent`, accepts the
-/// connection and never answers.
 fn receiver(silent: bool) -> (String, Received) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
@@ -119,7 +115,6 @@ fn request(method: Method, path: &str, token: Option<&str>, body: Value) -> Requ
 }
 
 impl Instance {
-    /// A running instance whose telemetry follows `pairs`.
     async fn start(pairs: &[(&str, &str)]) -> (Instance, marfa_server::telemetry::Guard) {
         let dir = TempDir::new().unwrap();
         let database = dir.path().join("marfa.db");
@@ -174,8 +169,7 @@ impl Instance {
         send(&self.public, call).await.0
     }
 
-    /// Makes the next write fail inside the database, as the contract's
-    /// fixtures do, by renaming a table it reaches.
+    /// Makes the next write fail inside the database by renaming a table it reaches.
     fn break_writes(&self) {
         let db = rusqlite::Connection::open(self.dir.path().join("marfa.db")).unwrap();
         db.execute_batch("ALTER TABLE event_log RENAME TO event_log_gone")
@@ -312,7 +306,6 @@ async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
     let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
     instance.break_writes();
 
-    // More faults than any queue holds.
     let started = Instant::now();
     for number in 0..600 {
         assert_eq!(
@@ -326,7 +319,6 @@ async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
         started.elapsed()
     );
 
-    // Whatever is stuck, a stop gives up inside the bound it was given.
     let stopping = Instant::now();
     guard.stop(Duration::from_secs(1));
     assert!(

@@ -1,5 +1,3 @@
-//! The five maps a credential holds, and how each is read.
-
 use serde_json::{Value, json};
 
 use crate::app::refusal::{Refusal, Result};
@@ -12,8 +10,7 @@ pub enum Level {
 }
 
 impl Level {
-    /// Only `read` and `write` grant: a stored level that is anything else
-    /// denies, ahead of whatever a wider entry says.
+    /// Only `read` and `write` grant: any other stored level denies, ahead of a wider entry.
     fn stored(value: &Value) -> Level {
         match value.as_str() {
             Some("write") => Level::Write,
@@ -33,7 +30,6 @@ impl Level {
 
 const PROFILE_ROWS: [&str; 3] = ["name", "email", "avatar"];
 
-/// One of a credential's maps, as stored and answered.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Map(serde_json::Map<String, Value>);
 
@@ -52,7 +48,6 @@ impl Map {
         Value::Object(self.0.clone())
     }
 
-    /// Whether any entry grants anything.
     pub fn grants_any(&self) -> bool {
         self.0
             .values()
@@ -81,8 +76,6 @@ impl Map {
         }
     }
 
-    /// An exact entry can only add to `*` here, since neither map takes a
-    /// denial.
     fn widest(&self, name: &str) -> Level {
         self.exact(name)
             .unwrap_or(Level::None)
@@ -90,7 +83,6 @@ impl Map {
     }
 }
 
-/// Which map a name is read against.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
     Type,
@@ -119,7 +111,6 @@ impl Axis {
         }
     }
 
-    /// What `map` grants on `name`.
     pub fn level(self, map: &Map, name: &str) -> Level {
         match self {
             Axis::Type | Axis::Edge => map.most_specific(name),
@@ -134,8 +125,6 @@ impl Axis {
         }
     }
 
-    /// Every name on which the two maps can differ: each entry, and the type
-    /// a wildcard's root names, which the wildcard covers.
     fn witnesses(self, held: &Map, wanted: &Map) -> Vec<String> {
         if self == Axis::Profile {
             return PROFILE_ROWS.map(str::to_string).to_vec();
@@ -150,7 +139,6 @@ impl Axis {
         names
     }
 
-    /// The name of the grant a refusal says is missing.
     fn scope(self, name: &str, level: Level) -> String {
         let level = level.word();
         match self {
@@ -162,8 +150,7 @@ impl Axis {
         }
     }
 
-    /// The first name `wanted` grants above what `held` does, as a scope. A
-    /// denial in `held` beside its wildcard counts: `wanted` must carry it.
+    /// A denial in `held` beside its wildcard counts: `wanted` must carry it.
     pub fn first_beyond(self, held: &Map, wanted: &Map) -> Option<String> {
         self.witnesses(held, wanted).into_iter().find_map(|name| {
             let want = self.level(wanted, &name);
@@ -192,7 +179,6 @@ impl Axis {
         }
     }
 
-    /// A map as a request names it, every entry judged.
     pub fn from_body(self, value: &Value) -> Result<Map> {
         let field = self.field();
         let Value::Object(entries) = value else {

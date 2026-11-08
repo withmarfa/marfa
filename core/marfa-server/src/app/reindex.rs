@@ -1,8 +1,5 @@
-//! The pages of a search reindex that a type's own write left behind.
-//!
-//! A type's write reindexes one page in its own transaction, so a small type
-//! is true when the write answers. A larger one goes on here a page to a
-//! write, so the writer serves every other caller between pages. With nothing
+//! A type's write reindexes one page in its own transaction; a larger type goes on here a
+//! page to a write, so the writer serves every other caller between pages. With nothing
 //! queued the task sleeps until a type's door wakes it.
 
 use std::sync::{Arc, Weak};

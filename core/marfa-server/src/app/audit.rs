@@ -1,5 +1,4 @@
-//! The record of what was done, written in the transaction of the write it
-//! records.
+//! Written in the transaction of the write it records.
 
 mod expiry;
 
@@ -41,7 +40,6 @@ const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 200;
 const MAX_SEARCH_CHARS: usize = 200;
 
-/// Which of the four kinds an action's entry is listed under.
 fn kind_of(action: &str) -> &'static str {
     let family = action.split('.').next().unwrap_or(action);
     if HOUSEKEEPING.contains(&action) {
@@ -55,7 +53,6 @@ fn kind_of(action: &str) -> &'static str {
     }
 }
 
-/// What a write says about itself.
 #[derive(Debug)]
 pub struct Entry<'a> {
     pub action: &'a str,
@@ -68,8 +65,6 @@ pub fn record(tx: &Transaction<'_>, at: &str, caller: &Caller, entry: Entry<'_>)
     record_from(tx, at, Some(caller), None, entry)
 }
 
-/// An entry that may have no caller, as a sign-in has none yet, and may name
-/// the address it came from.
 pub fn record_from(
     tx: &Transaction<'_>,
     at: &str,
@@ -96,7 +91,6 @@ pub fn record_from(
     Ok(())
 }
 
-/// What `GET /audit` narrows to.
 #[derive(Debug, Default)]
 pub struct Filter {
     action: Option<String>,
@@ -126,7 +120,6 @@ fn instant(value: &str, field: &str) -> Result<String> {
 }
 
 impl Filter {
-    /// Takes the query's pairs, each judged.
     pub fn from_query(pairs: &[(String, String)]) -> Result<Filter> {
         let mut filter = Filter {
             limit: DEFAULT_LIMIT,
@@ -198,8 +191,6 @@ fn entry_json(row: &Row<'_>) -> rusqlite::Result<(Value, String)> {
     Ok((Value::Object(out), cursor))
 }
 
-/// A page of entries, newest first, and the cursor of the next if there is
-/// one.
 pub fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<(Vec<Value>, Option<String>)> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<&dyn ToSql> = Vec::new();

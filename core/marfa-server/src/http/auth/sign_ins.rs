@@ -1,5 +1,3 @@
-//! `/owner/sign-ins`: every way the owner's Marfa can be reached.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

@@ -1,5 +1,4 @@
-//! Keeps `items_fts` true. Triggers name every row a write touched, and the
-//! item write function settles them before it commits.
+//! Keeps `items_fts` true: triggers name the rows a write touched, and the write settles them before it commits.
 
 use std::collections::{HashMap, HashSet};
 
@@ -10,11 +9,9 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use super::{parsed, rows};
 use crate::app::refusal::Result;
 
-/// The states whose rows the index holds.
 const INDEXED_STATES: [&str; 3] = ["active", "archived", "revoked"];
 
-/// A page of a reindex, which is what one write holds the writer for. The
-/// page inside a type's own write answers a small type at once.
+/// One write holds the writer for one page of a reindex.
 pub const REINDEX_PAGE: usize = 1_000;
 
 struct Indexings<'a> {
@@ -56,7 +53,6 @@ fn held_text(tx: &Transaction<'_>, seq: i64) -> Result<Option<(FtsText, String)>
         .optional()?)
 }
 
-/// Makes the index hold what the row at `seq` holds now.
 fn refresh(tx: &Transaction<'_>, indexings: &mut Indexings<'_>, seq: i64) -> Result<()> {
     let Some(row) = rows::indexed(tx, seq)?.filter(|row| row.state != "trashed") else {
         return remove(tx, seq);
@@ -89,7 +85,6 @@ fn refresh(tx: &Transaction<'_>, indexings: &mut Indexings<'_>, seq: i64) -> Res
     Ok(())
 }
 
-/// Brings the index level with this write, the last step of the write.
 pub(super) fn settle(tx: &Transaction<'_>, rules: &Rules) -> Result<()> {
     let pending: Vec<i64> = tx
         .prepare_cached("SELECT seq FROM items_fts_pending")?
@@ -110,8 +105,6 @@ pub(super) fn settle(tx: &Transaction<'_>, rules: &Rules) -> Result<()> {
     Ok(())
 }
 
-/// Queues every type whose indexed fields differ between two catalogs, each
-/// at the start of its rows.
 pub fn queue_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Result<()> {
     let named: HashSet<&str> = before
         .declared()
@@ -133,7 +126,6 @@ pub fn queue_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Res
     Ok(())
 }
 
-/// Reindexes up to `budget` queued rows, answering whether any are left.
 pub fn reindex_page(tx: &Transaction<'_>, rules: &Rules, budget: usize) -> Result<bool> {
     let mut indexings = Indexings {
         rules,

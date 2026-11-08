@@ -18,11 +18,9 @@ use crate::app::refusal::Result;
 use marfa_rules::query::SortDirection;
 use rusqlite::OptionalExtension;
 
-/// How deep a search reads.
 const DEPTH: i64 = 10_000;
 const SNIPPET_TOKENS: i64 = 32;
 
-/// A page of `GET /search`.
 #[derive(Clone, Debug)]
 pub struct Search {
     pub q: String,
@@ -59,7 +57,6 @@ pub(super) fn search_sql(
     Ok(sql)
 }
 
-/// The best rank among the hits the caller may read.
 fn best_rank(
     read: &Reader<'_, '_>,
     reach: &Reach,
@@ -80,11 +77,8 @@ fn best_rank(
         .optional()?)
 }
 
-/// A hit's score as a share of the best hit's. `bm25` weighs a word by how
-/// often it occurs in the whole index, readable or not, so its own figure
-/// would tell a caller about rows it may not read; a share of the best hit
-/// keeps only how the readable hits compare. The weight cancels out of the
-/// share but for the last bits of the division, which the rounding drops.
+/// A hit's score as a share of the best hit's. `bm25` weighs a word by how often it occurs in the
+/// whole index, readable or not, so its own figure would tell a caller about rows it may not read.
 fn relevance(rank: f64, top: Option<f64>) -> f64 {
     const PLACES: f64 = 1e9;
     match top {

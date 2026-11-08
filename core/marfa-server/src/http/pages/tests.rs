@@ -18,7 +18,6 @@ fn sign_in_view() -> SignIn {
     }
 }
 
-/// The page without its script and style, which a person does not read.
 fn without_code(page: &Page) -> String {
     let mut html = page.html().to_owned();
     for tag in ["script", "style"] {
@@ -242,7 +241,6 @@ fn a_lockout_names_the_wait_only_when_it_was_given_one() {
     let none = locked(None);
     assert!(none.html().contains("Too many attempts."));
     assert!(!without_code(&none).contains("minutes"));
-    // The witness for the device page below: a wait given and ignored.
     assert!(!without_code(&locked(Some("0"))).contains("minute"));
 }
 
@@ -464,10 +462,8 @@ mod consent_pages {
             let from = html.find("<h1>").unwrap();
             let to = html.find("<form").unwrap();
             let after = html.find("</form>").unwrap();
-            // Past the code line and the form's own fields, the words are one.
             let words = html[from..to].replace('\n', " ");
             let mut form = html[to..after].to_owned();
-            // The device's own check sits beside Approve; the rest is shared.
             if let (Some(start), Some(end)) = (
                 form.find("<section class=\"device-check\""),
                 form.find("</section>"),
@@ -513,7 +509,6 @@ mod consent_pages {
         assert!(!html.contains(
             "role=\"switch\" id=\"power-0\" name=\"scopes\" value=\"items.purge\" checked"
         ));
-        // The powers keep the order every page lists them in.
         assert!(html.find("keys.mint").unwrap() < html.find("items.purge").unwrap());
         assert!(html.contains("Can't be undone: delete items in the trash for good"));
         assert!(html.contains("Changes like this need a sign-in from the last 5 minutes."));

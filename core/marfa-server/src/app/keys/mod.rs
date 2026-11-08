@@ -1,6 +1,3 @@
-//! API keys: minting, changing, revoking and reading them. What a key may
-//! reach is decided in `access`.
-
 mod limit;
 pub mod reap;
 mod request;
@@ -38,8 +35,6 @@ pub struct Key {
     pub oauth_client_id: Option<String>,
     pub grants: Grants,
     pub levers: OwnLevers,
-    /// What this key is held to, as a transaction read it as a caller. It is
-    /// not part of the key, and is never stored or answered.
     pub standing: Standing,
     pub created_at: String,
     pub expires_at: Option<String>,
@@ -47,7 +42,6 @@ pub struct Key {
 }
 
 impl Key {
-    /// A key as every door answers it, which never holds its secret.
     pub fn to_json(&self) -> Map<String, Value> {
         let permissions: Vec<&str> = self
             .grants
@@ -127,7 +121,6 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
     })
 }
 
-/// The key `id` names, if it is neither revoked nor past its end at `at`.
 pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key>> {
     Ok(tx
         .query_row(
@@ -152,8 +145,6 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     Ok(Refusal::new(Code::ApiKeyNotFound, message))
 }
 
-/// The key a door that changes one acts on: one this caller reaches, and
-/// otherwise the refusal a key that does not exist gets.
 fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
     match live_by_id(tx, id, at)? {
         Some(key) if caller.reaches(&key) => Ok(key),
@@ -242,8 +233,8 @@ fn claimed_by_a_live_key(tx: &Transaction<'_>, source: &str, at: &str) -> Result
     )?)
 }
 
-/// Frees `source` from holders past their end, which nothing else could
-/// revoke, and refuses it if a live key still holds it.
+/// Frees `source` from holders past their end, which nothing else could revoke,
+/// and refuses it if a live key still holds it.
 fn take_source(unit: &Unit<'_, '_>, source: &str) -> Result<()> {
     let lapsed: Vec<String> = unit
         .tx()
@@ -287,8 +278,6 @@ fn require_ahead(expires_at: Option<&str>, at: &str) -> Result<()> {
     }
 }
 
-/// Makes a key, and answers it with its secret, which is the only time the
-/// secret is seen.
 pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, String)> {
     let plain = secret::new_secret()?;
     let hash = secret::hash(&app.settings.start.api_key_salt, &plain)?;
@@ -336,7 +325,6 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
     Ok((key, plain))
 }
 
-/// Replaces what an update names, and answers the key as it now stands.
 pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> Result<Key> {
     app.write(caller, UPDATED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -383,13 +371,11 @@ fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
     unit.audit_also(REVOKED, "key", id, None)
 }
 
-/// Ends a key for the owner, who reaches every key.
 pub(crate) fn end_for_owner(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
     end(unit, id)
 }
 
-/// Ends every live key carrying an app's origin, keys those keys minted among
-/// them. Whoever ended the app decides this, whatever keys they reach.
+/// Includes keys those keys minted. Whoever ended the app decides this, whatever keys they reach.
 pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<()> {
     let ids = unit
         .tx()
@@ -404,7 +390,6 @@ pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<()>
     Ok(())
 }
 
-/// Gives a key a new label for the owner, who reaches every key.
 pub(crate) fn relabel_for_owner(unit: &Unit<'_, '_>, key: &mut Key, label: &str) -> Result<()> {
     key.label = label.to_string();
     replace(unit.tx(), key)?;
@@ -416,7 +401,6 @@ pub(crate) fn relabel_for_owner(unit: &Unit<'_, '_>, key: &mut Key, label: &str)
     )
 }
 
-/// Every live key, whoever reaches it, oldest first.
 pub(crate) fn all_live(tx: &Transaction<'_>, at: &str) -> Result<Vec<Key>> {
     Ok(tx
         .prepare(&format!(
@@ -426,7 +410,6 @@ pub(crate) fn all_live(tx: &Transaction<'_>, at: &str) -> Result<Vec<Key>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Ends a key at once: the next request bearing it finds it revoked.
 pub async fn revoke(app: &App, caller: &Caller, id: String) -> Result<()> {
     app.write(caller, REVOKED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -437,7 +420,6 @@ pub async fn revoke(app: &App, caller: &Caller, id: String) -> Result<()> {
     .await
 }
 
-/// Every live key this caller reaches, decided on what the read sees.
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Key>> {
     let caller = caller.clone();
     let at = app.clock.stamp();
@@ -451,8 +433,6 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Key>> {
         .await
 }
 
-/// The live key a bearer token names, if any. The row is read every time, so
-/// a revocation holds from the moment it commits.
 pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
     if !secret::looks_like_a_key(token) {
         return Ok(None);
@@ -477,7 +457,6 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
     Ok(key)
 }
 
-/// Whether `id` is a key's ID at all, which a door judges before looking.
 pub fn check_id(id: &str) -> Result<()> {
     marfa_rules::validation::id("id", id)
         .map_err(|_| Refusal::validation("id is not a valid key ID."))

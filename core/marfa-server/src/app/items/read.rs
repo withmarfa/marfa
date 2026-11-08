@@ -1,6 +1,5 @@
-//! Reads of items. Each runs in one read transaction: it authorizes against
-//! the caller and the row as that transaction sees them, and hydrates from the
-//! same snapshot, so nothing it answers is newer than what it judged.
+//! Each read runs in one transaction: it authorizes and hydrates from the same snapshot, so
+//! nothing it answers is newer than what it judged.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -28,10 +27,8 @@ const TITLES_PER_NAME: i64 = 20;
 const FIRST_PAGE: i64 = 50;
 const MAX_TAKES: usize = 100;
 const MAX_NEIGHBORS: usize = 100;
-/// The rows one step of a walk reads, when a page can pass over rows.
 const WALK_BATCH: i64 = 200;
 
-/// One read: its transaction, and its caller as that transaction holds it.
 pub(crate) struct Reader<'a, 'c> {
     pub tx: &'a Transaction<'c>,
     pub caller: Caller,
@@ -63,8 +60,6 @@ where
 }
 
 impl Reader<'_, '_> {
-    /// The row a read names, which reads as missing where it is gone,
-    /// unreadable or in the bin.
     fn row(&self, id: &str) -> Result<Item> {
         self.caller.require_reach()?;
         rows::by_id(self.tx, id)?
@@ -76,8 +71,6 @@ impl Reader<'_, '_> {
         self.faults.hold_blocking(HOLD_READ_HYDRATION);
     }
 
-    /// One page of `row`'s history after `after`, filled past the snapshots
-    /// the caller may not read.
     fn history_page(&self, row: &Item, after: i64, limit: i64) -> Result<String> {
         let mut page = Vec::new();
         let mut at = after;
@@ -128,7 +121,6 @@ fn version_at(cursor: &str) -> Result<i64> {
         .ok_or_else(refused)
 }
 
-/// What `GET /items/{id}` adds to the item.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Detail {
     pub versions: bool,
@@ -136,8 +128,6 @@ pub struct Detail {
     pub neighbors: bool,
 }
 
-/// The items at the far ends of `far_ends` a detail may carry, up to the cap,
-/// whether any went past it, and how many the caller may not read.
 fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
     let mut held = Vec::new();
     let mut truncated = false;
@@ -234,7 +224,6 @@ pub async fn history(
     .await
 }
 
-/// What `POST /items/bulk-get` asks for beside the items.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Many {
     pub metadata: bool,
@@ -299,8 +288,6 @@ pub async fn bulk_get(
     .await
 }
 
-/// The rows at `seqs` as a page shows them, each item with its metadata where
-/// `include` asks for it.
 pub(crate) fn listed_rows(
     read: &Reader<'_, '_>,
     seqs: &[i64],
@@ -329,7 +316,6 @@ pub(crate) fn listed_rows(
         .collect()
 }
 
-/// The rows of a listing's page.
 pub(crate) fn listed(read: &Reader<'_, '_>, seqs: &[i64], include: &Many) -> Result<Vec<String>> {
     Ok(listed_rows(read, seqs, include)?
         .into_iter()
@@ -447,7 +433,6 @@ pub async fn extension(
     .await
 }
 
-/// What `POST /items/trash` would do, by the judgement that write makes.
 pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Result<String> {
     reading(app, caller, move |read| {
         let gate = Gate {
@@ -502,7 +487,6 @@ pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Resu
     .await
 }
 
-/// A page of a listing by name, filtered before it is cut.
 #[derive(Clone, Debug)]
 pub struct Listing {
     pub type_id: Option<String>,
@@ -534,8 +518,7 @@ fn batch_size(limit: i64, passes_over: bool) -> i64 {
 }
 
 impl Reader<'_, '_> {
-    /// A name exists only once worked out from the row, so a search walks the
-    /// rows, and its cost grows with what it passes over.
+    /// A name exists only once worked out from the row, so a search walks the rows.
     fn named_page(&self, listing: Listing, trashed: bool) -> Result<(Vec<Item>, Option<String>)> {
         let q = listing.q.trim().to_lowercase();
         let scope = json!(["summaries", listing.type_id, q, trashed]).to_string();
@@ -602,8 +585,6 @@ pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<S
     .await
 }
 
-/// When the bin may let `trashed_at` go, or none where it never will or that
-/// date is unknown or past what a date can say.
 fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Option<String> {
     if retention_days == 0 {
         return None;
@@ -638,7 +619,6 @@ pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String>
     .await
 }
 
-/// A page of the bin as the rows and versions one snapshot holds.
 pub async fn bin_selection(
     app: &App,
     caller: &Caller,
@@ -652,7 +632,6 @@ pub async fn bin_selection(
     .await
 }
 
-/// What `POST /items/lookup` finds rows by.
 #[derive(Clone, Debug)]
 pub enum Selector {
     Keys(Keys),

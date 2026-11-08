@@ -1,6 +1,4 @@
-//! What an edge write holds to where the contract's fixtures do not reach it:
-//! the write on an edge's target that a cascade asks for, door by door, and
-//! writes that meet each other.
+//! The write on an edge's target that a cascade asks for, door by door, and writes that meet each other.
 
 use std::sync::Arc;
 
@@ -120,7 +118,6 @@ impl Instance {
             .to_string()
     }
 
-    /// As a key that may do all an edge write asks.
     async fn local(&self, method: Method, path: &str, body: Option<Value>) -> Reply {
         send(self.public.clone(), Some(&self.owner), method, path, body).await
     }
@@ -180,8 +177,7 @@ impl Instance {
     }
 }
 
-/// Every door that can stand an edge of `parent-of` on a row: `core.task` is
-/// the row the key only reads, and `core.note` the one it writes.
+/// `core.task` is the row the key only reads, and `core.note` the one it writes.
 #[tokio::test]
 async fn an_edge_that_cascades_takes_write_on_its_targets_type_at_every_door() {
     let instance = Instance::start().await;
@@ -283,8 +279,6 @@ async fn an_edge_that_cascades_takes_write_on_its_targets_type_at_every_door() {
         .landed(StatusCode::CREATED);
 }
 
-/// A type that takes on `cascade` over edges already stored stands each of
-/// them as a new one would.
 #[tokio::test]
 async fn registering_a_cascade_over_stored_edges_takes_write_on_their_targets() {
     let instance = Instance::start().await;
@@ -331,7 +325,6 @@ async fn registering_a_cascade_over_stored_edges_takes_write_on_their_targets() 
         .landed(StatusCode::CREATED);
 }
 
-/// Each of two edges is fine alone. Together they would close a cycle.
 #[tokio::test]
 async fn two_writes_that_each_look_fine_cannot_close_a_cycle() {
     let instance = Instance::start().await;
@@ -351,8 +344,6 @@ async fn two_writes_that_each_look_fine_cannot_close_a_cycle() {
     }
 }
 
-/// The edge lands and the purge takes it, or the purge lands and the edge
-/// finds no target. No edge outlives its row either way.
 #[tokio::test]
 async fn an_end_purged_while_an_edge_is_made_leaves_no_edge_behind() {
     let instance = Instance::start().await;
@@ -384,8 +375,6 @@ async fn an_end_purged_while_an_edge_is_made_leaves_no_edge_behind() {
     assert_eq!(dangling, 0);
 }
 
-/// A restore finds the bin as it stands: an end purged since leaves nothing
-/// to bring back, and takes its edge with it.
 #[tokio::test]
 async fn a_restore_after_one_end_was_purged_brings_back_the_rest() {
     let instance = Instance::start().await;
@@ -418,8 +407,6 @@ async fn a_restore_after_one_end_was_purged_brings_back_the_rest() {
     assert_eq!(instance.edges_of("parent-of"), 1);
 }
 
-/// Entry 3 stands only on what entries 1 and 2 wrote, and the page goes back
-/// whole.
 #[tokio::test]
 async fn a_bulk_entry_is_judged_on_the_entries_before_it() {
     let instance = Instance::start().await;
@@ -453,7 +440,6 @@ async fn a_bulk_entry_is_judged_on_the_entries_before_it() {
     assert_eq!(instance.edges_of("parent-of"), 2);
 }
 
-/// A page of edges names an inexact integer inside `edges`, not `items`.
 #[tokio::test]
 async fn a_bulk_entry_with_an_inexact_integer_is_refused_by_its_position() {
     let instance = Instance::start().await;
@@ -475,7 +461,6 @@ async fn a_bulk_entry_with_an_inexact_integer_is_refused_by_its_position() {
     assert_eq!(instance.edges_of("parent-of"), 0);
 }
 
-/// A chain well past any recursion's reach moves to the bin whole.
 #[tokio::test]
 async fn a_deep_chain_of_parents_moves_to_the_bin_and_back() {
     let instance = Instance::start().await;
@@ -517,7 +502,6 @@ async fn a_deep_chain_of_parents_moves_to_the_bin_and_back() {
     assert_eq!(binned, 0);
 }
 
-/// What the bin's acts write to the log for a frame to send.
 #[tokio::test]
 async fn the_log_marks_what_a_cascade_took_and_what_a_purge_removed() {
     let instance = Instance::start().await;
@@ -577,7 +561,6 @@ async fn the_log_marks_what_a_cascade_took_and_what_a_purge_removed() {
     assert_eq!(logged("edge.deleted", edge)["purged_with"], json!(parent));
 }
 
-/// A refused inline edge takes the item row with it.
 #[tokio::test]
 async fn inline_edges_refused_after_the_item_row_leave_nothing_written() {
     let instance = Instance::start().await;

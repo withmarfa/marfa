@@ -1,7 +1,3 @@
-//! The settings that can change while the server runs. An entry here is all a
-//! new one needs: it resolves from its stored row, then its default, and reads
-//! back typed from the snapshot.
-
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -13,28 +9,20 @@ use crate::app::addresses::{self, Address};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Rule {
-    Whole {
-        min: u64,
-        max: u64,
-    },
+    Whole { min: u64, max: u64 },
     Boolean,
     Text,
-    /// One origin, or nothing when blank.
     Address,
-    /// A JSON array of origins.
     Addresses,
 }
 
-/// One setting. Its `key` is its row in the `settings` table and its field in
-/// `/config`.
 #[derive(Debug)]
 pub struct Entry {
     pub key: &'static str,
-    /// What the contract's fixtures set it by. Only test hooks read this name.
+    /// Seeds the value under test hooks only.
     pub test_name: Option<&'static str>,
     pub rule: Rule,
     pub default: &'static str,
-    /// One sentence for the person who reads it on screen.
     pub description: &'static str,
 }
 
@@ -50,13 +38,10 @@ impl Entry {
         }
     }
 
-    /// The text a row holds for a value this setting accepts: blank when it
-    /// means nothing, and otherwise normalized.
     pub fn row_text(&self, text: &str) -> Result<String, String> {
         self.parse(text).map(|value| value.row_text())
     }
 
-    /// What a person reads of the rule, as a phrase: "a whole number, 1 or more".
     fn phrase(&self) -> String {
         match self.rule {
             Rule::Whole { min, max } if max >= rule::SAFE_INTEGER => {
@@ -70,7 +55,6 @@ impl Entry {
         }
     }
 
-    /// The rule as a sentence without its full stop.
     pub fn words(&self) -> String {
         let phrase = self.phrase();
         let mut letters = phrase.chars();
@@ -78,8 +62,6 @@ impl Entry {
         first.into_iter().chain(letters).collect()
     }
 
-    /// The text a row holds for a JSON value sent for this setting. A value of
-    /// another JSON type than the rule's is refused as the rule would be.
     pub fn row_text_of_json(&self, value: &Json) -> Result<String, String> {
         let wrong_type = || format!("must be {}", self.phrase());
         let text = match (self.rule, value) {
@@ -94,7 +76,6 @@ impl Entry {
         self.row_text(&text)
     }
 
-    /// The default as JSON, as `/config` answers a value.
     pub fn default_json(&self) -> Json {
         self.default_value().to_json()
     }
@@ -105,7 +86,6 @@ impl Entry {
     }
 }
 
-/// A registered setting, typed by what it reads as.
 pub struct Setting<T: 'static> {
     pub entry: &'static Entry,
     kind: PhantomData<T>,
@@ -120,7 +100,6 @@ impl<T> Clone for Setting<T> {
 impl<T> Copy for Setting<T> {}
 
 impl<T: Kind> Setting<T> {
-    /// The registry's own value, whatever a seed or a row says.
     pub fn default_value(self) -> T {
         T::from_value(&self.entry.default_value()).expect("a setting reads as its rule's kind")
     }
@@ -135,8 +114,7 @@ pub enum Value {
     Addresses(Vec<Address>),
 }
 
-/// The digits of a JSON number, so that the rule judges a fraction or a
-/// negative as it judges any text.
+// Lets the rule judge a fraction or a negative as it judges text.
 fn whole_text(number: &serde_json::Number) -> String {
     if let Some(whole) = number.as_u64() {
         return whole.to_string();
@@ -150,7 +128,6 @@ fn whole_text(number: &serde_json::Number) -> String {
 }
 
 impl Value {
-    /// The value as `/config` answers it.
     pub fn to_json(&self) -> Json {
         match self {
             Value::Whole(number) => Json::from(*number),
@@ -181,7 +158,6 @@ impl Value {
     }
 }
 
-/// What a typed setting reads a resolved value as.
 pub trait Kind: Sized {
     fn from_value(value: &Value) -> Option<Self>;
 }
@@ -255,7 +231,6 @@ macro_rules! registry {
     };
 }
 
-/// How often a housekeeping job may run.
 const INTERVAL: Rule = Rule::Whole {
     min: 1,
     max: 3_153_600_000_000,
@@ -295,15 +270,12 @@ registry! {
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Some("MARFA_AUTH_BASE_URL"), Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
 }
 
-/// The entry a key names.
 pub fn entry(key: &str) -> Option<&'static Entry> {
     ENTRIES.iter().find(|entry| entry.key == key).copied()
 }
 
-/// What replaces a default under test hooks, by key.
 pub type Seeds = HashMap<&'static str, Value>;
 
-/// The JSON list a row holds for origins an environment gives between commas.
 fn list_of(text: &str) -> String {
     let origins: Vec<&str> = text
         .split(',')
@@ -313,7 +285,6 @@ fn list_of(text: &str) -> String {
     Json::from(origins).to_string()
 }
 
-/// Reads each entry's test name, adding a line for a value outside its rule.
 pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
     let mut seeds = Seeds::new();
     for entry in ENTRIES {
@@ -337,21 +308,16 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
     seeds
 }
 
-/// Every setting's value at one moment.
 #[derive(Debug)]
 pub struct Snapshot {
     values: HashMap<&'static str, Value>,
-    /// The rows that read, by key.
     stored: HashMap<&'static str, Value>,
     unreadable: Vec<&'static str>,
     generation: u64,
 }
 
 impl Snapshot {
-    /// Resolves each entry from its row, then its seed, then its default. A
-    /// blank row counts as absent, as a blank environment value does. A row
-    /// that does not read also counts as absent and goes on `unreadable`, and
-    /// a row with no entry is left alone.
+    /// A blank or unreadable row counts as absent; unreadable keys go on `unreadable`.
     pub fn resolve(seeds: &Seeds, stored: &[(String, String)], generation: u64) -> Snapshot {
         let mut values = HashMap::with_capacity(ENTRIES.len());
         let mut unreadable = Vec::new();
@@ -394,17 +360,14 @@ impl Snapshot {
         T::from_value(&self.values[setting.entry.key]).expect("a setting reads as its rule's kind")
     }
 
-    /// What a setting's stored row holds, when it has one that reads.
     pub fn stored(&self, entry: &Entry) -> Option<&Value> {
         self.stored.get(entry.key)
     }
 
-    /// A setting's value, whatever it came from.
     pub fn value(&self, entry: &Entry) -> &Value {
         &self.values[entry.key]
     }
 
-    /// The keys whose stored row does not read.
     pub fn unreadable(&self) -> &[&'static str] {
         &self.unreadable
     }

@@ -1,6 +1,5 @@
-//! What a move to the bin or a purge touches. [`plan`] alone judges it, inside
-//! the transaction that acts on the answer, so a preview and the write after
-//! it cannot disagree about what moves, what stops it or what the digest is.
+//! [`plan`] alone judges a move to the bin or a purge, inside the transaction that acts on it, so a
+//! preview and the write after it cannot disagree.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -18,7 +17,6 @@ use crate::app::edges::{Edge, Store};
 use crate::app::idempotency::{Claim, Need};
 use crate::app::refusal::{Code, Refusal, Result};
 
-/// The checks a door's row goes through, each noted for a replay to ask again.
 pub(super) struct Gate<'a, 'c> {
     pub tx: &'a Transaction<'c>,
     pub caller: &'a Caller,
@@ -55,8 +53,7 @@ impl<'c> Gate<'_, 'c> {
         }
     }
 
-    /// Whether the caller may write items of `type_id` through an item door,
-    /// which no caller may for a `system.*` type: only the server's own writes
+    /// No caller may write a `system.*` type through an item door: only the server's own writes
     /// reach those.
     pub fn type_gate(&self, type_id: &str) -> Result<()> {
         self.type_map_gate(type_id)?;
@@ -89,8 +86,6 @@ impl<'c> Gate<'_, 'c> {
         });
     }
 
-    /// The row a door names, in whatever state, which reads as missing where
-    /// it is gone or unreadable.
     pub fn readable_row(&self, id: &str) -> Result<Item> {
         self.note(Need::Reach);
         self.caller.require_reach()?;
@@ -99,8 +94,6 @@ impl<'c> Gate<'_, 'c> {
             .ok_or_else(not_found)
     }
 
-    /// The row a door writes, which also reads as missing in the bin and says
-    /// so to a caller who may read it there.
     pub fn writable_row(&self, id: &str) -> Result<Item> {
         let row = self.readable_row(id)?;
         if row.state == "trashed" {
@@ -121,10 +114,8 @@ impl<'c> Gate<'_, 'c> {
         Ok(row)
     }
 
-    /// A row in the bin answers only to the type map: the reserved namespaces
-    /// fence what a door may change, and purging what is already binned
-    /// changes nothing a person kept. A `system.*` row leaves by revocation
-    /// instead of the bin, and only the server's own write takes it from there.
+    /// A `system.*` row leaves by revocation instead of the bin, and only the server's own write
+    /// takes it from there.
     fn purgeable(&self, asked: &Asked) -> Result<Item> {
         self.note(Need::Purge);
         self.caller.require(Permission::ItemsPurge)?;
@@ -143,7 +134,6 @@ impl<'c> Gate<'_, 'c> {
     }
 }
 
-/// Refuses a `named` version the row no longer holds.
 pub(crate) fn require_version(row: &Item, named: Option<i64>) -> Result<()> {
     match named {
         Some(named) if named != row.version => Err(stale_bare(row, named)?),
@@ -157,33 +147,28 @@ pub(super) enum Act {
     Purge,
 }
 
-/// A row a plan is asked about, and the version the caller read, if it says.
 pub(super) struct Asked {
     pub id: String,
     pub version: Option<i64>,
 }
 
-/// A row a move to the bin takes, as the move leaves it.
 pub(super) struct Moving {
     pub item: Item,
     pub state: &'static str,
     pub mark: Option<Mark>,
 }
 
-/// A row a purge deletes, and the edges that go with it: each with its source
-/// as it stood, since the source can go in the same purge.
+/// Each edge with its source as it stood, since the source can go in the same purge.
 pub(super) struct Purging {
     pub item: Item,
     pub edges: Vec<(Edge, Item)>,
 }
 
-/// What an act touches. The rows named stand in the order named; what moves
-/// stands leaves first, each group's root last.
+/// The rows named stand in the order named; what moves stands leaves first, each group's root last.
 pub(super) struct Plan {
     pub named: Vec<Item>,
     pub moving: Vec<Moving>,
     pub purging: Vec<Purging>,
-    /// What each named row takes beneath it, leaves first.
     pub beneath: HashMap<String, Vec<String>>,
     pub digest: String,
 }
@@ -227,7 +212,6 @@ fn moving(item: Item, mark: Option<Mark>) -> Moving {
     }
 }
 
-/// The types of a link's ends, where the caller may read the link and both.
 fn readable_ends(gate: &Gate<'_, '_>, link: &Link) -> Result<Option<(String, String)>> {
     let (source, target) = (
         super::type_of(gate.tx, &link.source)?,
@@ -271,7 +255,6 @@ fn blocked(gate: &Gate<'_, '_>, root: &str, held: &[Link]) -> Result<Refusal> {
         .with_detail("blocking_edges", Value::Array(named)))
 }
 
-/// Why a `system.connection` row may not go, while something hangs off it.
 fn held_connection(row: &Item) -> Result<Option<String>> {
     if row.type_id != "system.connection" {
         return Ok(None);
@@ -298,8 +281,6 @@ fn held_connection(row: &Item) -> Result<Option<String>> {
     ))
 }
 
-/// Refuses a move of `moved`, whose first root is `root_of` says, that an edge
-/// or a live connection holds.
 fn require_free(
     gate: &Gate<'_, '_>,
     moved: &[Item],
@@ -384,8 +365,6 @@ fn with_hosts(gate: &Gate<'_, '_>, edge_type: &str) -> bool {
     gate.store().on_delete(edge_type) == OnDelete::WithHosts
 }
 
-/// Whether `part` went to the bin with its hosts and, with `going` gone, holds
-/// no edge to a host.
 fn goes_with_hosts(gate: &Gate<'_, '_>, part: &Item, going: &HashSet<String>) -> Result<bool> {
     let went = part.state == "trashed" && part.mark.as_ref().is_some_and(|mark| mark.hosts);
     if !went {
@@ -399,8 +378,7 @@ fn goes_with_hosts(gate: &Gate<'_, '_>, part: &Item, going: &HashSet<String>) ->
         .all(|link| going.contains(&link.target)))
 }
 
-/// Walks a purge outward, so that a part goes after its last host. Each edge
-/// stands with the first row of the walk that touches it, which names it.
+/// Each edge stands with the first row of the walk that touches it.
 fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
     let mut going: HashSet<String> = named.iter().map(|row| row.id.clone()).collect();
     let mut waiting: VecDeque<Item> = named.iter().cloned().collect();
@@ -432,7 +410,6 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
     Ok(purging)
 }
 
-/// What purging `row` takes with it, for a door that has judged the row.
 pub(super) fn walked_purge(gate: &Gate<'_, '_>, row: Item) -> Result<Vec<Purging>> {
     purge_walk(gate, &[row])
 }
@@ -452,7 +429,6 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     })
 }
 
-/// Judges `act` on the rows `asked` names. A refusal means nothing moves.
 pub(super) fn plan(gate: &Gate<'_, '_>, act: Act, asked: &[Asked]) -> Result<Plan> {
     match act {
         Act::Bin => binned(gate, asked),
@@ -460,16 +436,13 @@ pub(super) fn plan(gate: &Gate<'_, '_>, act: Act, asked: &[Asked]) -> Result<Pla
     }
 }
 
-/// A row a restore brings back that it did not name, and the row it comes back
-/// with.
 pub(super) struct Returning {
     pub item: Item,
     pub with: String,
     pub with_type: String,
 }
 
-/// The rows beneath `row` that the same trash took: what a cascading edge
-/// reaches and carries `mark`. A part comes back through its host instead.
+/// A part comes back through its host instead.
 fn beneath_marked(gate: &Gate<'_, '_>, row: &Item, mark: &Mark) -> Result<Vec<Item>> {
     let mut found = Vec::new();
     for id in graph::cascade_reach(&gate.store(), &row.id)? {
@@ -486,9 +459,7 @@ fn beneath_marked(gate: &Gate<'_, '_>, row: &Item, mark: &Mark) -> Result<Vec<It
     Ok(found)
 }
 
-/// What bringing `row` back from the bin brings with it: what its trash took,
-/// then the parts of every row now back, to a fixed point. Rows that went on
-/// their own carry no mark of this trash, so they stay.
+/// Rows that went on their own carry no mark of this trash, so they stay.
 pub(super) fn returning(gate: &Gate<'_, '_>, row: &Item) -> Result<Vec<Returning>> {
     let named = |item: Item| Returning {
         item,
@@ -546,8 +517,6 @@ pub(super) fn returning(gate: &Gate<'_, '_>, row: &Item) -> Result<Vec<Returning
     }
 }
 
-/// What a part written late takes to the bin, with `host`: nothing unless
-/// every host it holds is in the bin.
 pub(super) fn late_part(gate: &Gate<'_, '_>, source: &Item, host: &Item) -> Result<Vec<Moving>> {
     let store = gate.store();
     if host.state != "trashed" || matches!(source.state.as_str(), "trashed" | "revoked") {

@@ -8,12 +8,10 @@ use sha2::Sha256;
 
 use crate::app::refusal::{Refusal, Result};
 
-/// The `instance` row holding the signing secret.
 pub const SECRET_KEY: &str = "cursor_secret";
 
 const TAG_BYTES: usize = 16;
 
-/// The instance's signing secret.
 #[derive(Clone)]
 pub struct Secret(pub Vec<u8>);
 
@@ -29,7 +27,6 @@ impl Secret {
         Ok(tag)
     }
 
-    /// A value only this instance can work out from `text`.
     pub fn keyed(&self, scope: &str, text: &str) -> Result<String> {
         Ok(hex::encode(self.tag(scope, text.as_bytes())?))
     }
@@ -40,7 +37,6 @@ impl Secret {
         Ok(format!("{}{}", hex::encode(tag), hex::encode(payload)))
     }
 
-    /// The payload of a cursor issued under `scope`.
     pub fn open(&self, scope: &str, cursor: &str) -> Result<Json> {
         let bytes = hex::decode(cursor).map_err(|_| refused())?;
         if bytes.len() < TAG_BYTES {
@@ -62,7 +58,6 @@ pub fn refused() -> Refusal {
         .with_detail("field", "cursor")
 }
 
-/// Where a keyset page stopped: the sort keys of its last row, then its id.
 #[derive(Clone, Debug)]
 pub struct Position {
     pub keys: Vec<Value>,

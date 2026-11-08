@@ -1,5 +1,3 @@
-//! What signing in must survive that the contract's fixtures cannot stage.
-
 use std::sync::Arc;
 use std::time::Duration;
 

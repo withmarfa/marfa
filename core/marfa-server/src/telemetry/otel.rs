@@ -1,6 +1,5 @@
-//! Traces and log records over OTLP/HTTP with JSON bodies, sent by a blocking
-//! client from the exporters' own threads. There is no retry: a collector that
-//! refuses or hangs loses what was queued for it, and nothing else.
+//! Traces and log records over OTLP/HTTP with JSON bodies, sent by a blocking client from
+//! the exporters' own threads, with no retry.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -26,17 +25,13 @@ use opentelemetry_sdk::trace::{
 use super::config::Export;
 use super::sinks::agent;
 
-/// The most spans a trace holds back while it is undecided.
 pub const MAX_HELD_SPANS: usize = 500;
 /// How many traces are undecided at once; a trace over the number goes
 /// unexported unless an error shows in its first span after that.
 const MAX_HELD_TRACES: usize = 256;
-/// A trace whose root never ends is let go after this long.
 const HOLD_LIMIT: Duration = Duration::from_secs(60);
 
-/// A blocking client behind the exporters' asynchronous interface. The
-/// exporters call it from threads of their own, which a blocking call
-/// holds up and no request.
+/// Exporters call it from threads of their own, so a blocking call holds up no request.
 #[derive(Debug)]
 struct Blocking {
     agent: ureq::Agent,
@@ -66,10 +61,8 @@ impl HttpClient for Blocking {
     }
 }
 
-/// The exporter writes every 64-bit integer as a string, as the protobuf JSON
-/// mapping says. A collector reads either, but an attribute that is a whole
-/// number is a number to most readers, so an `intValue` that a double holds
-/// exactly is sent as one.
+/// The exporter writes every 64-bit integer as a string (protobuf JSON mapping); an
+/// `intValue` that a double holds exactly is sent as a number, as most readers expect.
 fn plain_integers(body: &[u8]) -> Vec<u8> {
     fn walk(value: &mut serde_json::Value) {
         match value {
@@ -155,20 +148,16 @@ pub fn logger_provider(export: &Export, resource: Resource) -> Result<SdkLoggerP
 }
 
 enum Trace {
-    /// No span of it has failed, and its root has not ended.
     Held {
         spans: Vec<SpanData>,
         since: Instant,
     },
-    /// A span of it failed: what follows is exported as it ends.
     Kept,
 }
 
-/// Decides a trace when its spans end. The ratio decides a trace as the
-/// specification's `TraceIdRatioBased` does. A trace the ratio does not keep
-/// is held, up to [`MAX_HELD_SPANS`] spans, until its local root ends; if a
-/// span of it has failed by then, or fails after, the held spans and every
-/// span after are exported whatever the ratio says.
+/// The ratio decides as `TraceIdRatioBased` does. A trace it does not keep is held, up to
+/// [`MAX_HELD_SPANS`] spans, until its local root ends; if a span failed by then, or fails
+/// after, the held spans and every later span are exported whatever the ratio says.
 #[derive(Debug)]
 pub struct Tail<P> {
     next: P,

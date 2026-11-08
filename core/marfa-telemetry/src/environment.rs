@@ -1,16 +1,11 @@
-//! How a setting's text is taken from the environment.
-
-/// A variable's value without its surrounding space, where it has one: an
-/// empty variable is an unset one.
+/// Trimmed; an empty variable counts as unset.
 pub fn text(get: &impl Fn(&str) -> Option<String>, name: &str) -> Option<String> {
     get(name)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-/// Whether `OTEL_SDK_DISABLED` turns every report off. Only `true`, in any
-/// case, does, as the OpenTelemetry specification asks; any other value
-/// leaves telemetry as the other settings say.
+/// Only `true`, in any case, turns telemetry off, as OpenTelemetry specifies.
 pub fn disabled(get: &impl Fn(&str) -> Option<String>) -> bool {
     text(get, "OTEL_SDK_DISABLED").is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }

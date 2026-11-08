@@ -19,7 +19,6 @@ pub struct Pool {
     size: u32,
 }
 
-/// A connection out of the pool, back in it however the read ends.
 struct Lease {
     conn: Option<Connection>,
     idle: Idle,
@@ -81,7 +80,6 @@ impl Pool {
             .unwrap_or_else(|_| Err(Refusal::internal("a read job panicked")))
     }
 
-    /// Waits a moment for reads in flight, then closes every connection.
     pub async fn close(&self) {
         let all = self.permits.acquire_many(self.size);
         let _ = tokio::time::timeout(CLOSE_WAIT, all).await;

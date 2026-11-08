@@ -1,5 +1,3 @@
-//! What a caller may read of the types.
-
 use marfa_rules::schema::{
     ChainFault, Obj, canonical, parent_chain_fault, resolve, roles_of, stored_shape_conflicts,
     validate_type,
@@ -11,7 +9,6 @@ use crate::app::App;
 use crate::app::catalog::{self, Catalog, Snapshot, provenance_json};
 use crate::app::refusal::{Code, Refusal, Result};
 
-/// Every readable type, by id, as the list answers it.
 pub async fn list(app: &App) -> Result<Vec<Value>> {
     let cache = app.catalog_handle();
     app.db
@@ -70,7 +67,6 @@ fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
     Some(Value::Object(schema))
 }
 
-/// One type with its chain read.
 pub async fn get(app: &App, id: String) -> Result<Value> {
     let cache = app.catalog_handle();
     app.db
@@ -94,8 +90,6 @@ pub async fn get(app: &App, id: String) -> Result<Value> {
         .await
 }
 
-/// Judges a definition as registration would, and answers it beside the
-/// type of its id as registered and as it resolves.
 pub async fn normalize(app: &App, body: Obj) -> Result<Value> {
     if let Some(id) = body.get("id").and_then(Value::as_str) {
         check_id(id, "id")?;

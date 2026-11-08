@@ -1,5 +1,4 @@
-//! What a list and a search ask, judged before any store is read: the sort
-//! grammar, and the `type` and `state` lists.
+//! The sort grammar and the `type` and `state` lists, judged before any store is read.
 
 use std::fmt;
 use std::str::FromStr;
@@ -10,9 +9,6 @@ use crate::catalog::Catalog;
 use crate::error::{Code, Result, RuleError};
 use crate::grammar;
 
-/// What a local list orders by, in the server's `sort` grammar: a time of the
-/// item, or `properties.<field>` for the scalar a property stores.
-// The shared `At` suffix is the column naming rule, not noise.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,12 +16,9 @@ pub enum SortField {
     CreatedAt,
     UpdatedAt,
     OccurredAt,
-    /// The name after `properties.`, one or more of `a` to `z`, `0` to `9`
-    /// and `_`.
+    /// The name after `properties.`: `a` to `z`, `0` to `9` and `_`.
     Property(String),
-    /// When each row went to the bin, or its `updated_at` where it holds no
-    /// such time: the order of a list of the bin alone that names no field
-    /// (`device/bin-local-order`). No caller names it, as no server takes it.
+    /// When each row went to the bin, or its `updated_at` where it has no such time. No caller names it.
     TrashedAt,
 }
 
@@ -42,7 +35,6 @@ impl fmt::Display for SortField {
 }
 
 impl SortField {
-    /// A property sort names its property as the server's grammar allows.
     pub fn property(name: &str) -> Result<SortField> {
         if name.is_empty()
             || !name
@@ -96,12 +88,6 @@ impl FromStr for SortDirection {
     }
 }
 
-/// The scalar a row sorts by under `properties.<name>`, as an SQL expression
-/// over `table.properties`: a number or a boolean as a REAL (false 0, true 1),
-/// a string as text, and anything else as NULL. SQLite orders every number
-/// before every string and strings by their UTF-8 bytes, so sorting on this
-/// with NULL last is the contract's order. `name` is one
-/// [`SortField::property`] has checked, so it is safe inside the path.
 /// `text` as a `LIKE` pattern matches it, under `ESCAPE '\\'`.
 pub fn escape_like(text: &str) -> String {
     text.replace('\\', "\\\\")
@@ -109,9 +95,7 @@ pub fn escape_like(text: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// The value a property sorts by, which SQLite's own order puts in the
-/// contract's: numbers and booleans by value, then text by its bytes, with
-/// anything else null. `path` is the SQL that gives the JSON path.
+/// Numbers and booleans by value, then text by its bytes, anything else null, which SQLite's own order gives. `path` is the SQL that gives the JSON path, and its property name must have passed [`SortField::property`].
 pub fn property_sort_expression(table: &str, path: &str) -> String {
     format!(
         "CASE json_type({table}.properties, {path}) \
@@ -122,18 +106,12 @@ pub fn property_sort_expression(table: &str, path: &str) -> String {
     )
 }
 
-/// The `type` filter that names every type, which a `type` list refuses.
 pub const EVERY_TYPE: &str = "*";
 
-/// The most entries a `type` list may name, as on the server
-/// (`search-and-filters/type-list-max`).
+/// The most entries a `type` list may name.
 pub const MAX_TYPE_ENTRIES: usize = 10;
 
-/// The entries of a `type` list, as the server reads one
-/// (`search-and-filters/type-list`): trimmed, blank ones dropped and repeats
-/// removed before the list is counted, in the order given. A list left with
-/// no entry or with too many is refused. Each entry still has to pass
-/// [`list_entry`] and [`refuse_unknown_type`].
+/// Trimmed, blank entries dropped and repeats removed before the list is counted, in the order given. A list left with no entry or too many is refused. Each entry must still pass [`list_entry`] and [`refuse_unknown_type`].
 pub fn type_entries(types: &[String]) -> Result<Vec<&str>> {
     let mut entries: Vec<&str> = Vec::new();
     for entry in types.iter().map(|entry| entry.trim()) {
@@ -154,10 +132,7 @@ pub fn type_entries(types: &[String]) -> Result<Vec<&str>> {
     Ok(entries)
 }
 
-/// One entry of a `type` list. `*` is no type filter at all and is refused
-/// as the server refuses it, and a name outside the type grammar is refused
-/// as [`declared_type`] refuses it. The entry still has to pass
-/// [`refuse_unknown_type`].
+/// `*` is refused, and a name outside the type grammar is refused as [`declared_type`] does.
 pub fn list_entry(entry: &str) -> Result<&str> {
     if entry == EVERY_TYPE {
         return Err(RuleError::validation(format!(
@@ -168,8 +143,7 @@ pub fn list_entry(entry: &str) -> Result<&str> {
     Ok(entry)
 }
 
-/// The type a `?type=` names, as the server reads it: none for no filter or
-/// `*`, and a name outside the server's type grammar is refused.
+/// None for no filter or `*`; a name outside the type grammar is refused.
 pub fn declared_type(declared: Option<&str>) -> Result<Option<&str>> {
     let Some(declared) = declared.filter(|declared| *declared != EVERY_TYPE) else {
         return Ok(None);
@@ -182,13 +156,7 @@ pub fn declared_type(declared: Option<&str>) -> Result<Option<&str>> {
     Ok(Some(declared))
 }
 
-/// A concrete type the catalog does not hold is refused `unknown_type`, as
-/// the server refuses one nothing registers (`device/type-unknown`). A
-/// wildcard is never refused: what it names may be nothing. A name outside the
-/// grammar is left to [`declared_type`], which refuses it first on the
-/// server's code. The server answers `type_not_permitted` for a registered
-/// type its key may not read, so only a type the catalog lacks is refused
-/// here: the catalog is the server's whole registry, whatever the key reads.
+/// A concrete type the catalog does not hold is refused `unknown_type`. A wildcard is never refused, since what it names may be nothing. A name outside the grammar is left to [`declared_type`], which refuses it first. Only a type the catalog lacks is refused: the catalog is the whole registry, whatever the key reads.
 pub fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> Result<()> {
     let Some(declared) = declared else {
         return Ok(());
@@ -205,12 +173,7 @@ pub fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> Result<
     ))
 }
 
-/// A `state` list, as the server reads one (`search-and-filters/state-list`),
-/// given how many states it names. An empty list names nothing and is
-/// refused, as the server refuses a `state` with no entry
-/// (`search-and-filters/state-empty`), and so is a list beside `all_states`,
-/// as the server refuses `any` beside a state
-/// (`search-and-filters/state-any-alone`).
+/// Refuses a `state` list that names no state, and one beside `all_states`.
 pub fn refuse_states(named: Option<usize>, all_states: bool) -> Result<()> {
     match named {
         Some(0) => Err(RuleError::validation(

@@ -1,7 +1,5 @@
-//! Everything that checks the owner's password: sign-in, confirming a stale
-//! sign-in, and changing it. Each counts the attempt, then checks the hash off
-//! the writer, then opens what it opens in one transaction that finds the
-//! password as it was checked.
+//! Everything that checks the owner's password. Each counts the attempt, checks the hash off the
+//! writer, then acts in one transaction that finds the password as it was checked.
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
@@ -27,8 +25,6 @@ fn wrong_credentials() -> Refusal {
     Refusal::new(Code::Unauthorized, "Invalid email or password.")
 }
 
-/// Counts one check of the password held for `email`, and answers the wait if
-/// the count refuses it. An attempt that cannot be counted is not made.
 async fn count(app: &App, email: &str, visit: &Visit) -> Result<Option<i64>> {
     let lanes = limits::password_lanes(email, visit.address);
     let clock = app.clock.clone();
@@ -39,15 +35,12 @@ async fn count(app: &App, email: &str, visit: &Visit) -> Result<Option<i64>> {
         .await
 }
 
-/// A password that checked out, as it stood when it did.
 struct Proven {
     owner: Owner,
     held: String,
     replacement: Option<String>,
 }
 
-/// Checks `password` against the account `email` names, if the owner's is
-/// that one. An email that names no account costs the same work.
 async fn prove(app: &App, email: &str, password: String) -> Result<Option<Proven>> {
     let email = email.to_string();
     let found = app
@@ -80,9 +73,7 @@ async fn prove(app: &App, email: &str, password: String) -> Result<Option<Proven
 }
 
 impl Proven {
-    /// Whether the email and password are still the ones checked. Inside the
-    /// transaction that acts on them, this closes the gap a change could slip
-    /// through while the hash was being checked.
+    /// Closes the gap a change could slip through while the hash was being checked.
     fn stands(&self, tx: &Transaction<'_>, at: &str) -> Result<bool> {
         if owner::read(tx)?.is_none_or(|owner| owner.email != self.owner.email) {
             return Ok(false);
@@ -125,7 +116,6 @@ async fn refused_sign_in(app: &App, email: &str, reason: &str, visit: &Visit) ->
         .await
 }
 
-/// Opens a browser session for the owner on their password.
 pub async fn with_password(
     app: &App,
     email: String,
@@ -195,8 +185,6 @@ pub async fn with_password(
     }
 }
 
-/// Replaces a stale browser session with one made now, on the owner's
-/// password. A refusal leaves the session as it was.
 pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
@@ -274,8 +262,6 @@ async fn refused_change(
     .await
 }
 
-/// Changes the owner's password from a browser session, which stays while
-/// every other one ends.
 pub async fn change_password(
     app: &App,
     caller: &Caller,

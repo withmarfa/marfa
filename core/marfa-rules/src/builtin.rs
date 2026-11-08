@@ -1,6 +1,4 @@
-//! The types Marfa ships, as a fresh server lists them, which a copy that has
-//! never reached a server holds as its catalog. Written from the registry by
-//! `scripts/generate-core-catalog.ts`.
+//! The shipped catalog: the types and lists a copy holds before it reaches a server.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -29,7 +27,6 @@ pub fn catalog() -> Result<WireCatalog, RuleError> {
         .map_err(|error| RuleError::decoding(format!("the shipped catalog: {error}")))
 }
 
-/// The lists the catalog carries beside its types, each read once.
 fn list(key: &str) -> Result<Vec<String>, RuleError> {
     static PARSED: OnceLock<Result<HashMap<String, Vec<String>>, String>> = OnceLock::new();
     PARSED
@@ -60,19 +57,15 @@ fn list(key: &str) -> Result<Vec<String>, RuleError> {
         })
 }
 
-/// The field types a type may declare, as the registry takes them.
 pub fn field_types() -> Result<Vec<String>, RuleError> {
     list("field_types")
 }
 
-/// The kinds a member of a list's entries may take, as the registry takes them.
 pub fn entry_member_types() -> Result<Vec<String>, RuleError> {
     list("entry_member_types")
 }
 
-/// The kind each format of a string turns into, as the registry folds a
-/// definition (`normalizeFieldDefinition`). A format absent from it annotates
-/// the string and leaves it one.
+/// The kind each string format turns into; a format absent from it annotates the string and leaves it one.
 pub fn format_field_types() -> Result<&'static HashMap<String, String>, RuleError> {
     static PARSED: OnceLock<Result<HashMap<String, String>, String>> = OnceLock::new();
     PARSED
@@ -85,28 +78,22 @@ pub fn format_field_types() -> Result<&'static HashMap<String, String>, RuleErro
         .map_err(|error| RuleError::decoding(format!("the shipped catalog's formats: {error}")))
 }
 
-/// The roots the type grammar reserves, which no publisher may take as its own.
 pub fn reserved_type_roots() -> Result<Vec<String>, RuleError> {
     list("reserved_type_roots")
 }
 
-/// The names an item has of its own, which a type cannot declare as a field.
 pub fn reserved_field_names() -> Result<Vec<String>, RuleError> {
     list("reserved_field_names")
 }
 
-/// The field names search reads whatever their type, which a thumbnail
-/// cannot take.
 pub fn searched_field_names() -> Result<Vec<String>, RuleError> {
     list("searched_field_names")
 }
 
-/// Whether Marfa ships a type by this id.
 pub fn ships(id: &str) -> Result<bool, RuleError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
 }
 
-/// The types Marfa ships, each as its definition is stored, by id.
 pub fn shipped_types() -> Result<&'static [Map<String, Value>], RuleError> {
     static PARSED: OnceLock<Result<Vec<Map<String, Value>>, String>> = OnceLock::new();
     PARSED
@@ -126,7 +113,6 @@ pub fn shipped_types() -> Result<&'static [Map<String, Value>], RuleError> {
         .map_err(|error| RuleError::decoding(format!("the shipped catalog: {error}")))
 }
 
-/// The edge types Marfa ships, each as the list answers it, by id.
 pub fn shipped_edge_types() -> Result<&'static [Value], RuleError> {
     static PARSED: OnceLock<Result<Vec<Value>, String>> = OnceLock::new();
     PARSED

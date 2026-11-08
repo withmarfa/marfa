@@ -1,5 +1,4 @@
-//! Platform types this build no longer ships, which stay registered until the
-//! owner removes them.
+//! Platform types this build no longer ships stay registered until the owner removes them.
 
 use serde_json::{Value, json};
 
@@ -10,7 +9,6 @@ use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::items;
 use crate::app::refusal::{Code, Refusal, Result};
 
-/// The types, other than `id`, that claim compatibility with it, sorted.
 fn dependents_of(catalog: &Catalog, id: &str) -> Vec<String> {
     let mut found: Vec<String> = catalog
         .types
@@ -25,7 +23,6 @@ fn dependents_of(catalog: &Catalog, id: &str) -> Vec<String> {
     found
 }
 
-/// The retired platform types, each with what stops its removal.
 pub async fn retired(app: &App, caller: &Caller) -> Result<Vec<Value>> {
     caller.require(Permission::InstanceRead)?;
     let cache = app.catalog_handle();
@@ -53,7 +50,6 @@ pub async fn retired(app: &App, caller: &Caller) -> Result<Vec<Value>> {
         .await
 }
 
-/// Removes a retired platform type nothing still depends on.
 pub async fn remove_retired(app: &App, caller: &Caller, id: String) -> Result<Value> {
     let cache = app.catalog_handle();
     let removed = app

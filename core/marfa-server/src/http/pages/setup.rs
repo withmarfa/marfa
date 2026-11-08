@@ -63,7 +63,6 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
     )
 }
 
-/// A message for each field the server refused, in its own words.
 #[derive(Debug, Clone, Default)]
 pub struct SetupFieldErrors {
     pub name: Option<String>,
@@ -78,7 +77,6 @@ pub struct SetupDetails {
     pub name: String,
     pub email: String,
     pub errors: SetupFieldErrors,
-    /// A refusal that belongs to no field.
     pub notice: Option<String>,
 }
 

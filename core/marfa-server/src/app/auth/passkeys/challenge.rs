@@ -1,5 +1,4 @@
-//! Ceremonies under way. A browser holds a random token and the table its
-//! digest, so what the library keeps of a ceremony never leaves the server.
+//! A browser holds a random token and the table its digest, so a ceremony's state never leaves the server.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
@@ -29,7 +28,6 @@ impl Purpose {
     }
 }
 
-/// One ceremony to record.
 pub struct New<'a, S> {
     pub purpose: Purpose,
     pub origin: &'a str,
@@ -37,7 +35,6 @@ pub struct New<'a, S> {
     pub state: &'a S,
 }
 
-/// A ceremony once it has been taken from the table.
 pub struct Taken {
     pub origin: String,
     pub session_id: Option<String>,
@@ -75,7 +72,6 @@ fn make_room(tx: &Transaction<'_>, now_ms: i64, purpose: Purpose) -> Result<()> 
     Ok(())
 }
 
-/// Records a ceremony and answers the token that can finish it.
 pub fn issue<S: Serialize>(
     tx: &Transaction<'_>,
     salt: &str,
@@ -101,8 +97,6 @@ pub fn issue<S: Serialize>(
     Ok(token)
 }
 
-/// Removes the ceremony `token` names and answers it if it was live and of
-/// `purpose`. One of another purpose, or past its time, is gone all the same.
 pub fn take(
     tx: &Transaction<'_>,
     salt: &str,

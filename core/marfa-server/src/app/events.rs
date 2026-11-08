@@ -1,6 +1,5 @@
-//! The log of what writes announce. An entry goes in with the write it tells
-//! of, and holds what a later stream sends without reading a row that may
-//! have changed since.
+//! The log of what writes announce. An entry goes in with the write it tells of and holds
+//! what a later stream sends without reading a row that may have changed since.
 
 mod expiry;
 

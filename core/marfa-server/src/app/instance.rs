@@ -1,5 +1,3 @@
-//! What an instance knows about itself.
-
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::App;
@@ -29,7 +27,6 @@ fn insert(tx: &Transaction<'_>, key: &str, value: &str) -> Result<bool> {
     Ok(added > 0)
 }
 
-/// The instance's id, made the first time a database is started.
 pub async fn identity(db: &Db) -> Result<String> {
     if let Some(id) = db.read(|tx| get(tx, ID)).await? {
         return Ok(id);
@@ -41,8 +38,7 @@ pub async fn identity(db: &Db) -> Result<String> {
     .await
 }
 
-/// The secret page cursors are signed with, made the first time a database is
-/// started and never answered.
+/// Made the first time a database starts, and never answered.
 pub async fn cursor_secret(db: &Db) -> Result<Secret> {
     let held = db.read(|tx| get(tx, SECRET_KEY)).await?;
     let text = match held {
@@ -63,7 +59,6 @@ pub async fn cursor_secret(db: &Db) -> Result<Secret> {
     Ok(Secret(text.into_bytes()))
 }
 
-/// The same secret, read inside a transaction.
 pub fn secret(tx: &Transaction<'_>) -> Result<Secret> {
     get(tx, SECRET_KEY)?
         .map(|text| Secret(text.into_bytes()))
@@ -75,12 +70,10 @@ pub async fn name(app: &App) -> Result<String> {
     Ok(name.unwrap_or_else(|| DEFAULT_NAME.to_string()))
 }
 
-/// The display name a write set, if one is set.
 pub fn stored_name(tx: &Transaction<'_>) -> Result<Option<String>> {
     get(tx, NAME)
 }
 
-/// Sets the display name, or with `None` returns it to the default.
 pub fn set_name(tx: &Transaction<'_>, name: Option<&str>) -> Result<()> {
     match name {
         Some(name) => {
@@ -97,7 +90,6 @@ pub fn set_name(tx: &Transaction<'_>, name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Whether the instance has been claimed, as this transaction sees it.
 pub fn is_claimed(tx: &Transaction<'_>) -> Result<bool> {
     Ok(get(tx, CLAIMED_AT)?.is_some())
 }

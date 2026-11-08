@@ -1,5 +1,3 @@
-//! `POST /auth/oauth2/register`.
-
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -16,8 +14,7 @@ use crate::app::auth::limits::{hold_to, register_lanes};
 use crate::app::refusal::Result;
 use crate::db::Write;
 
-/// Registers a client. The door takes no credential, so `bearer` says only
-/// that one came with a registration that needs none.
+/// `bearer` says only that a credential came with a registration that needs none.
 pub async fn register(
     app: &Arc<App>,
     body: &[u8],
