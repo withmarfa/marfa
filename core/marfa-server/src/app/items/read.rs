@@ -445,6 +445,45 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
     .await
 }
 
+/// An item's name and a short preview, as the caller may see them.
+#[derive(Clone, Debug)]
+pub struct Caption {
+    pub name: String,
+    pub preview: Option<String>,
+}
+
+/// Captions and host-derived names include only types the caller may read.
+pub async fn captions(
+    app: &App,
+    caller: &Caller,
+    ids: Vec<String>,
+) -> Result<HashMap<String, Caption>> {
+    reading(app, caller, move |read| {
+        let mut found = HashMap::new();
+        for id in ids {
+            let Some(row) = rows::by_id(read.tx, &id)? else {
+                continue;
+            };
+            if super::is_system(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
+                continue;
+            }
+            let shown = super::shown_of(read.tx, &read.catalog, &row, &|edge_type, host_type| {
+                read.caller.may_read_edge(edge_type, &row.type_id)
+                    && read.caller.may_read_type(host_type)
+            })?;
+            found.insert(
+                id,
+                Caption {
+                    name: shown.name.unwrap_or_else(|| super::UNTITLED.to_string()),
+                    preview: shown.preview,
+                },
+            );
+        }
+        Ok(found)
+    })
+    .await
+}
+
 /// The tags on active items the caller may read, most used first, then by name.
 pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>> {
     let rules = &read.catalog.rules;

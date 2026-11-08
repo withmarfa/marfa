@@ -76,13 +76,18 @@ pub struct NamingHost {
     pub properties: String,
 }
 
-/// The oldest edge out of `id` that names a part: an edge of a `with-hosts` type, or `excerpt-of`.
+/// Finds the oldest host through a `with-hosts` or `excerpt-of` edge that `readable`
+/// admits, given the edge type and the host's type.
 pub fn naming_host(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     id: &str,
+    readable: &dyn Fn(&str, &str) -> bool,
 ) -> Result<Option<NamingHost>> {
     for (edge_type, type_id, properties) in rows::hosts_out_of_bin(tx, id)? {
+        if !readable(&edge_type, &type_id) {
+            continue;
+        }
         let Some(kind) = catalog.edge_kind(&edge_type) else {
             continue;
         };
