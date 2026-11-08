@@ -54,6 +54,12 @@ impl Map {
             .any(|level| Level::stored(level) > Level::None)
     }
 
+    pub fn grants_write(&self) -> bool {
+        self.0
+            .values()
+            .any(|level| Level::stored(level) == Level::Write)
+    }
+
     pub(super) fn patterns(&self) -> impl Iterator<Item = (&str, Level)> {
         self.0
             .iter()

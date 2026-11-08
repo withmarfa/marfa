@@ -29,6 +29,7 @@ use crate::app::access::{Caller, Level};
 use crate::app::blobs::Hash;
 use crate::app::blobs::references::{self, Decided, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
+use crate::app::connectors::ReadOnly;
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::faults::HOLD_BULK_PAGE;
@@ -234,6 +235,14 @@ impl Change {
             Change::Page(_) | Change::Entry { .. } => "items.bulk",
         }
     }
+
+    fn fans_out(&self) -> bool {
+        match self {
+            Change::Page(page) => page.fanout,
+            Change::Entry { note, .. } => note.fanout,
+            _ => true,
+        }
+    }
 }
 
 type Outcome = (Map<String, Value>, Option<Value>, Option<Item>);
@@ -271,13 +280,16 @@ pub fn apply(
     claim: Option<&Claim>,
     change: Change,
 ) -> Result<Done> {
-    let job = Job {
-        unit,
-        catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
-        claim,
-        server_own: false,
-    };
-    job.run(change)
+    unit.fanning(change.fans_out(), |unit| {
+        let job = Job {
+            unit,
+            catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+            read_only: unit.read_only()?,
+            claim,
+            server_own: false,
+        };
+        job.run(change)
+    })
 }
 
 pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
@@ -292,6 +304,7 @@ pub(crate) fn apply_server_own(
     let job = Job {
         unit,
         catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+        read_only: unit.read_only()?,
         claim: None,
         server_own: true,
     };
@@ -580,6 +593,7 @@ pub(crate) fn settle_late_part(
 struct Job<'a, 't, 'c> {
     unit: &'a Unit<'t, 'c>,
     catalog: Arc<Catalog>,
+    read_only: ReadOnly,
     claim: Option<&'a Claim>,
     server_own: bool,
 }
@@ -757,14 +771,19 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn answer(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
         self.answer_with(
             status,
-            item.answered(self.unit.tx(), self.caller())?,
+            item.answered(&self.read_only, self.caller())?,
             item,
             also,
         )
     }
 
     fn answer_edges(&self, status: u16, item: &Item, also: &str) -> Result<Done> {
-        let shown = item.hydrated(self.unit.tx(), self.caller(), &self.catalog)?;
+        let shown = item.hydrated(
+            self.unit.tx(),
+            &self.read_only,
+            self.caller(),
+            &self.catalog,
+        )?;
         self.answer_with(status, shown, item, also)
     }
 
@@ -1759,6 +1778,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             operation,
             pulse,
             faults,
+            fanout: _,
         } = page;
         for (index, entry) in entries.iter().enumerate() {
             entry

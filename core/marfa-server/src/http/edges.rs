@@ -23,7 +23,7 @@ use crate::app::types::missing_field;
 
 const CREATE_FIELDS: [&str; 5] = ["id", "source_id", "target_id", "edge_type", "properties"];
 const UPDATE_FIELDS: [&str; 4] = ["version", "source_id", "target_id", "properties"];
-const PAGE_FIELDS: [&str; 3] = ["edges", "atomic", "mode"];
+const PAGE_FIELDS: [&str; 4] = ["edges", "atomic", "mode", "enable_fanout"];
 const ENTRY_FIELDS: [&str; 6] = [
     "id",
     "source_id",
@@ -306,6 +306,16 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
         Some(Value::Bool(flag)) => *flag,
         Some(_) => return Err(invalid_field("atomic", "atomic must be a boolean.")),
     };
+    let fanout = match sent.get("enable_fanout") {
+        None => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => {
+            return Err(invalid_field(
+                "enable_fanout",
+                "enable_fanout must be a boolean.",
+            ));
+        }
+    };
     let entries = match sent.remove("edges") {
         None => return Err(missing_field("edges")),
         Some(Value::Array(entries)) => entries,
@@ -334,6 +344,7 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
             .collect(),
         create_only,
         atomic,
+        fanout,
     })
 }
 

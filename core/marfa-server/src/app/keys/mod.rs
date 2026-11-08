@@ -142,6 +142,17 @@ pub fn stands(tx: &Transaction<'_>, id: &str, at: &str) -> Result<bool> {
     )?)
 }
 
+/// A key not revoked, whether or not its life has ended.
+pub fn unrevoked_by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Key>> {
+    Ok(tx
+        .query_row(
+            &format!("{SELECT} WHERE k.revoked_at IS NULL AND k.id = ?1"),
+            [id],
+            from_row,
+        )
+        .optional()?)
+}
+
 fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     let revoked: bool = tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM api_keys WHERE id = ?1 AND revoked_at IS NOT NULL)",

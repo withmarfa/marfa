@@ -1,5 +1,6 @@
 //! The only place that names axum.
 
+mod admission;
 pub mod answer;
 mod audit;
 mod auth;
@@ -11,6 +12,7 @@ mod caller_address;
 mod compression;
 mod conditional;
 mod config;
+mod connectors;
 mod control;
 #[cfg(test)]
 mod document;
@@ -26,8 +28,11 @@ mod keys;
 pub mod listening;
 mod listing;
 mod lookup;
+mod mcp;
+mod named_instance;
 mod oauth;
 pub mod observe;
+mod occurrences;
 mod overview;
 pub mod pages;
 mod profile;
@@ -42,19 +47,17 @@ mod views;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::app::App;
-use crate::app::access::{Caller, unauthorized};
 use crate::app::refusal::{Code, Refusal};
 use crate::listener::Declaration;
+use admission::Admission;
 use answer::{panicked, refusal_answer};
-use caller::identify;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
@@ -63,11 +66,7 @@ use doors::{Doors, delete, get, patch, post, put};
 type Routes = Doors;
 
 async fn unmatched(method: Method, headers: HeaderMap) -> Response {
-    let mut response = if method == Method::OPTIONS {
-        let mut empty = Response::new(Body::empty());
-        *empty.status_mut() = StatusCode::NO_CONTENT;
-        empty
-    } else if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
+    let mut response = if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
         refusal_answer(&Refusal::validation(
             "No operation at this path takes X-Marfa-Reach.",
         ))
@@ -105,38 +104,16 @@ fn schema_doors() -> Routes {
         .route("/edge-types/{id}", delete(edge_types::delete))
 }
 
-/// The instance's own authority, a browser's or the local command's, holds no
-/// type map, and every content door answers within one.
-async fn within_a_map(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    if matches!(
-        identify(&mut parts, &app).await,
-        Ok(Some(Caller::Local(_) | Caller::Owner(_)))
-    ) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(Request::from_parts(parts, body)).await
-}
-
-/// Counts admit a browser's session and no local command.
-async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    if matches!(identify(&mut parts, &app).await, Ok(Some(Caller::Local(_)))) {
-        return refusal_answer(&unauthorized());
-    }
-    next.run(Request::from_parts(parts, body)).await
-}
-
 fn overview_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/overview", get(overview::read))
-        .route_layer(from_fn_with_state(app, within_a_map))
+        .admitting(app, Admission::Mapped)
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
-        .route_layer(from_fn_with_state(app, not_local))
+        .admitting(app, Admission::Counted)
 }
 
 fn item_doors(app: Arc<App>) -> Routes {
@@ -144,6 +121,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items", post(items::create).get(listing::items))
         .route("/search", get(listing::search))
         .route("/events", get(events::open))
+        .route("/occurrences", get(occurrences::list))
         .route("/views", post(views::create))
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))
@@ -184,18 +162,25 @@ fn item_doors(app: Arc<App>) -> Routes {
             "/edges/{id}",
             get(edges::read).patch(edges::update).delete(edges::delete),
         )
-        .route_layer(from_fn_with_state(app, within_a_map))
+        .admitting(app, Admission::Mapped)
 }
 
-fn folder_doors() -> Routes {
-    Doors::new()
-        .route("/folders", post(folders::create).get(folders::inventory))
+/// Settings answer to a key or an app's token; the status takes a token or the private socket,
+/// which alone lists folders. A cookie is none of these.
+fn folder_doors(app: Arc<App>) -> Routes {
+    let settings = Doors::new()
+        .route("/folders", post(folders::create))
         .route("/folders/{id}", patch(folders::update))
         .route("/folders/{id}/revoke", post(folders::revoke))
+        .admitting(app.clone(), Admission::Mapped);
+    let status = Doors::new()
+        .route("/folders", get(folders::inventory))
         .route(
             "/folders/{id}/status",
             put(folders::report).get(folders::status),
         )
+        .admitting(app, Admission::Presented);
+    settings.merge(status)
 }
 
 fn blob_doors() -> Routes {
@@ -238,6 +223,43 @@ fn config_doors() -> Routes {
         .route("/config/settings", get(config::settings))
 }
 
+/// Browser sessions confer no connector authority.
+fn connector_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route(
+            "/connectors",
+            post(connectors::register).get(connectors::list),
+        )
+        .route(
+            "/connectors/{id}",
+            get(connectors::read).delete(connectors::remove),
+        )
+        .route("/connectors/{id}/heartbeat", post(connectors::heartbeat))
+        .route(
+            "/connectors/{id}/runs",
+            post(connectors::report_run).get(connectors::runs),
+        )
+        .route(
+            "/connectors/{id}/hold",
+            post(connectors::take_hold).delete(connectors::release_hold),
+        )
+        .route(
+            "/connectors/{id}/state",
+            get(connectors::state)
+                .put(connectors::replace_state)
+                .delete(connectors::clear_state),
+        )
+        .route(
+            "/connectors/{id}/agreements",
+            post(connectors::write_agreements).get(connectors::list_agreements),
+        )
+        .route(
+            "/connectors/{id}/agreements/lookup",
+            post(connectors::lookup_agreements),
+        )
+        .admitting(app, Admission::Presented)
+}
+
 fn shared(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/", get(root::describe))
@@ -251,18 +273,22 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
-        .merge(folder_doors())
+        .merge(folder_doors(app.clone()))
         .merge(blob_doors())
+        .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
         .merge(profile_doors())
-        .merge(oauth::grant_doors())
         .merge(config_doors())
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
+    let judging = named_instance::Judging {
+        app: app.clone(),
+        writes: Arc::new(routes.judged_writes()),
+    };
     let observed = Observed {
         app: app.clone(),
         listener: Arc::new(listener),
@@ -272,6 +298,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
+        .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))
@@ -285,8 +312,13 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// Sign-in, grant and OAuth callers hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
-    shared(app).merge(auth::doors()).merge(oauth::doors())
+    shared(app)
+        .merge(oauth::grant_doors().unjudged())
+        .merge(auth::doors().unjudged())
+        .merge(oauth::doors().unjudged())
+        .merge(mcp::doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
@@ -304,6 +336,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
 
 fn control_doors(app: &Arc<App>) -> Routes {
     let mut routes = shared(app.clone())
+        .merge(oauth::grant_doors().unjudged())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))

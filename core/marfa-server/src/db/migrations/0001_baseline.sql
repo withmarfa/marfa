@@ -237,7 +237,8 @@ CREATE TABLE IF NOT EXISTS event_log (
     type TEXT NOT NULL,
     source TEXT NOT NULL,
     at TEXT NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    fanout INTEGER NOT NULL CHECK (fanout IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
@@ -349,6 +350,18 @@ CREATE TABLE IF NOT EXISTS rate_limit_windows (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS rate_limit_windows_expiry ON rate_limit_windows (expires_at);
+
+-- Spent signatures expire at `expires_at`, in milliseconds.
+CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
+    token TEXT PRIMARY KEY NOT NULL,
+    credential TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
+    ON mcp_spent_confirmations (expires_at);
 
 -- What the OAuth server keeps. A secret is held only as a digest, and every
 -- time is in milliseconds.
@@ -623,6 +636,106 @@ CREATE TABLE IF NOT EXISTS folder_status (
     problems TEXT NOT NULL CHECK (json_valid(problems)),
     PRIMARY KEY (folder_id, sign_in_kind, sign_in_id, folder_store_id)
 ) STRICT, WITHOUT ROWID;
+
+
+-- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.
+CREATE TABLE IF NOT EXISTS connectors (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    key_id TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL CHECK (length(source) > 0),
+    name TEXT NOT NULL CHECK (length(name) > 0),
+    description TEXT,
+    read_only_types TEXT NOT NULL CHECK (json_valid(read_only_types)),
+    registered_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_heartbeat_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS connector_runs (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    connector_id TEXT NOT NULL REFERENCES connectors (id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    summary TEXT,
+    error TEXT,
+    reported_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS connector_runs_newest
+    ON connector_runs (connector_id, reported_at DESC, seq DESC);
+
+CREATE TABLE IF NOT EXISTS connector_holds (
+    connector_id TEXT PRIMARY KEY REFERENCES connectors (id) ON DELETE CASCADE,
+    process TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS connector_states (
+    source TEXT PRIMARY KEY CHECK (length(source) > 0),
+    state TEXT NOT NULL CHECK (json_valid(state)),
+    problems TEXT NOT NULL CHECK (json_valid(problems)),
+    updated_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS connector_agreements (
+    source TEXT NOT NULL CHECK (length(source) > 0),
+    item_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    waiting INTEGER NOT NULL CHECK (waiting IN (0, 1)),
+    record TEXT NOT NULL CHECK (json_valid(record)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (source, item_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS connector_agreements_order
+    ON connector_agreements (source, updated_at, item_id);
+CREATE INDEX IF NOT EXISTS connector_agreements_item ON connector_agreements (item_id);
+
+-- One row, and an integer by construction: a stored generation always reads.
+CREATE TABLE IF NOT EXISTS read_only_generation (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    value INTEGER NOT NULL
+) STRICT;
+
+-- Raised when a key or a registration changes in a way that decides which items read as read only.
+CREATE TRIGGER IF NOT EXISTS read_only_registered AFTER INSERT ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_declared AFTER UPDATE OF read_only_types ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_removed AFTER DELETE ON connectors
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_key_changed
+AFTER UPDATE OF source, type_permissions, expires_at, revoked_at ON api_keys
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_key_removed AFTER DELETE ON api_keys
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_claim_changed AFTER INSERT ON api_key_sources
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS read_only_claim_removed AFTER DELETE ON api_key_sources
+BEGIN
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
+END;
 
 CREATE TABLE IF NOT EXISTS enrichment_files (
     item_seq INTEGER NOT NULL,

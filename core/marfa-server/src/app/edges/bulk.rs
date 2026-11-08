@@ -34,6 +34,7 @@ pub struct Asked {
     pub entries: Vec<Result<Entry>>,
     pub create_only: bool,
     pub atomic: bool,
+    pub fanout: bool,
 }
 
 fn mode_word(create_only: bool) -> &'static str {
@@ -179,6 +180,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
         entries,
         create_only,
         atomic,
+        fanout,
     } = asked;
     if entries.is_empty() {
         reading(app, caller, |read: &Reader<'_, '_>| {
@@ -199,10 +201,12 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
         };
         return app
             .write(caller, ACTION, move |unit| {
-                let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
-                let writing = Writing::page(unit, &catalog);
-                unit.caller.require_reach()?;
-                atomic_page(&writing, page)
+                unit.fanning(fanout, |unit| {
+                    let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
+                    let writing = Writing::page(unit, &catalog);
+                    unit.caller.require_reach()?;
+                    atomic_page(&writing, page)
+                })
             })
             .await;
     }
@@ -219,24 +223,26 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
                 let operation = operation.clone();
                 let written = app
                     .write(caller, ACTION, move |unit| {
-                        let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
-                        let writing = Writing::page(unit, &catalog);
-                        let entered = writing.entry(entry, create_only)?;
-                        if let Entered::Created(id) | Entered::Updated(id) = &entered {
-                            unit.audit(
-                                ACTION,
-                                id,
-                                Some(json!({
-                                    "operation_id": operation,
-                                    "mode": mode_word(create_only),
-                                    "atomic": false,
-                                    "total": total,
-                                    "index": index,
-                                    "outcome": entered.outcome(),
-                                })),
-                            )?;
-                        }
-                        Ok(entered.answered(index))
+                        unit.fanning(fanout, |unit| {
+                            let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
+                            let writing = Writing::page(unit, &catalog);
+                            let entered = writing.entry(entry, create_only)?;
+                            if let Entered::Created(id) | Entered::Updated(id) = &entered {
+                                unit.audit(
+                                    ACTION,
+                                    id,
+                                    Some(json!({
+                                        "operation_id": operation,
+                                        "mode": mode_word(create_only),
+                                        "atomic": false,
+                                        "total": total,
+                                        "index": index,
+                                        "outcome": entered.outcome(),
+                                    })),
+                                )?;
+                            }
+                            Ok(entered.answered(index))
+                        })
                     })
                     .await;
                 match written {

@@ -39,7 +39,7 @@
  *   fault is cleared or set again. `sign-in-record` is the record that lists
  *   an app's sign-in, by its item ID; `type-definition` is a type's stored
  *   definition, by its type ID.
- * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
+ * - `unfold-deadline=<check>` expires a series at that deadline check.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
  * - `release:<point>` clears `hold:<point>` as the server admits its next
@@ -379,7 +379,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
   if (name === "unfold-deadline" || name === "store-check-deadline") {
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
-      return `an ${name} fault takes a whole number of milliseconds from 1`;
+      return `an ${name} fault takes a whole number of ${name === "unfold-deadline" ? "deadline checks" : "milliseconds"} from 1`;
     return undefined;
   }
   if (kind === "lose" || kind === "damage") {
@@ -719,7 +719,7 @@ export function unreadableFault(record: UnreadableRecord, id: string): boolean {
   return faults.get(`unreadable:${record}`)?.arg === id;
 }
 
-/** The time `unfold-deadline` allows one series to unfold, if it is armed. */
+/** The deadline check at which a series expires, if armed. */
 export function unfoldDeadlineFault(): number | undefined {
   const arg = faults.get("unfold-deadline")?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
