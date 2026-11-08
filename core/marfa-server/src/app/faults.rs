@@ -74,6 +74,7 @@ points! {
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
     FAIL_STREAM_REPLAY_ROW = Fail "stream-replay-row" Nth;
+    FAIL_STREAM_REPLAY_UNTYPED = Fail "stream-replay-untyped" Nth;
     FAIL_LOCK = Fail "lock" Nth;
     FAIL_AUDIT = Fail "audit" Write;
     FAIL_COMMIT = Fail "commit" Write;

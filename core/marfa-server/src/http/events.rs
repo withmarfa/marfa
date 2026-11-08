@@ -140,7 +140,13 @@ pub async fn open(
         caller,
         Opening { filter, resume },
         viewer,
-        hangup.map(|Extension(hangup)| -> events::Hangup { Box::new(move || hangup.now()) }),
+        hangup.map(|Extension(hangup)| events::Hangup {
+            close: Box::new({
+                let hangup = hangup.clone();
+                move || hangup.now()
+            }),
+            closed: Box::pin(hangup.closed()),
+        }),
     );
     let mut response = Response::new(Body::new(Feed(feed)));
     *response.status_mut() = StatusCode::OK;
@@ -150,6 +156,8 @@ pub async fn open(
         HeaderValue::from_static("text/event-stream"),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    // A stream's end then closes its connection, which `Hangup::closed` sees.
+    headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
     Ok(response)
 }

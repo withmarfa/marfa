@@ -40,11 +40,19 @@ pub trait Source: Listener<Addr: Debug> {
 
 /// Ending a response body cannot close a connection blocked on queued output.
 #[derive(Clone)]
-pub struct Hangup(Arc<Notify>);
+pub struct Hangup {
+    close: Arc<Notify>,
+    /// Its sender lives as long as the connection.
+    open: watch::Receiver<()>,
+}
 
 impl Hangup {
     pub fn now(&self) {
-        self.0.notify_one();
+        self.close.notify_one();
+    }
+
+    pub async fn closed(mut self) {
+        while self.open.changed().await.is_ok() {}
     }
 }
 
@@ -68,7 +76,11 @@ pub async fn serve<L: Source>(
         let peer = L::peer(&address);
         let router = router.clone();
         let asked = Arc::new(AtomicBool::new(false));
-        let hangup = Hangup(Arc::new(Notify::new()));
+        let (open, watching) = watch::channel(());
+        let hangup = Hangup {
+            close: Arc::new(Notify::new()),
+            open: watching,
+        };
         let service = service_fn({
             let (asked, hangup) = (asked.clone(), hangup.clone());
             move |mut request: hyper::Request<Incoming>| {
@@ -86,6 +98,7 @@ pub async fn serve<L: Source>(
             .with_upgrades();
         let mut stopped = stopping.subscribe();
         connections.spawn(async move {
+            let _open = open;
             let mut connection = pin!(connection);
             let mut told = false;
             loop {
@@ -96,7 +109,7 @@ pub async fn serve<L: Source>(
                         }
                         break;
                     }
-                    () = hangup.0.notified() => break,
+                    () = hangup.close.notified() => break,
                     _ = stopped.wait_for(|stopping| *stopping), if !told => {
                         // Hyper closes an idle connection at once, but keeps one
                         // whose first head is only partly read until the header

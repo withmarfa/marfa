@@ -1,5 +1,7 @@
 //! Each log page and its credential share one read snapshot.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -8,14 +10,14 @@ use axum::body::Bytes;
 use chrono::DateTime;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
 use super::frame::{Filter, Judge, Verdict, marker};
 use super::page::{self, Next};
 use crate::app::App;
 use crate::app::faults::{
-    FAIL_STREAM_CREDENTIAL, FAIL_STREAM_REPLAY, FAIL_STREAM_REPLAY_ROW, Faults, HOLD_STREAM_HEAD,
-    HOLD_STREAM_REPLAY,
+    FAIL_STREAM_CREDENTIAL, FAIL_STREAM_REPLAY, FAIL_STREAM_REPLAY_ROW, FAIL_STREAM_REPLAY_UNTYPED,
+    Faults, HOLD_STREAM_HEAD, HOLD_STREAM_REPLAY,
 };
 use crate::app::items::{Reader, reading};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -26,7 +28,7 @@ const PAGE_ROWS: usize = 200;
 const PAGE_BYTES: usize = 1 << 20;
 /// Measure stalls per piece, not per page or frame.
 const PIECE_BYTES: usize = 64 * 1024;
-/// The closing frame of a stream whose reader has stopped reading is not waited for long.
+/// How long a closing frame and the end of the response may take before the connection is closed.
 const CLOSING_SEND: Duration = Duration::from_secs(3);
 /// The credential is read again at least this soon before a key's `expires_at`.
 const MIN_EXPIRY_WAIT: Duration = Duration::from_millis(50);
@@ -59,8 +61,13 @@ impl Drop for Viewer {
     }
 }
 
-/// Closes the reader's connection.
-pub type Hangup = Box<dyn Fn() + Send + Sync>;
+/// The reader's connection.
+pub struct Hangup {
+    /// Closes it.
+    pub close: Box<dyn Fn() + Send + Sync>,
+    /// Resolves once it is closed.
+    pub closed: Pin<Box<dyn Future<Output = ()> + Send>>,
+}
 
 pub struct Opening {
     pub filter: Filter,
@@ -90,8 +97,9 @@ pub fn open(
         sent: None,
         torn: false,
         last_output: Instant::now(),
+        checked: Instant::now(),
         expiry: None,
-        _viewer: viewer,
+        viewer,
     };
     tokio::spawn(run.drive());
     feed
@@ -115,8 +123,10 @@ struct Run {
     /// Part of a frame was handed over and the rest was not, so nothing may follow it.
     torn: bool,
     last_output: Instant,
+    /// When the credential was last read.
+    checked: Instant,
     expiry: Option<Instant>,
-    _viewer: Viewer,
+    viewer: Viewer,
 }
 
 /// A full channel holds back the next page's read.
@@ -184,11 +194,18 @@ fn read_page(
             page.position = entry.id;
             return Ok(Next::Continue);
         };
-        let payload = if replay.is_some_and(|faults| faults.fail(FAIL_STREAM_REPLAY_ROW, None)) {
-            "not json".to_string()
-        } else {
-            entry.payload()?
-        };
+        let mut payload = entry.payload()?;
+        if let Some(faults) = replay {
+            let (invalid, untyped) = (
+                faults.fail(FAIL_STREAM_REPLAY_ROW, None),
+                faults.fail(FAIL_STREAM_REPLAY_UNTYPED, None),
+            );
+            if invalid {
+                payload = "not json".to_string();
+            } else if untyped {
+                payload = without_item_type(payload);
+            }
+        }
         match judge.render(entry, kind, &payload)? {
             Verdict::Send(text) => {
                 bytes += text.len();
@@ -218,14 +235,26 @@ fn read_page(
 }
 
 impl Run {
+    /// Hyper can hold a response's end for a reader that takes nothing, so its connection is closed at the deadline.
     async fn drive(mut self) {
-        if let Err(Ending::Closing(text)) = self.run().await
-            && timeout(CLOSING_SEND, self.frames.send(Bytes::from(text)))
-                .await
-                .is_err()
-        {
-            self.give_up();
+        let ending = self.run().await;
+        let deadline = Instant::now() + CLOSING_SEND;
+        if let Err(Ending::Closing(text)) = ending {
+            let _ = timeout_at(deadline, self.frames.send(Bytes::from(text))).await;
         }
+        let Run {
+            frames,
+            hangup,
+            viewer,
+            ..
+        } = self;
+        drop(frames);
+        if let Some(Hangup { close, closed }) = hangup
+            && timeout_at(deadline, closed).await.is_err()
+        {
+            close();
+        }
+        drop(viewer);
     }
 
     async fn run(&mut self) -> std::result::Result<(), Ending> {
@@ -346,16 +375,7 @@ impl Run {
             Ok(page) => page,
             Err(refusal) => return Err(self.failure(&refusal)),
         };
-        self.expiry = page
-            .expires_at
-            .as_deref()
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| {
-                let wait = (at.to_utc() - self.app.clock.now())
-                    .to_std()
-                    .unwrap_or_default();
-                Instant::now() + wait.max(MIN_EXPIRY_WAIT)
-            });
+        self.credential_read(page.expires_at.as_deref());
         if page.gap {
             return Err(self.too_old(page.oldest.unwrap_or(after)));
         }
@@ -369,6 +389,49 @@ impl Run {
             return Err(self.too_old(page.oldest.unwrap_or(id)));
         }
         Ok(page)
+    }
+
+    fn credential_read(&mut self, expires_at: Option<&str>) {
+        self.checked = Instant::now();
+        self.expiry = expires_at
+            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| {
+                let wait = (at.to_utc() - self.app.clock.now())
+                    .to_std()
+                    .unwrap_or_default();
+                Instant::now() + wait.max(MIN_EXPIRY_WAIT)
+            });
+    }
+
+    /// Reads the credential again while a page is handed over.
+    async fn recheck(&mut self) -> std::result::Result<(), Ending> {
+        if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
+            return Err(self.cut_short("read_failed"));
+        }
+        let read = reading(&self.app, &self.caller, |read| {
+            Ok(read.caller.key().and_then(|key| key.expires_at.clone()))
+        })
+        .await;
+        match read {
+            Ok(expires_at) => {
+                self.credential_read(expires_at.as_deref());
+                Ok(())
+            }
+            Err(refusal) if self.torn => {
+                tracing::debug!(error = %refusal, "A stream ended inside a frame");
+                Err(self.give_up())
+            }
+            Err(refusal) => Err(self.failure(&refusal)),
+        }
+    }
+
+    /// A closing frame cannot follow part of a frame, so a torn stream is closed without one.
+    fn cut_short(&self, reason: &str) -> Ending {
+        if self.torn {
+            self.give_up()
+        } else {
+            self.incomplete(reason)
+        }
     }
 
     fn check_stop(&self) -> std::result::Result<(), Ending> {
@@ -389,18 +452,35 @@ impl Run {
         Ok(())
     }
 
-    /// Shutdown interrupts a blocked handover.
+    /// A stop, a commit, a heartbeat and the credential's expiry each interrupt a blocked handover.
     async fn hand(&mut self, piece: Vec<u8>, tail: Tail) -> std::result::Result<(), Ending> {
         let mut stopping = self.stopping.clone();
-        let handed = tokio::select! {
-            handed = hand_over(&self.frames, Bytes::from(piece), PING) => handed,
-            _ = stopping.wait_for(|stopping| *stopping) => {
-                return Err(if self.torn {
-                    self.give_up()
-                } else {
-                    self.incomplete("server_stopping")
-                });
+        // A clone, so the live loop still sees a commit made while this waits.
+        let mut commits = self.commits.clone();
+        let frames = self.frames.clone();
+        let handing = hand_over(&frames, Bytes::from(piece), PING);
+        tokio::pin!(handing);
+        let handed = loop {
+            let heartbeat = self.checked + PING;
+            let recheck = self
+                .expiry
+                .map_or(heartbeat, |expiry| expiry.min(heartbeat));
+            let stopped = tokio::select! {
+                biased;
+                _ = stopping.wait_for(|stopping| *stopping) => true,
+                handed = &mut handing => break handed,
+                changed = commits.changed() => {
+                    if changed.is_err() {
+                        return Err(Ending::Gone);
+                    }
+                    false
+                }
+                () = sleep_until(recheck) => false,
+            };
+            if stopped {
+                return Err(self.cut_short("server_stopping"));
             }
+            self.recheck().await?;
         };
         if !handed {
             return Err(self.give_up());
@@ -421,7 +501,7 @@ impl Run {
     /// Hyper may keep a stalled connection open after its body ends.
     fn give_up(&self) -> Ending {
         if let Some(hangup) = &self.hangup {
-            hangup();
+            (hangup.close)();
         }
         Ending::Gone
     }
@@ -477,6 +557,19 @@ fn pieces(frames: Vec<(i64, String)>) -> Vec<(Vec<u8>, Tail)> {
         out.push((piece, Tail::Whole(last)));
     }
     out
+}
+
+fn without_item_type(payload: String) -> String {
+    let Ok(mut body) = serde_json::from_str::<Value>(&payload) else {
+        return payload;
+    };
+    match body.get_mut("item").and_then(Value::as_object_mut) {
+        Some(item) => {
+            item.remove("type");
+            body.to_string()
+        }
+        None => payload,
+    }
 }
 
 fn frame(text: Result<String>) -> std::result::Result<String, Ending> {
