@@ -448,6 +448,13 @@ describe("the folder door", () => {
     ],
     [{ outside_query: "keep" }, "validation_error", "outside_query"],
     [{ outside_query: null }, "validation_error", "outside_query"],
+    [
+      { query: { types: ["core.note"] }, defaults: { type: "core.task" } },
+      "validation_error",
+      "defaults.type",
+    ],
+    [{ include: ["{a,b"] }, "validation_error", "include"],
+    [{ ignore: ["[z-a]"] }, "validation_error", "ignore"],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {
@@ -532,6 +539,48 @@ describe("the folder door", () => {
     const { id } = await folder(settings);
     const changed = await client.updateFolder(id, { version: 1, ...settings });
     expect(changed.status).toBe(200);
+  });
+
+  it("refuses a change that leaves a default type outside the query, whichever setting it changes", async () => {
+    const { id } = await folder({
+      query: { types: ["core.note"] },
+      defaults: { type: "core.note" },
+    });
+    for (const change of [
+      { defaults: { type: "core.task" } },
+      { query: { types: ["core.task"] } },
+    ]) {
+      const r = await client.updateFolder(id, { version: 1, ...change });
+      expect(r.status, JSON.stringify(change)).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path).toBe("defaults.type");
+    }
+    // The witness: both changed together leave the default inside the query.
+    const both = await client.updateFolder(id, {
+      version: 1,
+      query: { types: ["core.task"] },
+      defaults: { type: "core.task" },
+    });
+    expect(both.status).toBe(200);
+  });
+
+  it("takes the star in a folder's query types and reads it back", async () => {
+    const settings = {
+      query: { types: ["*"] },
+      defaults: { type: "core.task" },
+    };
+    const { id } = await folder(settings);
+    const read = await client.getItem(id);
+    expect(read.data.item.properties).toMatchObject(settings);
+    const changed = await client.updateFolder(id, {
+      version: 1,
+      query: { types: ["*", "core.note"] },
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.data.item.properties.query).toEqual({
+      types: ["*", "core.note"],
+    });
   });
 
   it("answers a folder create repeated under one Idempotency-Key once", async () => {

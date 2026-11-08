@@ -1,3 +1,4 @@
+use marfa_rules::query::EVERY_TYPE;
 use marfa_rules::{filter, validation};
 use serde_json::{Map, Value, json};
 
@@ -107,7 +108,7 @@ pub(crate) fn check_title(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
+fn check_types(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()> {
     let Some(types) = value.as_array() else {
         return Err(at("query.types", "query.types must be a list."));
     };
@@ -122,6 +123,9 @@ fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
         let Some(type_id) = entry.as_str() else {
             return Err(at(&path, "A type is a string."));
         };
+        if every_type && type_id == EVERY_TYPE {
+            continue;
+        }
         check_id(type_id, &path)?;
         if type_id == "system" || type_id.starts_with("system.") {
             return Err(at(&path, "A query lists no system type."));
@@ -138,12 +142,13 @@ fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn check_query(value: &Value, catalog: &Catalog) -> Result<()> {
+/// `every_type` lets a query list `*`, which a folder's query holds and a view's does not.
+pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()> {
     let Some(query) = value.as_object() else {
         return Err(at("query", "query must be an object."));
     };
     if let Some(types) = query.get("types") {
-        check_types(types, catalog)?;
+        check_types(types, catalog, every_type)?;
     }
     if let Some(tier) = query.get("tier")
         && !tier.as_str().is_some_and(|tier| TIERS.contains(&tier))
@@ -273,7 +278,7 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
         check_title(title)?;
     }
     if let Some(query) = settings.get("query") {
-        check_query(query, catalog)?;
+        check_query(query, catalog, false)?;
     }
     if let Some(sort) = settings.get("sort") {
         check_sort(sort)?;

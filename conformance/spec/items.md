@@ -2328,6 +2328,30 @@ If a `first_placement` directory holds a `..` name, wherever it climbs back, or 
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes the settings a device can follow, on a create and on a change`.
 
+### `items/folder-setting-default-type`
+
+If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `defaults.type` that the types in `query.types` do not hold, then the server MUST answer `400 validation_error`, naming `defaults.type` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a file made at that type would fall outside the query of its own folder, and a device refuses to follow such a folder. A query naming no type, or `*`, holds every type but `system.*`, and a change is judged on the complete settings it leaves, not on the settings it names.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› refuses a change that leaves a default type outside the query, whichever setting it changes`.
+
+### `items/folder-setting-pattern`
+
+If an `include` or `ignore` line is not a gitignore pattern a device reads, such as one that opens a `{` alternation it never closes or holds a character range written backwards, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a device refuses to follow a folder whose list it cannot read, so a folder made with such a line would be stuck on every device.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
+
+### `items/folder-query-every-type`
+
+When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.
+
+**Reason:** `*` is every type but `system.*` (`folders/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
+
+**Tests:** `compliance/folders.test.ts › takes the star in a folder's query types and reads it back`.
+
 ## Links and tombstones
 
 A type that names a `link_field` (`types/link-field`) makes that field each item's link: a value one item of the type holds.

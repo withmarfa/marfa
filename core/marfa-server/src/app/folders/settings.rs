@@ -2,6 +2,7 @@
 
 use marfa_rules::edges::depth_inside_folder;
 use marfa_rules::filter::{EdgeDirection, FilterExpression, FilterField};
+use marfa_rules::folder as rules;
 use marfa_rules::validation;
 use serde_json::{Map, Value, json};
 
@@ -258,7 +259,7 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
         check_title(title)?;
     }
     if let Some(query) = settings.get("query") {
-        check_query(query, catalog)?;
+        check_query(query, catalog, true)?;
         check_filter(query)?;
     }
     if let Some(defaults) = settings.get("defaults") {
@@ -287,4 +288,40 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
         return Err(at("outside_query", "outside_query is send or hold."));
     }
     Ok(())
+}
+
+fn strings(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What a device needs to attach the folder, judged on the complete settings
+/// the write leaves: a partial update changes one setting beside the others.
+pub fn judge(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
+    let types = strings(settings.get("query").and_then(|query| query.get("types")));
+    let (include, ignore) = (
+        strings(settings.get("include")),
+        strings(settings.get("ignore")),
+    );
+    let default_type = settings
+        .get("defaults")
+        .and_then(|defaults| defaults.get("type"))
+        .and_then(Value::as_str);
+    rules::check(
+        &catalog.rules,
+        &rules::Settings {
+            types: &types,
+            default_type,
+            include: &include,
+            ignore: &ignore,
+        },
+    )
+    .map_err(|violation| at(&violation.path, violation.message))
 }

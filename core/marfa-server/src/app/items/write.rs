@@ -857,6 +857,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         match change {
             FolderChange::Create { settings } => {
                 folders::check(&settings, &self.catalog)?;
+                folders::judge(&settings, &self.catalog)?;
                 let source = self.source_of(None)?;
                 let item = self.created(
                     Put {
@@ -1233,6 +1234,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
         let mut settled = self.settled(row, resulting, writing)?;
+        if resulting == FOLDER_TYPE && writing.judged() {
+            folders::judge(&settled.properties, &self.catalog)?;
+        }
         if resulting != row.type_id {
             let replaced = writing.edges.as_deref().unwrap_or_default();
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
