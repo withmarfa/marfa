@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -19,8 +18,8 @@ import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
  *
  * The copy is an image of the directory at one instant, which is what a
  * volume snapshot or an APFS snapshot (and so Time Machine) takes. The
- * server's whole process group is stopped while the directory is copied, so
- * no write lands between one file and the next, and then resumed, so the
+ * target's `image` command stops the server while the directory is copied, so
+ * no write lands between one file and the next, and then resumes it, so the
  * image is taken of an instance that is mid-write rather than at rest.
  */
 
@@ -87,25 +86,10 @@ function writeContinuously(client: MarfaClient): {
   };
 }
 
-/** The directory the server writes to, copied while the server is stopped. */
-function imageOf(server: FreshServer): string {
-  const state = dirname(server.sqlitePath);
-  const group = Number(readFileSync(join(state, "server.pid"), "utf8").trim());
-  const image = mkdtempSync(join(tmpdir(), "marfa-backup-image-"));
+/** The directory the server writes to, as an image taken while it writes. */
+async function imageOf(server: FreshServer): Promise<string> {
+  const image = await server.image();
   restoredStates.push(image);
-  process.kill(-group, "SIGSTOP");
-  try {
-    cpSync(state, image, {
-      recursive: true,
-      // What the running process owns rather than what it holds.
-      filter: (source) =>
-        !/server\.(pid|log|exit)$/.test(source) &&
-        !/\/control-directory$/.test(source) &&
-        !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
-    });
-  } finally {
-    process.kill(-group, "SIGCONT");
-  }
   return image;
 }
 
@@ -131,7 +115,7 @@ describe("restoring a copy of the data directory taken while the instance was wr
   it(
     "refuses a key it holds when started with a different API_KEY_SALT",
     async () => {
-      const image = imageOf(original);
+      const image = await imageOf(original);
       process.env.API_KEY_SALT = "another-salt-".padEnd(40, "x");
       let restored: { client: MarfaClient; apiUrl: string };
       try {
@@ -165,7 +149,7 @@ describe("restoring a copy of the data directory taken while the instance was wr
             ]);
           }
           const before = writes.acknowledged.slice();
-          const image = imageOf(original);
+          const image = await imageOf(original);
 
           const { client: restored, apiUrl } = await bootRestored(image);
 

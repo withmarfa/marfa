@@ -20,7 +20,7 @@ import type { DeliveryReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
-import { faultsArmed, holdAt } from "../control/faults.js";
+import { faultsArmed, hiddenEventsFault, holdAt } from "../control/faults.js";
 
 /**
  * Stripe-style webhook signature. The HMAC is computed over
@@ -496,10 +496,11 @@ export class WebhookScheduler {
   }> {
     const { storage } = this.context;
     const result = await storage.runInTransaction(async () => {
+      const hidden = hiddenEventsFault();
       const position = await storage.outboundWebhooks.checkpoint();
       const initialLastEventId = position.lastEventId;
-      const head = (await storage.eventLog.getMaxId()) ?? 0n;
-      const minimum = await storage.eventLog.getMinRetainedId();
+      const head = (await storage.eventLog.getMaxId(hidden)) ?? 0n;
+      const minimum = await storage.eventLog.getMinRetainedId(hidden);
       if (
         position.lastEventId > head ||
         (position.eventId !== null && position.eventId > head)
@@ -526,12 +527,14 @@ export class WebhookScheduler {
           position.lastEventId = await storage.eventLog.getNonFanoutEnd(
             position.lastEventId,
             head,
+            hidden,
           );
           if (position.lastEventId === head) break;
         }
         const [event] = await storage.eventLog.getAfter(
           position.lastEventId,
           1,
+          { hidden },
         );
         if (!event) {
           throw new Error("Outbound webhook in-progress event is missing");
