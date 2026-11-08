@@ -17,7 +17,6 @@
     "test:watch": "vitest",
     "dev": "pnpm run assets:build && tsx watch --import ./src/instrumentation.ts src/index.ts",
     "schema-sql:generate": "tsx scripts/generate-schema-sql.ts",
-    "generate:openapi": "pnpm run assets:build && tsx scripts/generate-openapi.ts",
     "ui:viewer": "pnpm run assets:build && tsx watch scripts/ui-viewer.ts"
   },
   "dependencies": {

@@ -3,9 +3,8 @@
  * them: the shipped type and edge type definitions in `@withmarfa/types`, the
  * permission list in `@withmarfa/shared`, and the event names in the server's
  * webhook vocabulary and in the stream's frame schema in `openapi.json`,
- * which `pnpm check:statuses` and the OpenAPI freshness check hold to the
- * server. Like the repository's other generators, this reads the server by
- * path; nothing under `src/suites/` may.
+ * the document both servers are held to. Like the repository's other
+ * generators, this reads the server by path; nothing under `src/suites/` may.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

@@ -5,14 +5,11 @@
  * plain number as a float, so a version published as `number` leaves every
  * client to convert it. This walks the whole document, request and response,
  * for each member or parameter named for a version.
- *
- * Read from the committed file, which `openapi-committed-spec.test.ts` holds
- * to what the routes produce.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const COMMITTED = new URL("../../../openapi.json", import.meta.url);
+const COMMITTED = new URL("../../openapi.json", import.meta.url);
 
 /** A member or parameter that holds one version of an item, edge or type. */
 const VERSION_NAME =

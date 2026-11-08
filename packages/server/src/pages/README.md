@@ -235,7 +235,7 @@ joins `tokens.css` and `parts.css` into one stylesheet, and writes both into
 
 - Git does not track `assets.generated.ts`, so two pull requests that change
   the pages never conflict in it. `pnpm install` (the server's `prepare`
-  script), `pnpm build`, `pnpm dev`, `generate:openapi`, the tests' global
+  script), `pnpm build`, `pnpm dev`, the tests' global
   setup, and the scripts that boot the server from source
   (`conformance/scripts/marfa-server.ts` and `core/scripts/server-up.sh`)
   each write it from the sources first, and leave a current file alone.

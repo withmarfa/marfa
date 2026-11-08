@@ -10,6 +10,9 @@ pub mod caller;
 mod caller_address;
 mod config;
 mod control;
+#[cfg(test)]
+mod document;
+mod doors;
 mod edge_types;
 mod edges;
 mod health;
@@ -38,7 +41,6 @@ use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
-use axum::routing::{delete, get, patch, post, put};
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::app::App;
@@ -50,7 +52,9 @@ use caller::identify;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
-type Routes = Router<Arc<App>>;
+use doors::{Doors, delete, get, patch, post, put};
+
+type Routes = Doors;
 
 async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     let mut response = if method == Method::OPTIONS {
@@ -97,7 +101,7 @@ async fn reach_where_taken(request: Request, next: Next) -> Response {
 }
 
 fn key_doors(app: Arc<App>) -> Routes {
-    Router::new()
+    Doors::new()
         .route("/keys", post(keys::mint).get(keys::list))
         .route("/keys/current", get(keys::current))
         .route("/keys/{id}", patch(keys::update).delete(keys::revoke))
@@ -105,7 +109,7 @@ fn key_doors(app: Arc<App>) -> Routes {
 }
 
 fn schema_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route("/types", get(types::list).post(types::register))
         .route("/types/normalize", post(types::normalize))
         .route(
@@ -148,13 +152,13 @@ async fn not_local(State(app): State<Arc<App>>, request: Request, next: Next) ->
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
-    Router::new()
+    Doors::new()
         .route("/items/stats", get(listing::stats))
         .route_layer(from_fn_with_state(app, not_local))
 }
 
 fn item_doors(app: Arc<App>) -> Routes {
-    Router::new()
+    Doors::new()
         .route("/items", post(items::create).get(listing::items))
         .route("/search", get(listing::search))
         .route("/views", post(views::create))
@@ -214,7 +218,7 @@ fn blob_doors() -> Routes {
 }
 
 fn owner_item_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route("/items/summaries", get(trash::summaries))
         .route("/items/summaries/{id}/trash", post(trash::owner_trash))
         .route("/items/summaries/{id}/restore", post(trash::owner_restore))
@@ -224,7 +228,7 @@ fn owner_item_doors() -> Routes {
 }
 
 fn config_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route(
             "/config",
             get(config::read).put(config::put).patch(config::patch),
@@ -234,7 +238,7 @@ fn config_doors() -> Routes {
 }
 
 fn shared(app: Arc<App>) -> Routes {
-    Router::new()
+    Doors::new()
         .route("/", get(root::describe))
         .route("/health", get(health::answer))
         .route("/openapi.json", get(root::document))
@@ -260,6 +264,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         listener: Arc::new(listener),
     };
     routes
+        .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
         .route_layer(from_fn(reach_where_taken))
@@ -275,11 +280,13 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+fn public_doors(app: Arc<App>) -> Routes {
+    shared(app).merge(auth::doors()).merge(oauth::doors())
+}
+
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
-    let routes = shared(app.clone())
-        .merge(auth::doors())
-        .merge(oauth::doors());
-    finished(routes, app.clone(), listener).layer(from_fn_with_state(app, oauth::page_origins))
+    finished(public_doors(app.clone()), app.clone(), listener)
+        .layer(from_fn_with_state(app, oauth::page_origins))
 }
 
 pub(crate) async fn no_store(request: Request, next: Next) -> Response {
@@ -290,7 +297,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
     response
 }
 
-pub fn control(app: Arc<App>) -> Router {
+fn control_doors(app: &Arc<App>) -> Routes {
     let mut routes = shared(app.clone())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
@@ -314,7 +321,11 @@ pub fn control(app: Arc<App>) -> Router {
                     .delete(test_hooks::clear_faults),
             );
     }
-    finished(routes, app, Declaration::control())
+    routes
+}
+
+pub fn control(app: Arc<App>) -> Router {
+    finished(control_doors(&app), app, Declaration::control())
         .layer(middleware::from_fn(no_store))
         .layer(from_fn_with_state(
             body::CONTROL_BODY_DEADLINE,

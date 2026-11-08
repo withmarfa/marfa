@@ -399,7 +399,7 @@ const refusalCodes = new WeakMap<object, readonly [string, ...string[]]>();
  * client branches on an enum rather than on a string. Every door declares
  * the codes it answers on each status through this; there is no open
  * spelling of the envelope, because a door that cannot say what it answers
- * is a door whose refusals nothing can be held to. `openapi-published.test.ts`
+ * is a door whose refusals nothing can be held to. `ci/openapi/published.test.ts`
  * refuses a document that declares one.
  *
  * The order a door writes its codes in does not reach the document: the

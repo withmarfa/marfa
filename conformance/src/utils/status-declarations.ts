@@ -1,6 +1,6 @@
 /**
- * Hold every status the server was observed answering to the statuses its
- * document declares for that operation.
+ * Hold every status a server was observed answering to the statuses the
+ * committed `openapi.json` declares for that operation.
  *
  * The observation is the server's own request log rather than a client's,
  * because the fixtures reach the server four ways — the typed client, bare
@@ -13,7 +13,6 @@
  */
 
 import { redactSetupProof } from "./target.js";
-import { readFileSync } from "node:fs";
 
 /** One request as `middleware/logger.ts` writes it. */
 export interface RequestLine {
@@ -43,13 +42,10 @@ export interface StatusReport {
   observed: Map<string, Map<number, Set<string>>>;
   /** Routes the server served that the document does not publish. */
   unpublished: Map<string, Set<number>>;
-  /**
-   * Of those, the ones not named in {@link UNPUBLISHED_ROUTES}: a door the
-   * server serves and neither publishes nor says why.
-   */
-  unexplained: string[];
   /** Unpublished private control operations, outside the HTTP contract. */
   local: Map<string, Set<number>>;
+  /** Control operations the public listener answered, which it must not. */
+  exposedControl: string[];
   undeclared: UndeclaredStatus[];
   /**
    * `METHOD /path status code` for a refusal code drawn on a declared
@@ -70,55 +66,6 @@ export interface StatusReport {
 }
 
 const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
-
-/**
- * The sign-in library's own routes, which it serves under one `/auth/*`
- * pattern, so each is named here with why. A request under the pattern is held
- * to the route its path names.
- */
-export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
-  "POST /auth/sign-in/email": "password sign-in, which the sign-in form calls",
-  "POST /auth/sign-out": "a browser's sign-out",
-  "GET /auth/get-session": "the browser session a cookie names",
-  "POST /auth/revoke-sessions": "ends every browser session",
-  "POST /auth/revoke-other-sessions":
-    "ends every browser session but the caller's",
-  "POST /auth/change-password": "the owner's password change",
-  "GET /auth/passkey/generate-register-options":
-    "the owner's passkey registration challenge",
-  "POST /auth/passkey/verify-registration": "the owner's passkey registration",
-  "GET /auth/passkey/generate-authenticate-options":
-    "a passkey sign-in challenge",
-  "POST /auth/passkey/verify-authentication": "passkey sign-in",
-  "GET /auth/jwks": "the key set that signs id tokens",
-  "GET /auth/oauth2/authorize": "an app's authorization request",
-  "POST /auth/oauth2/token": "the token exchange, every grant",
-  "POST /auth/oauth2/revoke": "RFC 7009 revocation",
-  "POST /auth/oauth2/introspect": "RFC 7662 introspection",
-  "GET /auth/oauth2/userinfo": "OpenID userinfo",
-  "POST /auth/oauth2/end-session/confirm": "the end-session confirmation",
-  "POST /auth/device/code": "RFC 8628 device authorization",
-};
-
-/**
- * The routes the server serves outside its document, each with why: the
- * server's own list and the sign-in library's routes. A served route missing
- * from here is reported, so
- * the document cannot lose a door into this bucket without somebody writing
- * the reason down.
- */
-export const UNPUBLISHED_ROUTES: Readonly<Record<string, string>> = {
-  ...(JSON.parse(
-    readFileSync(
-      new URL(
-        "../../../packages/server/unpublished-routes.json",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  ) as Record<string, string>),
-  ...SIGN_IN_LIBRARY_ROUTES,
-};
 
 /**
  * The statuses each sign-in route and discovery document answers, which no
@@ -508,13 +455,13 @@ export function reportStatuses(
   > = SIGN_IN_ROUTE_STATUSES,
 ): StatusReport {
   const declared = declaredStatuses(document);
-  const templates = [
-    ...Object.keys(signInStatuses),
-    ...Object.keys(UNPUBLISHED_ROUTES),
-  ].filter((operation) => operation.includes("{"));
+  const templates = Object.keys(signInStatuses).filter((operation) =>
+    operation.includes("{"),
+  );
   const observed = new Map<string, Map<number, Set<string>>>();
   const unpublished = new Map<string, Set<number>>();
   const local = new Map<string, Set<number>>();
+  const exposedControl = new Set<string>();
   /** What the sign-in routes answered, held to `signInStatuses`. */
   const signIn = new Map<string, Map<number, Set<string>>>();
 
@@ -547,6 +494,9 @@ export function reportStatuses(
       statuses.add(line.status);
       local.set(operation, statuses);
       continue;
+    }
+    if (!declared.has(operation) && line.path.startsWith("/_control/")) {
+      exposedControl.add(operation);
     }
     // The sign-in catch-all refusing a path it does not serve, in the
     // envelope, answered for no door: there is no route to explain and no
@@ -640,10 +590,6 @@ export function reportStatuses(
   }
   unanswered.sort();
 
-  const unexplained = [...unpublished.keys()]
-    .filter((route) => UNPUBLISHED_ROUTES[route] === undefined)
-    .sort();
-
   const everyCode = new Set(
     [...codes.values()].flatMap((byStatus) =>
       [...byStatus.values()].flatMap((set) => [...set]),
@@ -657,7 +603,7 @@ export function reportStatuses(
     observed,
     unpublished,
     local,
-    unexplained,
+    exposedControl: [...exposedControl].sort(),
     undeclared,
     undeclaredCodes,
     unanswered,
