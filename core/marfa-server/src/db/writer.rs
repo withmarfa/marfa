@@ -87,8 +87,7 @@ fn commit_refused(error: rusqlite::Error) -> Refusal {
     }
 }
 
-/// The watch is raised whenever a commit was attempted: one that failed may have landed, and a
-/// stream has to read the log to know.
+/// A failed commit may have landed, so readers must check the log.
 fn settle(committed: rusqlite::Result<()>, commits: &watch::Sender<u64>) -> Result<()> {
     commits.send_modify(|count| *count += 1);
     committed.map_err(commit_refused)
@@ -188,8 +187,7 @@ impl Writer {
         })
     }
 
-    /// Raised after every commit, once its rows can be read; a reader that takes the value
-    /// before it reads sees every commit that follows.
+    /// Mark the watch seen before reading to avoid missing a concurrent commit.
     pub fn commits(&self) -> watch::Receiver<u64> {
         self.commits.subscribe()
     }

@@ -38,8 +38,7 @@ pub trait Source: Listener<Addr: Debug> {
     fn peer(address: &Self::Addr) -> Peer;
 }
 
-/// Closes the connection a request came in on. Ending a response body, with an error or not,
-/// cannot do it: hyper writes what it has queued first, and a peer that takes nothing never lets it finish.
+/// Ending a response body cannot close a connection blocked on queued output.
 #[derive(Clone)]
 pub struct Hangup(Arc<Notify>);
 

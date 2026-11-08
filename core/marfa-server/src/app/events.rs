@@ -20,8 +20,7 @@ pub use expiry::expire;
 pub use frame::Filter;
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
-/// Refuses the first entry of a stream's `type` that is outside the grammar, names no type, or
-/// names one the caller may not read; each entry is judged as it is reached.
+/// Judge each entry's syntax and access before proceeding to the next.
 pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Result<()> {
     reading(app, caller, move |read| {
         entries.iter().try_for_each(|entry| {
@@ -39,9 +38,7 @@ pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Re
     .await
 }
 
-/// One entry. `payload` is the JSON a frame is built from, without the
-/// `event_type` the entry names; a stream adds that and `read_only`, and
-/// leaves out what its subscriber may not read.
+/// The stored payload precedes subscriber filtering and frame decoration.
 pub struct Event<'a> {
     pub event_type: &'static str,
     pub item_id: &'a str,

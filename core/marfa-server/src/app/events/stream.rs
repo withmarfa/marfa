@@ -1,5 +1,4 @@
-//! One open stream: it reads the log after the last id it handled, one page at a time, each page
-//! judged for the credential as it stands when the page is read.
+//! Each log page and its credential share one read snapshot.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,8 +24,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 pub const PING: Duration = Duration::from_secs(30);
 const PAGE_ROWS: usize = 200;
 const PAGE_BYTES: usize = 1 << 20;
-/// What the reader is handed at once. A reader's patience is measured per piece, so a slow reader
-/// that keeps taking pieces is never mistaken for one that has stopped, however large a page or a frame is.
+/// Measure stalls per piece, not per page or frame.
 const PIECE_BYTES: usize = 64 * 1024;
 /// The closing frame of a stream whose reader has stopped reading is not waited for long.
 const CLOSING_SEND: Duration = Duration::from_secs(3);
@@ -69,8 +67,7 @@ pub struct Opening {
     pub resume: Option<i64>,
 }
 
-/// The frames of a new stream, written as the reader takes them. A reader that stops taking them is
-/// let go, and `hangup` closes its connection.
+/// `hangup` closes the connection when its reader stalls.
 pub fn open(
     app: Arc<App>,
     caller: crate::app::access::Caller,
@@ -122,8 +119,7 @@ struct Run {
     _viewer: Viewer,
 }
 
-/// Waits up to `patience` for the reader to take `piece`. The channel holds one piece, so a reader that
-/// stops reading holds back the next page's read, and is let go once it has taken nothing for `patience`.
+/// A full channel holds back the next page's read.
 async fn hand_over(frames: &mpsc::Sender<Bytes>, piece: Bytes, patience: Duration) -> bool {
     matches!(timeout(patience, frames.send(piece)).await, Ok(Ok(())))
 }
@@ -241,8 +237,7 @@ impl Run {
             vec![("cursor", head.to_string().into())],
         ))?)
         .await?;
-        // A resumed stream reads one page whatever the head says, so a log the sweep has moved
-        // past the cursor since the head was read ends the stream before `stream_live`.
+        // Retention may have passed the cursor since the head was read.
         let mut resumed = self.resume.is_some();
         if resumed {
             self.app.faults.hold(HOLD_STREAM_REPLAY, None).await;
@@ -394,8 +389,7 @@ impl Run {
         Ok(())
     }
 
-    /// Hands one piece to the reader. A stop ends the wait, so a reader that takes nothing cannot hold
-    /// the stop back; a reader that takes nothing for a ping interval is let go.
+    /// Shutdown interrupts a blocked handover.
     async fn hand(&mut self, piece: Vec<u8>, tail: Tail) -> std::result::Result<(), Ending> {
         let mut stopping = self.stopping.clone();
         let handed = tokio::select! {
@@ -424,8 +418,7 @@ impl Run {
         Ok(())
     }
 
-    /// Ends the stream without a closing frame and closes the reader's connection, which hyper
-    /// keeps open while the reader takes nothing.
+    /// Hyper may keep a stalled connection open after its body ends.
     fn give_up(&self) -> Ending {
         if let Some(hangup) = &self.hangup {
             hangup();
@@ -461,8 +454,7 @@ impl Run {
     }
 }
 
-/// The frames of a page cut into pieces of at most `PIECE_BYTES`. A piece ends where a frame ends
-/// unless the frame is longer than a piece.
+/// Keep frame boundaries unless a frame exceeds `PIECE_BYTES`.
 fn pieces(frames: Vec<(i64, String)>) -> Vec<(Vec<u8>, Tail)> {
     let mut out = Vec::new();
     let mut piece: Vec<u8> = Vec::new();
