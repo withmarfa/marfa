@@ -446,9 +446,9 @@ If a picture upload ends before its body is whole, then the server MUST store no
 
 ### `instance-claim/picture-replace`
 
-When the server stores a new picture, the server MUST keep only the bytes of the new picture.
+When the server stores a new picture, the server MUST serve only that picture at `/owner/picture`, and no earlier one after the new picture is removed.
 
-**Reason:** The owner has one picture, and the bytes of a replaced one are no longer wanted.
+**Reason:** The owner has one picture, and a replaced one is never served again.
 
 **Tests:** `compliance/owner-picture.test.ts › holds one picture, the last one stored`.
 

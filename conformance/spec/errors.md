@@ -600,6 +600,24 @@ When the server answers `409 housekeeping_job_running`, the server MUST NOT star
 
 **Tests:** `compliance/housekeeping-job-running.test.ts › answers 409 housekeeping_job_running, and runs once the earlier run has ended`.
 
+## A type whose stored definition cannot be read
+
+### `errors/type-chain`
+
+When a request reads a type whose stored definition does not read, the server MUST answer `409 type_chain_unresolvable` with `details.type_id` naming that type.
+
+**Reason:** the caller did nothing wrong, and every operation that writes a type judges what it stores, so meeting such a definition means the registry already held it.
+
+**Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
+
+### `errors/type-chain-correctable`
+
+While a type's stored definition does not read, the server MUST accept `PUT /types/{id}` for the type with a corrected schema.
+
+**Reason:** that operation does not read the stored definition to resolve it, so a `500` there would leave nothing to correct it with.
+
+**Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
+
 ## What a report of a failed database statement carries
 
 ### `errors/report-log`

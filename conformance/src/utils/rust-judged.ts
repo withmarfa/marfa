@@ -88,6 +88,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/tombstone-housekeeping.test.ts",
   "src/suites/compliance/trash-preview.test.ts",
   "src/suites/compliance/trashed-at.test.ts",
+  "src/suites/compliance/type-chain-unresolvable.test.ts",
   "src/suites/compliance/type-dependency-permissions.test.ts",
   "src/suites/compliance/type-identifier-validation.test.ts",
   "src/suites/compliance/type-inheritance.test.ts",

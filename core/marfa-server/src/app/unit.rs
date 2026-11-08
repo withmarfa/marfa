@@ -88,7 +88,6 @@ impl App {
     {
         let caller = caller.clone();
         let clock = self.clock.clone();
-        let faults = self.faults.clone();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -97,7 +96,7 @@ impl App {
         self.db
             .write(write, move |tx| {
                 let at = clock.stamp();
-                let caller = caller.current(tx, &at)?.with_unreadable_record(&faults);
+                let caller = caller.current(tx, &at)?;
                 job(&Unit {
                     tx,
                     action,

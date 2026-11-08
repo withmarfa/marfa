@@ -30,9 +30,10 @@
  *   to `<n>`, from now until the fault is cleared or set again. The count
  *   stays in the database, so it outlasts a restart that the fault does not.
  * - `unreadable:<record>=<id>` makes the server read one stored record as
- *   gone while everything that names it stands, from now until the fault is
- *   cleared or set again. `sign-in-record` is the record that lists an app's
- *   sign-in, by its item ID.
+ *   gone or damaged while everything that names it stands, from now until the
+ *   fault is cleared or set again. `sign-in-record` is the record that lists
+ *   an app's sign-in, by its item ID; `type-definition` is a type's stored
+ *   definition, by its type ID.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
@@ -233,7 +234,7 @@ export type LimitLane = (typeof LIMIT_LANES)[number];
 const MAX_LIMIT = 1_000_000;
 
 /** The stored records an `unreadable` fault may name. */
-const UNREADABLE_RECORDS = ["sign-in-record"] as const;
+const UNREADABLE_RECORDS = ["sign-in-record", "type-definition"] as const;
 export type UnreadableRecord = (typeof UNREADABLE_RECORDS)[number];
 const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 

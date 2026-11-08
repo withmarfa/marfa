@@ -346,6 +346,15 @@ describe("an unreadable fault", () => {
     expect(unreadableFault("sign-in-record", "a2")).toBe(false);
   });
 
+  it("takes a type's stored definition by its type ID", () => {
+    expect(unreadableFault("type-definition", "acme.note")).toBe(false);
+    expect(arm("unreadable:type-definition", "acme.note")).toBeUndefined();
+    expect(unreadableFault("type-definition", "acme.note")).toBe(true);
+    expect(unreadableFault("sign-in-record", "acme.note")).toBe(false);
+    clearFaults();
+    expect(unreadableFault("type-definition", "acme.note")).toBe(false);
+  });
+
   it("refuses a record nothing reads, and an argument that is not an ID", () => {
     expect(arm("unreadable:elsewhere", "a1")).toMatch(/not a record/);
     expect(arm("unreadable:sign-in-record")).toMatch(/ID of the record/);

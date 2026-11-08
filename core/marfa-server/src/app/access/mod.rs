@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use super::auth::seconds_of;
 use super::auth::session::{self, Session};
 use super::config;
-use super::faults::{self, Faults};
 use super::keys::{self, Key};
 use super::oauth;
 use super::refusal::{Code, Refusal, Result};
@@ -405,16 +404,6 @@ impl Caller {
             Caller::Key(key) | Caller::App { key, .. } => key.id.clone(),
             Caller::Owner(session) => format!("owner:{}", session.id),
         }
-    }
-
-    /// An app whose sign-in record an `unreadable:sign-in-record` fault names is known by its client.
-    pub fn with_unreadable_record(mut self, faults: &Faults) -> Caller {
-        if let Caller::App { grant, .. } = &mut self
-            && faults.unreadable(faults::SIGN_IN_RECORD, &grant.grant_id)
-        {
-            grant.grant_id.clone_from(&grant.client_id);
-        }
-        self
     }
 
     pub fn actor(&self) -> Value {

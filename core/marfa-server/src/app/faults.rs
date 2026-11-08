@@ -220,14 +220,15 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
 }
 
 /// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
-const LIMIT_LANES: [&str; 1] = ["device-owner-instance"];
+pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
+const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
 const MAX_LIMIT: u64 = 1_000_000;
 
-/// Stored records an `unreadable:<record>=<id>` fault makes the server read as gone.
-pub const SIGN_IN_RECORD: &str = "sign-in-record";
-const UNREADABLE_RECORDS: [&str; 1] = [SIGN_IN_RECORD];
+/// Stored values an `unreadable:<stored>=<id>` fault makes the server read as damaged.
+pub const TYPE_DEFINITION: &str = "type-definition";
+const UNREADABLE_STORED: [&str; 1] = [TYPE_DEFINITION];
 
-fn is_record_id(text: &str) -> bool {
+fn is_stored_id(text: &str) -> bool {
     let mut bytes = text.bytes();
     bytes
         .next()
@@ -288,21 +289,21 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(count)))
         }
         "unreadable" => {
-            if !UNREADABLE_RECORDS.contains(&rest) {
+            if !UNREADABLE_STORED.contains(&rest) {
                 return Err(format!(
-                    "{rest} is not a record: {}",
-                    UNREADABLE_RECORDS.join(" or ")
+                    "{rest} is not stored here: {}",
+                    UNREADABLE_STORED.join(" or ")
                 ));
             }
-            if arg.is_some_and(is_record_id) {
+            if arg.is_some_and(is_stored_id) {
                 Ok((None, None))
             } else {
-                Err("an unreadable fault takes the ID of the record".to_string())
+                Err("an unreadable fault takes the ID of the stored value".to_string())
             }
         }
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, \
-             free:<volume>, limit:<lane> or unreadable:<record>"
+             free:<volume>, limit:<lane> or unreadable:<stored>"
                 .to_string(),
         ),
     }
@@ -469,8 +470,8 @@ impl Faults {
             .and_then(|count| i64::try_from(count).ok())
     }
 
-    pub fn unreadable(&self, record: &str, id: &str) -> bool {
-        let name = format!("unreadable:{record}");
+    pub fn unreadable(&self, stored: &str, id: &str) -> bool {
+        let name = format!("unreadable:{stored}");
         self.armed()
             .iter()
             .any(|fault| fault.name == name && fault.arg.as_deref() == Some(id))
@@ -573,29 +574,37 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_record_reads_as_gone_for_its_id_alone() {
+    fn an_unreadable_value_reads_as_damaged_for_its_id_alone() {
         let faults = Faults::default();
-        assert!(!faults.unreadable(SIGN_IN_RECORD, "a1"));
-        faults.set("unreadable:sign-in-record", Some("a1")).unwrap();
-        assert!(faults.unreadable(SIGN_IN_RECORD, "a1"));
-        assert!(!faults.unreadable(SIGN_IN_RECORD, "a2"));
-        faults.set("unreadable:sign-in-record", Some("a2")).unwrap();
-        assert!(!faults.unreadable(SIGN_IN_RECORD, "a1"));
-        assert!(faults.unreadable(SIGN_IN_RECORD, "a2"));
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a1"));
+        faults
+            .set("unreadable:type-definition", Some("a1"))
+            .unwrap();
+        assert!(faults.unreadable(TYPE_DEFINITION, "a1"));
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a2"));
+        faults
+            .set("unreadable:type-definition", Some("a2"))
+            .unwrap();
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a1"));
+        assert!(faults.unreadable(TYPE_DEFINITION, "a2"));
         faults.clear(None);
-        assert!(!faults.unreadable(SIGN_IN_RECORD, "a2"));
+        assert!(!faults.unreadable(TYPE_DEFINITION, "a2"));
     }
 
     #[test]
-    fn refuses_an_unreadable_record_nothing_reads_and_an_argument_that_is_no_id() {
+    fn refuses_an_unreadable_value_nothing_reads_and_an_argument_that_is_no_id() {
         assert!(refused("unreadable:elsewhere", Some("a1")));
-        assert!(refused("unreadable:sign-in-record", None));
+        assert!(refused("unreadable:sign-in-record", Some("a1")));
+        assert!(refused("unreadable:type-definition", None));
         for arg in ["", " ", "a b", "/x", "-a"] {
-            assert!(refused("unreadable:sign-in-record", Some(arg)), "{arg}");
+            assert!(refused("unreadable:type-definition", Some(arg)), "{arg}");
         }
-        assert!(refused("unreadable:sign-in-record", Some(&"a".repeat(129))));
+        assert!(refused(
+            "unreadable:type-definition",
+            Some(&"a".repeat(129))
+        ));
         assert!(!refused(
-            "unreadable:sign-in-record",
+            "unreadable:type-definition",
             Some(&"a".repeat(128))
         ));
     }

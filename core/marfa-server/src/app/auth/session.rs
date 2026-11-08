@@ -247,17 +247,20 @@ pub async fn seen(app: &App, session: Session) -> Result<Option<Seen>> {
             recorded: false,
         }));
     }
-    if app.faults.fail(FAIL_SESSION_USE, None) {
-        return Ok(Some(Seen {
-            session,
-            recorded: false,
-        }));
-    }
     let id = session.id.clone();
     let clock = app.clock.clone();
+    let faults = app.faults.clone();
     match app
         .db
-        .write(USE, move |tx| record_use(tx, &id, clock.now_ms() / 1000))
+        .write(USE, move |tx| {
+            if faults.fail(FAIL_SESSION_USE, None) {
+                return Err(Refusal::new(
+                    Code::WriteContention,
+                    "The database is busy; try again.",
+                ));
+            }
+            record_use(tx, &id, clock.now_ms() / 1000)
+        })
         .await
     {
         Err(refusal) if leaves_use_unwritten(&refusal) => Ok(Some(Seen {
