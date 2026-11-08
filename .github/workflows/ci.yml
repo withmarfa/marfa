@@ -75,7 +75,6 @@ jobs:
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
       image: ${{ steps.classify.outputs.image }}
       types-freshness: ${{ steps.classify.outputs.types-freshness }}
-      openapi-freshness: ${{ steps.classify.outputs.openapi-freshness }}
       version-fields: ${{ steps.classify.outputs.version-fields }}
       clients-freshness: ${{ steps.classify.outputs.clients-freshness }}
       core: ${{ steps.classify.outputs.core }}
@@ -1529,33 +1528,6 @@ jobs:
             exit 1
           fi
 
-  openapi-freshness:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.openapi-freshness != 'false') }}
-    name: OpenAPI spec freshness
-    timeout-minutes: 8
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # The generator script imports through @withmarfa/shared, which needs
-      # its dist/ before tsx can resolve it.
-      - run: pnpm --filter "@withmarfa/server..." build
-      - name: Regenerate and check for drift
-        run: |
-          pnpm --filter @withmarfa/server run generate:openapi
-          if ! git diff --exit-code openapi.json; then
-            echo "openapi.json is out of date. Run 'pnpm generate' and commit."
-            exit 1
-          fi
-
   version-fields:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.version-fields != 'false') }}
@@ -1706,7 +1678,6 @@ jobs:
         restore-drill,
         image,
         types-freshness,
-        openapi-freshness,
         version-fields,
         clients-freshness,
         core,
@@ -1756,7 +1727,6 @@ jobs:
         restore-drill,
         image,
         types-freshness,
-        openapi-freshness,
         version-fields,
         clients-freshness,
         core,

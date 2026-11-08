@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -13,6 +10,14 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import {
+  damageBlobs,
+  diskHolds,
+  diskIntact,
+  faultsOn,
+  loseBlobs,
+  type FaultTarget,
+} from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
 
 let client: MarfaClient;
@@ -22,7 +27,9 @@ let operator: MarfaClient;
 /** One of the values the run booted the server with. A run without it was
  *  booted without `pnpm marfa:up` or `pnpm garage:up`, which is a failure
  *  here rather than a skip. */
-function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
+function bootEnv(
+  name: "MARFA_API_URL" | "MARFA_CONTROL_SOCKET" | "S3_ENDPOINT",
+) {
   const value = process.env[name];
   if (!value) {
     throw new Error(
@@ -116,15 +123,9 @@ function kinds(copies: readonly { kind: string }[]): string[] {
   return copies.map((copy) => copy.kind).sort();
 }
 
-function sha256(bytes: Uint8Array): string {
-  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
-/** Where the referee's own server keeps a disk copy: the store the run
- *  booted, in a directory named by the hex's first four characters. */
-function diskPathFor(hash: string): string {
-  const hex = hash.slice("sha256:".length);
-  return join(bootEnv("MARFA_BLOB_PATH"), hex.slice(0, 4), hex);
+/** Faults on the referee's own server, aimed at blobs this fixture uploaded. */
+function blobFaults(): FaultTarget {
+  return faultsOn(bootEnv("MARFA_CONTROL_SOCKET"));
 }
 
 /** This run's own bytes, so a state directory reused across runs holds no
@@ -380,16 +381,16 @@ describe("the rules that keep a blob's bytes", () => {
     });
     expect(before.data.data).toHaveLength(0);
 
-    // The disk copy overwritten under the referee's own server, at its own
-    // length so only the digest can tell, and another's removed: the check
+    // The disk copy reads as other bytes, at its own length so only the
+    // digest can tell, and another's reads as gone: the check
     // strikes both with an audit row each, replication brings the right
     // bytes back from the object store, and the download reads them.
     //
     // The strike is read off the audit rows, not off the copy record: a
     // strike wakes replication, which the server runs on its own poll, so
     // the struck copy can be back before a listing sees it gone.
-    writeFileSync(diskPathFor(hash), content.replace("corrupted", "CORRUPTED"));
-    unlinkSync(diskPathFor(missing));
+    await damageBlobs(blobFaults(), [hash]);
+    await loseBlobs(blobFaults(), [missing]);
     const struckRows = async (each: string) =>
       (
         await client.listAudit({
@@ -418,7 +419,9 @@ describe("the rules that keep a blob's bytes", () => {
         "disk",
         "s3",
       ]);
-      expect(sha256(readFileSync(diskPathFor(each)))).toBe(each);
+      expect(await diskIntact(bootEnv("MARFA_CONTROL_SOCKET"), each)).toBe(
+        true,
+      );
     }
     const download = await client.downloadBlob(hash);
     expect(download.status).toBe(200);
@@ -943,13 +946,13 @@ describe("how the copies are placed and removed", () => {
     const s3 = stores.find((store) => store.kind === "s3")!;
     const link = (await client.getBlobUrl(hash)).data.url;
     // The witness: both stores hold the bytes before either is dropped.
-    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect(await diskHolds(bootEnv("MARFA_CONTROL_SOCKET"), hash)).toBe(true);
     expect((await fetch(link)).status).toBe(200);
 
     expect((await operator.deleteBlobCopy(hash, disk.id)).status).toBe(200);
-    expect(existsSync(diskPathFor(hash))).toBe(false);
+    expect(await diskHolds(bootEnv("MARFA_CONTROL_SOCKET"), hash)).toBe(false);
     await replicateToZero();
-    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect(await diskHolds(bootEnv("MARFA_CONTROL_SOCKET"), hash)).toBe(true);
 
     expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
     expect((await fetch(link)).status).toBe(404);
@@ -1008,14 +1011,14 @@ describe("how the copies are placed and removed", () => {
     const hash = await uploadText("purged from the disk and the object store");
     await replicateToZero();
     const link = (await operator.getBlobUrl(hash)).data.url;
-    expect(existsSync(diskPathFor(hash))).toBe(true);
+    expect(await diskHolds(bootEnv("MARFA_CONTROL_SOCKET"), hash)).toBe(true);
     expect((await fetch(link)).status).toBe(200);
 
     await sweepOrphans();
     await sweepOrphans();
 
     expect((await operator.downloadBlob(hash)).status).toBe(404);
-    expect(existsSync(diskPathFor(hash))).toBe(false);
+    expect(await diskHolds(bootEnv("MARFA_CONTROL_SOCKET"), hash)).toBe(false);
     expect((await fetch(link)).status).toBe(404);
   });
 
@@ -1026,8 +1029,6 @@ describe("how the copies are placed and removed", () => {
     await replicateToZero();
     const stores = (await operator.listBlobStores()).data.data;
     const s3 = stores.find((store) => store.kind === "s3")!;
-    const path = diskPathFor(hash);
-    const bytes = readFileSync(path);
     expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
@@ -1035,7 +1036,7 @@ describe("how the copies are placed and removed", () => {
 
     // The disk's copy goes behind the copy record's back, as a store's late delete
     // would take it: the copy record still names two copies.
-    unlinkSync(path);
+    await loseBlobs(blobFaults(), [hash]);
     const refused = await operator.deleteBlobCopy(hash, s3.id);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("copies_below_minimum");
@@ -1052,7 +1053,7 @@ describe("how the copies are placed and removed", () => {
     );
 
     // The witness: with the disk's copy back, the same drop goes.
-    writeFileSync(path, bytes);
+    await blobFaults().clearFault("lose:blob");
     const dropped = await operator.deleteBlobCopy(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([

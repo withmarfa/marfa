@@ -30,6 +30,7 @@ const ROUTES: [string, string, unknown?][] = [
   ["GET", "/_control/test/faults"],
   ["PUT", "/_control/test/faults", { name: "hold:version-thinning:item" }],
   ["DELETE", "/_control/test/faults"],
+  ["GET", "/_control/test/blob-stores"],
 ];
 
 async function overHttp(

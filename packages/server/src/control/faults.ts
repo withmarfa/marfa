@@ -34,6 +34,17 @@
  *   when that request answers. A fixture then reads from the server itself
  *   whether a job reached a later hold before `/health` answered, with the
  *   health request already in the server when the job resumes.
+ * - `lose:blob=<hashes>` makes the disk store read each named blob as
+ *   absent, `damage:blob=<hashes>` makes it read the blob with its first
+ *   byte changed, and `damage:blob-unreadable=<hashes>` makes a read or a
+ *   question of presence for the blob fail with `EIO`, from now until the
+ *   store deletes that blob (or, for a lost blob, places it again) or the
+ *   fault is cleared or set again. `<hashes>` is a list of `sha256:` names
+ *   separated by `,`.
+ * - `hide:event=<first>[-<last>]` makes each webhook-schedule run read the
+ *   events with those ids (a whole number, or a range of two) as absent from
+ *   the event log, and `hide:webhook-position` makes it read the place it
+ *   keeps in the log as absent. Nothing is stored.
  * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery, or an
  *   MCP tool's fetch of a file, resolve that name to scripted addresses.
  *   `<answers>` is one answer per lookup, separated by `;`, each a list of
@@ -52,6 +63,7 @@
  */
 
 import ipaddr from "ipaddr.js";
+import type { HiddenEventIds } from "../storage/interface.js";
 
 /** What follows `=` in the name of a fault, by the point it is set on. */
 type ArgShape =
@@ -94,6 +106,7 @@ export const POINTS: {
     { name: "read-snapshot", arg: "none" },
     { name: "webhook-schedule:queued", arg: "none" },
     { name: "read-hydration", arg: "none" },
+    { name: "admission", arg: "every-or-nth" },
     { name: "export-validation", arg: "none" },
     { name: "write", arg: "write" },
     { name: "export-page", arg: "nth" },
@@ -115,6 +128,7 @@ export const POINTS: {
     { name: "blob-read-short", arg: "nth" },
     { name: "blob-write", arg: "nth" },
     { name: "blob-delete", arg: "nth" },
+    { name: "folder-status-report", arg: "nth" },
     { name: "housekeeping:<job>", arg: "nth" },
     { name: "job-row", arg: "nth" },
     { name: "stream-head", arg: "nth" },
@@ -142,6 +156,8 @@ const ACTION = /^[a-z][a-z0-9_.-]*$/;
 /** The longest delay a timer takes. */
 const MAX_DEADLINE_MS = 2_147_483_647;
 const MAX_NTH = 1_000_000;
+const BLOB_HASH = /^sha256:[0-9a-f]{64}$/;
+const MAX_BLOB_HASHES = 1_000;
 
 export interface ActiveFault {
   name: string;
@@ -172,6 +188,8 @@ interface Entry {
   fired: number;
   /** See {@link ActiveFault.held_when_answered}. */
   heldWhenAnswered: string[] | undefined;
+  /** For `lose:blob`, `damage:blob` and `damage:blob-unreadable`: the blobs still read wrongly. */
+  hashes: Set<string> | undefined;
 }
 
 const faults = new Map<string, Entry>();
@@ -251,6 +269,25 @@ function answers(arg: string | null): ScriptedAnswer[] | undefined {
   return steps;
 }
 
+/** The blobs a `lose:blob` or `damage:blob` argument names, or undefined where it is not a list of them. */
+function blobHashes(arg: string | null): string[] | undefined {
+  if (arg === null || arg === "") return undefined;
+  const hashes = arg.split(",");
+  return hashes.length <= MAX_BLOB_HASHES &&
+    hashes.every((hash) => BLOB_HASH.test(hash))
+    ? hashes
+    : undefined;
+}
+
+/** The events a `hide:event` argument names, or undefined where it is not an id or a range. */
+function hiddenRange(arg: string | null): HiddenEventIds | undefined {
+  const match = /^([1-9][0-9]{0,17})(?:-([1-9][0-9]{0,17}))?$/.exec(arg ?? "");
+  if (match?.[1] === undefined) return undefined;
+  const first = BigInt(match[1]);
+  const last = match[2] === undefined ? first : BigInt(match[2]);
+  return last < first ? undefined : { first, last };
+}
+
 function shapeProblem(name: string, arg: string | null): string | undefined {
   const colon = name.indexOf(":");
   const kind = colon < 0 ? name : name.slice(0, colon);
@@ -285,6 +322,24 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return `an ${name} fault takes a whole number of milliseconds from 1`;
     return undefined;
   }
+  if (kind === "lose" || kind === "damage") {
+    if (rest === "blob" || (kind === "damage" && rest === "blob-unreadable"))
+      return blobHashes(arg) === undefined
+        ? `a ${kind}:${rest} fault takes sha256: blob names separated by ,`
+        : undefined;
+    return `no ${kind} is named ${rest}`;
+  }
+  if (kind === "hide") {
+    if (rest === "event")
+      return hiddenRange(arg) === undefined
+        ? "a hide:event fault takes an event id, or two joined by -, from 1"
+        : undefined;
+    if (rest === "webhook-position")
+      return arg === null
+        ? undefined
+        : "a hide:webhook-position fault takes no argument";
+    return `no hide is named ${rest}`;
+  }
   if (kind === "release") {
     if (declared("hold", rest) === undefined)
       return `no hold point is named ${rest}`;
@@ -296,7 +351,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, lose:blob, damage:blob, damage:blob-unreadable, hide:event, hide:webhook-position, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -351,6 +406,10 @@ export function setFault(name: string, arg: string | null): void {
       ? undefined
       : aim(point, arg);
   const aimed = typeof target === "object" ? target : undefined;
+  const hashes =
+    (kind === "lose" || kind === "damage") && /:blob(-unreadable)?$/.test(name)
+      ? new Set(blobHashes(arg))
+      : undefined;
   const existing = faults.get(name);
   if (existing) {
     existing.arg = arg;
@@ -358,6 +417,7 @@ export function setFault(name: string, arg: string | null): void {
     existing.seen = 0;
     existing.fired = 0;
     existing.heldWhenAnswered = undefined;
+    existing.hashes = hashes;
   } else
     faults.set(name, {
       arg,
@@ -366,6 +426,7 @@ export function setFault(name: string, arg: string | null): void {
       seen: 0,
       fired: 0,
       heldWhenAnswered: undefined,
+      hashes,
     });
 }
 
@@ -517,6 +578,41 @@ export async function holdAt(
   signal?: AbortSignal,
 ): Promise<void> {
   await atPoint(point, () => Promise.resolve(), action, signal);
+}
+
+/** How the disk store reads `hash` while a fault says so, if one does. */
+export function blobLie(
+  hash: string,
+): "lose" | "damage" | "unreadable" | undefined {
+  if (faults.size === 0) return undefined;
+  if (faults.get("lose:blob")?.hashes?.has(hash)) return "lose";
+  if (faults.get("damage:blob-unreadable")?.hashes?.has(hash))
+    return "unreadable";
+  if (faults.get("damage:blob")?.hashes?.has(hash)) return "damage";
+  return undefined;
+}
+
+/**
+ * Ends what a blob fault says of `hash`: the store
+ * deleted it, or, for a lost blob, placed it again.
+ */
+export function healBlob(hash: string, placed: boolean): void {
+  if (faults.size === 0) return;
+  faults.get("lose:blob")?.hashes?.delete(hash);
+  if (placed) return;
+  faults.get("damage:blob")?.hashes?.delete(hash);
+  faults.get("damage:blob-unreadable")?.hashes?.delete(hash);
+}
+
+/** The events `hide:event` makes the webhook-schedule job read as absent, if it is armed. */
+export function hiddenEventsFault(): HiddenEventIds | undefined {
+  if (faults.size === 0) return undefined;
+  return hiddenRange(faults.get("hide:event")?.arg ?? null);
+}
+
+/** Whether `hide:webhook-position` makes the webhook-schedule job read its place in the log as absent. */
+export function webhookPositionHidden(): boolean {
+  return faults.size > 0 && faults.has("hide:webhook-position");
 }
 
 /** The deadline `deadline:<job>` sets for a run of `job`, if one is armed. */
