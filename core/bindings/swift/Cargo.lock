@@ -851,7 +851,6 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "core-foundation",
- "globset",
  "hex",
  "libc",
  "libsqlite3-sys",
@@ -892,6 +891,8 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "chrono",
+ "globset",
+ "regex",
  "ryu",
  "serde",
  "serde_json",

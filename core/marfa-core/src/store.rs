@@ -1516,23 +1516,8 @@ pub fn slice_holds(
         ))
 }
 
-pub const EVERY_TYPE: &str = "*";
-
-/// Whether a declaration names the type, tier aside: `EVERY_TYPE` names every
-/// type but `system.*`.
-pub fn declares_type(
-    catalog: &marfa_rules::catalog::Catalog,
-    types: &[String],
-    row_type: &str,
-) -> bool {
-    types.iter().any(|declared| {
-        if declared == EVERY_TYPE {
-            !is_system(row_type)
-        } else {
-            catalog.matches(declared, row_type)
-        }
-    })
-}
+pub use marfa_rules::folder::declares_type;
+pub use marfa_rules::query::EVERY_TYPE;
 
 /// `EVERY_TYPE` takes what a bare server listing answers, which leaves out
 /// `system.*`. A `system.*` row named by type is taken at either tier: the
@@ -1555,9 +1540,7 @@ pub fn slice_takes(
     })
 }
 
-pub(crate) fn is_system(r#type: &str) -> bool {
-    r#type.starts_with("system.")
-}
+pub(crate) use marfa_rules::folder::is_system;
 
 pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>, CoreError> {
     match meta_get(conn, META_SLICE_QUERY)? {

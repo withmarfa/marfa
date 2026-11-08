@@ -326,27 +326,17 @@ impl Settings {
         Ok(())
     }
 
-    /// The server refuses a placement directory a device cannot write to: an
-    /// absolute or drive-absolute one, one with a backslash or NUL, and one
-    /// with a `..` name, which a device counts `outside` wherever it climbs
-    /// back (`items/folder-setting-followable`).
+    /// A placement directory a device cannot write to is refused, as the
+    /// server refuses it (`items/folder-setting-followable`).
     fn placements(&self) -> Result<()> {
         for (r#type, dir) in &self.first_placement {
-            let outside = dir.starts_with('/')
-                || dir.contains(['\\', '\0'])
-                || dir.split('/').any(|name| name == "..")
-                || dir.split_once(':').is_some_and(|(drive, _)| {
-                    drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic())
-                });
-            if outside {
-                return Err(CoreError::Validation {
+            marfa_rules::folder::check_placement(r#type, dir).map_err(|message| {
+                CoreError::Validation {
                     code: "validation_error".into(),
-                    message: format!(
-                        "{type}: {dir:?} is not a directory inside the folder: write a path relative to its root, with \"/\" between names and no \"..\" name"
-                    ),
+                    message,
                     details: None,
-                });
-            }
+                }
+            })?;
         }
         Ok(())
     }
@@ -354,30 +344,23 @@ impl Settings {
     /// A default type the query does not hold would put every new file
     /// outside its own folder.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
-        if let Some(named) = &self.defaults.r#type
-            && !self.holds_type(catalog, named)
-        {
-            return Err(CoreError::Invalid(format!(
-                "a new file would become a {named}, which the query does not hold"
-            )));
-        }
-        Ok(())
+        marfa_rules::folder::check_default_type(
+            catalog,
+            &self.query.types,
+            self.defaults.r#type.as_deref(),
+        )
+        .map_err(CoreError::Invalid)
     }
 
     /// Whether the query names no type or names `*`: every type but
     /// `system.*`. The one reading of the star, so a folder naming it holds,
     /// writes and reports exactly what a folder naming no type does.
     pub(crate) fn names_every_type(&self) -> bool {
-        self.query.types.is_empty()
-            || self
-                .query
-                .types
-                .iter()
-                .any(|named| named.trim() == crate::store::EVERY_TYPE)
+        marfa_rules::folder::names_every_type(&self.query.types)
     }
 
     pub(crate) fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
-        crate::store::declares_type(catalog, &self.slice_types(), named)
+        marfa_rules::folder::holds_type(catalog, &self.query.types, named)
     }
 
     /// What the query holds, as clauses on `items`: the one evaluation a
@@ -534,15 +517,7 @@ impl Settings {
     /// type or names `*`, which `narrow` reads as every type, and the types
     /// otherwise.
     pub(crate) fn slice_types(&self) -> Vec<String> {
-        if self.names_every_type() {
-            vec![crate::store::EVERY_TYPE.to_string()]
-        } else {
-            self.query
-                .types
-                .iter()
-                .map(|named| named.trim().to_string())
-                .collect()
-        }
+        marfa_rules::folder::slice_types(&self.query.types)
     }
 
     pub fn tier(&self) -> SliceTier {
