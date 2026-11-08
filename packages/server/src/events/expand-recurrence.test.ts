@@ -38,7 +38,7 @@ describe("expandSeries", () => {
       expandSeries(
         weekly({
           starts_at: "2041-08-01T21:30:00Z",
-          ends_at: null,
+          ends_at: undefined,
           timezone: "UTC",
           recurrence: ["RRULE:FREQ=MINUTELY"],
         }),
