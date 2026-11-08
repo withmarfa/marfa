@@ -210,6 +210,15 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     if let Some(address) = &request.url {
         check_address(app, address).await?;
     }
+    let fields: Vec<&'static str> = [
+        ("url", request.url.is_some()),
+        ("events", request.events.is_some()),
+        ("type_filter", request.type_filter.is_some()),
+        ("active", request.active.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(field, named)| named.then_some(field))
+    .collect();
     let cache = app.catalog_handle();
     let subscription = app
         .write(caller, "webhook.update", move |unit| {
@@ -242,7 +251,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
                     }
                 }
             }
-            unit.audit("webhook", &id, None)?;
+            unit.audit("webhook", &id, Some(json!({ "fields": fields })))?;
             Ok(next)
         })
         .await?;

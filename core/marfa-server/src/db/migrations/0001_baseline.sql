@@ -421,7 +421,8 @@ CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT
 CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
 
 -- A delivery keeps its event as the log held it, so the log can expire it, and
--- each attempt judges it again for the credential as it stands then. `attempt`
+-- each attempt judges it again for the credential as it stands then. Only a
+-- pending or dead_letter delivery keeps it, since only those are sent. `attempt`
 -- counts every recorded attempt; `cycle_attempt` only those since the delivery
 -- was queued or redelivered. `due_at` is in milliseconds on the server's clock.
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -432,7 +433,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     event_type TEXT NOT NULL,
     type TEXT NOT NULL,
     source TEXT NOT NULL,
-    payload TEXT NOT NULL,
+    payload TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'dead_letter', 'canceled')),
     status_code INTEGER,
     attempt INTEGER NOT NULL DEFAULT 0,
@@ -441,7 +442,8 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     due_at INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (webhook_id, event_id)
+    UNIQUE (webhook_id, event_id),
+    CHECK (payload IS NOT NULL OR status IN ('success', 'canceled'))
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS webhook_deliveries_due

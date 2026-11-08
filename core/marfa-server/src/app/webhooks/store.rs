@@ -329,8 +329,8 @@ pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
 /// already settled stays as it is.
 pub fn cancel(tx: &Transaction<'_>, seq: i64, error: &str, at: &str) -> Result<()> {
     tx.execute(
-        "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3 \
-         WHERE seq = ?1 AND status = 'pending'",
+        "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3, \
+         payload = NULL WHERE seq = ?1 AND status = 'pending'",
         params![seq, error, at],
     )?;
     Ok(())
@@ -338,8 +338,8 @@ pub fn cancel(tx: &Transaction<'_>, seq: i64, error: &str, at: &str) -> Result<(
 
 pub fn cancel_all(tx: &Transaction<'_>, webhook_id: &str, error: &str, at: &str) -> Result<()> {
     tx.execute(
-        "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3 \
-         WHERE webhook_id = ?1 AND status = 'pending'",
+        "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3, \
+         payload = NULL WHERE webhook_id = ?1 AND status = 'pending'",
         params![webhook_id, error, at],
     )?;
     Ok(())
@@ -357,7 +357,8 @@ pub struct Recorded<'a> {
 pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE webhook_deliveries SET status = ?2, status_code = ?3, error = ?4, due_at = ?5, \
-         attempt = attempt + 1, cycle_attempt = cycle_attempt + 1, updated_at = ?6 \
+         attempt = attempt + 1, cycle_attempt = cycle_attempt + 1, updated_at = ?6, \
+         payload = CASE WHEN ?2 = 'success' THEN NULL ELSE payload END \
          WHERE seq = ?1 AND status = 'pending'",
         params![
             seq,
