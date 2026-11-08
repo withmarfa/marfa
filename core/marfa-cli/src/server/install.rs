@@ -267,9 +267,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             None
         }
     };
-    // The address people sign in at, which the server holds. A native server
-    // only this machine reaches needs none; in a container it would fall back
-    // to the container's own port, not the one published here.
+    // Docker's fallback uses the container port, not the published port.
     let sign_in: Option<String> = match access {
         Access::Local => {
             if args.address.is_some() {
