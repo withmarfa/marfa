@@ -930,8 +930,7 @@ async fn a_drop_is_not_confirmed_by_another_bucket_holding_the_same_object() {
     assert_eq!(fetched.bytes, bytes);
 }
 
-/// Occupies the writer until the sender is used or dropped, beating so writes queued behind
-/// it wait. The receiver answers once the writer has started on it.
+/// Holds the writer and keeps its heartbeat alive until the sender releases it.
 fn occupy_writer(
     app: &Arc<App>,
 ) -> (
@@ -958,7 +957,7 @@ fn occupy_writer(
     (release, began)
 }
 
-/// Lets every task woken so far run as far as it can without waiting on anything.
+/// Gives queued tasks an opportunity to run before the next step.
 async fn settle() {
     for _ in 0..8 {
         tokio::task::yield_now().await;

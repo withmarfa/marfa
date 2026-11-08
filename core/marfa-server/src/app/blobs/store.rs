@@ -163,9 +163,7 @@ impl Gate {
         }
     }
 
-    /// Runs a write or a deletion on a task of its own and waits `deadline` for it. One that
-    /// takes longer, or whose wait is dropped, goes on, and its blob stays unfinished until it
-    /// ends.
+    /// A timed-out or dropped wait keeps the blob unfinished until the work ends.
     pub async fn outlast<T, W>(
         self: &Arc<Gate>,
         hash: &Hash,
@@ -230,8 +228,7 @@ impl Drop for Ending {
     }
 }
 
-/// Held by the wait. Leaving it, by a deadline or by being dropped, while the work runs marks
-/// the blob unfinished.
+/// Keeps unfinished work marked when its caller stops waiting.
 struct Waiting {
     gate: Arc<Gate>,
     hash: Hash,

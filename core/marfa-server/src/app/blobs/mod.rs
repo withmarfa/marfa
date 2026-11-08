@@ -406,9 +406,7 @@ impl Blobs {
         }
     }
 
-    /// Whether the store answers now with its own marker. Asked after an object store's answers
-    /// and before the copy record changes on them, so an endpoint that stopped being the store
-    /// since an earlier answer changes nothing.
+    /// Checks the marker after the answer used to change the copy record.
     async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;
@@ -529,8 +527,7 @@ fn joined<T>(outcome: std::result::Result<T, tokio::task::JoinError>) -> Result<
     outcome.map_err(|error| Refusal::internal(&format!("a blob task did not finish: {error}")))
 }
 
-/// Runs work that holds a blob's lock or changes a store or the copy record on a task the
-/// server owns, so a caller that goes away abandons only its wait.
+/// A disconnected caller abandons its wait without cancelling the work.
 async fn owned<T: Send + 'static>(
     work: impl Future<Output = Result<T>> + Send + 'static,
 ) -> Result<T> {
@@ -734,9 +731,7 @@ impl App {
         }
     }
 
-    /// Places the bytes on the disk and only then runs `job`, the write that records them, so
-    /// a file with no record is never served and a recorded one is never removed. The lock on
-    /// the bytes is held until the write has ended, on a task the server owns.
+    /// Holds the blob lock through the record's commit, even if the caller disconnects.
     pub async fn keep_upload<T, F>(
         self: &Arc<App>,
         caller: &Caller,
@@ -1000,9 +995,7 @@ impl App {
         self.db.read(rows::orphans).await
     }
 
-    /// Drops one store's copy while `min_copies` others remain, each confirmed by its store,
-    /// on a task the server owns. The copy leaves the copy record, with its deletion queued,
-    /// before its bytes go.
+    /// Queues deletion with the copy's removal before deleting its bytes.
     pub async fn drop_copy(
         self: &Arc<App>,
         caller: &Caller,

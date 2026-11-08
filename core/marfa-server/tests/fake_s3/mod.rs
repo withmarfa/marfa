@@ -1,6 +1,4 @@
-//! An S3-compatible object store in the test process, path style, that keeps objects in
-//! memory and can be told to answer every request `404`, to send a body slowly, to carry out
-//! a deletion late, or to reach another bucket.
+//! An in-memory S3 fixture with controllable failures, delays, and bucket switching.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
