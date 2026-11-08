@@ -70,6 +70,7 @@ points! {
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
+    HOLD_STREAM_DRAIN = Hold "stream-drain" None;
     HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;

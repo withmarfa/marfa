@@ -15,11 +15,12 @@ use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 use super::frame::{Filter, Judge, Verdict, marker};
 use super::page::{self, Next};
 use crate::app::App;
+use crate::app::access::reach::{Demand, Judge as Reach};
 use crate::app::faults::{
     FAIL_STREAM_CREDENTIAL, FAIL_STREAM_REPLAY, FAIL_STREAM_REPLAY_ROW, FAIL_STREAM_REPLAY_UNTYPED,
-    Faults, HOLD_STREAM_HEAD, HOLD_STREAM_REPLAY,
+    Faults, HOLD_STREAM_DRAIN, HOLD_STREAM_HEAD, HOLD_STREAM_REPLAY,
 };
-use crate::app::items::{Reader, reading};
+use crate::app::items::{Reader, reading_under};
 use crate::app::refusal::{Code, Refusal, Result};
 
 /// A quiet stream is pinged this often, and a reader that takes nothing for this long is closed.
@@ -81,6 +82,22 @@ pub struct Hangup {
 pub struct Opening {
     pub filter: Filter,
     pub resume: Option<i64>,
+    /// Set on a copy stream: the reach it resumes under, none where it begins.
+    pub reach: Option<String>,
+}
+
+/// Each page must satisfy the reach announced by the copy stream.
+struct Copying {
+    judge: Reach,
+    reach: Option<String>,
+}
+
+impl Copying {
+    fn demand(&self) -> Option<Demand> {
+        self.reach
+            .clone()
+            .map(|reach| Demand::new(self.judge.clone(), reach))
+    }
 }
 
 /// `hangup` closes the connection when its reader stalls.
@@ -92,6 +109,10 @@ pub fn open(
     hangup: Option<Hangup>,
 ) -> mpsc::Receiver<Bytes> {
     let (frames, feed) = mpsc::channel(1);
+    let copy = opening.filter.copy.then(|| Copying {
+        judge: Reach::of(&app),
+        reach: opening.reach,
+    });
     let run = Run {
         stopping: app.stopping(),
         commits: app.db.commits(),
@@ -99,6 +120,7 @@ pub fn open(
         caller,
         filter: opening.filter,
         resume: opening.resume,
+        copy,
         frames,
         hangup,
         started: 0,
@@ -119,6 +141,7 @@ struct Run {
     caller: crate::app::access::Caller,
     filter: Filter,
     resume: Option<i64>,
+    copy: Option<Copying>,
     frames: mpsc::Sender<Bytes>,
     hangup: Option<Hangup>,
     stopping: watch::Receiver<bool>,
@@ -277,11 +300,7 @@ impl Run {
         self.check_stop()?;
         let head = self.opening().await?;
         self.check_stop()?;
-        self.send(frame(marker(
-            "stream_cursor",
-            vec![("cursor", head.to_string().into())],
-        ))?)
-        .await?;
+        self.announce("stream_cursor", head).await?;
         // Retention may have passed the cursor since the head was read.
         let mut resumed = self.resume.is_some();
         if resumed {
@@ -296,11 +315,14 @@ impl Run {
             }
             self.page(Some(faults)).await?;
         }
-        self.send(frame(marker(
-            "stream_live",
-            vec![("cursor", self.position.max(head).to_string().into())],
-        ))?)
-        .await?;
+        if self.copy.is_some() {
+            // Only a log read to its end under the reach lets the marker certify the copy.
+            self.app.faults.hold(HOLD_STREAM_DRAIN, None).await;
+            self.drain().await?;
+            self.certify().await?;
+        }
+        self.announce("stream_live", self.position.max(head))
+            .await?;
         self.position = self.position.max(head);
         let mut stopping = self.stopping.clone();
         loop {
@@ -327,6 +349,52 @@ impl Run {
         }
     }
 
+    /// The marker that names where the stream stands, and for a copy stream the instance and reach it holds.
+    async fn announce(&mut self, name: &str, cursor: i64) -> std::result::Result<(), Ending> {
+        let mut fields: Vec<(&str, Value)> = vec![("cursor", cursor.to_string().into())];
+        if let Some(copy) = &self.copy {
+            let reach = copy.reach.clone().ok_or(Ending::Gone)?;
+            fields.push(("instance_id", copy.judge.instance_id().into()));
+            fields.push(("reach", reach.into()));
+        }
+        self.send(frame(marker(name, fields))?).await
+    }
+
+    /// Reads the head, in the snapshot that settles the reach of a copy stream.
+    async fn head(&mut self) -> std::result::Result<page::Bounds, Ending> {
+        let read = match &self.copy {
+            None => {
+                reading_under(&self.app, &self.caller, None, |read| {
+                    Ok((page::bounds(read.tx)?, None))
+                })
+                .await
+            }
+            Some(copy) => {
+                let (judge, asked) = (copy.judge.clone(), copy.reach.clone());
+                reading_under(&self.app, &self.caller, None, move |read| {
+                    let reach = match asked {
+                        Some(asked) => {
+                            judge.require(read.tx, &read.caller, &asked)?;
+                            asked
+                        }
+                        None => judge.reach(read.tx, &read.caller)?,
+                    };
+                    Ok((page::bounds(read.tx)?, Some(reach)))
+                })
+                .await
+            }
+        };
+        match read {
+            Ok((bounds, reach)) => {
+                if let (Some(copy), Some(reach)) = (self.copy.as_mut(), reach) {
+                    copy.reach = Some(reach);
+                }
+                Ok(bounds)
+            }
+            Err(refusal) => Err(self.failure(&refusal)),
+        }
+    }
+
     /// Reads the head, and settles a cursor the log cannot resume from.
     async fn opening(&mut self) -> std::result::Result<i64, Ending> {
         if self
@@ -336,10 +404,7 @@ impl Run {
         {
             return Err(self.incomplete("read_failed"));
         }
-        let bounds = match reading(&self.app, &self.caller, |read| page::bounds(read.tx)).await {
-            Ok(bounds) => bounds,
-            Err(refusal) => return Err(self.failure(&refusal)),
-        };
+        let bounds = self.head().await?;
         self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
         let Some(cursor) = self.resume else {
             self.started = bounds.head;
@@ -347,6 +412,12 @@ impl Run {
             return Ok(bounds.head);
         };
         self.started = cursor;
+        let too_old = bounds
+            .oldest
+            .filter(|oldest| *oldest > cursor.saturating_add(1));
+        if self.copy.is_some() && (cursor > bounds.head || too_old.is_some()) {
+            self.announce("stream_cursor", bounds.head).await?;
+        }
         if cursor > bounds.head {
             return Err(ending(marker(
                 "cursor_ahead",
@@ -356,10 +427,7 @@ impl Run {
                 ],
             )));
         }
-        if let Some(oldest) = bounds
-            .oldest
-            .filter(|oldest| *oldest > cursor.saturating_add(1))
-        {
+        if let Some(oldest) = too_old {
             return Err(self.too_old(oldest));
         }
         self.position = cursor;
@@ -383,7 +451,8 @@ impl Run {
             return Err(self.incomplete("read_failed"));
         }
         let (filter, after) = (self.filter.clone(), self.position);
-        let read = reading(&self.app, &self.caller, move |read| {
+        let demand = self.copy.as_ref().and_then(Copying::demand);
+        let read = reading_under(&self.app, &self.caller, demand, move |read| {
             read_page(read, &filter, after, replay.as_deref())
         })
         .await;
@@ -424,7 +493,19 @@ impl Run {
         if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
             return Err(self.cut_short("read_failed"));
         }
-        let read = reading(&self.app, &self.caller, |read| {
+        self.reread().await
+    }
+
+    /// The last reach check before `stream_live`. The watch is marked seen first, so a commit after the read wakes the hand-over of the marker.
+    async fn certify(&mut self) -> std::result::Result<(), Ending> {
+        self.commits.borrow_and_update();
+        self.reread().await
+    }
+
+    /// Reads the credential, and for a copy stream its reach, in a snapshot of its own.
+    async fn reread(&mut self) -> std::result::Result<(), Ending> {
+        let demand = self.copy.as_ref().and_then(Copying::demand);
+        let read = reading_under(&self.app, &self.caller, demand, |read| {
             Ok(read.caller.key().and_then(|key| key.expires_at.clone()))
         })
         .await;
@@ -523,6 +604,9 @@ impl Run {
     }
 
     fn failure(&self, refusal: &Refusal) -> Ending {
+        if refusal.code == Code::ReachChanged {
+            return ending(marker("reach_changed", Vec::new()));
+        }
         if refusal.code == Code::Unauthorized {
             return self.incomplete("credential_ended");
         }
@@ -755,6 +839,147 @@ mod tests {
         releasing.await.unwrap();
         assert_eq!(viewers.open(), 0);
         assert!(viewers.admit(1).is_some());
+    }
+
+    /// A copy stream's state with its channel full, so the next piece waits for a reader.
+    async fn copy_run() -> (tempfile::TempDir, Run, mpsc::Receiver<Bytes>) {
+        use crate::app::access::Caller;
+        use crate::settings::{Environment, Settings};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let (database, blobs, socket) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("blobs"),
+            dir.path().join("s.sock"),
+        );
+        let pairs = [
+            ("SQLITE_PATH", database.to_str().unwrap()),
+            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+        ];
+        let app = App::start(Settings::read(Environment::from_pairs(&pairs)).unwrap())
+            .await
+            .unwrap();
+        let judge = Reach::of(&app);
+        let (asked, clock) = (judge.clone(), app.clock.clone());
+        let reach = app
+            .db
+            .read(move |tx| {
+                let caller = Caller::local().current(tx, &clock.stamp())?;
+                asked.reach(tx, &caller)
+            })
+            .await
+            .unwrap();
+        let (frames, feed) = mpsc::channel(1);
+        frames.send(Bytes::from_static(b"held")).await.unwrap();
+        let run = Run {
+            stopping: app.stopping(),
+            commits: app.db.commits(),
+            app,
+            caller: Caller::local(),
+            filter: Filter {
+                types: Vec::new(),
+                edges: true,
+                copy: true,
+            },
+            resume: None,
+            copy: Some(Copying {
+                judge,
+                reach: Some(reach),
+            }),
+            frames,
+            hangup: None,
+            started: 0,
+            position: 0,
+            sent: None,
+            torn: false,
+            last_output: Instant::now(),
+            checked: Instant::now(),
+            expiry: None,
+            viewer: Viewers::default().admit(0).unwrap(),
+        };
+        (dir, run, feed)
+    }
+
+    async fn move_reach(run: &Run) {
+        run.app
+            .db
+            .write(crate::db::Write::own(), |tx| {
+                crate::app::instance::raise_reach(tx)
+            })
+            .await
+            .unwrap();
+    }
+
+    fn closed_by(ending: std::result::Result<(), Ending>) -> String {
+        match ending {
+            Err(Ending::Closing(text)) => text,
+            Err(Ending::Gone) => panic!("the stream ended without a closing frame"),
+            Ok(()) => panic!("the stream went on"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_piece_whose_channel_has_room_is_handed_over_when_the_reach_holds() {
+        let (_dir, mut run, mut feed) = copy_run().await;
+        run.commits.borrow_and_update();
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"held"[..]));
+        run.hand(b"piece".to_vec(), Tail::Whole(Some(7)))
+            .await
+            .unwrap_or_else(|_| panic!("the piece was not handed over"));
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"piece"[..]));
+        assert_eq!(run.sent, Some(7));
+    }
+
+    #[tokio::test]
+    async fn a_piece_ready_to_send_waits_for_the_reach_check_a_commit_asks_for() {
+        let (_dir, mut run, mut feed) = copy_run().await;
+        run.commits.borrow_and_update();
+        move_reach(&run).await;
+        // Nothing has polled the hand-over yet, so the commit and the room are ready together.
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"held"[..]));
+        let closing = closed_by(run.hand(b"piece".to_vec(), Tail::Whole(Some(7))).await);
+        assert!(closing.contains("reach_changed"), "{closing}");
+        assert!(
+            feed.try_recv().is_err(),
+            "the piece was sent past the check"
+        );
+        assert_eq!(run.sent, None);
+    }
+
+    #[tokio::test]
+    async fn a_reach_that_moves_after_the_last_check_stops_stream_live_when_the_channel_has_room() {
+        let (_dir, mut run, mut feed) = copy_run().await;
+        run.certify()
+            .await
+            .unwrap_or_else(|_| panic!("the reach had not moved"));
+        move_reach(&run).await;
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"held"[..]));
+        let closing = closed_by(run.announce("stream_live", 0).await);
+        assert!(closing.contains("reach_changed"), "{closing}");
+        assert!(feed.try_recv().is_err(), "stream_live was sent");
+    }
+
+    #[tokio::test]
+    async fn a_reach_that_moved_before_the_last_check_ends_the_stream_there() {
+        let (_dir, mut run, _feed) = copy_run().await;
+        move_reach(&run).await;
+        let closing = closed_by(run.certify().await);
+        assert!(closing.contains("reach_changed"), "{closing}");
+    }
+
+    #[tokio::test]
+    async fn stream_live_is_handed_over_when_the_reach_holds_at_the_last_check() {
+        let (_dir, mut run, mut feed) = copy_run().await;
+        run.certify()
+            .await
+            .unwrap_or_else(|_| panic!("the reach had not moved"));
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"held"[..]));
+        run.announce("stream_live", 0)
+            .await
+            .unwrap_or_else(|_| panic!("stream_live was not announced"));
+        let sent = feed.recv().await.unwrap();
+        assert!(String::from_utf8_lossy(&sent).contains("stream_live"));
     }
 
     #[tokio::test]

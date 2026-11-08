@@ -10,6 +10,8 @@ use super::App;
 use super::access::{Caller, Door, Level, Permission, SchemaKind};
 use super::catalog::{self, Catalog, Snapshot};
 use super::edges;
+use super::instance;
+use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::types::{issues_json, missing_field};
 use super::unit::Unit;
@@ -91,16 +93,8 @@ fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()
     })
 }
 
-pub async fn list(app: &App) -> Result<Vec<Value>> {
-    let cache = app.catalog_handle();
-    let registered = app
-        .db
-        .read(move |tx| {
-            Ok(catalog::current(&cache, tx, Snapshot::Committed)?
-                .edge_types
-                .clone())
-        })
-        .await?;
+pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
+    let registered = reading(app, caller, |read| Ok(read.catalog.edge_types.clone())).await?;
     let held = builtin::shipped_edge_types()
         .map_err(|error| Refusal::internal(&format!("the shipped edge types: {error}")))?;
     Ok(held
@@ -211,6 +205,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ],
             )?;
             catalog::raise(unit.tx())?;
+            instance::raise_reach(unit.tx())?;
             unit.audit("edge_type", &id, None)?;
             Ok((true, built))
         })
@@ -273,6 +268,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         unit.tx()
             .execute("DELETE FROM edge_types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
         unit.audit("edge_type", &id, None)?;
         Ok(())
     })

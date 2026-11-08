@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use super::App;
 use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
+use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 pub use limit::Limiter;
@@ -442,6 +443,17 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Key>> {
             Ok(keys.into_iter().filter(|key| caller.reaches(key)).collect())
         })
         .await
+}
+
+/// Only a key credential has a current-key answer.
+pub async fn current(app: &App, caller: &Caller) -> Result<Option<Map<String, Value>>> {
+    reading(app, caller, |read| {
+        Ok(match &read.caller {
+            Caller::Key(key) => Some(key.to_json()),
+            _ => None,
+        })
+    })
+    .await
 }
 
 pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
