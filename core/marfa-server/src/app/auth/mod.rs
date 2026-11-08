@@ -91,6 +91,12 @@ pub fn seconds_of(at: &str) -> Result<i64> {
         .map_err(|_| Refusal::internal("an instant did not read"))
 }
 
+pub fn millis_of(at: &str) -> Result<i64> {
+    DateTime::parse_from_rfc3339(at)
+        .map(|at| at.timestamp_millis())
+        .map_err(|_| Refusal::internal("an instant did not read"))
+}
+
 fn stamp_of(seconds: i64) -> String {
     DateTime::<Utc>::from_timestamp(seconds, 0)
         .unwrap_or_default()
