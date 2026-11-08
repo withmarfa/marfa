@@ -4403,23 +4403,6 @@ export interface components {
             label?: string;
         };
         /** @description An error response. */
-        BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "bulk_cap_exceeded" | "missing_required_field" | "unknown_type" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
         CoreTypeImmutableOrTypeNotPermittedRefusal: {
             /** @description What went wrong. */
             error: {
@@ -16260,7 +16243,6 @@ export interface operations {
              * @description - `missing_required_field`: `to` is missing.
              *     - `validation_error`: `to` is malformed or names the type itself.
              *     - `unknown_type`: no type has the identifier `to`.
-             *     - `bulk_cap_exceeded`: the type holds over 50,000 items.
              */
             400: {
                 headers: {
@@ -16273,7 +16255,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

@@ -331,6 +331,16 @@ pub(super) fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+pub(super) fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
+    let listed = serde_json::to_string(ids)
+        .map_err(|_| crate::app::refusal::Refusal::internal("a list of IDs did not print"))?;
+    let mut statement = tx.prepare_cached(
+        "SELECT DISTINCT type FROM items WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY type",
+    )?;
+    let found = statement.query_map([listed], |row| row.get(0))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 /// The marks naming a retyped item follow it to its new type.
 pub(super) fn retype_marks(tx: &Transaction<'_>, root: &str, type_id: &str) -> Result<()> {
     tx.prepare_cached("UPDATE items SET trashed_with_type = ?2 WHERE trashed_with = ?1")?

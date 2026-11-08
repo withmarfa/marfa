@@ -2101,10 +2101,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                     }
                 }
                 validation::tag_count(held.len(), tags.len()).map_err(ruled)?;
-                if tags != held {
-                    rows::set_tags(tx, row.seq, &tags)?;
-                    self.tags_landed(&row, json!({ "tags": tags }))?;
-                }
+                rows::set_tags(tx, row.seq, &tags)?;
+                self.tags_landed(&row, json!({ "tags": tags }))?;
                 Ok(RowDone::default())
             }
             RowAct::Tier(tier) => self.row_update(id, |update| update.tier = Some(tier.clone())),

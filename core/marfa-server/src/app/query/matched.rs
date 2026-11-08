@@ -21,6 +21,8 @@ pub(crate) fn matched(
     for entry in &ask.types {
         if read.catalog.rules.known(entry) {
             judge_type(read, entry)?;
+        } else {
+            read.caller.require_type(entry, Level::Read)?;
         }
     }
     judge_terms(read, ask)?;

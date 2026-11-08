@@ -434,6 +434,11 @@ pub fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
     rows::settings(tx)
 }
 
+/// The types the named items hold now, each once.
+pub fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
+    rows::types_of(tx, ids)
+}
+
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     rows::count_of_type(tx, type_id)
 }

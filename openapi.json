@@ -5434,44 +5434,6 @@
         ],
         "description": "A key or app whose type map names a type outright."
       },
-      "BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "bulk_cap_exceeded",
-                  "missing_required_field",
-                  "unknown_type",
-                  "validation_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "CoreTypeImmutableOrTypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
@@ -30904,11 +30866,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },

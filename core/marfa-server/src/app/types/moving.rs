@@ -277,6 +277,7 @@ pub async fn move_type(
     let cache = app.catalog_handle();
     if asked.dry_run {
         let at = app.clock.stamp();
+        let named = [from.clone(), asked.to.clone()];
         let answer = crate::app::items::reading(app, caller, move |read| {
             let (caller, tx) = (&read.caller, read.tx);
             judge(caller, &read.catalog, &from, &asked.to)?;
@@ -296,7 +297,21 @@ pub async fn move_type(
             }))
         })
         .await?;
-        return Ok((200, answer.to_string()));
+        let body = answer.to_string();
+        let Some(claim) = claim else {
+            return Ok((200, body));
+        };
+        let kept = app
+            .write(caller, "items.bulk_action", move |unit| {
+                claim.note(Need::Reach);
+                for name in named {
+                    claim.note(Need::Type { name, write: true });
+                }
+                idempotency::complete(unit, &claim, 200, body.as_bytes())?;
+                Ok(body)
+            })
+            .await?;
+        return Ok((200, kept));
     }
     let answered = app
         .write(caller, "items.bulk_action", move |unit| {
@@ -308,6 +323,15 @@ pub async fn move_type(
                 return Err(plan.refusal(&from));
             }
             let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
+            if let Some(claim) = &claim {
+                claim.note(Need::Reach);
+                for name in [&from, &asked.to] {
+                    claim.note(Need::Type {
+                        name: name.clone(),
+                        write: true,
+                    });
+                }
+            }
             let queued = Queued {
                 action: Action::TypeMove {
                     from,
@@ -318,7 +342,6 @@ pub async fn move_type(
             };
             let body = jobs::enqueue(unit, &queued, &ids)?;
             if let Some(claim) = &claim {
-                claim.note(Need::Reach);
                 idempotency::complete(unit, claim, 202, body.as_bytes())?;
             }
             Ok(body)

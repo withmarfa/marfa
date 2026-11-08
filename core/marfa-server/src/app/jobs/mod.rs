@@ -274,7 +274,7 @@ pub async fn queue(
         fanout,
     } = asked;
     let purge = action.purges();
-    let (ids, form) = super::items::reading(app, caller, move |read| {
+    let (ids, form, types) = super::items::reading(app, caller, move |read| {
         read.caller.require_reach()?;
         if purge {
             read.caller.require(super::access::Permission::ItemsPurge)?;
@@ -283,11 +283,32 @@ pub async fn queue(
         if ids.len() as i64 > cap {
             return Err(over_cap(cap));
         }
-        Ok((ids, read.caller.source_filter_form()))
+        let types = super::items::types_of(read.tx, &ids)?;
+        Ok((ids, read.caller.source_filter_form(), types))
     })
     .await?;
+    let needs = move |claim: &Claim| {
+        claim.note(if purge { Need::Purge } else { Need::Reach });
+        for name in &types {
+            claim.note(Need::Type {
+                name: name.clone(),
+                write: true,
+            });
+        }
+    };
     if dry_run {
-        return Ok((200, dry_answer(&action, &ids).to_string()));
+        let body = dry_answer(&action, &ids).to_string();
+        let Some(claim) = claim else {
+            return Ok((200, body));
+        };
+        let kept = app
+            .write(caller, "items.bulk_action", move |unit| {
+                needs(&claim);
+                idempotency::complete(unit, &claim, 200, body.as_bytes())?;
+                Ok(body)
+            })
+            .await?;
+        return Ok((200, kept));
     }
     app.faults.hold(HOLD_JOB_SELECTED, None).await;
     let queued = Queued { action, fanout };
@@ -302,7 +323,7 @@ pub async fn queue(
             }
             let body = enqueue(unit, &queued, &ids)?;
             if let Some(claim) = &claim {
-                claim.note(if purge { Need::Purge } else { Need::Reach });
+                needs(claim);
                 idempotency::complete(unit, claim, 202, body.as_bytes())?;
             }
             Ok(body)

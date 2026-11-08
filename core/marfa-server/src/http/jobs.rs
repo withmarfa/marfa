@@ -120,12 +120,38 @@ fn timestamp(sent: &Map<String, Value>, field: &str) -> Result<Option<String>> {
         .transpose()
 }
 
+fn is_blank(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(entries) => entries.iter().all(is_blank),
+        _ => false,
+    }
+}
+
+/// A narrowing field that names nothing would match every item, so it is refused, not dropped.
+fn refuse_empty(filter: &Map<String, Value>) -> Result<()> {
+    let empty: Vec<String> = ["type", "source", "tags", "filter"]
+        .into_iter()
+        .filter(|field| filter.get(*field).is_some_and(is_blank))
+        .map(|field| format!("filter.{field}"))
+        .collect();
+    if empty.is_empty() {
+        return Ok(());
+    }
+    Err(Refusal::validation(format!(
+        "The filter names fields that hold no value: {}.",
+        empty.join(", ")
+    ))
+    .with_detail("empty_parameters", empty))
+}
+
 fn ask_of(sent: &Map<String, Value>) -> Result<Ask> {
     let filter = match sent.get("filter") {
         None => Map::new(),
         Some(Value::Object(filter)) => filter.clone(),
         Some(_) => return Err(invalid_field("filter", "filter must be an object.")),
     };
+    refuse_empty(&filter)?;
     let types = match text_of(&filter, "type")? {
         Some(type_id) => {
             check_id(&type_id, "filter.type")?;
@@ -147,7 +173,11 @@ fn ask_of(sent: &Map<String, Value>) -> Result<Ask> {
         states: States::Named(vec![state]),
         source: text_of(&filter, "source")?,
         tier: one_of(&filter, "tier", &TIERS)?,
-        tags: strings(&filter, "tags")?.unwrap_or_default(),
+        tags: strings(&filter, "tags")?
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|tag| !tag.trim().is_empty())
+            .collect(),
         filter: expression,
         occurred_after: timestamp(&filter, "occurred_after")?,
         occurred_before: timestamp(&filter, "occurred_before")?,
@@ -237,14 +267,15 @@ fn action_of(name: &str, sent: &Map<String, Value>) -> Result<(Action, Option<Ve
 }
 
 fn asked_of(body: &ReadBody) -> Result<Asked> {
-    let sent = body.object(Bag::Whole)?;
-    body.refuse_inexact_numbers(Bag::Whole)?;
+    let sent = body.object(Bag::Patch)?;
+    body.refuse_inexact_numbers(Bag::Patch)?;
     let name = required(text_of(&sent, "action")?, "action")?;
     let own = own_fields(&name).unwrap_or_default();
     refuse_undeclared(&sent, own)?;
+    let ask = ask_of(&sent)?;
     let (action, expected) = action_of(&name, &sent)?;
     Ok(Asked {
-        ask: ask_of(&sent)?,
+        ask,
         cap: cap_of(&sent)?,
         dry_run: flag(&sent, "dry_run")?,
         fanout: flag(&sent, "enable_fanout")?,
