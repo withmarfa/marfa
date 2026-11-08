@@ -12,15 +12,7 @@ import {
   type StreamTap,
 } from "../../utils/stream-tap.js";
 
-/**
- * What a copy stream does when the server cannot read what it needs to open,
- * to replay, or to go on delivering: the head of the log, a page of the log or
- * the stream's credential.
- *
- * The fixtures set the failure or the hold through the target interface
- * (`conformance/README.md`, "Faults") on a server of their own. Failure faults
- * act once; hold faults remain armed until cleared.
- */
+// Failure faults act once; hold faults stay armed until cleared.
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
