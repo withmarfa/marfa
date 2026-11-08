@@ -825,8 +825,6 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
     let local = format!("http://localhost:{}", rig.port);
     assert_eq!(rig.address().as_deref(), Some(local.as_str()));
-    // A changed published port moves it with the port, and an explicit
-    // `--access local` puts back an address someone moved.
     let moved = free_port();
     rig.also_listen(moved);
     let on_moved = ["--port", &moved.to_string(), "--access", "local"].map(String::from);
