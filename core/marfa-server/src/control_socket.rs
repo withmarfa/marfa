@@ -5,10 +5,9 @@
 //! is held to that before anything is made there, and the socket is bound
 //! under a name of its own and made private before it appears at its path.
 
-use std::ffi::{CString, OsString};
+use std::ffi::OsString;
 use std::fs::{File, Metadata, OpenOptions, TryLockError};
 use std::io::ErrorKind;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Component, Path, PathBuf};
@@ -394,7 +393,7 @@ fn publish(bound: &Path, path: &Path) -> Result<Identity, Failure> {
 }
 
 fn refuse_acl(path: &Path, what: &str) -> Result<(), Failure> {
-    match grants_by_acl(path) {
+    match marfa_acl::grants_by_acl(path) {
         Ok(false) => Ok(()),
         Ok(true) => Err(Failure::start(format!(
             "The control socket's {what} {} has an access control list that grants access",
@@ -405,128 +404,6 @@ fn refuse_acl(path: &Path, what: &str) -> Result<(), Failure> {
             path.display()
         ))),
     }
-}
-
-fn c_path(path: &Path) -> std::io::Result<CString> {
-    CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))
-}
-
-/// Whether an entry of the path's ACL allows anything. Deny entries narrow
-/// access, so they stand.
-#[cfg(target_os = "macos")]
-fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
-    use std::ffi::{c_char, c_int, c_void};
-
-    #[allow(non_camel_case_types)]
-    type acl_t = *mut c_void;
-    #[allow(non_camel_case_types)]
-    type acl_entry_t = *mut c_void;
-    const ACL_TYPE_EXTENDED: c_int = 0x100;
-    const ACL_FIRST_ENTRY: c_int = 0;
-    const ACL_NEXT_ENTRY: c_int = -1;
-    const ACL_EXTENDED_ALLOW: c_int = 1;
-    unsafe extern "C" {
-        fn acl_get_link_np(path: *const c_char, kind: c_int) -> acl_t;
-        fn acl_get_entry(acl: acl_t, entry_id: c_int, entry: *mut acl_entry_t) -> c_int;
-        fn acl_get_tag_type(entry: acl_entry_t, tag: *mut c_int) -> c_int;
-        fn acl_free(object: *mut c_void) -> c_int;
-    }
-
-    let name = c_path(path)?;
-    // SAFETY: `name` is NUL-terminated and outlives the call. A non-null
-    // answer is owned here and freed below, and each entry is read only while
-    // it is held.
-    unsafe {
-        let acl = acl_get_link_np(name.as_ptr(), ACL_TYPE_EXTENDED);
-        if acl.is_null() {
-            let error = std::io::Error::last_os_error();
-            return match error.raw_os_error() {
-                Some(libc::ENOENT) => Ok(false),
-                _ => Err(error),
-            };
-        }
-        let mut grants = false;
-        let mut entry: acl_entry_t = std::ptr::null_mut();
-        let mut which = ACL_FIRST_ENTRY;
-        while acl_get_entry(acl, which, &mut entry) == 0 {
-            let mut tag: c_int = 0;
-            if acl_get_tag_type(entry, &mut tag) == 0 && tag == ACL_EXTENDED_ALLOW {
-                grants = true;
-                break;
-            }
-            which = ACL_NEXT_ENTRY;
-        }
-        acl_free(acl);
-        Ok(grants)
-    }
-}
-
-/// Whether the path's POSIX ACL names an account or group beyond its owner,
-/// or holds a default ACL for what is made inside it.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
-    if read_xattr(path, c"system.posix_acl_default")?.is_some_and(|value| value.len() > 4) {
-        return Ok(true);
-    }
-    Ok(read_xattr(path, c"system.posix_acl_access")?.is_some_and(|value| names_others(&value)))
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<u8>>> {
-    let file = c_path(path)?;
-    loop {
-        // SAFETY: both names are NUL-terminated and outlive the calls, and
-        // the buffer passed is as long as the size given with it.
-        let size =
-            unsafe { libc::lgetxattr(file.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) };
-        if size < 0 {
-            let error = std::io::Error::last_os_error();
-            return match error.raw_os_error() {
-                Some(libc::ENODATA | libc::ENOTSUP) => Ok(None),
-                _ => Err(error),
-            };
-        }
-        let mut value = vec![0u8; size.unsigned_abs()];
-        let read = unsafe {
-            libc::lgetxattr(
-                file.as_ptr(),
-                name.as_ptr(),
-                value.as_mut_ptr().cast(),
-                value.len(),
-            )
-        };
-        if read >= 0 {
-            value.truncate(read.unsigned_abs());
-            return Ok(Some(value));
-        }
-        let error = std::io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::ERANGE) => continue,
-            Some(libc::ENODATA | libc::ENOTSUP) => return Ok(None),
-            _ => return Err(error),
-        }
-    }
-}
-
-/// Whether an ACL in the kernel's extended attribute form names a user or a
-/// group: a four-byte version, then eight bytes for each entry, its tag first.
-#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
-fn names_others(value: &[u8]) -> bool {
-    const NAMED_USER: u16 = 0x02;
-    const NAMED_GROUP: u16 = 0x08;
-    value.get(4..).unwrap_or_default().chunks(8).any(|entry| {
-        let tag = u16::from_le_bytes([entry[0], *entry.get(1).unwrap_or(&0)]);
-        tag == NAMED_USER || tag == NAMED_GROUP
-    })
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-fn grants_by_acl(_path: &Path) -> std::io::Result<bool> {
-    Err(std::io::Error::new(
-        ErrorKind::Unsupported,
-        "a private control socket needs macOS or Linux",
-    ))
 }
 
 #[cfg(test)]
@@ -784,25 +661,6 @@ mod tests {
         let _other = UnixListener::bind(&path).unwrap();
         claim.release();
         UnixStream::connect(&path).unwrap();
-    }
-
-    #[test]
-    fn an_acl_naming_another_account_is_seen() {
-        let entry = |tag: u16| {
-            let mut bytes = tag.to_le_bytes().to_vec();
-            bytes.extend_from_slice(&[7, 0, 0, 0, 0, 0]);
-            bytes
-        };
-        let acl = |tags: &[u16]| {
-            let mut bytes = 2u32.to_le_bytes().to_vec();
-            for tag in tags {
-                bytes.extend(entry(*tag));
-            }
-            bytes
-        };
-        assert!(!names_others(&acl(&[0x01, 0x04, 0x20])));
-        assert!(names_others(&acl(&[0x01, 0x02, 0x04, 0x10, 0x20])));
-        assert!(names_others(&acl(&[0x01, 0x04, 0x08, 0x10, 0x20])));
     }
 
     #[cfg(target_os = "macos")]

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::Transaction;
+use tokio::sync::watch;
 
 pub use open::Options;
 pub use writer::Pulse;
@@ -149,6 +150,10 @@ impl Db {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    pub fn commits(&self) -> watch::Receiver<u64> {
+        self.writer.commits()
     }
 
     /// Beaten by a job that writes longer than the busy budget, so writes queued behind it wait.

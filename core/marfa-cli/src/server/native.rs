@@ -121,24 +121,6 @@ pub fn stable_binary_of_this() -> Result<PathBuf, CliError> {
     Ok(stable_binary(&real, invoked))
 }
 
-/// The private socket's checks read ACLs with `getfacl` on Linux, so an
-/// install without it could not talk to its own server.
-pub fn check_acl_tool() -> Result<(), CliError> {
-    if !cfg!(target_os = "linux") {
-        return Ok(());
-    }
-    let found = std::process::Command::new("getfacl")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if found {
-        return Ok(());
-    }
-    Err(CliError::Install(
-        "`getfacl` was not found, and the server's private socket cannot be checked without it: install the acl package (`apt install acl`, `dnf install acl`)".into(),
-    ))
-}
-
 /// `marfa-server` beside the real path of `marfa`, and nowhere else: a server
 /// found on the path could be any program.
 pub fn find_server(real_exe: &Path) -> Option<PathBuf> {

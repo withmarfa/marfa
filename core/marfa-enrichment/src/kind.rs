@@ -33,9 +33,21 @@ pub(crate) enum Kind {
         ocr: bool,
     },
     Pdf,
+    /// A sound or a video, read for its length and picture size and for no text.
+    /// `matroska` is whether the file is WebM or Matroska, which this crate reads
+    /// itself; every other container goes to Symphonia.
+    Media {
+        matroska: bool,
+    },
 }
 
 impl Kind {
+    /// Whether the reader holds the whole file in memory. A media reader reads
+    /// headers and steps over the rest.
+    pub(crate) fn loads_whole_file(self) -> bool {
+        !matches!(self, Self::Media { .. })
+    }
+
     pub(crate) fn of(mime: &str) -> Option<Self> {
         let bare = mime
             .split(';')
@@ -77,6 +89,15 @@ impl Kind {
             "application/vnd.ms-excel" => Self::Sheet(Sheet::Xls),
             "application/vnd.oasis.opendocument.spreadsheet"
             | "application/vnd.oasis.opendocument.spreadsheet-template" => Self::Sheet(Sheet::Ods),
+            "audio/mpeg" | "audio/mp3" | "audio/wav" | "audio/x-wav" | "audio/wave"
+            | "audio/vnd.wave" | "audio/flac" | "audio/x-flac" | "audio/ogg" | "audio/opus"
+            | "audio/vorbis" | "application/ogg" | "video/ogg" | "audio/mp4" | "audio/x-m4a"
+            | "audio/m4a" | "audio/x-m4b" | "audio/3gpp" | "audio/3gpp2" | "video/mp4"
+            | "video/x-m4v" | "video/quicktime" | "video/3gpp" | "video/3gpp2" => {
+                Self::Media { matroska: false }
+            }
+            "video/webm" | "audio/webm" | "video/x-matroska" | "audio/x-matroska"
+            | "video/matroska" | "audio/matroska" => Self::Media { matroska: true },
             "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/tiff"
             | "image/gif" => Self::Image { ocr: true },
             _ if bare.starts_with("image/") => Self::Image { ocr: false },

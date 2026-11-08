@@ -118,7 +118,6 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         Runtime::Native => {
             steps.say("Checking the server program...");
             native::Layout::new(&folder.dir).check_socket()?;
-            native::check_acl_tool()?;
             if manager == Some(Manager::SystemdUser) {
                 super::systemd::user_session()?;
             }

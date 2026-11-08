@@ -7,16 +7,22 @@ import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { parseSse } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+} from "../../utils/fresh-server.js";
 
 /**
- * A reader that stops reading is ended, not buffered for.
+ * A reader that takes nothing for a ping interval is closed, and the server
+ * holds nothing for it in the meantime.
  *
  * The subscriber here is a raw socket that stops reading as soon as its
  * request is sent, which is what a sleeping laptop or a stuck proxy looks
  * like to the server: nothing a client library could buffer on its behalf
- * sits between the two. Several times the stated bound is then written,
- * enough to pass it and whatever the operating system's socket buffers
- * hold, and only then is the socket read.
+ * sits between the two. Enough is written to fill whatever the operating
+ * system's socket buffers hold, the socket is left unread for longer than a
+ * ping interval, and only then is it read.
  */
 
 let client: MarfaClient;
@@ -27,24 +33,30 @@ let apiKey: string;
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
-    "stream-reader-behind",
+    "stream-stalled-reader",
   ));
 });
 
 afterAll(async () => {
   await cleanup(ctx);
-});
+  await stopFreshServers();
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** The bound `events.md` states, in bytes. */
-const BOUND = 4 * 1024 * 1024;
-/** Written while the socket is not read: the bound, and room for buffers. */
-const WRITTEN = 4 * BOUND;
+/** Written while the socket is not read: more than the socket buffers hold. */
+const WRITTEN = 16 * 1024 * 1024;
+/** The ping interval `events.md` states, and room beyond it. */
+const PING_MS = 30_000;
 const BODY = "x".repeat(90_000);
+/** What a container runtime allows a stop, less the room it needs to kill. */
+const STOP_BUDGET_MS = 8_000;
 
 /** Open `GET /events` on a socket of its own and stop reading at once. */
-async function stalledSubscriber(): Promise<{
+async function stalledSubscriber(
+  apiUrl: string,
+  apiKey: string,
+): Promise<{
   socket: Socket;
-  readAll: () => Promise<string>;
+  readAll: () => Promise<{ text: string; terminated: boolean }>;
 }> {
   const url = new URL(apiUrl);
   const tls = url.protocol === "https:";
@@ -58,10 +70,13 @@ async function stalledSubscriber(): Promise<{
   });
   const chunks: Buffer[] = [];
   let ended: (() => void) | undefined;
+  /** The response ended with its last chunk, as one the server finished does. */
+  const terminated = (): boolean =>
+    Buffer.concat(chunks).subarray(-5).toString("latin1") === "0\r\n\r\n";
   socket.on("data", (chunk: Buffer) => {
     chunks.push(chunk);
     // The response ends with its last chunk; the connection may stay open.
-    if (chunk.subarray(-5).toString("latin1") === "0\r\n\r\n") ended?.();
+    if (terminated()) ended?.();
   });
   socket.pause();
   socket.write(
@@ -70,12 +85,16 @@ async function stalledSubscriber(): Promise<{
       `Authorization: Bearer ${apiKey}\r\n` +
       "Accept: text/event-stream\r\n\r\n",
   );
-  const readAll = (): Promise<string> =>
+  const readAll = (): Promise<{ text: string; terminated: boolean }> =>
     new Promise((resolve, reject) => {
       ended = () => {
-        resolve(dechunk(Buffer.concat(chunks)));
+        resolve({
+          text: dechunk(Buffer.concat(chunks)),
+          terminated: terminated(),
+        });
       };
       socket.once("end", ended);
+      socket.once("close", ended);
       socket.once("error", reject);
       socket.resume();
     });
@@ -101,10 +120,10 @@ function dechunk(raw: Buffer): string {
 }
 
 describe("a reader that stops reading", () => {
-  it("is ended with reader_behind once it falls past the bound, and resumes from its cursor", async ({
+  it("is closed once it has taken nothing for a ping interval, and resumes from the last id it took", async ({
     signal,
   }) => {
-    const { socket, readAll } = await stalledSubscriber();
+    const { socket, readAll } = await stalledSubscriber(apiUrl, apiKey);
     try {
       // The subscription settles before the writes it has to fall behind on.
       await new Promise((r) => setTimeout(r, 300));
@@ -129,19 +148,25 @@ describe("a reader that stops reading", () => {
         }
       }
 
-      const text = await readAll();
+      // The reader takes nothing for longer than a ping interval.
+      await new Promise((r) => setTimeout(r, PING_MS + 5_000));
+
+      // Reading now reaches the end of the stream: the server closed it, and
+      // would otherwise hold it open for good.
+      const read = await readAll();
+      const { terminated } = read;
+      // A client takes an event only when it is whole: the frame the
+      // connection was cut inside is not one the reader received.
+      const text = read.text.slice(0, read.text.lastIndexOf("\n\n") + 2);
+      // The server dropped the connection: a response it finished would end
+      // with its last chunk, behind whatever the reader never took.
+      expect(terminated, "the response ended as a finished one does").toBe(
+        false,
+      );
       const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => m[1]!);
-      // The witness: the stream delivered before it fell behind.
+      // The witness: the stream delivered before the reader stopped.
       expect(ids.length).toBeGreaterThan(0);
-      const terminal = text.slice(text.indexOf("event: stream_incomplete"));
-      expect(terminal.startsWith("event: stream_incomplete")).toBe(true);
-      const data = JSON.parse(/^data: (.*)$/m.exec(terminal)?.[1] ?? "{}") as {
-        reason?: string;
-        cursor?: string | null;
-      };
-      expect(data.reason).toBe("reader_behind");
-      expect(data.cursor).toBe(ids.at(-1));
-      expect(terminal).not.toMatch(/^id:/m);
+      const lastId = ids.at(-1)!;
       // What the server held for the reader stayed bounded: everything
       // written did not reach it.
       expect(text).not.toContain(last);
@@ -168,7 +193,7 @@ describe("a reader that stops reading", () => {
       const resumed = await withStream(
         apiUrl,
         apiKey,
-        { lastEventId: data.cursor! },
+        { lastEventId: lastId },
         async (stream) => {
           const { events } = await collectUntil(
             stream,
@@ -185,12 +210,43 @@ describe("a reader that stops reading", () => {
         .map(itemOf)
         .filter((id): id is string => id !== undefined && mine.has(id));
       expect(delivered).toEqual(unsent);
-      const cursor = BigInt(data.cursor!);
+      const cursor = BigInt(lastId);
       for (const e of resumed.filter((frame) => frame.id !== undefined)) {
         expect(BigInt(e.id!) > cursor).toBe(true);
       }
     } finally {
       socket.destroy();
     }
-  });
+  }, 180_000);
+
+  it("does not hold back a stop: the server stops within its budget with a status of 0", async () => {
+    const fresh = await bootFreshServer("stream-stalled-reader-stop");
+    const writer = new MarfaClient({
+      baseUrl: fresh.apiUrl,
+      apiKey: fresh.workingKey,
+    });
+    const { socket } = await stalledSubscriber(fresh.apiUrl, fresh.workingKey);
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      for (let written = 0; written < WRITTEN; written += 10 * BODY.length) {
+        const r = await writer.bulkItems(
+          Array.from({ length: 10 }, (_, i) =>
+            createNote({
+              source: "stream-stalled-reader-stop",
+              properties: { body: `${String(written)}-${String(i)}${BODY}` },
+            }),
+          ),
+        );
+        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      }
+      // The reader holds a frame the server cannot hand over, and is still
+      // inside the ping interval, so only the stop can end the stream.
+      const stoppedAt = Date.now();
+      fresh.signal("SIGTERM");
+      expect(await fresh.exit()).toMatchObject({ code: 0, signal: null });
+      expect(Date.now() - stoppedAt).toBeLessThan(STOP_BUDGET_MS);
+    } finally {
+      socket.destroy();
+    }
+  }, 180_000);
 });

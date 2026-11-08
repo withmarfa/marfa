@@ -15,7 +15,7 @@ use seccompiler::{
 };
 
 /// Calls a reader needs whatever it is reading. Reading and writing reach only the
-/// descriptors a child holds: its three pipes and a model it opened.
+/// descriptors a child holds: the file it reads, its two pipes and a model it opened.
 const ALWAYS: &[libc::c_long] = &[
     libc::SYS_read,
     libc::SYS_readv,

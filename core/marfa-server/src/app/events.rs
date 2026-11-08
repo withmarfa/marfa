@@ -2,15 +2,43 @@
 //! what a later stream sends without reading a row that may have changed since.
 
 mod expiry;
+mod frame;
+mod page;
+mod stream;
 
+use marfa_rules::query::list_entry;
 use rusqlite::{Transaction, params};
+use serde_json::json;
 
-use super::refusal::Result;
+use super::App;
+use super::access::Caller;
+use super::items::reading;
+use super::query::judge_type;
+use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
+pub use frame::Filter;
+pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
-/// One entry. `payload` is the JSON a frame carries, as text, so the numbers
-/// in an item's properties stay as they were stored.
+/// Judge each entry's syntax and access before proceeding to the next.
+pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Result<()> {
+    reading(app, caller, move |read| {
+        entries.iter().try_for_each(|entry| {
+            list_entry(entry).map_err(|error| {
+                Refusal::validation(error.message.clone())
+                    .with_detail("field", "type")
+                    .with_detail(
+                        "errors",
+                        json!([{ "path": "type", "message": error.message }]),
+                    )
+            })?;
+            judge_type(read, entry)
+        })
+    })
+    .await
+}
+
+/// The stored payload precedes subscriber filtering and frame decoration.
 pub struct Event<'a> {
     pub event_type: &'static str,
     pub item_id: &'a str,

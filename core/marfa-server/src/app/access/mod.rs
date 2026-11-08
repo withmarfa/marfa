@@ -1,17 +1,20 @@
 //! Every decision of reach is made here; nothing else reads a map or names a permission as text.
 //! A decision takes the state it decides on, so a write can make it inside its own transaction.
 
+mod blobs;
 mod edges;
 mod items;
 mod levers;
 mod maps;
+mod profile;
+pub mod reach;
 mod schema;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
-use super::auth::seconds_of;
 use super::auth::session::{self, Session};
+use super::auth::{millis_of, seconds_of};
 use super::config;
 use super::keys::{self, Key};
 use super::oauth;
@@ -246,7 +249,7 @@ impl Caller {
 
     pub fn require_recent(&self, at: &str) -> Result<()> {
         match self.session() {
-            Some(session) if !session.is_recent(seconds_of(at)?) => {
+            Some(session) if !session.is_recent(millis_of(at)?) => {
                 Err(Refusal::new(Code::Forbidden, SIGN_IN_AGAIN))
             }
             _ => Ok(()),
@@ -696,6 +699,64 @@ mod tests {
         ] {
             assert_eq!(outlives(wanted, limit), longer, "{wanted:?} {limit:?}");
         }
+    }
+
+    #[test]
+    fn a_blob_is_read_only_through_a_row_that_lends_it_and_that_the_caller_may_read() {
+        use crate::app::blobs::Lender;
+
+        fn reads<const N: usize>(caller: &Caller, lenders: [Lender; N]) -> bool {
+            caller.may_read_blob(lenders.map(Ok)).unwrap()
+        }
+
+        let note = || Lender::Item {
+            type_id: "core.note".into(),
+        };
+        let link = |source_type: &str| Lender::Edge {
+            edge_type: "core.links".into(),
+            source_type: source_type.into(),
+        };
+        let extension = |item_type: &str| Lender::Extension {
+            namespace: "acme".into(),
+            item_type: item_type.into(),
+        };
+        let reader = |types: Value, edges: Value, extensions: Value| {
+            let key = with_map(key("r", "mine", &[], &[]), Axis::Type, types);
+            let key = with_map(key, Axis::Edge, edges);
+            Caller::Key(Box::new(with_map(key, Axis::Extension, extensions)))
+        };
+        let notes = json!({ "core.note": "read" });
+        let nothing = json!({});
+        let every_edge = json!({ "*": "read" });
+
+        let narrow = reader(notes.clone(), nothing.clone(), nothing.clone());
+        assert!(reads(&narrow, [note()]));
+        assert!(!reads(&narrow, []));
+        assert!(!reads(
+            &narrow,
+            [Lender::Item {
+                type_id: "core.file".into()
+            }]
+        ));
+        assert!(!reads(&narrow, [link("core.note")]));
+        assert!(!reads(&narrow, [extension("core.note")]));
+
+        let edges = reader(notes.clone(), every_edge.clone(), nothing.clone());
+        assert!(reads(&edges, [link("core.note")]));
+        assert!(!reads(&edges, [link("core.file")]));
+
+        let extensions = reader(notes, nothing.clone(), json!({ "acme": "read" }));
+        assert!(reads(&extensions, [extension("core.note")]));
+        assert!(!reads(&extensions, [extension("core.file")]));
+
+        let manager = key("m", "mine", &[Permission::BlobsManage], &[]);
+        for every in [Caller::Key(Box::new(manager)), Caller::local()] {
+            assert!(reads(&every, []));
+        }
+
+        let unread = || Err(Refusal::internal("unread"));
+        assert!(narrow.may_read_blob([Ok(note()), unread()]).unwrap());
+        assert!(narrow.may_read_blob([unread(), Ok(note())]).is_err());
     }
 
     #[test]

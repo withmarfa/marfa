@@ -13,9 +13,9 @@ use crate::app::types;
 
 const ICON_FIELDS: [&str; 1] = ["icon"];
 
-pub async fn list(State(app): State<Arc<App>>, _caller: Caller, uri: Uri) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     query::only(&uri, &[])?;
-    let data = types::list(&app).await?;
+    let data = types::list(&app, &caller).await?;
     Ok(json_answer(
         StatusCode::OK,
         &json!({ "data": data, "next_cursor": null }),

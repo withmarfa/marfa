@@ -1,8 +1,8 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
-use super::{Note, Visit, limits, note, password, seconds_of, session, stamp_of};
-use crate::app::access::Caller;
+use super::{Note, Visit, limits, note, password, picture, seconds_of, session, stamp_of};
+use crate::app::access::{Caller, Level};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
 
@@ -16,15 +16,18 @@ pub struct Owner {
     pub email: String,
     pub name: String,
     pub created_at: i64,
+    /// Whether the owner holds a picture, which `GET /owner/picture` serves.
+    pub avatar: bool,
 }
 
 impl Owner {
-    pub fn to_json(&self) -> Value {
+    /// The owner as answered, with the instance's own `origin` to address the picture by.
+    pub fn to_json(&self, origin: &str) -> Value {
         json!({
             "id": self.id,
             "email": self.email,
             "name": self.name,
-            "avatar": null,
+            "avatar": self.avatar.then(|| format!("{origin}/owner/picture")),
             "created_at": stamp_of(self.created_at),
         })
     }
@@ -36,6 +39,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Owner> {
         email: row.get("email")?,
         name: row.get("name")?,
         created_at: row.get("created_at")?,
+        avatar: false,
     })
 }
 
@@ -43,13 +47,21 @@ pub fn read(tx: &Transaction<'_>) -> Result<Option<Owner>> {
     let Some(id) = instance::owner_id(tx)? else {
         return Ok(None);
     };
-    Ok(tx
+    let owner = tx
         .query_row(
             "SELECT id, email, name, created_at FROM auth_user WHERE id = ?1",
             [id],
             from_row,
         )
-        .optional()?)
+        .optional()?;
+    owner
+        .map(|owner| {
+            Ok(Owner {
+                avatar: picture::exists(tx)?,
+                ..owner
+            })
+        })
+        .transpose()
 }
 
 pub fn not_found() -> Refusal {
@@ -162,6 +174,7 @@ pub(super) fn create(
         email: details.email.clone(),
         name: details.name.clone(),
         created_at: now,
+        avatar: false,
     })
 }
 
@@ -173,6 +186,7 @@ pub async fn find(app: &App) -> Result<Option<Owner>> {
 pub struct Update {
     email: Option<String>,
     name: Option<String>,
+    clear_avatar: bool,
     fields: Vec<String>,
 }
 
@@ -195,6 +209,7 @@ impl Update {
         Ok(Update {
             email: text("email")?.map(checked_email).transpose()?,
             name,
+            clear_avatar: body.contains_key("avatar"),
             fields: body.keys().cloned().collect(),
         })
     }
@@ -210,6 +225,10 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
         }
         if let Some(name) = update.name {
             owner.name = name;
+        }
+        if update.clear_avatar {
+            picture::remove(unit.tx())?;
+            owner.avatar = false;
         }
         unit.tx().execute(
             "UPDATE auth_user SET email = ?2, name = ?3, updated_at = ?4, \
@@ -230,6 +249,81 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
             },
         )?;
         Ok(owner)
+    })
+    .await
+}
+
+#[derive(Debug)]
+pub struct ProfileUpdate {
+    name: Option<String>,
+    clear_avatar: bool,
+}
+
+pub const PROFILE_FIELDS: [&str; 2] = ["name", "avatar"];
+
+impl ProfileUpdate {
+    pub fn from_body(body: &Map<String, Value>) -> Result<ProfileUpdate> {
+        if body.is_empty() {
+            return Err(Refusal::validation("Name at least one field to change."));
+        }
+        if body.get("avatar").is_some_and(|avatar| !avatar.is_null()) {
+            return Err(invalid("avatar", "Only null clears the picture here."));
+        }
+        let name = match body.get("name") {
+            None => None,
+            Some(Value::String(name)) => {
+                Some(checked_name(name)?.ok_or_else(|| invalid("name", "Enter a name."))?)
+            }
+            Some(_) => return Err(invalid("name", "Must be a string.")),
+        };
+        Ok(ProfileUpdate {
+            name,
+            clear_avatar: body.contains_key("avatar"),
+        })
+    }
+
+    fn fields(&self) -> Vec<&'static str> {
+        let named = [(self.name.is_some(), "name"), (self.clear_avatar, "avatar")];
+        named
+            .into_iter()
+            .filter_map(|(present, field)| present.then_some(field))
+            .collect()
+    }
+}
+
+pub async fn update_profile(
+    app: &App,
+    caller: &Caller,
+    update: ProfileUpdate,
+    visit: Visit,
+) -> Result<()> {
+    app.write(caller, "profile.update", move |unit| {
+        let fields = update.fields();
+        for field in &fields {
+            unit.caller.require_profile(field, Level::Write)?;
+        }
+        let owner = read(unit.tx())?.ok_or_else(not_found)?;
+        if let Some(name) = &update.name {
+            unit.tx().execute(
+                "UPDATE auth_user SET name = ?2, updated_at = ?3 WHERE id = ?1",
+                params![owner.id, name, seconds_of(&unit.at)?],
+            )?;
+        }
+        if update.clear_avatar {
+            picture::remove(unit.tx())?;
+        }
+        note(
+            unit.tx(),
+            &unit.at,
+            Some(&unit.caller),
+            &visit,
+            Note {
+                action: "profile.update",
+                resource_type: "auth_user",
+                resource_id: &owner.id,
+                details: Some(json!({ "fields": fields })),
+            },
+        )
     })
     .await
 }

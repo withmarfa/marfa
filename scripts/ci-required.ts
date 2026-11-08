@@ -631,8 +631,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The rest of its source, its fixtures and its README are pure Rust, read
   // the same on every system, and so Linux vouches for them.
   [/^core\/marfa-enrichment\//, [...RUST_LINUX, ...ENRICHMENT]],
-  // The Rust server's private socket checks ACLs with macOS-only code, so a
-  // Mac builds and tests it too.
+  // The ACL reading both the command line and the Rust server's private
+  // socket use has macOS-only code, so a Mac builds and tests it too.
+  [/^core\/marfa-acl\//, RUST],
+  // The server's own use of it has a macOS-only test.
   [
     /^core\/marfa-server\/src\/control_socket\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],

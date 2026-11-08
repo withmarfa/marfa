@@ -82,12 +82,13 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
-pub async fn current(caller: Caller, uri: Uri) -> Answer {
-    let Some(key) = caller.key() else {
+pub async fn current(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    let key = keys::current(&app, &caller).await?;
+    let Some(key) = key else {
         return Err(Refusal::new(Code::Forbidden, "This credential is not a key.").into());
     };
     query::only(&uri, &[])?;
-    Ok(json_answer(StatusCode::OK, &Value::Object(key.to_json())))
+    Ok(json_answer(StatusCode::OK, &Value::Object(key)))
 }
 
 pub async fn update(

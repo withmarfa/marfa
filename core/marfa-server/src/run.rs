@@ -80,20 +80,19 @@ fn listen(
     app: &Arc<App>,
     public: Option<TcpListener>,
     private: UnixListener,
-    stop: &watch::Receiver<bool>,
 ) {
     if let Some(listener) = public {
         servers.spawn(http::serve(
             Tcp::new(listener, app.settings.start.public_listener.name),
             http::public(app.clone()),
-            stopped(stop.clone()),
+            stopped(app.stopping()),
             PUBLIC_HEADER_READ_TIMEOUT,
         ));
     }
     servers.spawn(http::serve(
         Socket::new(private, Declaration::control().name),
         http::control(app.clone()),
-        stopped(stop.clone()),
+        stopped(app.stopping()),
         CONTROL_HEADER_READ_TIMEOUT,
     ));
 }
@@ -112,7 +111,6 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let private = UnixListener::from_std(claim.bind()?)
         .map_err(|error| Failure::start(format!("The control socket failed: {error}")))?;
 
-    let (stop, stopping) = watch::channel(false);
     let port = public
         .as_ref()
         .and_then(|listener| listener.local_addr().ok())
@@ -124,7 +122,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
         .await
         .map_err(|refusal| Failure::start(refusal.message.to_string()))?;
     let mut servers = JoinSet::new();
-    listen(&mut servers, &app, public, private, &stopping);
+    listen(&mut servers, &app, public, private);
     if !app.settings.start.control_only {
         housekeeping::start(&app);
     }
@@ -141,7 +139,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     tracing::info!("Stopping");
     app.housekeeping.stop();
     app.faults.clear(None);
-    let _ = stop.send(true);
+    app.begin_stop();
     let (closed, ()) = tokio::join!(
         tokio::time::timeout(STOP_WAIT, servers.join_all()),
         app.housekeeping.settle(STOP_WAIT),
