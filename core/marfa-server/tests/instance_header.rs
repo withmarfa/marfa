@@ -30,7 +30,6 @@ struct Instance {
     cookie: String,
 }
 
-/// Where a request goes and what it presents.
 #[derive(Clone, Copy, PartialEq)]
 enum Presents {
     Key,

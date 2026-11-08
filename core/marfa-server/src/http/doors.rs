@@ -1,5 +1,4 @@
-//! The one table every router is built from. A door cannot be added without being
-//! recorded, so `served` is what the router answers.
+//! Every served door is recorded here.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -137,16 +136,13 @@ impl Doors {
         self
     }
 
-    /// Applies a group's credential rule to the doors already held, and records it for the
-    /// checks that must know whether a door takes the credential a request presents.
+    /// Admission and instance checks share the group's credential rule.
     pub fn admitting(mut self, app: Arc<App>, rule: Admission) -> Self {
         self.admissions
             .extend(self.paths.iter().map(|path| (*path, rule)));
         self.route_layer(from_fn_with_state((app, rule), admit))
     }
 
-    /// The write doors the instance header is judged at: each path with the methods it serves
-    /// and the credentials its group takes.
     pub(super) fn judged_writes(&self) -> HashMap<&'static str, (Vec<Method>, Admission)> {
         let mut judged: HashMap<&'static str, (Vec<Method>, Admission)> = HashMap::new();
         for door in &self.served {

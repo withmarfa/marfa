@@ -52,15 +52,13 @@ pub(super) fn judge(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     }
 }
 
-/// What the layer reads: the instance, and the write doors it judges.
 #[derive(Clone)]
 pub struct Judging {
     pub app: Arc<App>,
     pub writes: Arc<HashMap<&'static str, (Vec<Method>, Admission)>>,
 }
 
-/// Judges the header of a write to a door that takes the credential presented, on every
-/// listener. A door that takes no credential judges the header itself.
+/// A door that takes no credential judges the header itself.
 pub async fn judged(State(judging): State<Judging>, request: Request, next: Next) -> Response {
     let rule = request
         .extensions()
