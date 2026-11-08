@@ -306,7 +306,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks-linux != 'false') }}
     name: Core checks (Linux)
-    timeout-minutes: 17
+    timeout-minutes: 35
     runs-on: ubuntu-latest
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -1135,6 +1135,10 @@ jobs:
 
       - name: Boot the Rust server
         working-directory: conformance
+        # A shard's fixtures can keep it busy on servers of their own for
+        # longer than the harness's idle limit; the job's limit bounds it.
+        env:
+          CONFORMANCE_SERVER_IDLE_MS: "0"
         run: |
           pnpm marfa:up --state "$RUNNER_TEMP/marfa"
           cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
