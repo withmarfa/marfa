@@ -548,6 +548,8 @@ When the reach of a copy stream changes after the stream has started, the server
 
 While a copy stream replays, has a frame written while it opened still to send, or is about to announce `stream_live`, if the reach changes, then the server MUST end the stream with `reach_changed`.
 
+**Reason:** a change counts once it has committed before the read of the page or the marker, because each is read in one snapshot under the reach that held there. A change committed after that read is caught by the next read, by a resume or by any conditional read.
+
 **Tests:** `compliance/copy-stream-races.test.ts › ends with reach_changed and sends no replayed frame and no stream_live`, `› ends with reach_changed and sends neither the frame written while it opened nor stream_live`, `› ends with reach_changed and does not announce stream_live`.
 
 ### `reach/terminal-races-silent`
