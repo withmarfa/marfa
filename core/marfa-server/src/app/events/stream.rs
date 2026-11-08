@@ -319,6 +319,8 @@ impl Run {
             // Only a log read to its end under the reach lets the marker certify the copy.
             self.app.faults.hold(HOLD_STREAM_DRAIN, None).await;
             self.drain().await?;
+            // Delivering the last page took time in which the reach can have moved.
+            self.reread().await?;
         }
         self.announce("stream_live", self.position.max(head))
             .await?;
@@ -411,10 +413,13 @@ impl Run {
             return Ok(bounds.head);
         };
         self.started = cursor;
+        let too_old = bounds
+            .oldest
+            .filter(|oldest| *oldest > cursor.saturating_add(1));
+        if self.copy.is_some() && (cursor > bounds.head || too_old.is_some()) {
+            self.announce("stream_cursor", bounds.head).await?;
+        }
         if cursor > bounds.head {
-            if self.copy.is_some() {
-                self.announce("stream_cursor", bounds.head).await?;
-            }
             return Err(ending(marker(
                 "cursor_ahead",
                 vec![
@@ -423,10 +428,7 @@ impl Run {
                 ],
             )));
         }
-        if let Some(oldest) = bounds
-            .oldest
-            .filter(|oldest| *oldest > cursor.saturating_add(1))
-        {
+        if let Some(oldest) = too_old {
             return Err(self.too_old(oldest));
         }
         self.position = cursor;
@@ -492,7 +494,13 @@ impl Run {
         if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
             return Err(self.cut_short("read_failed"));
         }
-        let read = reading(&self.app, &self.caller, |read| {
+        self.reread().await
+    }
+
+    /// Reads the credential, and for a copy stream its reach, in a snapshot of its own.
+    async fn reread(&mut self) -> std::result::Result<(), Ending> {
+        let demand = self.copy.as_ref().and_then(Copying::demand);
+        let read = reading_under(&self.app, &self.caller, demand, |read| {
             Ok(read.caller.key().and_then(|key| key.expires_at.clone()))
         })
         .await;

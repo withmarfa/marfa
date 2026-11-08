@@ -1,4 +1,5 @@
-//! What moves a reach, and what leaves it, read from the instance's own counter.
+//! What moves a reach, and what leaves it, read from the instance's own counter, and how a copy
+//! stream ends when it moves.
 
 use std::sync::Arc;
 
@@ -7,11 +8,14 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::App;
 use marfa_server::app::access::{Caller, reach::Judge};
+use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
+
+use http_body_util::BodyExt;
 
 struct Instance {
     dir: TempDir,
@@ -481,4 +485,182 @@ async fn the_reach_is_the_same_after_a_restart() {
     let before = instance.reach().await;
     let again = instance.restart().await;
     assert_eq!(before, again.reach().await);
+}
+
+/// A key that reads notes and tasks, with the means to narrow it to notes.
+struct Reader {
+    id: String,
+    key: String,
+}
+
+impl Instance {
+    async fn reader(&self) -> Reader {
+        let minted = send(
+            &self.control,
+            request(
+                Method::POST,
+                "/keys",
+                None,
+                Some(json!({
+                    "label": "reader",
+                    "source": "reader",
+                    "permissions": [],
+                    "type_permissions": { "core.note": "read", "core.task": "read" },
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
+        Reader {
+            id: minted.body["id"].as_str().unwrap().to_string(),
+            key: minted.body["key"].as_str().unwrap().to_string(),
+        }
+    }
+
+    async fn narrow(&self, reader: &Reader) {
+        let narrowed = send(
+            &self.control,
+            request(
+                Method::PATCH,
+                &format!("/keys/{}", reader.id),
+                None,
+                Some(json!({ "type_permissions": { "core.note": "read" } })),
+            ),
+        )
+        .await;
+        assert_eq!(narrowed.status, StatusCode::OK, "{}", narrowed.body);
+    }
+
+    /// A copy stream's response; the stream runs until its body is read or dropped.
+    async fn copy_stream(&self, key: &str, resume: Option<(&str, &str)>) -> Body {
+        let mut builder = Request::builder()
+            .uri("/events?edges=all&copy=1")
+            .header(header::AUTHORIZATION, format!("Bearer {key}"));
+        if let Some((cursor, reach)) = resume {
+            builder = builder
+                .header("Last-Event-ID", cursor)
+                .header("X-Marfa-Reach", reach);
+        }
+        let response = self
+            .public
+            .clone()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.into_body()
+    }
+
+    async fn held_at_drain(&self) {
+        for _ in 0..500 {
+            if self.app.faults.list().iter().any(|fault| fault.waiting > 0) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("the copy stream never reached its final drain");
+    }
+}
+
+/// The frames a stream sends, as (event name, data), read until it closes or one named by `stop` arrives.
+async fn frames(mut body: Body, stop: &[&str]) -> (Vec<(String, Value)>, bool) {
+    let mut text = String::new();
+    let mut closed = false;
+    let read = async {
+        while let Some(frame) = body.frame().await {
+            let Ok(data) = frame.unwrap().into_data() else {
+                continue;
+            };
+            text.push_str(&String::from_utf8_lossy(&data));
+            if blocks(&text)
+                .iter()
+                .any(|(name, _)| stop.contains(&name.as_str()))
+            {
+                return false;
+            }
+        }
+        true
+    };
+    if let Ok(done) = tokio::time::timeout(std::time::Duration::from_secs(5), read).await {
+        closed = done;
+    }
+    (blocks(&text), closed)
+}
+
+fn blocks(text: &str) -> Vec<(String, Value)> {
+    text.split("\n\n")
+        .filter_map(|block| {
+            let name = block
+                .lines()
+                .find_map(|line| line.strip_prefix("event: "))?;
+            let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+            Some((name.to_string(), serde_json::from_str(data).ok()?))
+        })
+        .collect()
+}
+
+fn names(events: &[(String, Value)]) -> Vec<&str> {
+    events.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+#[tokio::test]
+async fn a_reach_that_moves_while_the_last_page_is_handed_over_ends_the_stream_before_stream_live()
+{
+    let instance = Instance::start().await;
+    let reader = instance.reader().await;
+    instance.app.faults.set("hold:stream-drain", None).unwrap();
+    // The reader takes nothing yet, so the page the drain finds waits to be handed over.
+    let body = instance.copy_stream(&reader.key, None).await;
+    instance.held_at_drain().await;
+    // Each note fills a piece of its own, and the channel holds one piece ahead of the reader.
+    let first = instance.note(&"a".repeat(40_000)).await;
+    let second = instance.note(&"b".repeat(40_000)).await;
+    instance.app.faults.clear(Some("hold:stream-drain"));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    instance.narrow(&reader).await;
+
+    let (events, closed) = frames(body, &["stream_live"]).await;
+    assert_eq!(
+        names(&events),
+        ["stream_cursor", "item.created", "reach_changed"]
+    );
+    assert_eq!(events[1].1["item"]["id"], first["id"]);
+    assert_ne!(events[1].1["item"]["id"], second["id"]);
+    assert!(closed);
+}
+
+#[tokio::test]
+async fn a_copy_stream_resumed_behind_what_the_log_keeps_announces_its_cursor_first() {
+    let instance = Instance::start().await;
+    let reader = instance.reader().await;
+    let (events, _) = frames(
+        instance.copy_stream(&reader.key, None).await,
+        &["stream_live"],
+    )
+    .await;
+    let live = &events.last().unwrap().1;
+    let (cursor, reach) = (
+        live["cursor"].as_str().unwrap().to_string(),
+        live["reach"].as_str().unwrap().to_string(),
+    );
+    for index in 0..3 {
+        instance.note(&format!("kept {index}")).await;
+    }
+    instance
+        .app
+        .db
+        .write(Write::own(), |tx| {
+            Ok(tx.execute_batch(
+                "DELETE FROM event_log WHERE id <= (SELECT MAX(id) - 1 FROM event_log)",
+            )?)
+        })
+        .await
+        .unwrap();
+
+    let body = instance
+        .copy_stream(&reader.key, Some((&cursor, &reach)))
+        .await;
+    let (events, closed) = frames(body, &[]).await;
+    assert_eq!(names(&events), ["stream_cursor", "catchup_too_old"]);
+    assert!(closed);
 }

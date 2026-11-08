@@ -202,15 +202,19 @@ async fn copy(
             reach,
         },
         viewer,
-        hangup.map(|Extension(hangup)| events::Hangup {
-            close: Box::new({
-                let hangup = hangup.clone();
-                move || hangup.now()
-            }),
-            closed: Box::pin(hangup.closed()),
-        }),
+        hangup_of(hangup),
     );
     Ok(streaming(feed))
+}
+
+fn hangup_of(hangup: Option<Extension<listening::Hangup>>) -> Option<events::Hangup> {
+    hangup.map(|Extension(hangup)| events::Hangup {
+        close: Box::new({
+            let hangup = hangup.clone();
+            move || hangup.now()
+        }),
+        closed: Box::pin(hangup.closed()),
+    })
 }
 
 fn streaming(feed: mpsc::Receiver<Bytes>) -> Response {
@@ -268,7 +272,7 @@ pub async fn open(
             reach: None,
         },
         viewer,
-        hangup.map(|Extension(hangup)| -> events::Hangup { Box::new(move || hangup.now()) }),
+        hangup_of(hangup),
     );
     Ok(streaming(feed))
 }
