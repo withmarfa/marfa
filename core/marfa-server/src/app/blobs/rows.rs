@@ -84,9 +84,9 @@ pub fn held_in(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<bool
     )?)
 }
 
-/// The distinct answers the read rule asks of the rows that lend a blob, read one seek at a
-/// time in index order, so a caller stops at the first it may read and never walks more than
-/// one row per distinct answer, however many rows lend.
+/// The distinct answers the read rule asks of the rows that lend a blob, read lazily in index
+/// order, so a caller stops at the first it may read. Each answer costs at most four index
+/// seeks, however many rows lend it.
 pub fn lenders<'a, 'c>(tx: &'a Transaction<'c>, hash: &'a Hash) -> Lenders<'a, 'c> {
     Lenders {
         tx,
@@ -119,7 +119,8 @@ pub struct Lenders<'a, 'c> {
     hash: &'a Hash,
     /// The last answer read, or `None` once the walk has ended.
     after: Option<[String; 4]>,
-    /// How many of `after`'s columns hold an answer, less one.
+    /// The deepest query in `LENDER_AFTER` that `after` bounds: only the first before any
+    /// answer is read.
     deepest: usize,
 }
 
