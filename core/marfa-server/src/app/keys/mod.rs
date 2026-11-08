@@ -132,6 +132,15 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// A key's label for as long as its row is kept, revoked or not.
+pub fn label(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row("SELECT label FROM api_keys WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
 fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     let revoked: bool = tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM api_keys WHERE id = ?1 AND revoked_at IS NOT NULL)",

@@ -5,7 +5,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::stored::{self, Change};
-use marfa_server::app::{App, housekeeping};
+use marfa_server::app::{App, housekeeping, webhooks};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -43,6 +43,7 @@ impl Instance {
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();
         app.clock.pause(true);
+        webhooks::start(&app);
         let mut instance = Instance {
             public: public(app.clone()),
             control: control(app.clone()),
@@ -103,6 +104,9 @@ impl Instance {
     }
 
     async fn run(&self, job: &str) -> Value {
+        if job == "event-log-cleanup" {
+            self.scheduled().await;
+        }
         let path = format!("/housekeeping/{job}/run");
         let run = self.ok(Method::POST, &path, json!({})).await;
         assert_eq!(run["outcome"], "ok", "{run}");
@@ -185,6 +189,17 @@ impl Instance {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         panic!("{what} did not happen");
+    }
+
+    /// The event log keeps what the webhook sender has not passed.
+    async fn scheduled(&self) {
+        self.when("the webhook sender to pass the log", async |instance| {
+            instance.count(
+                "SELECT count(*) FROM webhook_position \
+                 WHERE event_id = (SELECT COALESCE(MAX(id), 0) FROM event_log)",
+            ) == 1
+        })
+        .await;
     }
 
     async fn when_held(&self) {
@@ -292,6 +307,29 @@ async fn event_log_cleanup_takes_entries_a_second_past_the_retention_and_never_t
     instance.forward(400 * DAY);
     instance.run("event-log-cleanup").await;
     assert_eq!(instance.count("SELECT count(*) FROM event_log"), 1);
+}
+
+#[tokio::test]
+async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    instance.note().await;
+    instance.scheduled().await;
+    instance.app.faults.set("hold:webhook-schedule", None).unwrap();
+    instance.note().await;
+    instance.note().await;
+    instance.when_held().await;
+    let passed = instance.count("SELECT event_id FROM webhook_position");
+    let held = instance.count("SELECT count(*) FROM event_log");
+    assert!(passed < held);
+
+    instance.forward(3 * HOUR);
+    let path = "/housekeeping/event-log-cleanup/run";
+    let run = instance.ok(Method::POST, path, json!({})).await;
+    assert_eq!(run["result"]["deleted"], passed);
+    assert_eq!(instance.count("SELECT MIN(id) FROM event_log"), passed + 1);
+
+    instance.app.faults.clear(Some("hold:webhook-schedule"));
+    assert_eq!(instance.run("event-log-cleanup").await["deleted"], held - passed - 1);
 }
 
 #[tokio::test]

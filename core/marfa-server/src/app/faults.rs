@@ -1,5 +1,6 @@
 //! Faults a test harness sets on a running server, each named for where it acts.
 
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -72,6 +73,9 @@ points! {
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
     HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+    HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
+    HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
+    HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
@@ -107,6 +111,13 @@ impl Volume {
         }
     }
 }
+
+const HIDE_POSITION: &str = "hide:webhook-position";
+const HIDE_EVENTS: &str = "hide:event";
+const RESOLVE: &str = "resolve:";
+
+/// One scripted answer: the address the check judges, and the one a socket connects to.
+pub type Scripted = Vec<(IpAddr, IpAddr)>;
 
 const FAIL_JOB: &Point = &Point {
     kind: Kind::Fail,
@@ -261,6 +272,62 @@ fn is_stored_id(text: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
+fn hidden_range(text: &str) -> Option<(i64, i64)> {
+    let id = |part: &str| {
+        (!part.starts_with('0') && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<i64>().ok())
+            .flatten()
+            .filter(|id| *id >= 1)
+    };
+    let (first, last) = match text.split_once('-') {
+        Some((first, last)) => (id(first)?, id(last)?),
+        None => (id(text)?, id(text)?),
+    };
+    (first <= last).then_some((first, last))
+}
+
+fn scripted(text: &str) -> Option<Vec<Scripted>> {
+    text.split(';')
+        .map(|answer| {
+            answer
+                .split(',')
+                .map(|address| match address.split_once('>') {
+                    Some((checked, connected)) => {
+                        Some((checked.parse().ok()?, connected.parse().ok()?))
+                    }
+                    None => address.parse().ok().map(|ip| (ip, ip)),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+    match (rest, arg) {
+        ("webhook-position", None) => Ok((None, None)),
+        ("webhook-position", Some(_)) => Err(format!("{HIDE_POSITION} takes no argument")),
+        ("event", Some(text)) if hidden_range(text).is_some() => Ok((None, None)),
+        ("event", _) => Err(format!(
+            "{HIDE_EVENTS} takes an event id, or two joined by -, from 1"
+        )),
+        _ => Err(format!("no hide is named {rest}")),
+    }
+}
+
+fn judge_resolve(host: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+    if host.is_empty() {
+        return Err("a resolve fault names a host: resolve:<host>".to_string());
+    }
+    match arg.and_then(scripted) {
+        Some(_) => Ok((None, None)),
+        None => Err(
+            "a resolve fault takes one answer per lookup, separated by ;, each a list of \
+             addresses separated by , and each address written <address> or <checked>><connected>"
+                .to_string(),
+        ),
+    }
+}
+
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
@@ -328,9 +395,12 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 Err("an unreadable fault takes the ID of the stored value".to_string())
             }
         }
+        "hide" => judge_hide(rest, arg),
+        "resolve" => judge_resolve(rest, arg),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume>, limit:<lane> or unreadable:<stored>"
+             deadline:<job>, free:<volume>, limit:<lane>, unreadable:<stored>, hide:event, \
+             hide:webhook-position or resolve:<host>"
                 .to_string(),
         ),
     }
@@ -352,6 +422,13 @@ impl Faults {
     /// Re-arming starts a fault again; a hold's waiters stay held. A refused fault is never armed.
     pub fn set(&self, name: &str, arg: Option<&str>) -> Result<(), String> {
         let (aim, number) = judge(name, arg)?;
+        let lowered;
+        let name = if name.starts_with(RESOLVE) {
+            lowered = name.to_ascii_lowercase();
+            lowered.as_str()
+        } else {
+            name
+        };
         let mut armed = self.armed();
         let arg = arg.map(str::to_string);
         if let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) {
@@ -538,6 +615,30 @@ impl Faults {
         };
         fault.fired += 1;
         true
+    }
+
+    pub fn hides_position(&self) -> bool {
+        self.armed().iter().any(|fault| fault.name == HIDE_POSITION)
+    }
+
+    /// The ids `hide:event` makes the log read as absent.
+    pub fn hidden_events(&self) -> Option<(i64, i64)> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == HIDE_EVENTS)
+            .and_then(|fault| fault.arg.as_deref())
+            .and_then(hidden_range)
+    }
+
+    /// The answer the next lookup of `host` is given, if one is scripted. The last answer repeats.
+    pub fn scripted_answer(&self, host: &str) -> Option<Scripted> {
+        let name = format!("{RESOLVE}{}", host.to_ascii_lowercase());
+        let mut armed = self.armed();
+        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        let mut answers = scripted(fault.arg.as_deref()?)?;
+        let index = (fault.fired as usize).min(answers.len() - 1);
+        fault.fired += 1;
+        Some(answers.swap_remove(index))
     }
 
     pub fn health_admitted(&self) -> Option<Released> {
@@ -731,6 +832,38 @@ mod tests {
             assert!(!refused(name, arg), "{name}");
         }
         assert!(refused("hold:bulk-page", Some("two")));
+    }
+
+    #[test]
+    fn takes_hides_and_scripted_lookups_in_their_own_forms() {
+        assert!(!refused("hide:webhook-position", None));
+        assert!(refused("hide:webhook-position", Some("1")));
+        assert!(!refused("hide:event", Some("7")));
+        assert!(!refused("hide:event", Some("1-9")));
+        assert!(refused("hide:event", Some("9-1")));
+        assert!(refused("hide:event", Some("0")));
+        assert!(refused("hide:event", None));
+        assert!(refused("hide:elsewhere", None));
+        assert!(refused("resolve:", Some("127.0.0.1")));
+        assert!(refused("resolve:a.test", None));
+        assert!(refused("resolve:a.test", Some("not-an-address")));
+        assert!(!refused("resolve:a.test", Some("93.184.216.34>127.0.0.1;::1")));
+    }
+
+    #[test]
+    fn a_scripted_lookup_answers_in_turn_and_repeats_the_last() {
+        let faults = Faults::default();
+        faults
+            .set("resolve:Rebind.test", Some("93.184.216.34>127.0.0.1;::1,10.0.0.1"))
+            .unwrap();
+        let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+        let first = faults.scripted_answer("rebind.test").unwrap();
+        assert_eq!(first, vec![(ip("93.184.216.34"), ip("127.0.0.1"))]);
+        let later = vec![(ip("::1"), ip("::1")), (ip("10.0.0.1"), ip("10.0.0.1"))];
+        assert_eq!(faults.scripted_answer("rebind.test").unwrap(), later);
+        assert_eq!(faults.scripted_answer("rebind.test").unwrap(), later);
+        assert_eq!(faults.scripted_answer("other.test"), None);
+        assert_eq!(faults.list()[0].fired, 3);
     }
 
     #[test]
