@@ -147,14 +147,16 @@ impl Config {
 
         let timeout = match text(&get, "MARFA_ERROR_WEBHOOK_TIMEOUT_MS") {
             None => DEFAULT_WEBHOOK_TIMEOUT_MS,
-            Some(given) => rule::whole_number(&given, 1, rule::DAY_MS).unwrap_or_else(|rule_text| {
-                refuse(rule::line(
-                    "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
-                    &rule_text,
-                    &given,
-                ));
-                DEFAULT_WEBHOOK_TIMEOUT_MS
-            }),
+            Some(given) => {
+                rule::whole_number(&given, 1, rule::DAY_MS).unwrap_or_else(|rule_text| {
+                    refuse(rule::line(
+                        "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
+                        &rule_text,
+                        &given,
+                    ));
+                    DEFAULT_WEBHOOK_TIMEOUT_MS
+                })
+            }
         };
         let webhook = text(&get, "MARFA_ERROR_WEBHOOK_URL").and_then(|address| {
             if is_web_address(&address) {

@@ -2,7 +2,7 @@ const BOOLEAN_RULE: &str = "must be true or false (also 1/0, yes/no, on/off)";
 
 pub const HOUR_MS: u64 = 3_600_000;
 pub const DAY_MS: u64 = 86_400_000;
-pub const WEEK_MS: u64 = 604_800_000;
+pub const YEAR_MS: u64 = 31_536_000_000;
 pub const TERABYTE: u64 = 1_099_511_627_776;
 pub const MILLION: u64 = 1_000_000;
 

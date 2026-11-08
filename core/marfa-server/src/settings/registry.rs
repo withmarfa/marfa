@@ -216,7 +216,7 @@ macro_rules! registry {
 
 const INTERVAL: Rule = Rule::Whole {
     min: 1,
-    max: rule::WEEK_MS,
+    max: rule::YEAR_MS,
 };
 const UP_TO_A_DAY: Rule = Rule::Whole {
     min: 1,

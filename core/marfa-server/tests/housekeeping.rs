@@ -662,8 +662,8 @@ async fn start_clears_an_unfinished_run_and_moves_no_schedule_later() {
 async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
     let instance = Instance::start(&[
         ("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS", "5"),
-        ("MARFA_AUDIT_CLEANUP_INTERVAL_MS", "604800000"),
-        ("MARFA_TRASH_PURGE_INTERVAL_MS", "604800000"),
+        ("MARFA_AUDIT_CLEANUP_INTERVAL_MS", "31536000000"),
+        ("MARFA_TRASH_PURGE_INTERVAL_MS", "31536000000"),
     ])
     .await;
     instance.app.clock.pause(false);
