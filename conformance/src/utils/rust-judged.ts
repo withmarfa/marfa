@@ -99,6 +99,8 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/key-rate-limit.test.ts",
   "src/suites/compliance/key-reach.test.ts",
   "src/suites/compliance/keys-update.test.ts",
+  "src/suites/compliance/mcp-scripted.test.ts",
+  "src/suites/compliance/mcp-single-use.test.ts",
   "src/suites/compliance/media-progress.test.ts",
   "src/suites/compliance/media-rating-game.test.ts",
   "src/suites/compliance/metadata-routes.test.ts",
