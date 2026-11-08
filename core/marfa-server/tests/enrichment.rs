@@ -441,9 +441,7 @@ fn main() {
         ),
         trial(
             "fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared",
-            || {
-                Box::pin(fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared())
-            },
+            || Box::pin(fills_the_size_of_a_picture_left_for_its_words_when_the_size_is_cleared()),
         ),
         trial(
             "reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refusal",
