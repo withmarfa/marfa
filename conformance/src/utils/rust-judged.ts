@@ -271,6 +271,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/device/save-before-sync-live.test.ts",
   "src/suites/device/save-before-sync.test.ts",
   "src/suites/device/scripted-server.test.ts",
+  "src/suites/device/search-file-text-live.test.ts",
   "src/suites/device/search-live.test.ts",
   "src/suites/device/slice-tiers-live.test.ts",
   "src/suites/device/status-groups.test.ts",
