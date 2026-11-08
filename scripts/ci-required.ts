@@ -612,8 +612,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
-  // its native readers are read by the native job alone: nothing else compiles
-  // or runs them but the image, which builds the release programs with them.
+  // its native readers are read by the native job and the image, which builds
+  // the release programs with them: nothing else compiles or runs them.
   [/^core\/marfa-enrichment\/native\//, ["core-native", "image"]],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
