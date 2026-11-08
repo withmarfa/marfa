@@ -236,6 +236,8 @@ fn take_lock(path: &Path, me: u32) -> Result<File, Failure> {
     }
 }
 
+const STALE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn clear_stale(path: &Path) -> Result<(), Failure> {
     let unreadable = |error: std::io::Error| {
         Failure::start(format!("{} could not be read: {error}", path.display()))
@@ -249,8 +251,18 @@ fn clear_stale(path: &Path) -> Result<(), Failure> {
     if !found.file_type().is_socket() {
         return Err(exists());
     }
-    match UnixStream::connect(path) {
+    let (sent, answer) = std::sync::mpsc::channel();
+    let target = path.to_path_buf();
+    std::thread::spawn(move || {
+        let _ = sent.send(UnixStream::connect(target));
+    });
+    // A listener that never accepts is a socket in use, not a stale one.
+    match answer
+        .recv_timeout(STALE_CONNECT_TIMEOUT)
+        .unwrap_or_else(|_| Err(ErrorKind::TimedOut.into()))
+    {
         Ok(_) => return Err(in_use(path)),
+        Err(error) if error.kind() == ErrorKind::TimedOut => return Err(in_use(path)),
         Err(error) if error.kind() == ErrorKind::ConnectionRefused => {}
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(unreadable(error)),

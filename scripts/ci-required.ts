@@ -591,10 +591,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
-  // The Rust server is built and tested on Linux alone, and its contract is
-  // run by the Rust contract jobs. It has no macOS-only code, which
-  // `ci/ci-required.test.ts` searches `core/` for; the binary and the Swift
-  // package do not depend on it, so no Mac job reads it.
+  // The Rust server's private socket checks ACLs with macOS-only code, so a
+  // Mac builds and tests it too.
+  [
+    /^core\/marfa-server\/src\/control_socket\.rs$/,
+    ["core-checks", "core-checks-linux", "rust-contract"],
+  ],
+  // The rest of the server is built and tested on Linux, and its contract is
+  // run by the Rust contract jobs; the binary and the Swift package do not
+  // depend on it.
   [/^core\/marfa-server\//, ["core-checks-linux", "rust-contract"]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac

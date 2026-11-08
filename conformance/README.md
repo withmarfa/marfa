@@ -796,7 +796,8 @@ or when the classifier skipped them all.
   when a test failed. `Rust contract score` counts the reports as described
   above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
   waits for it. A change under `core/marfa-server/` runs these jobs and
-  `Core checks (Linux)`, and none of the TypeScript server's.
+  `Core checks (Linux)`, and `Core checks` for the private socket's macOS
+  code, and none of the TypeScript server's.
 
 `scripts/ci-required.ts` says which groups a change reaches and writes the
 matrix. A change to `spec/` alone runs the offline lane, and the compliance

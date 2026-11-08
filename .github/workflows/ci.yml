@@ -1013,8 +1013,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install socket ACL inspection
-        run: sudo apt-get update && sudo apt-get install -y acl
       # Nothing in the workspace is built for the Rust server.
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v8
