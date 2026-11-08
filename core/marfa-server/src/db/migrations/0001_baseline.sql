@@ -638,8 +638,7 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
--- A file is read again when what a read would give it changes: its bytes, its type, or a
--- field the sweep fills being cleared.
+-- An existing reference alone does not queue changed file properties.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
