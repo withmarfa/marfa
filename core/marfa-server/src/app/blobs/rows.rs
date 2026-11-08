@@ -368,6 +368,17 @@ pub fn deletion_failed(
     Ok(())
 }
 
+/// Counts a replication run that did not copy the blob into the store.
+pub fn copy_failed(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO blob_copy_failures (hash, store_id, failures) \
+         SELECT ?1, ?2, 1 WHERE EXISTS (SELECT 1 FROM blobs WHERE hash = ?1) \
+         ON CONFLICT (hash, store_id) DO UPDATE SET failures = failures + 1",
+    )?
+    .execute(params![hash.as_str(), store_id])?;
+    Ok(())
+}
+
 /// Records a copy a store now holds, unless the blob has left the registry since.
 pub fn record_copy(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) -> Result<bool> {
     if find(tx, hash)?.is_none() {
@@ -378,6 +389,8 @@ pub fn record_copy(tx: &Transaction<'_>, hash: &Hash, store_id: &str, at: &str) 
          ON CONFLICT (hash, store_id) DO NOTHING",
     )?
     .execute(params![hash.as_str(), store_id, at])?;
+    tx.prepare_cached("DELETE FROM blob_copy_failures WHERE hash = ?1 AND store_id = ?2")?
+        .execute(params![hash.as_str(), store_id])?;
     deleted(tx, hash, store_id)?;
     Ok(true)
 }
@@ -401,6 +414,7 @@ pub struct Missing {
 }
 
 const MISSING: &str = "FROM blobs b JOIN stores t ON t.detached_at IS NULL \
+     LEFT JOIN blob_copy_failures f ON f.hash = b.hash AND f.store_id = t.id \
      WHERE NOT EXISTS (SELECT 1 FROM blob_copies c WHERE c.hash = b.hash AND c.store_id = t.id) \
      AND EXISTS (SELECT 1 FROM blob_copies c JOIN stores s ON s.id = c.store_id \
                  WHERE c.hash = b.hash AND s.detached_at IS NULL)";
@@ -408,7 +422,7 @@ const MISSING: &str = "FROM blobs b JOIN stores t ON t.detached_at IS NULL \
 pub fn missing(tx: &Transaction<'_>, limit: u64) -> Result<Vec<Missing>> {
     let mut statement = tx.prepare_cached(&format!(
         "SELECT b.hash, b.mime_type, b.size_bytes, t.id {MISSING} \
-         ORDER BY b.recorded_at, b.hash, t.id LIMIT ?1"
+         ORDER BY coalesce(f.failures, 0), b.recorded_at, b.hash, t.id LIMIT ?1"
     ))?;
     let rows = statement.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
         Ok((
@@ -644,7 +658,12 @@ fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
 /// Takes a blob out of the registry with its copies, proofs and report, and queues the
 /// deletion of its bytes in each store.
 pub fn purge(tx: &Transaction<'_>, hash: &Hash, stores: &[String], at: &str) -> Result<()> {
-    for table in ["blob_copies", "blob_proofs", "blob_orphans"] {
+    for table in [
+        "blob_copies",
+        "blob_copy_failures",
+        "blob_proofs",
+        "blob_orphans",
+    ] {
         tx.prepare_cached(&format!("DELETE FROM {table} WHERE hash = ?1"))?
             .execute([hash.as_str()])?;
     }

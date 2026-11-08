@@ -157,14 +157,21 @@ async fn copy_to(
     Copy::Skipped
 }
 
-/// Gives every attached store a copy of every blob, oldest blob first, within the run's
-/// bounds.
+/// Gives every attached store a copy of every blob, within the run's bounds: the copies that
+/// failed in the fewest runs first, then the oldest blob first, so a blob that cannot be copied
+/// never holds back the others.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.settings.live();
     let (batch, batch_bytes) = (
         live.get(BLOB_REPLICATE_BATCH),
         live.get(BLOB_REPLICATE_BATCH_BYTES),
     );
+    if app.blobs.attached().len() < 2 {
+        return Ok(Report {
+            result: json!({ "copied": 0, "bytes": 0, "remaining": 0 }),
+            again: false,
+        });
+    }
     let missing = app.db.read(move |tx| rows::missing(tx, batch)).await?;
     let mut unreachable = BTreeSet::new();
     let (mut copied, mut bytes) = (0u64, 0u64);
@@ -192,22 +199,32 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         if holders.contains(&pair.store_id) {
             continue;
         }
-        match app.finish_deletion(&target, &hash).await {
-            Ok(()) => {}
+        let cleared = match app.finish_deletion(&target, &hash).await {
+            Ok(()) => true,
             Err(Failed::Late) => {
                 unreachable.insert(pair.store_id.clone());
-                continue;
+                false
             }
             Err(Failed::Io(error)) => {
                 tracing::warn!(%error, "A queued deletion in a store to copy to failed");
-                continue;
+                false
             }
-        }
-        let from = match copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await {
+        };
+        let made = if cleared {
+            copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await
+        } else {
+            Copy::Skipped
+        };
+        let from = match made {
             Copy::Made { from } => from,
-            Copy::Skipped => continue,
-            Copy::TargetSilent => {
-                unreachable.insert(pair.store_id.clone());
+            Copy::Skipped | Copy::TargetSilent => {
+                if matches!(made, Copy::TargetSilent) {
+                    unreachable.insert(pair.store_id.clone());
+                }
+                let (blob, to) = (hash.clone(), pair.store_id.clone());
+                app.db
+                    .write(Write::own(), move |tx| rows::copy_failed(tx, &blob, &to))
+                    .await?;
                 continue;
             }
         };
