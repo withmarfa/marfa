@@ -36,15 +36,26 @@ const CONFIG_PATH: &str = "/config";
 /// sent with it. `finish` keeps reading in the background so a refusal that leaves a
 /// body unread still arrives.
 #[derive(Clone)]
-pub struct Shared(Arc<Mutex<Body>>);
+pub struct Shared {
+    body: Arc<Mutex<Body>>,
+    ended: Arc<AtomicBool>,
+}
 
 impl Shared {
     pub fn new(body: Body) -> Shared {
-        Shared(Arc::new(Mutex::new(body)))
+        Shared {
+            ended: Arc::new(AtomicBool::new(body.is_end_stream())),
+            body: Arc::new(Mutex::new(body)),
+        }
     }
 
     fn held(&self) -> MutexGuard<'_, Body> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.body.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the body has been read to its end.
+    pub fn is_whole(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     pub fn finish(mut self) {
@@ -76,11 +87,19 @@ impl HttpBody for Shared {
         self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
-        Pin::new(&mut *self.held()).poll_frame(context)
+        let polled = Pin::new(&mut *self.held()).poll_frame(context);
+        if matches!(polled, Poll::Ready(None)) {
+            self.ended.store(true, Ordering::Release);
+        }
+        polled
     }
 
     fn is_end_stream(&self) -> bool {
-        self.held().is_end_stream()
+        let end = self.held().is_end_stream();
+        if end {
+            self.ended.store(true, Ordering::Release);
+        }
+        end
     }
 
     fn size_hint(&self) -> SizeHint {
