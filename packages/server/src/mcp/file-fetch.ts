@@ -43,7 +43,6 @@ export type ToolFetch = <T>(
 ) => Promise<ToolFetchOutcome<T>>;
 
 export interface ToolFetchOptions {
-  fetcher: PublicFetcher;
   /** `MARFA_MCP_FETCH_ENABLED`. */
   enabled: boolean;
   audit: Pick<AuditStore, "log">;
