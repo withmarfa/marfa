@@ -111,7 +111,7 @@ describe("OAuth client authentication methods", () => {
     );
     for (const path of ["/auth/device/code", "/auth/oauth2/token"]) {
       for (const extra of [
-        { client_secret: "a-secret" },
+        { client_secret: "a-secret" } as Record<string, string>,
         {
           client_assertion_type:
             "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
