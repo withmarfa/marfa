@@ -296,7 +296,7 @@ describe("what a change runs", () => {
       [...RUST, ...ENRICHMENT, "ci-sqlite", "version-fields"],
     ],
     [
-      "the native readers' scripts, pins and patches, which only the native build runs",
+      "the native readers' scripts, pins and patches, which the native build and the Rust server's build run",
       [
         "core/marfa-enrichment/native/release.sh",
         "core/marfa-enrichment/native/manifest.txt",
@@ -304,7 +304,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["ci-sqlite", "core-native"],
+      ["ci-sqlite", "core-native", "rust-contract"],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",

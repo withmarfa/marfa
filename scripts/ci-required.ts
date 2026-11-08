@@ -616,9 +616,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
-  // its native readers are read by the native job alone: nothing else compiles
-  // or runs them.
-  [/^core\/marfa-enrichment\/native\//, ["core-native"]],
+  // its native readers are read by the native job, and by the Rust contract
+  // build, which links the server with them.
+  [/^core\/marfa-enrichment\/native\//, ["core-native", "rust-contract"]],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
   // the isolation, the tests and the build script run on a Mac as well. A
