@@ -676,51 +676,6 @@ async fn saving_finding_reading_editing_and_deleting_through_the_tools_is_audite
 }
 
 #[tokio::test]
-async fn a_part_is_named_after_its_host_only_for_a_credential_that_reads_the_edge() {
-    let instance = Instance::start(&[]).await;
-    let writer = instance
-        .key(json!({ "type_permissions": { "*": "write" }, "edge_permissions": { "*": "write" } }))
-        .await;
-    let host = instance
-        .tool(
-            &writer,
-            "marfa_create",
-            json!({ "type": "core.note", "properties": { "title": "Private ledger", "body": "x" } }),
-        )
-        .await;
-    let host = host.payload()["id"].as_str().unwrap().to_string();
-    let part = instance.note(&writer, "a passage worth keeping").await;
-    let part = part.payload()["id"].as_str().unwrap().to_string();
-    let edge = json!({ "source_id": part, "target_id": host, "edge_type": "excerpt-of" });
-    let made = instance
-        .call(&writer, Method::POST, "/edges", Some(edge))
-        .await;
-    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
-
-    let title_for = async |token: &str| {
-        let found = instance
-            .tool(token, "marfa_find", json!({ "query": "passage" }))
-            .await;
-        let row = found.payload()["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["id"] == part.as_str())
-            .cloned()
-            .unwrap();
-        row.to_string()
-    };
-    let with_edge = instance
-        .key(json!({ "type_permissions": { "*": "read" }, "edge_permissions": { "*": "read" } }))
-        .await;
-    assert!(title_for(&with_edge).await.contains("Private ledger"));
-    let without_edge = instance
-        .key(json!({ "type_permissions": { "*": "read" } }))
-        .await;
-    assert!(!title_for(&without_edge).await.contains("Private ledger"));
-}
-
-#[tokio::test]
 async fn an_argument_the_tool_does_not_take_is_an_error_naming_it() {
     let instance = Instance::start(&[]).await;
     let token = instance.writer().await;

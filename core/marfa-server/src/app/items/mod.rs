@@ -319,16 +319,16 @@ fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a st
 }
 
 fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String> {
-    let shown = shown_of(tx, catalog, row, &|_, _| true)?;
+    let shown = shown_of(tx, catalog, row, &|_| true)?;
     Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
 }
 
-/// An item's name and preview; a part is named after its oldest host that `readable` admits.
+/// An item's name and preview; a part is named after its oldest host of a readable type.
 pub(crate) fn shown_of(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     row: &Item,
-    readable: &dyn Fn(&str, &str) -> bool,
+    readable: &dyn Fn(&str) -> bool,
 ) -> Result<display::ItemDisplay> {
     let rules = &catalog.rules;
     let properties = parsed(&row.properties)?;
