@@ -15,7 +15,7 @@ import {
   type HealthProbes,
 } from "./health-probes.js";
 import { errorReason } from "../error-text.js";
-import { healthAdmitted } from "../control/faults.js";
+import { healthAdmitted, refusing } from "../control/faults.js";
 import { makeErrorResponseSchema } from "../openapi.js";
 
 export type Status = "ok" | "degraded" | "down";
@@ -228,7 +228,10 @@ export async function readHealth(
   // Blob storage. The disk store, which every upload lands on, under the
   // same budget: a held disk is a fault this door exists to report.
   const blobStorage = timed(
-    () => blobs.disk.has("sha256:healthcheck"),
+    () =>
+      refusing("blob-store")
+        ? Promise.reject(new Error("the disk store refused"))
+        : blobs.disk.has("sha256:healthcheck"),
     `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
   );
 

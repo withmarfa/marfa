@@ -14,13 +14,24 @@ export function createFaultedHeadRead(
   };
 }
 
+/** The payload with its item's type removed: valid JSON that names no type. */
+function withoutItemType(payload: string): string {
+  const parsed = JSON.parse(payload) as { item?: Record<string, unknown> };
+  if (parsed.item) delete parsed.item.type;
+  return JSON.stringify(parsed);
+}
+
 /** Corrupt only this replay read; the stored row and its live twin stay intact. */
 export function replayRowsUnderFaults(
   rows: PersistedEvent[],
 ): PersistedEvent[] {
-  return rows.map((row) =>
-    failAt("stream-replay-row") ? { ...row, payload: "not json" } : row,
-  );
+  return rows.map((row) => {
+    if (failAt("stream-replay-row")) return { ...row, payload: "not json" };
+    if (failAt("stream-replay-untyped")) {
+      return { ...row, payload: withoutItemType(row.payload) };
+    }
+    return row;
+  });
 }
 
 /** The same unclassifiable event must reach persistence and live announcement. */

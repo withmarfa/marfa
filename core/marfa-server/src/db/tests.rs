@@ -29,14 +29,6 @@ const TWO: &[Migration] = &[
         sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
     },
 ];
-const TWO_BROKEN: &[Migration] = &[
-    BASE,
-    Migration {
-        version: 2,
-        sql: "ALTER TABLE notes ADD COLUMN first INTEGER; ALTER TABLE nowhere ADD COLUMN x;",
-    },
-];
-
 const INDEXED: &[Migration] = &[Migration {
     version: 1,
     sql: "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
@@ -63,8 +55,6 @@ fn options(file: &Path, migrations: &'static [Migration]) -> Options {
         busy_budget: Duration::from_millis(200),
         readers: 2,
         migrations,
-        migration_fault: None,
-        free_disk_bytes: None,
     }
 }
 
@@ -368,34 +358,28 @@ async fn a_path_outside_ascii_opens_as_the_same_file_again() {
 }
 
 #[tokio::test]
-async fn an_update_runs_only_what_the_file_lacks_and_keeps_a_copy() {
+async fn an_older_database_is_refused_and_left_as_it_was() {
     let place = folder();
     let db = open(&place.file);
     db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
     db.close().await;
+    let before = std::fs::read(&place.file).unwrap();
 
-    let updated = Db::open(&options(&place.file, TWO), Arc::default())
-        .map_err(|f| f.message)
-        .unwrap();
-    let pinned: i64 = updated
-        .read(|tx| {
-            Ok(
-                tx.query_row("SELECT pinned FROM notes WHERE id = 1", [], |row| {
-                    row.get(0)
-                })?,
-            )
-        })
-        .await
-        .unwrap();
-    assert_eq!(pinned, 0);
-    updated.close().await;
-    let copy = PathBuf::from(format!("{}.schema-1-to-2.bak", place.file.display()));
-    assert!(copy.exists());
-    let version: u32 = Connection::open(&place.file)
-        .unwrap()
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 2);
+    let failure = refused(&place.file, TWO);
+    assert_eq!(failure.status, 78);
+    assert!(
+        failure.message.contains("is not this build's"),
+        "{}",
+        failure.message
+    );
+    assert!(
+        failure.message.contains("restore the archive there"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(std::fs::read(&place.file).unwrap(), before);
+    let beside = std::fs::read_dir(place.file.parent().unwrap()).unwrap();
+    assert_eq!(beside.filter(|entry| entry.is_ok()).count(), 1);
 }
 
 #[tokio::test]
@@ -488,18 +472,6 @@ async fn an_index_gone_from_a_table_still_there_is_refused() {
         "{}",
         failure.message
     );
-}
-
-#[tokio::test]
-async fn a_migration_that_fails_leaves_the_file_at_its_version() {
-    let place = folder();
-    let db = open(&place.file);
-    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
-    db.close().await;
-
-    refused(&place.file, TWO_BROKEN);
-    let reopened = open(&place.file);
-    assert_eq!(ids(&reopened).await, [1]);
 }
 
 #[tokio::test]

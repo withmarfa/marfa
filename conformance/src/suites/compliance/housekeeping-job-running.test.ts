@@ -54,6 +54,8 @@ beforeAll(async () => {
     MARFA_HEARTBEAT_URL: `http://127.0.0.1:${String(address.port)}/beat`,
     // Past the file, so the one run in it is the one the boot starts.
     MARFA_HEARTBEAT_INTERVAL_MS: "3600000",
+    // Falls due every second, so a due job exists while the heartbeat is held.
+    FEED_EXPIRY_INTERVAL_MS: "1000",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -149,9 +151,9 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     expect(other.status).toBe(200);
 
     // A job that falls due while the heartbeat is held runs too:
-    // `webhook-schedule` is due every second.
+    // `feed-expiry` is due every second.
     let dueRan = false;
-    const dueBy = Date.now() + 5_000;
+    const dueBy = Date.now() + 15_000;
     while (!dueRan && Date.now() < dueBy) {
       const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
         headers: { Authorization: `Bearer ${server!.managementKey}` },
@@ -162,7 +164,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
         }
       ).data;
       const started = rows.find(
-        (job) => job.name === "webhook-schedule",
+        (job) => job.name === "feed-expiry",
       )?.last_started_at;
       dueRan =
         started != null && Date.parse(started) > Date.parse(runningSince!);

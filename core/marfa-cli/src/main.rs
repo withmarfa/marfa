@@ -319,8 +319,8 @@ enum Command {
         command: FoldersCommand,
     },
     Docs(docs::DocsArgs),
-    /// A server on this machine, in Docker: install it, upgrade it, see how
-    /// it is and take it down.
+    /// A server on this machine, run natively or in Docker: install it,
+    /// upgrade it, see how it is and take it down.
     Server {
         #[command(subcommand)]
         command: server::ServerCommand,
@@ -569,7 +569,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
     {
         return Err(CliError::Usage(
-            "server commands run Docker on this machine and take none of --url, --key and --profile"
+            "server commands act on this machine and take none of --url, --key and --profile"
                 .into(),
         ));
     }
