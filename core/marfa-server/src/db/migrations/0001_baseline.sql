@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS event_log (
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
+    wake_requested INTEGER NOT NULL DEFAULT 0 CHECK (wake_requested IN (0, 1)),
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,

@@ -115,7 +115,7 @@ pub fn plan(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Vec<Step> {
 /// The claim leaves `next_run_at` alone, so a run cut off stays due.
 pub fn claim(tx: &Transaction<'_>, name: &str, seen: Option<&str>, at: &str) -> Result<bool> {
     let changed = tx.execute(
-        "UPDATE housekeeping_jobs SET running_since = ?2, last_started_at = ?2 \
+        "UPDATE housekeeping_jobs SET running_since = ?2, last_started_at = ?2, wake_requested = 0 \
          WHERE name = ?1 AND running_since IS NULL AND (?3 IS NULL OR next_run_at = ?3)",
         params![name, at, seen],
     )?;
@@ -178,7 +178,9 @@ fn next_after(held: Option<i64>, started: i64, finished: i64, interval: i64, aga
 
 pub fn bring_forward(tx: &Transaction<'_>, name: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
-        "UPDATE housekeeping_jobs SET next_run_at = ?2 WHERE name = ?1 AND next_run_at > ?2",
+        "UPDATE housekeeping_jobs SET next_run_at = MIN(next_run_at, ?2), \
+         wake_requested = CASE WHEN running_since IS NOT NULL THEN 1 ELSE wake_requested END \
+         WHERE name = ?1",
     )?
     .execute(params![name, at])?;
     Ok(())
@@ -197,23 +199,23 @@ pub struct Finish<'a> {
 }
 
 pub fn finish(tx: &Transaction<'_>, run: &Finish<'_>) -> Result<()> {
-    let held: Option<String> = tx
+    let held: Option<(String, bool)> = tx
         .query_row(
-            "SELECT next_run_at FROM housekeeping_jobs WHERE name = ?1",
+            "SELECT next_run_at, wake_requested FROM housekeeping_jobs WHERE name = ?1",
             [run.name],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
     let finished = parsed_ms(run.finished_at).unwrap_or(0);
     let next = next_after(
-        held.as_deref().and_then(parsed_ms),
+        held.as_ref().and_then(|(at, _)| parsed_ms(at)),
         parsed_ms(run.started_at).unwrap_or(0),
         finished,
         run.interval_ms,
-        run.again,
+        run.again || held.is_some_and(|(_, requested)| requested),
     );
     tx.execute(
-        "UPDATE housekeeping_jobs SET next_run_at = ?2, running_since = NULL, \
+        "UPDATE housekeeping_jobs SET next_run_at = ?2, running_since = NULL, wake_requested = 0, \
          last_finished_at = ?3, last_outcome = ?4, last_error = ?5, last_result = ?6 \
          WHERE name = ?1",
         params![
@@ -233,6 +235,53 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_800_000_000_000;
+
+    #[test]
+    fn a_wake_during_a_claimed_run_survives_its_finish() {
+        for offset in [0, 1] {
+            let mut db = rusqlite::Connection::open_in_memory().unwrap();
+            db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+                .unwrap();
+            let tx = db.transaction().unwrap();
+            apply(
+                &tx,
+                &[Step::Enter {
+                    name: "job",
+                    next_ms: NOW,
+                }],
+                None,
+            )
+            .unwrap();
+            assert!(claim(&tx, "job", None, &stamp_of(NOW)).unwrap());
+            bring_forward(&tx, "job", &stamp_of(NOW + offset)).unwrap();
+            let end = Finish {
+                name: "job",
+                started_at: &stamp_of(NOW),
+                finished_at: &stamp_of(NOW + 10),
+                interval_ms: 60_000,
+                again: false,
+                outcome: "ok",
+                error: None,
+                result: None,
+            };
+            finish(&tx, &end).unwrap();
+            assert!(matches!(
+                plan(&rows(&tx).unwrap(), &[JOB], NOW + 10).as_slice(),
+                [Step::Claim { .. }]
+            ));
+            assert!(claim(&tx, "job", None, &stamp_of(NOW + 10)).unwrap());
+            finish(
+                &tx,
+                &Finish {
+                    started_at: &stamp_of(NOW + 10),
+                    finished_at: &stamp_of(NOW + 20),
+                    ..end
+                },
+            )
+            .unwrap();
+            assert!(plan(&rows(&tx).unwrap(), &[JOB], NOW + 20).is_empty());
+        }
+    }
 
     fn row(name: &str, next: &str, running: bool) -> Row {
         Row {
