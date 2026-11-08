@@ -44,7 +44,10 @@ pub async fn list(app: &App, caller: &Caller, page: Page) -> Result<String> {
             read.tx,
             FOLDER_TYPE,
             "active",
-            after.as_ref().zip(created).map(|(at, created)| (created, at.id.as_str())),
+            after
+                .as_ref()
+                .zip(created)
+                .map(|(at, created)| (created, at.id.as_str())),
             page.limit + 1,
         )?;
         let more = rows.len() as i64 > page.limit;
@@ -59,14 +62,16 @@ pub async fn list(app: &App, caller: &Caller, page: Page) -> Result<String> {
             }));
         }
         let next_cursor = match rows.last().filter(|_| more) {
-            Some(last) => Value::from(secret.issue(
-                SCOPE,
-                &Position {
-                    keys: vec![Sql::Text(last.created_at.clone())],
-                    id: last.id.clone(),
-                }
-                .payload(),
-            )?),
+            Some(last) => Value::from(
+                secret.issue(
+                    SCOPE,
+                    &Position {
+                        keys: vec![Sql::Text(last.created_at.clone())],
+                        id: last.id.clone(),
+                    }
+                    .payload(),
+                )?,
+            ),
             None => Value::Null,
         };
         Ok(json!({ "data": data, "next_cursor": next_cursor }).to_string())

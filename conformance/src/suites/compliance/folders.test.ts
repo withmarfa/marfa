@@ -417,6 +417,11 @@ describe("the folder door", () => {
       "removal_threshold.files",
     ],
     [
+      { removal_threshold: { files: 9007199254740992 } },
+      "validation_error",
+      "removal_threshold.files",
+    ],
+    [
       { full_pass_interval_seconds: 59 },
       "validation_error",
       "full_pass_interval_seconds",

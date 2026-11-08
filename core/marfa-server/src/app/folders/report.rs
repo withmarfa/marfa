@@ -112,7 +112,9 @@ fn success_time(body: &Map<String, Value>) -> Result<Option<String>> {
 }
 
 fn problems(body: &Map<String, Value>) -> Result<Vec<(&'static str, i64)>> {
-    let value = body.get("problems").ok_or_else(|| missing_field("problems"))?;
+    let value = body
+        .get("problems")
+        .ok_or_else(|| missing_field("problems"))?;
     let Some(listed) = value.as_array() else {
         return Err(invalid("problems", "problems must be a list."));
     };
@@ -125,7 +127,10 @@ fn problems(body: &Map<String, Value>) -> Result<Vec<(&'static str, i64)>> {
         let Some(problem) = problem.as_object() else {
             return Err(invalid(&path, "A problem is an object."));
         };
-        if let Some(extra) = problem.keys().find(|key| !matches!(key.as_str(), "code" | "count")) {
+        if let Some(extra) = problem
+            .keys()
+            .find(|key| !matches!(key.as_str(), "code" | "count"))
+        {
             return Err(invalid(
                 &path,
                 format!("A problem names a code and a count, not {extra}."),
@@ -153,19 +158,16 @@ impl Report {
             .collect();
         if !unknown.is_empty() {
             unknown.sort_unstable();
-            return Err(Refusal::validation(format!(
-                "A report names no {}.",
-                unknown.join(", ")
-            ))
-            .with_detail("unknown_body_fields", unknown));
+            return Err(
+                Refusal::validation(format!("A report names no {}.", unknown.join(", ")))
+                    .with_detail("unknown_body_fields", unknown),
+            );
         }
         let waiting = body
             .get("first_sync_waiting")
             .ok_or_else(|| missing_field("first_sync_waiting"))?
             .as_bool()
-            .ok_or_else(|| {
-                invalid("first_sync_waiting", "first_sync_waiting is true or false.")
-            })?;
+            .ok_or_else(|| invalid("first_sync_waiting", "first_sync_waiting is true or false."))?;
         Ok(Report {
             folder_store_id: store_id(body)?,
             sequence: count(body, "sequence", 1)?,

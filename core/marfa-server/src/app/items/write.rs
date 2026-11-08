@@ -891,25 +891,18 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 let at = self.unit.at.as_str();
                 let mut properties = parsed(&row.properties)?;
                 properties.insert("revoked_at".to_string(), Value::from(at));
-                let writer = self.writer();
-                let stamped = rows::advance(
-                    tx,
+                let stamped = self.land(
                     &row,
-                    &Uuid::now_v7().to_string(),
-                    &Landed {
-                        type_id: &row.type_id,
-                        tier: row.tier.as_deref(),
-                        source_id: row.source_id.as_deref(),
-                        link: row.link.as_deref(),
-                        properties: &js::canonical(&properties),
-                        title_key: title_key(&self.catalog.rules, &row.type_id, &properties)
-                            .as_deref(),
-                        schema_version: self.schema_version(&row.type_id),
-                        occurred_at: &row.occurred_at,
-                        at,
-                        writer: writer.as_ref(),
+                    &row.type_id,
+                    &Settled {
+                        properties,
+                        base: None,
+                        fields: ItemFields::default(),
+                        resolution: None,
+                        copy: None,
                     },
                 )?;
+                let writer = self.writer();
                 let item = rows::move_state(
                     tx,
                     &stamped,

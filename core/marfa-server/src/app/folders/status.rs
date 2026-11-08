@@ -61,7 +61,12 @@ fn problems_json(problems: &[(String, i64)]) -> Value {
 
 /// Reports a copy under the credential that sent it, replacing the copy's report when the
 /// sequence is greater and leaving it, receipt time included, when it is not.
-pub async fn report(app: &App, caller: &Caller, folder_id: String, report: Report) -> Result<String> {
+pub async fn report(
+    app: &App,
+    caller: &Caller,
+    folder_id: String,
+    report: Report,
+) -> Result<String> {
     let faults = app.faults.clone();
     app.write(caller, ACTION, move |unit| {
         let tx = unit.tx();
@@ -177,7 +182,9 @@ fn stands(tx: &Transaction<'_>, kind: &str, id: &str, at: &str) -> Result<bool> 
     match kind {
         "key" => keys::stands(tx, id, at),
         "app" => Ok(grants::of_owner(tx, id)?.is_some()),
-        _ => Err(Refusal::internal("a stored folder report names an unknown sign-in kind")),
+        _ => Err(Refusal::internal(
+            "a stored folder report names an unknown sign-in kind",
+        )),
     }
 }
 
@@ -202,7 +209,10 @@ impl Totals {
         self.add(|t| &mut t.pending_uploads, copy.pending_uploads);
         self.add(|t| &mut t.pending_downloads, copy.pending_downloads);
         self.add(|t| &mut t.paused_removals, copy.paused_removals);
-        self.add(|t| &mut t.first_sync_waiting, i64::from(copy.first_sync_waiting));
+        self.add(
+            |t| &mut t.first_sync_waiting,
+            i64::from(copy.first_sync_waiting),
+        );
         for (code, count) in &copy.problems {
             let at = match self.problems.iter().position(|(held, _)| held == code) {
                 Some(at) => at,
@@ -241,15 +251,16 @@ fn status_of(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<String> 
     let mut at_group: Option<(String, String, bool)> = None;
     let mut copies: Vec<Value> = Vec::new();
     let mut named = (String::new(), String::new(), String::new());
-    let mut close = |group: &Option<(String, String, bool)>, name: &str, copies: &mut Vec<Value>| {
-        if let Some((kind, id, current)) = group {
-            groups.push(json!({
-                "sign_in": { "kind": kind, "id": id, "name": name },
-                "current": current,
-                "copies": std::mem::take(copies),
-            }));
-        }
-    };
+    let mut close =
+        |group: &Option<(String, String, bool)>, name: &str, copies: &mut Vec<Value>| {
+            if let Some((kind, id, current)) = group {
+                groups.push(json!({
+                    "sign_in": { "kind": kind, "id": id, "name": name },
+                    "current": current,
+                    "copies": std::mem::take(copies),
+                }));
+            }
+        };
     for row in stored_rows(tx, folder_id)? {
         let same = at_group
             .as_ref()

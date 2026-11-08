@@ -136,7 +136,13 @@ pub(super) fn newest_of(
          ORDER BY created_at DESC, id DESC LIMIT ?5"
     ))?;
     let found = statement.query_map(
-        params![type_id, state, after.map(|at| at.0), after.map(|at| at.1), limit],
+        params![
+            type_id,
+            state,
+            after.map(|at| at.0),
+            after.map(|at| at.1),
+            limit
+        ],
         item_of,
     )?;
     Ok(found.collect::<rusqlite::Result<_>>()?)

@@ -10,6 +10,8 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::check_id;
 use crate::app::views::{QUERY, at, check_query, check_title, undeclared_in};
 
+pub use crate::app::views::refuse_null;
+
 pub const SETTINGS: [&str; 10] = [
     "title",
     "query",
@@ -29,6 +31,7 @@ const MAX_PATTERNS: usize = 1_000;
 const MAX_TEXT: usize = 1_024;
 const MAX_DEFAULT_EDGE_TYPES: usize = 100;
 const MAX_DEFAULT_EDGE_TARGETS: usize = 100;
+const MOST_FILES: f64 = 9_007_199_254_740_991.0;
 const FULL_PASS_SECONDS: std::ops::RangeInclusive<f64> = 60.0..=86_400.0;
 
 /// Every key the body or one of its settings names that the folder does not declare, by its path
@@ -48,10 +51,6 @@ pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
     }
     paths.sort_unstable();
     paths
-}
-
-pub fn refuse_null(settings: &Map<String, Value>) -> Result<()> {
-    crate::app::views::refuse_null(settings)
 }
 
 fn known_type(value: &Value, path: &str, catalog: &Catalog) -> Result<()> {
@@ -127,10 +126,11 @@ fn check_edges(value: &Value, catalog: &Catalog) -> Result<()> {
                 format!("{path} holds at most {MAX_DEFAULT_EDGE_TARGETS} item IDs."),
             ));
         }
-        if !targets
-            .iter()
-            .all(|target| target.as_str().is_some_and(|id| validation::id(&path, id).is_ok()))
-        {
+        if !targets.iter().all(|target| {
+            target
+                .as_str()
+                .is_some_and(|id| validation::id(&path, id).is_ok())
+        }) {
             return Err(at(&path, format!("{path} holds item IDs.")));
         }
     }
@@ -149,13 +149,15 @@ fn check_defaults(value: &Value, catalog: &Catalog) -> Result<()> {
     {
         return Err(at("defaults.tier", "defaults.tier is library or feed."));
     }
-    if let Some(properties) = defaults.get("properties")
-        && !properties.is_object()
-    {
-        return Err(at(
-            "defaults.properties",
-            "defaults.properties must be an object.",
-        ));
+    if let Some(properties) = defaults.get("properties") {
+        let Some(properties) = properties.as_object() else {
+            return Err(at(
+                "defaults.properties",
+                "defaults.properties must be an object.",
+            ));
+        };
+        validation::property_names(properties)
+            .map_err(|error| at("defaults.properties", error.message))?;
     }
     if let Some(tags) = defaults.get("tags") {
         let tags: Option<Vec<String>> = tags.as_array().and_then(|tags| {
@@ -203,10 +205,7 @@ fn check_patterns(settings: &Map<String, Value>, name: &str) -> Result<()> {
 
 fn check_placement(value: &Value, catalog: &Catalog) -> Result<()> {
     let Some(placement) = value.as_object() else {
-        return Err(at(
-            "first_placement",
-            "first_placement must be an object.",
-        ));
+        return Err(at("first_placement", "first_placement must be an object."));
     };
     for (type_id, directory) in placement {
         let path = format!("first_placement.{type_id}");
@@ -235,11 +234,11 @@ fn check_threshold(settings: &Map<String, Value>, name: &str) -> Result<()> {
     if let Some(files) = threshold.get("files")
         && !files
             .as_f64()
-            .is_some_and(|files| files >= 0.0 && files.fract() == 0.0)
+            .is_some_and(|files| (0.0..=MOST_FILES).contains(&files) && files.fract() == 0.0)
     {
         return Err(at(
             &format!("{name}.files"),
-            format!("{name}.files is a whole number of 0 or more."),
+            format!("{name}.files is a whole number from 0 to 9007199254740991."),
         ));
     }
     if let Some(fraction) = threshold.get("fraction")
