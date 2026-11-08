@@ -68,6 +68,7 @@ const TEST_ROUTES = [
   ["GET", "/_control/test/faults"],
   ["PUT", "/_control/test/faults"],
   ["DELETE", "/_control/test/faults"],
+  ["GET", "/_control/test/blob-stores"],
 ] as const;
 
 async function status(
@@ -107,6 +108,31 @@ describe("the test hook routes", () => {
     for (const [method, path] of TEST_ROUTES) {
       expect(await status(app, method, path), `${method} ${path}`).toBe(404);
     }
+  });
+});
+
+describe("the blob-stores route", () => {
+  it("answers each attached store and the spool, and refuses a name that is no blob's", async () => {
+    const app = appFor(true, true);
+    const all = await app.request("/_control/test/blob-stores");
+    expect(all.status).toBe(200);
+    const listed = (await all.json()) as {
+      stores: { kind: string; holds: boolean }[];
+      spool: { name: string; size: number }[];
+    };
+    expect(listed.stores.map((store) => store.kind)).toContain("disk");
+    expect(listed.spool).toEqual([]);
+
+    const absent = await app.request(
+      `/_control/test/blob-stores?hash=sha256:${"0".repeat(64)}`,
+    );
+    const disk = ((await absent.json()) as typeof listed).stores.find(
+      (store) => store.kind === "disk",
+    );
+    expect(disk?.holds).toBe(false);
+
+    const bad = await app.request("/_control/test/blob-stores?hash=nope");
+    expect(bad.status).toBe(400);
   });
 });
 

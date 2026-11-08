@@ -1,0 +1,70 @@
+name: PDFium upkeep
+
+# File reading pins PDFium, which reads untrusted files, and its fixes land
+# about weekly. Each week this compares the pin in
+# core/marfa-enrichment/native/manifest.txt with the newest
+# bblanchon/pdfium-binaries release. Once the pin is four weeks behind it
+# pushes a branch with the manifest moved and opens one issue, or updates the
+# open one, that links the branch.
+#
+# It opens no pull request: GitHub Actions may not create pull requests in this
+# repository, and one opened with the workflow's token would start no CI. A
+# person or agent opens it from the issue, and its `Core native` job decides.
+# A failed scheduled run is reported like the other scheduled workflows.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Look up and print the move; push and open nothing.
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare a PDFium move
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      # The token stays in the checkout: the script pushes the branch with it.
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          if [[ "${DRY_RUN}" == "true" ]]; then args+=(--dry-run); fi
+          scripts/prepare-pdfium-move.sh "${args[@]}"
+
+  # A failed scheduled run opens an issue, or comments on the one that is open.
+  # Only a schedule reports, so no pull request run can open an issue.
+  report-failure:
+    name: Report a failed scheduled run
+    needs: prepare
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh

@@ -10,17 +10,16 @@ mod sign_ins;
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::response::Response;
-use axum::routing::{get, patch, post};
 use serde_json::{Map, Value};
 
 use super::Routes;
 use super::answer::Stopped;
+use super::doors::{Doors, get, patch, post};
 use super::no_store;
 use super::observe::RequestContext;
 use crate::app::App;
@@ -85,7 +84,7 @@ fn text_field<'b>(body: &'b Map<String, Value>, field: &str) -> Result<&'b str, 
 }
 
 pub fn owner_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route(
             "/owner",
             get(owner::read).post(owner::claim).patch(owner::update),
@@ -104,7 +103,7 @@ pub fn owner_doors() -> Routes {
 }
 
 pub fn doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route("/auth/sign-in", get(pages::sign_in).post(sign_in::form))
         .route("/auth/error", get(pages::error))
         .route("/auth/device", get(pages::device))
