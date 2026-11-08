@@ -858,20 +858,24 @@ impl App {
         Err(unavailable())
     }
 
+    /// The object store's own link while it holds a copy, or the instance's. A store that
+    /// holds a copy and makes no link in time, its credentials included, is a store that failed.
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
         if let Some(s3) = &self.blobs.s3
             && let Some(object) = found.object_in(&Store::S3(s3.clone()))
         {
-            match s3.link(object, Duration::from_secs(ttl)).await {
-                Ok(url) => {
-                    return Ok(Link {
-                        url,
-                        expires_in: ttl,
-                    });
+            let lifetime = Duration::from_secs(ttl);
+            return match s3.link(object, lifetime, self.blobs.check()).await {
+                Ok(url) => Ok(Link {
+                    url,
+                    expires_in: ttl,
+                }),
+                Err(error) => {
+                    tracing::warn!(%error, "The object store made no link");
+                    Err(unavailable())
                 }
-                Err(error) => tracing::warn!(%error, "The object store made no link"),
-            }
+            };
         }
         let expires_ms = i64::try_from(ttl)
             .ok()

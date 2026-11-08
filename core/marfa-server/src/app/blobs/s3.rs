@@ -297,12 +297,71 @@ impl S3 {
         }
     }
 
-    /// A link the store serves itself, signed with the store's own clock.
-    pub async fn link(&self, key: &str, ttl: Duration) -> io::Result<String> {
-        self.client
-            .signed_url(axum::http::Method::GET, &self.path_of(key), ttl)
-            .await
-            .map(|url| url.to_string())
-            .map_err(failed)
+    /// A link the store serves itself, signed with the store's own clock, made within `limit`
+    /// with the wait for credentials included.
+    pub async fn link(&self, key: &str, ttl: Duration, limit: Duration) -> io::Result<String> {
+        let path = self.path_of(key);
+        let signed = self.client.signed_url(axum::http::Method::GET, &path, ttl);
+        match tokio::time::timeout(limit, signed).await {
+            Ok(signed) => signed.map(|url| url.to_string()).map_err(failed),
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the object store's credentials did not arrive in time",
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    use object_store::CredentialProvider;
+    use object_store::aws::AwsCredential;
+
+    use super::*;
+
+    /// Credentials that never arrive, as from an instance metadata endpoint that stopped
+    /// answering.
+    #[derive(Debug)]
+    struct Unanswered;
+
+    impl CredentialProvider for Unanswered {
+        type Credential = AwsCredential;
+
+        fn get_credential<'a, 'b>(
+            &'a self,
+        ) -> Pin<Box<dyn Future<Output = object_store::Result<Arc<AwsCredential>>> + Send + 'b>>
+        where
+            'a: 'b,
+            Self: 'b,
+        {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_link_waiting_on_credentials_fails_within_its_limit() {
+        let client = AmazonS3Builder::new()
+            .with_bucket_name("marfa")
+            .with_region("us-east-1")
+            .with_credentials(Arc::new(Unanswered))
+            .build()
+            .unwrap();
+        let s3 = S3 {
+            id: Uuid::now_v7().to_string(),
+            locator: "s3://marfa/blobs".to_string(),
+            prefix: "blobs".to_string(),
+            client,
+        };
+        let limit = Duration::from_millis(50);
+        let link = s3.link("a/b", Duration::from_secs(60), limit);
+        let answer = tokio::time::timeout(limit * 40, link).await;
+        assert!(
+            matches!(&answer, Ok(Err(error)) if error.kind() == io::ErrorKind::TimedOut),
+            "{answer:?}"
+        );
     }
 }
