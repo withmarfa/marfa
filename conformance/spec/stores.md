@@ -60,7 +60,7 @@ When the server starts over a disk folder that holds the marker of a store, the 
 
 ### `stores/fresh-folder-fresh-store`
 
-When the server starts over a disk folder that holds no marker, and `stores/missing-folder-refused` does not refuse the start, the server MUST list a new store and claim no copies in it.
+When the server starts over a disk folder that holds no marker, and neither `stores/missing-folder-refused` nor `stores/missing-folder-unknown-bucket` refuses the start, the server MUST list a new store and claim no copies in it.
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
@@ -68,17 +68,25 @@ When the server starts over a disk folder that holds no marker, and `stores/miss
 
 Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
 
-**Reason:** a folder or marker missing where the copy record names copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
+**Reason:** a folder or marker missing where the copy record names copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store the server kept copies in is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
 
 **Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`.
+
+### `stores/missing-folder-unknown-bucket`
+
+Where an object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, and the object store does not answer with the marker of an object store the copy record records, then the server MUST refuse to start, naming the folder.
+
+**Reason:** an empty bucket, another bucket or one that does not answer holds none of the copies the folder held, so a start over it would answer every saved file `503 blob_store_unavailable` and take new uploads into a folder the drive hides once it is mounted again.
+
+**Tests:** `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`.
 
 ### `stores/missing-folder-untouched`
 
-If `stores/missing-folder-refused` refuses the start, then the server MUST NOT create the folder or write a marker in it.
+If `stores/missing-folder-refused` or `stores/missing-folder-unknown-bucket` refuses the start, then the server MUST NOT create the folder or write a marker in it.
 
 **Reason:** a marker written there would make the next start take the folder as a new store.
 
-**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`.
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`, `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`.
 
 ### `stores/detached-listed`
 
@@ -176,11 +184,19 @@ While the copy record holds no copy of a blob, the server MUST answer `GET /blob
 
 ### `stores/no-bytes-not-found`
 
-While the copy record records no copy of a registered blob in an attached store, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `404 blob_not_found`.
+While the copy record records no copy of a registered blob in any store, attached or detached, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `404 blob_not_found`.
 
 **Reason:** the bytes of a copy struck or dropped can stay in their store until a later run deletes them, and they are not the blob's.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`, `› answers HEAD as GET does for a blob that lost its last copy`.
+
+### `stores/detached-only-unavailable`
+
+While the copy record records copies of a registered blob only in stores the configuration no longer names, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `503 blob_store_unavailable`.
+
+**Reason:** a detached store is a drive or bucket that is away, not proof that the bytes are gone, so `404 blob_not_found` would tell a client to forget a file that comes back once the store is attached again.
+
+**Tests:** `compliance/blob-store-folders.test.ts › answers GET and HEAD 503 for a blob whose every copy is in a detached store`.
 
 ## Links
 
