@@ -333,7 +333,7 @@ If an update would give a key an app made a permission, map entry or claimed sou
 
 If `PATCH /keys/{id}` names `narrow_only: true` and would give the key a permission, map entry or claimed source the key does not hold, then the server MUST answer `403 forbidden`, whoever the caller is.
 
-**Reason:** The owner console's key page offers a key less access and never more. It builds its choices from the key as it was when the page opened, so an update sent from a page opened before another change, or edited by hand, must not lift what the key holds now.
+**Reason:** A caller narrowing access may have read the key before another change. The update must not restore access the key has since lost.
 
 **Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
 
@@ -639,7 +639,7 @@ When local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `n
 
 If `PATCH /keys/{id}` names `narrow_only: true` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
 
-**Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: the owner console's key page offers a key less, and a page opened before another change must not lengthen what the key has now.
+**Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: an update based on an earlier read must not lengthen the key's current life.
 
 **Tests:** `compliance/key-expiry.test.ts › is shortened or given when the key has none, and refused a later expiry or none`.
 
