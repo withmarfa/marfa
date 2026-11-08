@@ -253,6 +253,16 @@ pub fn consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<Option
         .optional()?)
 }
 
+pub fn consent_by_grant(tx: &Connection, grant_id: &str) -> Result<Option<Consent>> {
+    Ok(tx
+        .query_row(
+            "SELECT * FROM auth_oauth_consent WHERE grant_id = ?1",
+            [grant_id],
+            consent_of,
+        )
+        .optional()?)
+}
+
 pub fn standing_grant(tx: &Connection, grant_id: &str, user_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(

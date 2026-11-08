@@ -42,6 +42,7 @@ mod test_hooks;
 mod trash;
 mod types;
 mod views;
+mod webhooks;
 
 use std::sync::Arc;
 
@@ -82,6 +83,23 @@ fn key_doors(app: Arc<App>) -> Routes {
         .route("/keys/current", get(keys::current))
         .route("/keys/{id}", patch(keys::update).delete(keys::revoke))
         .route_layer(from_fn_with_state(app, keys::limited))
+}
+
+fn webhook_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/webhooks", post(webhooks::create).get(webhooks::list))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route(
+            "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+            post(webhooks::redeliver),
+        )
+        .admitting(app, Admission::Presented)
 }
 
 fn schema_doors() -> Routes {
@@ -253,6 +271,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
+        .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))

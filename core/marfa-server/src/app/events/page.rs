@@ -2,6 +2,7 @@
 
 use rusqlite::{Row, Transaction, params};
 
+use super::frame::Head;
 use crate::app::refusal::Result;
 
 /// Where the log stands in one snapshot.
@@ -35,6 +36,15 @@ pub(super) struct Entry<'a, 'r> {
 }
 
 impl Entry<'_, '_> {
+    pub fn head(&self) -> Head<'_> {
+        Head {
+            id: self.id,
+            event_type: &self.event_type,
+            type_id: &self.type_id,
+            source: &self.source,
+        }
+    }
+
     pub fn payload(&self) -> Result<String> {
         Ok(self.row.get(4)?)
     }

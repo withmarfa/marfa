@@ -12,6 +12,7 @@ mod profile;
 pub mod reach;
 mod schema;
 mod tools;
+mod webhooks;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
@@ -27,6 +28,7 @@ pub use levers::{Levers, OwnLevers, Standing, report_unread};
 pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
+pub use webhooks::{Maker, standing_maker};
 
 pub const SIGN_IN_AGAIN: &str = "Sign in again to perform this operation";
 
@@ -214,15 +216,8 @@ impl Caller {
             Caller::Local(_) => Ok(Caller::Local(config::standing(tx, None)?)),
             Caller::Server => Ok(Caller::Server),
             Caller::Key(key) => {
-                let mut key = keys::live_by_id(tx, &key.id, at)?.ok_or_else(unauthorized)?;
-                key.standing = match &key.levers {
-                    OwnLevers::Unread(text) => {
-                        report_unread(&key.id, text);
-                        Standing::closed()
-                    }
-                    own => config::standing(tx, own.readable())?,
-                };
-                Ok(Caller::Key(Box::new(key)))
+                let key = keys::live_by_id(tx, &key.id, at)?.ok_or_else(unauthorized)?;
+                Ok(Caller::Key(Box::new(standing_key(tx, key)?)))
             }
             Caller::Owner(session) => {
                 let mut session = session::live_by_id(tx, &session.id, seconds_of(at)?)?
@@ -426,6 +421,17 @@ impl Caller {
             }
         }
     }
+}
+
+fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
+    key.standing = match &key.levers {
+        OwnLevers::Unread(text) => {
+            report_unread(&key.id, text);
+            Standing::closed()
+        }
+        own => config::standing(tx, own.readable())?,
+    };
+    Ok(key)
 }
 
 pub fn unauthorized() -> Refusal {
