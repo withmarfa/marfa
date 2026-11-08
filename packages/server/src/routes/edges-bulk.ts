@@ -70,7 +70,7 @@ import { announcedSource, publishEdge } from "../pubsub.js";
 import { announceSettledParts } from "./_edges-inline.js";
 import { settleLateParts } from "../storage/item-write.js";
 import { requestBlobProof } from "./_blob-reach.js";
-import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { holdBulkEntry, yieldBulkWork } from "../bulk-actions/yield.js";
 import { undeclaredEntryKeyRefusal } from "./_unknown-body-keys.js";
 
 // ---------------------------------------------------------------------------
@@ -649,6 +649,7 @@ export function edgesBulkRoutes(storage: Storage) {
       const results: BulkEdgeResult[] = [];
       let anyMayHaveCommitted = false;
       for (const [i, raw] of rawEdges.entries()) {
+        await holdBulkEntry();
         if (i > 0) await yieldBulkWork({ writing: true });
         // Each entry's edge and its event commit together: inside the page's
         // transaction when it is atomic, in one of its own otherwise. Both

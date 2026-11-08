@@ -27,11 +27,3 @@ pub fn boolean(text: &str) -> Result<bool, String> {
         _ => Err(BOOLEAN_RULE.to_string()),
     }
 }
-
-pub fn one_of<'a>(text: &str, allowed: &[&'a str]) -> Result<&'a str, String> {
-    allowed
-        .iter()
-        .find(|name| **name == text)
-        .copied()
-        .ok_or_else(|| format!("must be one of {}", allowed.join(", ")))
-}
