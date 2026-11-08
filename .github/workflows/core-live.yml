@@ -77,9 +77,7 @@ jobs:
           # Assigned first: `eval "$(…)"` of a failed boot's empty output succeeds.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          # The folder tests wait for the Rust server's folder doors. They are
-          # named here so that leaving them out is never silent, and they run
-          # again once those doors exist.
+          # Restore the folder tests when the server serves their doors.
           echo "Not run: the folder tests, which need the server's folder doors"
           cargo nextest list --locked --workspace --run-ignored only \
             -E 'binary(live_folders)' --message-format oneline

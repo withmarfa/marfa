@@ -30,6 +30,7 @@ server_bin="${MARFA_SERVER_BIN:-${CARGO_TARGET_DIR:-${repo}/core/target}/release
   echo "server-up: ${server_bin} is not a built server; run cargo build --release -p marfa-server under core/" >&2
   exit 1
 }
+server_bin="$(cd "$(dirname "${server_bin}")" && pwd -P)/$(basename "${server_bin}")"
 keep=""
 if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
   state="${MARFA_SERVER_KEEP}"
