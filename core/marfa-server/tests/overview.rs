@@ -229,3 +229,31 @@ async fn an_empty_instance_lists_its_types_with_no_items_and_leaves_the_rest_out
         assert!(answer.get(absent).is_none(), "{absent}");
     }
 }
+
+#[tokio::test]
+async fn a_key_reading_only_system_types_still_sees_its_edge_types() {
+    let instance = Instance::open(TempDir::new().unwrap()).await;
+    let system_only = instance
+        .key(json!({
+            "label": "views", "source": "views", "permissions": [],
+            "type_permissions": { "system.view": "read" },
+            "edge_permissions": { "*": "read" },
+        }))
+        .await;
+    let body = instance.overview(&system_only).await;
+    assert!(body.get("types").is_none(), "{body}");
+    assert!(body.get("total").is_none(), "{body}");
+    let edges = body["edge_types"].as_array().expect("edge types listed");
+    assert!(!edges.is_empty());
+    assert!(edges.iter().all(|edge| edge["access"] == "read"), "{body}");
+
+    let no_reach = instance
+        .key(json!({
+            "label": "none", "source": "none", "permissions": [],
+            "type_permissions": {},
+            "edge_permissions": { "*": "read" },
+        }))
+        .await;
+    let body = instance.overview(&no_reach).await;
+    assert!(body.get("edge_types").is_none(), "{body}");
+}

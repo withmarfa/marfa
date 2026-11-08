@@ -163,6 +163,11 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
         types.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
         let total: i64 = types.iter().map(|(_, count)| count).sum();
         let reads_types = !types.is_empty();
+        let reads_any = catalog
+            .types
+            .ids()
+            .into_iter()
+            .any(|id| read.caller.may_read_type(id));
         let types: Vec<Value> = capped(types, TYPES, "types", &mut truncated)
             .into_iter()
             .map(|(id, count)| {
@@ -178,6 +183,8 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
         if reads_types {
             body.insert("types".into(), types.into());
             body.insert("total".into(), total.into());
+        }
+        if reads_any {
             let edges = edge_types(catalog, &read.caller, &mut truncated)?;
             if !edges.is_empty() {
                 body.insert("edge_types".into(), edges.into());
