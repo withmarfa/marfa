@@ -31,7 +31,7 @@ const MS = "MARFA_BULK_ACTION_JOB_RETENTION_MS";
 
 const MAX_DAYS = 36_500;
 const MAX_HOURS = 876_000;
-const MAX_MS = 3_153_600_000_000;
+const MAX_MS = 31_536_000_000;
 
 const ALL = [...DAYS, HOURS, MS];
 
@@ -54,7 +54,7 @@ const OUTSIDE = (max: number): string[] => [
 const RANGE: Record<string, string> = {
   ...Object.fromEntries(DAYS.map((name) => [name, "from 0 to 36500"])),
   [HOURS]: "from 0 to 876000",
-  [MS]: "from 0 to 3153600000000",
+  [MS]: "from 0 to 31536000000",
 };
 
 /** The largest value of each setting, to put one step past. */
@@ -113,7 +113,7 @@ describe("a retention setting outside its range", () => {
     expectRefused([HOURS]);
   });
 
-  it("refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 3153600000000, and names the setting", () => {
+  it("refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 31536000000, and names the setting", () => {
     expectRefused([MS]);
   });
 });

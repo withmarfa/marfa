@@ -17,7 +17,7 @@ import { TEST_OWNER } from "../../utils/target.js";
  * page holds its first entry uncommitted, and a page under `atomic: false`
  * has committed it.
  *
- * **Its own server**, because one test sets the busy budget and because the
+ * **Its own server**, because one test sets the write wait and because the
  * limiter is on here: counting a request is a write, so a read that had to
  * wait for the page to be counted would wait for it. The budget is short
  * enough that a held page outlasts it many times over. The caps are far above
@@ -25,13 +25,13 @@ import { TEST_OWNER } from "../../utils/target.js";
  */
 const BUDGET_MS = 300;
 const PAGE = 20;
-const SCHEDULER_NEVER_POLLS_MS = "2147483647";
+const SCHEDULER_NEVER_POLLS_MS = "3600000";
 
 let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("bulk-page-answers-others", {
-    SQLITE_BUSY_BUDGET_MS: String(BUDGET_MS),
+    MARFA_WRITE_WAIT_MS: String(BUDGET_MS),
     MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
     MARFA_RATE_LIMIT_ENABLED: "true",
     MARFA_RATE_LIMIT_REQUESTS: "1000000",
@@ -170,7 +170,7 @@ describe("a bulk page leaves the server answering other requests", () => {
 });
 
 describe("a write that waits behind a bulk page", () => {
-  it("lands after an atomic page that holds the lock longer than the busy budget", async () => {
+  it("lands after an atomic page that holds the lock longer than the write wait", async () => {
     await seed("waiting-write");
     const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("waiting-write", "after", true)),
@@ -191,7 +191,7 @@ describe("a write that waits behind a bulk page", () => {
     expect((await single.response).status).toBe(201);
   }, 120_000);
 
-  it("counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget", async () => {
+  it("counts a sign-in attempt after an atomic page that holds the lock longer than the write wait", async () => {
     // A password attempt is counted before the password is checked, in a
     // write of its own outside any transaction.
     const origin = await issuerOrigin(server);

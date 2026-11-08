@@ -1197,7 +1197,7 @@ describe("the conformance shards", () => {
           file.endsWith(".test.ts") && !file.endsWith(".decision.test.ts"),
       )
       .filter((file) =>
-        /spec-statements|spec-references|errors-table|settings-table|coverage-table|schema-coverage|SPEC_DIR|\.\.\/spec/.test(
+        /spec-statements|spec-references|errors-table|coverage-table|schema-coverage|SPEC_DIR|\.\.\/spec/.test(
           readFileSync(join(ROOT, file), "utf8"),
         ),
       )

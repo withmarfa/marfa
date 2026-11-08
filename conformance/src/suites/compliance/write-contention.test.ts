@@ -16,11 +16,11 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  * **The lock is a fault.** Firing concurrent writes at the server does not
  * reach contention: the client serializes its own calls, so two of this
  * process's transactions do not overlap. `refuse:write-lock` makes a write
- * wait as it would for a lock held elsewhere, until the busy budget is spent,
+ * wait as it would for a lock held elsewhere, until the write wait is spent,
  * and then refuse it; clearing the fault lets the waiting write through.
  *
  * Two servers, because the claim is about a setting. One booted with the
- * busy budget at zero, where the first `SQLITE_BUSY` is the answer; one
+ * write wait at zero, where the first `SQLITE_BUSY` is the answer; one
  * on the default, where the retry outwaits a lock held briefly and the
  * same write lands. A fixture doing this against the run's shared server
  * would change the budget for every other file on the instance.
@@ -35,16 +35,16 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  * interval at the setting's ceiling means the scheduler never claims
  * anything; a run asked for over HTTP does not wait on a poll. It also
  * keeps a scheduled write from taking the lock a request is about to ask
- * for, with a busy budget of zero.
+ * for, with a write wait of zero.
  */
-const SCHEDULER_NEVER_POLLS_MS = "2147483647";
+const SCHEDULER_NEVER_POLLS_MS = "3600000";
 
 let impatient: FreshServer | undefined;
 let patient: FreshServer | undefined;
 
 beforeAll(async () => {
   impatient = await bootFreshServer("contention-impatient", {
-    SQLITE_BUSY_BUDGET_MS: "0",
+    MARFA_WRITE_WAIT_MS: "0",
     MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
   });
   patient = await bootFreshServer("contention-patient");
@@ -143,7 +143,7 @@ describe("contention on the write lock", () => {
   }, 120_000);
 
   it("names the budget it spent, so the setting is observable", async () => {
-    // The wiring from `SQLITE_BUSY_BUDGET_MS` through config to the
+    // The wiring from `MARFA_WRITE_WAIT_MS` through config to the
     // retry is otherwise invisible: a server that ignored the variable
     // would answer the same `503` five seconds later, and a fixture
     // asserting the status alone would pass either way.

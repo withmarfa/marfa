@@ -572,7 +572,7 @@ When the connector's own key sends `POST /connectors/{id}/hold` with a `process`
 
 ### `connectors/hold-window`
 
-When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `MARFA_CONNECTOR_HOLD_MS` names another.
+When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `connector_hold_ms` names another.
 
 **Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
 
@@ -1028,7 +1028,7 @@ If the server refuses `POST /connectors/{id}/agreements` with `400`, then the se
 
 When `POST /connectors/{id}/agreements` carries a body larger than the request cap and no larger than the bulk cap, the server MUST take the batch.
 
-**Reason:** a batch of 500 records of 16 KiB is larger than the request cap, and the bulk cap, 16777216 bytes unless `MARFA_MAX_BULK_REQUEST_BYTES` names another, is the one this operation has.
+**Reason:** a batch of 500 records of 16 KiB is larger than the request cap, and the bulk cap, 16777216 bytes unless `max_bulk_request_bytes` names another, is the one this operation has.
 
 **Tests:** `compliance/connector-bounds.test.ts › takes an agreements batch past the request cap, and one of exactly the bulk cap, and answers 413 to one byte more`.
 

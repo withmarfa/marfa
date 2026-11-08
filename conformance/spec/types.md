@@ -1266,6 +1266,8 @@ If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcemen
 
 If a key without `config.manage` sends `GET /config`, `PUT /config` or `PATCH /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
 
+**Reason:** `config.manage` also sets how long the audit log, the trash, the versions and the other retained records are kept. A holder may shorten a retention, and the shortening stands: the next run of the cleanup job removes what is now older, and nothing asks the owner again. A key that may only read the audit log holds no `config.manage`, so it cannot shorten the trail it reads.
+
 **Tests:** `compliance/schema-enforcement.test.ts › refuses all three doors to a key without config.manage`.
 
 ### `types/strict-mode`

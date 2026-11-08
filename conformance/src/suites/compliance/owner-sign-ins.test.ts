@@ -41,10 +41,10 @@ let keysMinted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     // How long a write waits for the lock before it gives up, kept short for
     // the case that holds the lock from outside.
-    SQLITE_BUSY_BUDGET_MS: "1000",
+    MARFA_WRITE_WAIT_MS: "1000",
   });
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

@@ -12,6 +12,7 @@ import {
   keepStatusLog,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { contractSettingName } from "../../../scripts/marfa-server.js";
 import { pageField, visibleText } from "../../utils/page-html.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 
@@ -69,8 +70,8 @@ let origin: string;
 
 beforeAll(async () => {
   server = await bootFreshServer("console-pages", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-    ERROR_WEBHOOK_URL: `https://alerts.example.test/hook/${SECRET_SETTING}`,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_ERROR_WEBHOOK_URL: `https://alerts.example.test/hook/${SECRET_SETTING}`,
     MARFA_ERROR_WEBHOOK_TIMEOUT_MS: WITNESS_TIMEOUT,
   });
   const discovery = await fetch(
@@ -272,8 +273,9 @@ describe("the pages for activity and all settings", () => {
       if (setting.secret)
         expect(setting, setting.name).not.toHaveProperty("value");
     }
-    const named = (name: string) => data.find((s) => s.name === name);
-    expect(named("ERROR_WEBHOOK_URL")).toMatchObject({
+    const named = (name: string) =>
+      data.find((s) => contractSettingName(s.name) === name);
+    expect(named("MARFA_ERROR_WEBHOOK_URL")).toMatchObject({
       secret: true,
       set: true,
     });

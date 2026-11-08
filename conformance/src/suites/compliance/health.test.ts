@@ -22,13 +22,13 @@ import {
  * touches only the write is seen by polling until the window ends, which is
  * a wait on a condition and not on a clock.
  *
- * The server's busy budget is zero, so a write held by `refuse:write-lock`
+ * The server's write wait is zero, so a write held by `refuse:write-lock`
  * is refused at once instead of waiting out a budget of its own.
  */
 let server: FreshServer | undefined;
 
 beforeAll(async () => {
-  server = await bootFreshServer("health", { SQLITE_BUSY_BUDGET_MS: "0" });
+  server = await bootFreshServer("health", { MARFA_WRITE_WAIT_MS: "0" });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, FRESH_SERVER_TIMEOUT_MS);
@@ -344,7 +344,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
 
   beforeAll(async () => {
     patient = await bootFreshServer("health-patient", {
-      SQLITE_BUSY_BUDGET_MS: String(BUSY_BUDGET_MS),
+      MARFA_WRITE_WAIT_MS: String(BUSY_BUDGET_MS),
     });
   }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -390,7 +390,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
     expect(silent.body.components.database_write?.status).toBe("degraded");
     expect(othersOf(silent, "database_write")).toEqual(["ok", "ok", "ok"]);
     // A silence and not a refusal: the answer came when the probe's own
-    // budget ran out, long before the write's busy budget would have
+    // budget ran out, long before the write's write wait would have
     // refused it with `write_contention`.
     expect(silent.elapsedMs).toBeGreaterThanOrEqual(PROBE_BUDGET_MS);
     expect(silent.elapsedMs).toBeLessThan(BUSY_BUDGET_MS);

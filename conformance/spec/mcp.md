@@ -344,7 +344,7 @@ If the address `marfa_create` names answers with a redirect, then the server MUS
 
 ### `mcp/file-too-large`
 
-If the file `marfa_create` names is larger than `MARFA_MCP_FETCH_MAX_BYTES`, then the server MUST answer a tool error with code `file_not_fetched` and reason `too_large`.
+If the file `marfa_create` names is larger than `mcp_fetch_max_bytes`, then the server MUST answer a tool error with code `file_not_fetched` and reason `too_large`.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a file larger than MARFA_MCP_FETCH_MAX_BYTES with reason too_large and saves nothing`.
 
@@ -398,12 +398,12 @@ If `marfa_create` is asked to fetch a file while the server is fetching four fil
 
 ### `mcp/file-rate-limited`
 
-Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `RATE_LIMIT_WINDOW_MS`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
+Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `rate_limit_window_ms`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a credential's 31st fetch in a window with reason rate_limited, and not another credential's`.
 
 ### `mcp/file-disabled`
 
-While `MARFA_MCP_FETCH_ENABLED` is off, if `marfa_create` is asked to save a file from `url` or `file`, then the server MUST answer a tool error with code `file_not_fetched` and reason `disabled` without connecting to the address.
+While `mcp_fetch_enabled` is off, if `marfa_create` is asked to save a file from `url` or `file`, then the server MUST answer a tool error with code `file_not_fetched` and reason `disabled` without connecting to the address.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses url and file with reason disabled while MARFA_MCP_FETCH_ENABLED is off, without connecting`.

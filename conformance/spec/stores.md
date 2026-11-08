@@ -114,7 +114,7 @@ While a copy sits in a store the configuration no longer names, the server MUST 
 
 ### `stores/min-copies-reported`
 
-When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `MARFA_BLOB_MIN_COPIES`, which is 1 unless set.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `blob_min_copies`, which is 1 unless set.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
@@ -232,19 +232,19 @@ When a caller authorized by `instance.maintain` or direct owner or local authori
 
 ### `stores/replicate-count-bound`
 
-When a run of `blob-replicate` has blobs to copy, the server MUST copy at most `MARFA_BLOB_REPLICATE_BATCH` of them.
+When a run of `blob-replicate` has blobs to copy, the server MUST copy at most `blob_replicate_batch` of them.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › copies at most the batch, answers what it did, and runs again on its own for the rest`.
 
 ### `stores/replicate-byte-bound`
 
-When a run of `blob-replicate` has copied a blob, the server MUST NOT copy another blob in that run whose size would push the bytes it copied past `MARFA_BLOB_REPLICATE_BATCH_BYTES`.
+When a run of `blob-replicate` has copied a blob, the server MUST NOT copy another blob in that run whose size would push the bytes it copied past `blob_replicate_batch_bytes`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the blob that would push the copied bytes past the bound`.
 
 ### `stores/replicate-first-blob`
 
-When a run of `blob-replicate` has a blob larger than `MARFA_BLOB_REPLICATE_BATCH_BYTES` to copy as its first, the server MUST copy it and no more.
+When a run of `blob-replicate` has a blob larger than `blob_replicate_batch_bytes` to copy as its first, the server MUST copy it and no more.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › copies a blob larger than the bound when it is the run's first, and nothing more`.
 
@@ -458,7 +458,7 @@ When a run of `blob-integrity` cannot reach a store, the server MUST count the s
 
 When a run of `blob-integrity` cannot reach one store, the server MUST still check the copies in the stores it can reach.
 
-**Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's `MARFA_BLOB_INTEGRITY_BATCH` copies.
+**Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's `blob_integrity_batch` copies.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks the copies of a store that can answer when another cannot be reached`.
 
@@ -508,19 +508,19 @@ When a run of `blob-integrity` takes copies to check, the server MUST take first
 
 ### `stores/integrity-count-bound`
 
-When a run of `blob-integrity` has copies to check, the server MUST check at most `MARFA_BLOB_INTEGRITY_BATCH` of them.
+When a run of `blob-integrity` has copies to check, the server MUST check at most `blob_integrity_batch` of them.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks no more copies than the batch in one run, least recently checked first and across the stores`.
 
 ### `stores/integrity-byte-bound`
 
-When a run of `blob-integrity` has copies to check, the server MUST stop before the copy whose blob's size would push the run's `bytes` past `MARFA_BLOB_INTEGRITY_BATCH_BYTES`.
+When a run of `blob-integrity` has copies to check, the server MUST stop before the copy whose blob's size would push the run's `bytes` past `blob_integrity_batch_bytes`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the copy that would push the bytes read past the bound`.
 
 ### `stores/integrity-first-copy`
 
-When a run of `blob-integrity` has a copy larger than `MARFA_BLOB_INTEGRITY_BATCH_BYTES` to check as its first, the server MUST check it and no more.
+When a run of `blob-integrity` has a copy larger than `blob_integrity_batch_bytes` to check as its first, the server MUST check it and no more.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks a copy larger than the bound when it is the run's first, and nothing more`.
 
@@ -592,7 +592,7 @@ When a run of `blob-orphans` finds a blob that something references, the server 
 
 ### `stores/orphan-purges-after-grace`
 
-When a run of `blob-orphans` finds a blob reported by an earlier run longer ago than `MARFA_BLOB_CLEANUP_GRACE_MS` and still unreferenced, the server MUST purge it.
+When a run of `blob-orphans` finds a blob reported by an earlier run longer ago than `blob_cleanup_grace_ms` and still unreferenced, the server MUST purge it.
 
 **Reason:** a report made by the run itself, or exactly that old, waits for the next run.
 
@@ -600,7 +600,7 @@ When a run of `blob-orphans` finds a blob reported by an earlier run longer ago 
 
 ### `stores/orphan-keeps-within-grace`
 
-While a blob's report is not older than `MARFA_BLOB_CLEANUP_GRACE_MS`, the server MUST NOT purge it.
+While a blob's report is not older than `blob_cleanup_grace_ms`, the server MUST NOT purge it.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 
@@ -624,19 +624,19 @@ When a run of `blob-orphans` purges a blob, the server MUST remove its bytes fro
 
 ### `stores/orphan-switched-off-unlisted`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, the server MUST leave `blob-orphans` out of the housekeeping listing.
+Where `blob_cleanup_interval_ms` is 0, the server MUST leave `blob-orphans` out of the housekeeping listing.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `stores/orphan-switched-off-not-run`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
+Where `blob_cleanup_interval_ms` is 0, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `stores/orphan-switched-off-report`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0 on an instance that has never run `blob-orphans`, when a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
+Where `blob_cleanup_interval_ms` is 0 on an instance that has never run `blob-orphans`, when a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
