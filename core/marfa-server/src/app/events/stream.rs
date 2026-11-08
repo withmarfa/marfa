@@ -44,12 +44,19 @@ pub struct Viewer(Arc<AtomicU64>);
 impl Viewers {
     /// A `cap` of 0 admits every viewer.
     pub fn admit(&self, cap: u64) -> Option<Viewer> {
-        self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |open| {
-                (cap == 0 || open < cap).then_some(open + 1)
-            })
-            .ok()
-            .map(|_| Viewer(self.0.clone()))
+        let mut open = self.0.load(Ordering::Acquire);
+        loop {
+            if cap != 0 && open >= cap {
+                return None;
+            }
+            match self
+                .0
+                .compare_exchange_weak(open, open + 1, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Some(Viewer(self.0.clone())),
+                Err(now) => open = now,
+            }
+        }
     }
 
     pub fn open(&self) -> u64 {
