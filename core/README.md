@@ -2,12 +2,14 @@
 
 The Rust engine every native client embeds: a local SQLite working copy of a slice of one Marfa server, kept current from its event log, read locally, and written to through a queue that holds each write until the server answers it. `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md` say what it does; the fixtures under `conformance/src/suites/device/` test it through the `marfa` binary and the Node binding.
 
-| Crate            | What it is                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| `marfa-core`     | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                              |
-| `marfa-cli`      | The `marfa` binary                                                                                           |
-| `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
-| `bindings/node`  | The napi-rs module `@withmarfa/core`                                                                         |
+| Crate             | What it is                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| `marfa-rules`     | The rules a client and a server share. It has no SQLite, HTTP, async runtime or client code                  |
+| `marfa-core`      | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                              |
+| `marfa-cli`       | The `marfa` binary                                                                                           |
+| `marfa-telemetry` | The exception event and where a token may travel, shared by the command line and the server                  |
+| `bindings/swift`  | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
+| `bindings/node`   | The napi-rs module `@withmarfa/core`                                                                         |
 
 ## Identify an instance
 
