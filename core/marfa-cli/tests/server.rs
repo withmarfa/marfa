@@ -65,6 +65,8 @@ case "$1" in
   exec)
     case "$*" in
       *"setup status"*) if [ -e "$S/claimed" ]; then echo '{"claimed":true}'; else echo '{"claimed":false}'; fi ;;
+      *"config get"*) if [ -e "$S/address" ]; then printf '{"sign_in_address":"%s"}\n' "$(cat "$S/address")"; else echo '{}'; fi ;;
+      *"config update"*) printf '%s' "$*" | sed -n 's/.*"sign_in_address":"\([^"]*\)".*/\1/p' > "$S/address"; echo '{}' ;;
       *"setup open"*) echo '{"url":"http://localhost/setup#handoff=TICKET123","expires_at":"2030-01-01T00:00:00Z"}' ;;
     esac ;;
   logs) if [ -e "$S/server-log" ]; then cat "$S/server-log"; else echo "a line of the server's log"; fi ;;
@@ -149,7 +151,7 @@ struct Rig {
 
 impl Rig {
     fn new(name: &str) -> Rig {
-        let root = std::env::temp_dir().join(format!("marfa-server-{}-{name}", std::process::id()));
+        let root = PathBuf::from("/tmp").join(format!("mfs-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let state = root.join("state");
         fs::create_dir_all(&state).unwrap();
@@ -194,8 +196,7 @@ impl Rig {
             .env("MARFA_DOCKER", self.root.join("docker"))
             .env("FAKE_DOCKER_STATE", &self.state)
             .env("MARFA_TAILSCALE", self.root.join("tailscale"))
-            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
-            .env_remove("S3_SECRET_ACCESS_KEY");
+            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"));
         for (name, value) in env {
             command.env(name, value);
         }
@@ -213,7 +214,7 @@ impl Rig {
         let port = self.port.to_string();
         let mut command = quiet::marfa();
         command
-            .args(["server", "install", "--release", "0.0.22", "--port", &port])
+            .args(["server", "install", "--docker", "--release", "0.0.22", "--port", &port])
             .args(["--yes", "--wait", "5"])
             .args(extra)
             .arg("--dir")
@@ -224,7 +225,7 @@ impl Rig {
             .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
             .env("TERM", "xterm-256color")
             .env_remove("NO_COLOR")
-            .env_remove("S3_SECRET_ACCESS_KEY");
+            ;
         for (name, value) in env {
             command.env(name, value);
         }
@@ -235,6 +236,7 @@ impl Rig {
         let port = self.port.to_string();
         let mut args = vec![
             "install",
+            "--docker",
             "--release",
             "0.0.22",
             "--port",
@@ -249,7 +251,7 @@ impl Rig {
 
     /// An install with exactly the options given, apart from not asking.
     fn install_as(&self, extra: &[&str]) -> (i32, String, String) {
-        let mut args = vec!["install", "--yes", "--wait", "5"];
+        let mut args = vec!["install", "--docker", "--yes", "--wait", "5"];
         args.extend(extra);
         self.marfa(&args)
     }
@@ -276,6 +278,13 @@ impl Rig {
         self.health.push(std::thread::spawn(move || {
             serve_health(port, &state, &stop)
         }));
+    }
+
+    /// The sign-in address the stand-in server holds.
+    fn address(&self) -> Option<String> {
+        fs::read_to_string(self.state.join("address"))
+            .ok()
+            .map(|text| text.trim().to_string())
     }
 
     fn home(&self) -> PathBuf {
@@ -593,10 +602,8 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
         Some("172.30.0.0/24")
     );
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
-    assert_eq!(
-        rig.setting("MARFA_AUTH_BASE_URL").as_deref(),
-        Some("https://marfa.example.com")
-    );
+    assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
+    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
 
     let salt = secrets(&rig);
     let (code, _, stderr) = rig.install(&[
@@ -620,10 +627,11 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     let (code, _, stderr) = rig.install(&["--access", "local"]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
-    assert_eq!(
-        rig.setting("MARFA_AUTH_BASE_URL"),
-        Some(format!("http://localhost:{}", rig.port))
-    );
+    // A local server leaves the address as it is.
+    assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
+    let fresh = Rig::new("proxy-local");
+    fresh.installed(&["--access", "local"]);
+    assert_eq!(fresh.address(), None);
 }
 
 #[test]
@@ -641,7 +649,8 @@ fn the_summary_says_where_a_tunnel_points_and_which_machine_holds_the_folder() {
         stdout.contains(&format!("Point at  {target}")),
         "the summary never says where the tunnel points: {stdout}"
     );
-    let folder = format!("  Folder    {} on ", rig.dir.display());
+    let real = fs::canonicalize(&rig.root).unwrap().join("install");
+    let folder = format!("  Folder    {} on ", real.display());
     assert!(
         stdout.contains(&folder),
         "the summary never names the machine: {stdout}"
@@ -785,6 +794,7 @@ fn tailscale_without_tailscale_says_what_to_install() {
     let (code, _, stderr) = rig.marfa_with(
         &[
             "install",
+            "--docker",
             "--release",
             "0.0.22",
             "--port",
@@ -798,64 +808,6 @@ fn tailscale_without_tailscale_says_what_to_install() {
     assert_eq!(code, 3, "{stderr}");
     assert!(stderr.contains("Tailscale"), "{stderr}");
     assert!(!rig.dir.join("marfa.env").exists());
-}
-
-#[test]
-fn a_bucket_is_written_and_its_secret_key_comes_from_the_environment() {
-    let rig = Rig::new("bucket");
-    let port = rig.port.to_string();
-    let output = output_of(
-        quiet::marfa()
-            .args([
-                "server",
-                "install",
-                "--release",
-                "0.0.22",
-                "--access",
-                "local",
-                "--yes",
-                "--wait",
-                "5",
-            ])
-            .args([
-                "--port",
-                &port,
-                "--s3-bucket",
-                "my-bucket",
-                "--s3-access-key-id",
-                "AKIAEXAMPLE",
-            ])
-            .arg("--dir")
-            .arg(&rig.dir)
-            .env("MARFA_DOCKER", rig.root.join("docker"))
-            .env("FAKE_DOCKER_STATE", &rig.state)
-            .env("MARFA_AUTOSTART_ROOT", rig.home())
-            .env("S3_SECRET_ACCESS_KEY", "s3/secret+value"),
-    );
-    let said = String::from_utf8_lossy(&output.stdout).to_string()
-        + &String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{said}");
-    assert!(!said.contains("s3/secret+value"));
-    assert_eq!(rig.setting("S3_BUCKET").as_deref(), Some("my-bucket"));
-    assert_eq!(rig.setting("S3_PREFIX").as_deref(), Some("marfa"));
-    assert_eq!(
-        rig.setting("S3_SECRET_ACCESS_KEY").as_deref(),
-        Some("s3/secret+value")
-    );
-
-    // Without the key, nothing can ask for it, so the command says what to set.
-    let other = Rig::new("bucket-no-key");
-    let (code, _, stderr) = other.install(&[
-        "--access",
-        "local",
-        "--s3-bucket",
-        "b",
-        "--s3-access-key-id",
-        "id",
-    ]);
-    assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("S3_SECRET_ACCESS_KEY"), "{stderr}");
-    assert!(!other.dir.join("marfa.env").exists());
 }
 
 #[test]
@@ -919,7 +871,9 @@ fn a_build_without_a_release_and_the_word_latest_are_refused() {
         (&[][..], "not a release"),
         (&["--release", "latest"], "is not a release"),
     ] {
-        let mut args = vec!["install", "--access", "local", "--yes", "--port", &port];
+        let mut args = vec![
+            "install", "--docker", "--access", "local", "--yes", "--port", &port,
+        ];
         args.extend(extra);
         let (code, _, stderr) = rig.marfa(&args);
         assert_eq!(code, 2, "{stderr}");
@@ -934,6 +888,7 @@ fn a_port_in_use_is_refused() {
     let held_port = held.local_addr().unwrap().port().to_string();
     let (code, _, stderr) = rig.marfa(&[
         "install",
+        "--docker",
         "--release",
         "0.0.22",
         "--access",
@@ -954,6 +909,7 @@ fn no_docker_is_said_plainly() {
             .args([
                 "server",
                 "install",
+                "--docker",
                 "--release",
                 "0.0.22",
                 "--access",
@@ -1218,7 +1174,6 @@ fn managed_elsewhere(rig: &Rig, body: &str) {
 const CLOUDFLARE_FILE: &str =
     "API_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-MARFA_AUTH_BASE_URL=https://marfa.example.com
 TRUSTED_PROXY_HEADER=CF-Connecting-IP
 OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 ";
@@ -1227,8 +1182,15 @@ OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
     let rig = Rig::new("external");
     managed_elsewhere(&rig, CLOUDFLARE_FILE);
-    let (code, stdout, stderr) = rig.install(&["--access", "cloudflare", "--external-settings"]);
+    let (code, stdout, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ]);
     assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
     assert_eq!(
         rig.file("marfa.env"),
         CLOUDFLARE_FILE,
@@ -1265,7 +1227,6 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
 const QUOTED_FILE: &str =
     "API_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MARFA_AUTH_SECRET='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-MARFA_AUTH_BASE_URL='https://example.test'
 TRUSTED_PROXY_HEADER='CF-Connecting-IP'
 ";
 
@@ -1298,9 +1259,12 @@ fn a_settings_file_with_quoted_values_is_read_the_way_compose_reads_it() {
 }
 
 #[test]
-fn a_quoted_address_that_differs_from_the_asked_one_is_refused_without_its_quotes() {
-    let rig = Rig::new("external-quoted-differs");
-    managed_elsewhere(&rig, QUOTED_FILE);
+fn a_quoted_proxy_header_that_is_not_cloudflares_is_refused() {
+    let rig = Rig::new("external-quoted-header");
+    managed_elsewhere(
+        &rig,
+        &QUOTED_FILE.replace("'CF-Connecting-IP'", "'X-Real-IP'"),
+    );
     let (code, _, stderr) = rig.install(&[
         "--access",
         "cloudflare",
@@ -1310,24 +1274,12 @@ fn a_quoted_address_that_differs_from_the_asked_one_is_refused_without_its_quote
     ]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("MARFA_AUTH_BASE_URL is https://example.test: change one"),
+        stderr.contains("TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
         "{stderr}"
     );
     assert!(
         !rig.dir.join(".env").exists(),
         "a refused install wrote its settings"
-    );
-
-    // A quoted proxy header that is not Cloudflare's is still refused.
-    managed_elsewhere(
-        &rig,
-        &QUOTED_FILE.replace("'CF-Connecting-IP'", "'X-Real-IP'"),
-    );
-    let (code, _, stderr) = rig.install(&["--access", "cloudflare", "--external-settings"]);
-    assert_eq!(code, 2, "{stderr}");
-    assert!(
-        stderr.contains("TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
-        "{stderr}"
     );
 }
 
@@ -1346,13 +1298,18 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
 
     managed_elsewhere(
         &rig,
-        "API_KEY_SALT=sssssssssssssssssssssssssssssssss\nMARFA_AUTH_BASE_URL=http://marfa.example.com\n",
+        "API_KEY_SALT=sssssssssssssssssssssssssssssssss\n",
     );
-    let (code, _, stderr) = rig.install(&["--access", "cloudflare", "--external-settings"]);
+    let (code, _, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ]);
     assert_eq!(code, 2, "{stderr}");
     for said in [
         "MARFA_AUTH_SECRET is not set",
-        "must be an https address",
         "TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
     ] {
         assert!(stderr.contains(said), "{said}\n{stderr}");
@@ -1365,17 +1322,6 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
         !rig.dir.join(".env").exists(),
         "a refused install wrote its settings"
     );
-
-    managed_elsewhere(&rig, CLOUDFLARE_FILE);
-    let (code, _, stderr) = rig.install(&[
-        "--access",
-        "cloudflare",
-        "--external-settings",
-        "--address",
-        "https://elsewhere.example.com",
-    ]);
-    assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("change one"), "{stderr}");
 }
 
 #[test]
@@ -1383,14 +1329,21 @@ fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     let rig = Rig::new("external-range");
     let base = CLOUDFLARE_FILE.replace("TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
     managed_elsewhere(&rig, &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"));
-    let (code, _, stderr) = rig.install(&["--access", "proxy", "--external-settings"]);
+    let proxy = [
+        "--access",
+        "proxy",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    let (code, _, stderr) = rig.install(&proxy);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("172.30.0.0/24"), "{stderr}");
     managed_elsewhere(
         &rig,
         &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
     );
-    let (code, _, stderr) = rig.install(&["--access", "proxy", "--external-settings"]);
+    let (code, _, stderr) = rig.install(&proxy);
     assert_eq!(code, 0, "{stderr}");
 }
 
@@ -1481,6 +1434,7 @@ fn a_relative_folder_works_because_compose_reads_it_from_inside() {
             .args([
                 "server",
                 "install",
+                "--docker",
                 "--dir",
                 "install",
                 "--release",
@@ -1566,7 +1520,13 @@ fn a_login_agent_that_fails_does_not_cost_the_setup_link() {
 fn deleting_the_data_leaves_a_settings_file_that_is_managed_elsewhere() {
     let rig = Rig::new("external-delete");
     managed_elsewhere(&rig, CLOUDFLARE_FILE);
-    rig.installed(&["--access", "cloudflare", "--external-settings"]);
+    rig.installed(&[
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ]);
     let (code, stdout, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("managed elsewhere"), "{stdout}");
@@ -1609,6 +1569,7 @@ fn a_busy_port_on_every_address_is_found_before_anything_is_written() {
     let port = held.local_addr().unwrap().port().to_string();
     let (code, _, stderr) = rig.marfa(&[
         "install",
+        "--docker",
         "--release",
         "0.0.22",
         "--access",
@@ -1629,10 +1590,7 @@ fn the_tailnet_address_follows_the_install() {
     let map = || fs::read_to_string(&map_file).unwrap_or_default();
     rig.installed(&["--access", "tailscale"]);
     assert_eq!(map(), format!("443 http://127.0.0.1:{}\n", rig.port));
-    assert_eq!(
-        rig.setting("MARFA_AUTH_BASE_URL").as_deref(),
-        Some("https://host.example.ts.net")
-    );
+    assert_eq!(rig.address().as_deref(), Some("https://host.example.ts.net"));
     assert_eq!(
         rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
@@ -1708,7 +1666,7 @@ fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
     fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
     fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
     let (code, stdout, stderr) = rig.marfa_with(
-        &["install", "--yes", "--wait", "5", "--access", "local"],
+        &["install", "--docker", "--yes", "--wait", "5", "--access", "local"],
         &[("MARFA_TAILSCALE", &broken)],
     );
     assert_eq!(code, 0, "{stderr}");
