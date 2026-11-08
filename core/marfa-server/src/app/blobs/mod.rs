@@ -82,7 +82,8 @@ impl Blobs {
         })
     }
 
-    /// The store is attached the first time its marker is seen, and kept as it was after.
+    /// The store is attached the first time its marker is seen. A later start keeps its
+    /// `attached_at`, takes the folder it is now at, and attaches it again if it was detached.
     pub async fn register(&self, db: &Db, at: String) -> std::result::Result<(), Failure> {
         let Store::Disk(disk) = &self.store;
         let id = disk.id().to_string();
