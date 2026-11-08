@@ -42,6 +42,84 @@ fn between(schedule: &Schedule, from: &str, to: &str) -> Vec<String> {
 }
 
 #[test]
+fn secondly_until_stops_without_spending_the_budget() {
+    let schedule = series(
+        "2027-06-01T09:00:00Z",
+        None,
+        &["RRULE:FREQ=SECONDLY;UNTIL=20270601T130000Z"],
+    );
+    let mut meter = Meter::new(WORK_LIMIT);
+    let rows = schedule
+        .starts(ms("2027-06-01"), ms("2027-06-02"), &mut meter, usize::MAX)
+        .unwrap();
+    assert_eq!(rows.len(), 14_401);
+    assert_eq!(meter.spent(), rows.len() as u64 + 1);
+}
+
+#[test]
+fn fractional_exdates_match_whole_seconds() {
+    for start in ["2027-01-01T09:00:00.500Z", "1969-01-01T09:00:00.500Z"] {
+        let year = &start[..4];
+        for suffix in ["Z", ""] {
+            let excluded = format!("EXDATE:{year}0102T090000{suffix}");
+            let from = format!("{year}-01-01");
+            let to = format!("{year}-01-05");
+            let witness = series(start, None, &["RRULE:FREQ=DAILY;COUNT=4"]);
+            assert_eq!(between(&witness, &from, &to).len(), 4);
+            let schedule = series(start, None, &["RRULE:FREQ=DAILY;COUNT=4", &excluded]);
+            assert_eq!(
+                between(&schedule, &from, &to),
+                [1, 3, 4].map(|day| format!("{year}-01-0{day}T09:00:00Z")),
+                "{excluded}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fractional_until_includes_its_whole_second() {
+    for suffix in ["Z", ""] {
+        let rule = format!("RRULE:FREQ=DAILY;UNTIL=20270103T090000{suffix}");
+        let schedule = series("2027-01-01T09:00:00.500Z", None, &[&rule]);
+        assert_eq!(
+            between(&schedule, "2027-01-01", "2027-01-05"),
+            [
+                "2027-01-01T09:00:00Z",
+                "2027-01-02T09:00:00Z",
+                "2027-01-03T09:00:00Z"
+            ],
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn interval_uses_the_starts_week_year() {
+    let schedule = series(
+        "2024-12-30T09:00:00Z",
+        None,
+        &["RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=1;BYDAY=MO"],
+    );
+    assert_eq!(
+        between(&schedule, "2024-12-31", "2027-02-01"),
+        ["2027-01-04T09:00:00Z"]
+    );
+}
+
+#[test]
+fn january_start_keeps_the_previous_week_year() {
+    let schedule = series(
+        "2021-01-01T09:00:00Z",
+        None,
+        &["RRULE:FREQ=YEARLY;BYWEEKNO=53;BYDAY=SU"],
+    );
+    assert_eq!(
+        between(&schedule, "2021-01-02", "2021-02-01"),
+        ["2021-01-03T09:00:00Z"]
+    );
+}
+
+#[test]
 fn week_year_boundaries() {
     for (start, rule, from, to, expected) in [
         (

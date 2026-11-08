@@ -241,6 +241,11 @@ fn walk_days(
     };
     let (start_year, start_month, _) = civil_from_days(start_day);
     let start_week = week_start(start_day, rule.wkst);
+    let yearly_base = if rule.byweekno.is_some() {
+        civil_from_days(start_week + 3).0
+    } else {
+        start_year
+    };
     let mut k: i64 = 0;
     loop {
         let Period {
@@ -250,7 +255,7 @@ fn walk_days(
             months,
         } = match rule.freq {
             YEARLY => {
-                let y = start_year + k * rule.interval;
+                let y = yearly_base + k * rule.interval;
                 if y > LAST_YEAR {
                     return Ok(());
                 }

@@ -310,7 +310,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
-        UNFOLD_DEADLINE if rest.is_empty() => unfold_deadline_of(arg).map(|check| (None, Some(check))),
+        UNFOLD_DEADLINE if rest.is_empty() => {
+            unfold_deadline_of(arg).map(|check| (None, Some(check)))
+        }
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
                 return Err(format!(

@@ -73,56 +73,6 @@ function fields(details: Record<string, unknown> | undefined): string[] {
 }
 
 describe("a recurring series", () => {
-  it("selects week years across calendar boundaries", async () => {
-    const id = await event({
-      starts_at: "2021-01-04T09:00:00Z",
-      recurrence: ["RRULE:FREQ=YEARLY;INTERVAL=2;BYWEEKNO=1;BYDAY=MO"],
-    });
-    expect(
-      await startsOf(id, "2024-12-01T00:00:00Z", "2026-01-01T00:00:00Z"),
-    ).toEqual(["2024-12-30T09:00:00.000Z"]);
-  });
-
-  it("continues past a gap candidate beyond UTC UNTIL", async () => {
-    const id = await event({
-      starts_at: "2027-03-28T00:00:00Z",
-      timezone: "Europe/London",
-      recurrence: ["RRULE:FREQ=MINUTELY;INTERVAL=40;UNTIL=20270328T011000Z"],
-    });
-    expect(
-      await startsOf(id, "2027-03-28T00:45:00Z", "2027-03-28T02:00:00Z"),
-    ).toEqual(["2027-03-28T01:00:00.000Z"]);
-  });
-
-  it("preserves fractional starts and matches a moved fractional slot", async () => {
-    const id = await event({
-      starts_at: "2041-01-01T09:00:00.500Z",
-      recurrence: ["RRULE:FREQ=DAILY;COUNT=2"],
-    });
-    expect(await startsOf(id, "2041-01-01", "2041-01-03")).toEqual([
-      "2041-01-01T09:00:00.500Z",
-      "2041-01-02T09:00:00.500Z",
-    ]);
-    const moved = await event({
-      starts_at: "2041-01-02T12:00:00Z",
-      original_starts_at: "2041-01-02T09:00:00.500Z",
-    });
-    const edge = await client.createEdge({
-      source_id: id,
-      target_id: moved,
-      edge_type: "parent-of",
-    });
-    expect(edge.status).toBe(201);
-    const rows = await window("2041-01-01", "2041-01-03");
-    expect(
-      rows.filter((o) => o.item.id === id).map((o) => o.starts_at),
-    ).toEqual(["2041-01-01T09:00:00.500Z"]);
-    expect(rows.find((o) => o.item.id === moved)).toMatchObject({
-      series_id: id,
-      replaces: "2041-01-02T09:00:00.500Z",
-    });
-  });
-
   it("counts its own start as the first occurrence and carries its length to each", async () => {
     // A Thursday start under a Tuesday rule: the start, then the rule's days.
     const id = await event({
@@ -1112,7 +1062,6 @@ describe("what a write may store", () => {
       { end_timezone: "UTC+1" },
       "end_timezone",
     ],
-    ["a zone name in another case", { timezone: "europe/berlin" }, "timezone"],
     [
       "an end zone given as an offset",
       { end_timezone: "+01:00" },

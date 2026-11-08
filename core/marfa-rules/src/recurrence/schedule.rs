@@ -201,7 +201,7 @@ pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
                             ex_days.insert(zone.day_of(ms));
                         }
                         other => {
-                            ex_instants.insert(anchor(other));
+                            ex_instants.insert(anchor(other).div_euclid(1000));
                         }
                     }
                 }
@@ -288,7 +288,7 @@ impl Schedule {
                 } else if wall > until_wall + DAY {
                     true
                 } else {
-                    self.anchor_wall(wall) > ms
+                    self.anchor_wall(wall).div_euclid(1000) > ms.div_euclid(1000)
                 }
             }
         }
@@ -323,7 +323,7 @@ impl Schedule {
             if !(end > from_ms || (end == ms && ms >= from_ms)) {
                 return Ok(());
             }
-            if self.ex_instants.contains(&ms)
+            if self.ex_instants.contains(&ms.div_euclid(1000))
                 || (!self.ex_days.is_empty() && self.ex_days.contains(&self.zone.day_of(ms)))
             {
                 return Ok(());
@@ -348,7 +348,11 @@ impl Schedule {
                     return Ok(ControlFlow::Break(()));
                 }
                 if rule.until.is_some_and(|until| self.past_until(until, wall)) {
-                    return Ok(ControlFlow::Continue(()));
+                    return Ok(if self.zone.wall_of(self.zone.instant_of(wall)) != wall {
+                        ControlFlow::Continue(())
+                    } else {
+                        ControlFlow::Break(())
+                    });
                 }
                 produced += 1;
                 if wall >= low_wall {
