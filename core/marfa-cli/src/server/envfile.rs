@@ -125,6 +125,15 @@ impl EnvFile {
         Ok(())
     }
 
+    /// Every assignment, with its value read as Compose reads it.
+    pub fn entries(&self) -> Vec<(String, String)> {
+        self.lines
+            .iter()
+            .filter_map(|line| assignment(line))
+            .map(|(name, value)| (name.to_string(), read_value(value)))
+            .collect()
+    }
+
     pub fn remove(&mut self, name: &str) {
         self.lines
             .retain(|line| assignment(line).is_none_or(|(found, _)| found != name));

@@ -7,6 +7,7 @@ pub mod body;
 mod bulk;
 pub mod caller;
 mod caller_address;
+mod compression;
 mod config;
 mod control;
 #[cfg(test)]
@@ -248,7 +249,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         app: app.clone(),
         listener: Arc::new(listener),
     };
-    routes
+    let router = routes
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
@@ -257,7 +258,8 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))
         .layer(from_fn_with_state(observed, observe_request))
-        .with_state(app)
+        .with_state(app);
+    compression::gzip_json(router)
 }
 
 pub fn public(app: Arc<App>) -> Router {
