@@ -398,61 +398,6 @@ async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_t
 }
 
 #[tokio::test]
-async fn a_platform_type_this_build_no_longer_ships_stays_until_the_owner_removes_it() {
-    let instance = Instance::start().await;
-    let before = instance
-        .local(Method::GET, "/platform-types/retired", None)
-        .await;
-    assert_eq!(
-        before.body["data"].as_array().map(Vec::len),
-        Some(0),
-        "{}",
-        before.body
-    );
-
-    let instance = instance
-        .restart(|database| {
-            database
-                .execute(
-                    "INSERT INTO types (id, origin, definition, created_at, updated_at) VALUES \
-                     ('core.retired', 'platform', '{\"id\":\"core.retired\",\"fields\":{}}', 'then', 'then')",
-                    [],
-                )
-                .unwrap();
-        })
-        .await;
-
-    let retired = instance
-        .local(Method::GET, "/platform-types/retired", None)
-        .await;
-    let rows = retired.body["data"].as_array().unwrap();
-    assert_eq!(rows.len(), 1, "{}", retired.body);
-    assert_eq!(rows[0]["id"], "core.retired");
-    assert_eq!(rows[0]["removable"], true);
-    let read = instance
-        .local(Method::GET, "/types/core.retired", None)
-        .await;
-    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
-    let deleted = instance
-        .local(Method::DELETE, "/types/core.retired", None)
-        .await;
-    assert_eq!(deleted.code(), "core_type_immutable");
-
-    let removed = instance
-        .local(Method::DELETE, "/platform-types/core.retired", None)
-        .await;
-    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
-    let after = instance
-        .local(Method::GET, "/types/core.retired", None)
-        .await;
-    assert_eq!(after.status, StatusCode::NOT_FOUND, "{}", after.body);
-    let shipped = instance
-        .local(Method::DELETE, "/platform-types/core.note", None)
-        .await;
-    assert!(shipped.status.is_client_error(), "{}", shipped.body);
-}
-
-#[tokio::test]
 async fn an_edge_type_registers_widens_by_evolution_and_deletes() {
     let instance = Instance::start().await;
     let body = json!({

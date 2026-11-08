@@ -134,8 +134,6 @@ const STANDING: Record<string, string> = {
   "DELETE /blobs/:hash/copies/:store": "blobs.manage",
   "GET /housekeeping": "instance.read",
   "POST /housekeeping/:name/run": "instance.maintain",
-  "GET /platform-types/retired": "instance.read",
-  "DELETE /platform-types/:id": "instance.maintain",
   "POST /restore": DIRECT,
   "GET /metrics": "instance.read",
   "POST /webhooks": "webhooks.manage",

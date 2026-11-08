@@ -76,7 +76,6 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/publisher-types.test.ts",
   "src/suites/compliance/request-limit.test.ts",
   "src/suites/compliance/retention-policy.test.ts",
-  "src/suites/compliance/retired-platform-types.test.ts",
   "src/suites/compliance/search-depth.test.ts",
   "src/suites/compliance/search-matching.test.ts",
   "src/suites/compliance/search-ordering.test.ts",

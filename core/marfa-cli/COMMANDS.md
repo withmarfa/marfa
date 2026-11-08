@@ -1407,26 +1407,6 @@ marfa types move [OPTIONS] <FROM> <TO>
 | `--dry-run` | Show what would move and change, and change nothing. |
 | `--properties <JSON>` | Properties to merge into every item as it moves, as a JSON object, such as a field the new type requires. |
 
-### marfa types retired
-
-The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
-
-```text
-marfa types retired [OPTIONS]
-```
-
-### marfa types delete-retired
-
-Delete one retired platform type. Requires `instance.maintain`.
-
-```text
-marfa types delete-retired [OPTIONS] <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The type id. |
-
 ## search
 
 Full-text search on the server, best match first unless a sort is given.

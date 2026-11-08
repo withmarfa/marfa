@@ -17,6 +17,7 @@ import {
   createRegistryFrame,
   TYPE_REGISTRY,
   registryMapFacet,
+  removePlatformRegistryType,
 } from "@withmarfa/shared";
 import { createSqliteStorage } from "./index.js";
 import { sqliteRequestContext } from "./request-context.js";
@@ -359,9 +360,7 @@ it("retained system forEach passes a captured set to callbacks in another async 
   });
   try {
     await entered.promise;
-    expect(await storage.types.deleteRetiredPlatformType(platform.id)).toBe(
-      true,
-    );
+    removePlatformRegistryType(platform.id);
     forEach((value, key, selectedSet) => {
       if (key !== platform.id) return;
       retainedSet = selectedSet;

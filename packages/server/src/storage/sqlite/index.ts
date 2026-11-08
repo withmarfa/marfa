@@ -50,10 +50,6 @@ import {
 import { projectPlatformRows } from "../platform-family.js";
 import { reportTypeShapeConflicts } from "../type-shape-conflicts.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
-import {
-  computeRetiredPlatformTypes,
-  setRetiredPlatformTypes,
-} from "../retired-platform-types.js";
 import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
 import { sqliteStoredValueCounts } from "./stored-value-counts.js";
 import {
@@ -148,13 +144,6 @@ export async function createSqliteStorage(
   // reserving a root after the fact can. Reported and never acted on, on the
   // same judgment the projection above makes.
   reportReservedRootRows(loadedTypes);
-  // What this instance still carries that the build no longer ships. Recorded
-  // rather than acted on: the reasoning for reporting instead of pruning is
-  // at the helper, and it is the same judgment the projection above makes
-  // one line up.
-  setRetiredPlatformTypes(
-    computeRetiredPlatformTypes(shippedPlatformTypes(), loadedTypes),
-  );
   // How many rows this instance holds that no build understands. One
   // aggregate per scanned column, awaited for the reason the type warmup
   // above is: a value recorded after storage is handed back is a value

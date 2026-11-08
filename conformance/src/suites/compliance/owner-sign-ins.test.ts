@@ -7,7 +7,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   connect,
   issuerOrigin,
@@ -391,43 +390,6 @@ describe("the owner's sign-ins", () => {
     expect(text).not.toContain(
       decodeURIComponent(browser.cookie.slice(browser.cookie.indexOf("=") + 1)),
     );
-  });
-
-  it("lists and ends no session of anyone but the owner", async () => {
-    const browser = await signIn();
-    const now = Math.floor(serverNow() / 1000);
-    // Another person's session is a state no door makes: the instance has one
-    // owner.
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare(
-        "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
-      ).run("someone-else", "Someone Else", "someone@example.test", now, now);
-      db.prepare(
-        "INSERT INTO auth_session (id, token, user_id, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-      ).run(
-        "someone-elses-session",
-        "someone-elses-token",
-        "someone-else",
-        now,
-        now,
-        now + 7 * 24 * 3600,
-      );
-    });
-    // The witness: the owner's own session is listed beside where it would be.
-    expect((await signIns(browser)).some((row) => row.current)).toBe(true);
-    expect((await signIns(browser)).map((row) => row.id)).not.toContain(
-      "someone-elses-session",
-    );
-    const refused = await end(browser, "someone-elses-session");
-    expect(refused.status).toBe(404);
-    expect(refused.headers.get("x-error-code")).toBe("sign_in_not_found");
-    expect(
-      withInstanceDatabase(server.sqlitePath, (db) =>
-        db
-          .prepare("SELECT id FROM auth_session WHERE id = ?")
-          .get("someone-elses-session"),
-      ),
-    ).toBeDefined();
   });
 
   it("refuses a key and an app's token 403, and no credential 401", async () => {

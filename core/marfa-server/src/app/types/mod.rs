@@ -1,10 +1,8 @@
 //! Types: judgement of a definition is `marfa_rules::schema`'s; this module reads the catalog and writes.
 
-mod platform;
 mod read;
 mod write;
 
-pub use platform::{remove_retired, retired};
 pub use read::{get, list, normalize};
 pub use write::{clear_icon, delete, register, replace, set_icon};
 

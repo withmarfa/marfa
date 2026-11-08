@@ -2,7 +2,6 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { Hono, type Context } from "hono";
 import { ErrorCode } from "@withmarfa/shared";
 import { shapedError } from "../middleware/error-handler.js";
-import { retiredPlatformTypes } from "../storage/retired-platform-types.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import { hashApiKey, type AppEnv } from "../middleware/auth.js";
@@ -312,17 +311,6 @@ export const HealthSchema = z
       .describe(
         "Each component checked: reading and writing the database, free disk space and the blob store.",
       ),
-    platform_types: z
-      .object({
-        retired: z
-          .number()
-          .int()
-          .min(0)
-          .describe(
-            "How many platform types the instance holds that this build no longer ships.",
-          ),
-      })
-      .describe("The platform types this build no longer ships."),
     unrecognized_stored_values: z
       .object({
         rows: z
@@ -373,7 +361,6 @@ export const HealthSchema = z
         disk: { status: "ok", latency_ms: 0 },
         blob_storage: { status: "ok", latency_ms: 0 },
       },
-      platform_types: { retired: 0 },
       unrecognized_stored_values: { rows: 0, scanned: true },
     },
   });
@@ -447,43 +434,18 @@ export function healthRoutes(
       }
     }
 
-    // Shipped types this instance still carries that the build no longer
-    // names. Derived at boot from the build and the rows, so reading it
-    // costs nothing and cannot go stale against a running process.
-    //
-    // A count and nothing else: this endpoint is unauthenticated, and the
-    // identifiers say
-    // which types an instance is serving that its build does not. Those
-    // sit behind the admin read.
-    //
-    // Not a component: it carries no status and never degrades the
-    // response. Neither kind of retired type is a fault. A retired type that still holds
-    // items is the designed outcome, because the row is what makes those
-    // items resolve, and the removal route refuses to drop it. A retired
-    // type holding nothing is untidy rather than unhealthy: it resolves,
-    // it serves, it costs nothing. Overall status answers whether this
-    // instance is serving correctly right now, and a row that changes no
-    // behavior is not part of that answer. A component that can sit
-    // degraded indefinitely teaches its readers to ignore the ones that
-    // matter, so the rule: a check earns the right to degrade only if
-    // something is wrong now. If the honest description is "someone could
-    // tidy this up", it is a report.
-    const platformTypes = { retired: retiredPlatformTypes().length };
-
     // How many rows this instance holds whose stored value falls outside
     // the union the build compares that column against. Counted at boot,
     // so reading it costs nothing and cannot go stale against a running
     // process.
     //
-    // A count and nothing else, and here that is sharper than it is for
-    // the retired figure above: this endpoint is unauthenticated, and the
+    // A count and nothing else: this endpoint is unauthenticated, and the
     // value itself would advertise what another build wrote to anyone who
     // asks. The true stored string is on the boot log, behind the
     // machine administrator's access to it.
     //
     // Not a component, and this is the shape decision rather than the
-    // field. It carries no status and never moves `overall`, which is
-    // `platform_types`'s shape. The
+    // field. It carries no status and never moves `overall`. The
     // rule is already written into this file: a check earns the right to
     // degrade only if something is wrong now. This one can sit non-zero
     // indefinitely (clearing it needs the build that wrote the rows or a
@@ -522,7 +484,6 @@ export function healthRoutes(
       {
         status: overall,
         components,
-        platform_types: platformTypes,
         unrecognized_stored_values: storedValues,
         ...(placement && { placement }),
         ...(version && { version }),

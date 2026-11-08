@@ -374,7 +374,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Health and maintenance",
     description:
-      "How the instance is doing: its health, what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
+      "How the instance is doing: its health, what needs attention, its metrics, its audit log and its housekeeping jobs.",
     operations: [
       "getHealth",
       "listAttention",
@@ -382,8 +382,6 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "listAuditLog",
       "listHousekeeping",
       "runHousekeeping",
-      "listRetiredPlatformTypes",
-      "deleteRetiredPlatformType",
     ],
   },
   {

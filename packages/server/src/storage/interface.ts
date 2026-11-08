@@ -1353,24 +1353,6 @@ export interface TypeStore {
    * belongs to a person, not to a boot path that runs on every instance.
    */
   seedPlatformTypes(seeded: readonly SeededPlatformType[]): Promise<string[]>;
-  /**
-   * Remove one platform row the build no longer ships. Answers whether a
-   * row was actually deleted.
-   *
-   * **Scoped to `origin = 'platform'`.** Nothing else writes that origin,
-   * a rule the archive restore enforces by refusing to write a platform
-   * origin.
-   *
-   * No guard of its own: whether removal is safe is a question about
-   * items, which this layer cannot see. The caller decides and this
-   * performs.
-   *
-   * **Evicts the in-process registry entry too, as `delete` does.** The row
-   * and the registry are both what makes a type resolve, so removing one
-   * without the other leaves the identifier answering every read until the
-   * next restart, with the route that removed it reporting success.
-   */
-  deleteRetiredPlatformType(id: string): Promise<boolean>;
   countRegistered(): Promise<number>;
   /**
    * Which of `names` some row of one of `types` holds a value under, in any

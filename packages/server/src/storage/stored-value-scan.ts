@@ -14,9 +14,8 @@
  * sees.
  *
  * **This reports and does not refuse to boot, which is the whole design.**
- * The reasoning is `retired-platform-types.ts`'s and `platform-family.ts`'s,
- * twenty lines from where this goes, and it is stronger here rather than
- * weaker:
+ * The reasoning is `platform-family.ts`'s, twenty lines from where this
+ * goes, and it is stronger here rather than weaker:
  *
  * - A throw here is the one process exiting, with every housekeeping job
  *   it drives.
@@ -37,9 +36,8 @@
  * build wrote to anyone who asks.
  *
  * **Derived, never stored.** Recomputed at every boot from the rows, for
- * the reason `retired-platform-types.ts` gives: a stored flag would be a second
- * source of truth with nothing keeping it honest, and it would go stale in
- * precisely the case that matters.
+ * a stored flag would be a second source of truth with nothing keeping it
+ * honest, and it would go stale in precisely the case that matters.
  */
 import {
   ITEM_STATES,
@@ -282,10 +280,8 @@ export interface UnrecognizedStoredValue {
  * What one boot's scan concluded.
  *
  * `scanned` exists because `values` being empty has three meanings and
- * `/health` publishes one number over all of them. `retired-platform-types.ts`,
- * whose reader contract this otherwise copies, has only two — nothing
- * recorded yet, or nothing found — and no failure path at all. This has a
- * third: looked and could not read. The scenario is the one the feature
+ * `/health` publishes one number over all of them: nothing recorded yet,
+ * nothing found, and looked and could not read. The scenario is the one the feature
  * exists for: a build meets a database another build wrote, the query
  * fails on a column one of them does not have, the catch fires, and
  * without this flag `/health` serves exactly what a healthy instance
@@ -440,8 +436,8 @@ export async function scanStoredValues(
 let lastScan: StoredValueScan = { scanned: false, values: [] };
 
 /**
- * Record what this boot concluded. Called once at boot, on the same pass
- * that records the retired platform types.
+ * Record what this boot concluded. Called once at boot, after the type
+ * registry is filled.
  */
 export function setStoredValueScan(scan: StoredValueScan): void {
   lastScan = { scanned: scan.scanned, values: [...scan.values] };
