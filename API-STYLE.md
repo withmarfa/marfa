@@ -1,10 +1,10 @@
 # API style guide
 
-How Marfa's API description is written: every summary, description and example in `openapi.json`. The server generates that document from its route definitions, so this guide governs the text in those definitions.
+How Marfa's API description is written: every summary, description and example in `openapi.json`. The committed `openapi.json` is the document: it is edited directly, both servers are held to it, and this guide governs its text.
 
 The wording follows the [Google developer documentation style guide](https://developers.google.com/style), including its guidance on [API reference text](https://developers.google.com/style/api-reference-comments). Names and shapes follow `GLOSSARY.md`, which follows Stripe's API conventions. Where this guide is silent, follow Google.
 
-**(checked)** marks a rule that `packages/server/src/openapi-style.test.ts` checks. A change that breaks one fails the test, naming what broke it.
+**(checked)** marks a rule that `ci/openapi/style.test.ts` checks. A change that breaks one fails the test, naming what broke it.
 
 ## Who reads it
 
@@ -72,7 +72,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 - **Put fixed facts in the schema, not the text**: type, range, default and allowed values go in `minimum`, `maximum`, `default` and `enum`. The text gives a default only when it depends on something, such as "Defaults to your `default_tier`".
 - A comma-separated list says so and names its values.
 - **(checked: at most 250 characters)**
-- **Take `limit` and `cursor` from `pageLimit` and `pageCursor` in `packages/server/src/page-limits.ts`.** `Idempotency-Key` and `X-Marfa-Reach` come from `openapi-finalize.ts`. So each has one text everywhere. **(checked: one text per parameter name)** Share a parameter only where it means the same thing; where it means something else on one operation, define it there with its own text. A listing a device walks to fill its copy takes `pageLimit({ capped: true })`, which reads a larger `limit` as the bound instead of refusing it, has no `maximum`, and says the bound in a text that every such listing shares.
+- **Give `limit`, `cursor`, `Idempotency-Key` and `X-Marfa-Reach` one text everywhere.** **(checked: one text per parameter name)** Share a parameter only where it means the same thing; where it means something else on one operation, define it there with its own text. A listing a device walks to fill its copy reads a larger `limit` as the bound instead of refusing it, has no `maximum`, and says the bound in a text that every such listing shares.
 
 ## Objects and fields
 
@@ -97,7 +97,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   - `id_reused`: `id` belongs to a different item. `details.differs` says what differs.
   ```
 
-- **The shared responses, `401`, `413`, `429`, `500` and `503`, take their text from one definition in `openapi-finalize.ts`**, which adds them to each operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
+- **The shared responses, `401`, `413`, `429`, `500` and `503`, take one text each**, the same on every operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
 - **(checked: at most 400 characters)**
 
 ## Streams and requests Marfa sends
@@ -109,12 +109,12 @@ So each operation, parameter, field and response says what it needs to on its ow
 
 - Every success response carries an example of a realistic object.
 - A field whose format is not obvious from its type carries an example: IDs, type identifiers, times, cursors.
-- Set an example with `.openapi({ example })` on a field, `.openapi("Name", { example })` on a named schema, or `example` beside `schema` in a response's content.
+- Set an example with `example` on a field or a named schema, or beside `schema` in a response's content.
 - Invent plausible values. Never use a real person, account or machine. IDs are UUIDv7. Times are UTC with milliseconds: `2026-10-03T09:30:00.000Z`.
 
 ## Groups
 
-Each operation has one tag, which is its group in the reference. The groups, their order and each group's operations are `PUBLIC_TAGS` in `packages/server/src/openapi-finalize.ts`, each group with a one-sentence description. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
+Each operation has one tag, which is its group in the reference. The groups are the document's `tags`, each with a one-sentence description, its order and its operations. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
 
 Within a group, operations come in the order a developer meets them:
 
@@ -126,11 +126,9 @@ Within a group, operations come in the order a developer meets them:
 6. Delete.
 7. The group's other actions, in the order a developer meets them. For example, restore comes before purge.
 
-A group starts with the first of these it has, with one exception: Connector state starts with the hold, which a process takes before it writes. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, a request Marfa sends included. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
+A group starts with the first of these it has, with one exception: Connector state starts with the hold, which a process takes before it writes. Give the order as the tag's `x-operation-order`, each an `operationId`, a request Marfa sends included. `paths` follow the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
 
-`openapi-operation-order.test.ts` checks that every published operation and webhook is listed once, under its own tag, and that every name in a list is published. A new operation fails it, naming the operation, until it has an entry.
-
-Leave the route mounts in `app.ts` alone: Hono matches in registration order, and a static route such as `/items/stats` shares a prefix with a parameter route.
+`ci/openapi/operation-order.test.ts` checks that every published operation and webhook is listed once, under its own tag, and that every name in a list is published. A new operation fails it, naming the operation, until it has an entry.
 
 ## General sections
 
@@ -138,10 +136,9 @@ The document's `info.description` holds the rules that apply everywhere, each un
 
 ## Where the text lives
 
-- An operation's summary, description and responses: its `createRoute` definition in `packages/server/src/routes/`. The operations served as plain Hono handlers register schema-backed descriptions beside their mounts: the instance description, event stream and OAuth registration schemas live in `packages/server/src/routes/`.
-- A field's or parameter's description: `.describe()` on its schema. A code comment never reaches the document.
-- The general sections, the shared responses and the shared header parameters: `packages/server/src/openapi-finalize.ts`. `limit` and `cursor`: `packages/server/src/page-limits.ts`.
-- After any change, run `pnpm generate` and commit everything it writes in the same pull request: `openapi.json`, the TypeScript SDK generated from it and the core's contract version.
+All of it is in `openapi.json`: an operation's summary, description and responses, a field's or parameter's description, and the general sections in `info.description`. A code comment never reaches the document.
+
+After any change, run `pnpm generate` and commit everything it writes in the same pull request: the TypeScript SDK generated from the document and the core's contract version.
 
 ## Before you open a pull request
 
@@ -150,4 +147,4 @@ The document's `info.description` holds the rules that apply everywhere, each un
 3. The description starts with a verb in the third person, is at most three sentences, and has no word it doesn't need.
 4. Every parameter, field and response you added or changed is described.
 5. Every fact matches the contract in `conformance/spec/`. Where the server and the contract disagree, fix the one that is wrong; never describe around it.
-6. `pnpm generate` has run, and `pnpm --filter @withmarfa/server test` passes.
+6. `pnpm generate` has run, and `pnpm vitest run --project ci-config ci/openapi` passes.

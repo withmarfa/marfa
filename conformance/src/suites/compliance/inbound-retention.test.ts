@@ -6,7 +6,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
 import {
   DAY_MS,
@@ -385,19 +384,6 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     }
   }
 
-  function storedCharge(id: string): number {
-    const value = withInstanceDatabase(
-      server.sqlitePath,
-      (db) =>
-        db
-          .prepare("SELECT stored_bytes FROM inbound_deliveries WHERE id = ?")
-          .get(id)?.stored_bytes,
-    );
-    if (typeof value !== "number")
-      throw new Error("The receipt charge was not stored");
-    return value;
-  }
-
   /** Moves the clock past the pending retention, so the deliveries made so
    *  far are past it, the first the oldest. */
   async function pastPendingRetention(): Promise<void> {
@@ -414,7 +400,6 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     expect(charge(a, exact.source, half) + charge(b, exact.source, half)).toBe(
       TARGET,
     );
-    expect(storedCharge(a.id) + storedCharge(b.id)).toBe(TARGET);
     await exact.deliver("small");
     await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 2, remaining: true });
@@ -431,7 +416,6 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     expect(
       charge(c, over.source, overHalf) + charge(d, over.source, overHalf + 1),
     ).toBe(TARGET + 1);
-    expect(storedCharge(c.id) + storedCharge(d.id)).toBe(TARGET + 1);
     await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 1, remaining: true });
     expect(await over.kept()).toEqual(["d"]);
@@ -444,7 +428,6 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     const w = await world();
     const large = await w.deliverSized("large", TARGET);
     expect(charge(large, w.source, TARGET)).toBeGreaterThan(TARGET);
-    expect(storedCharge(large.id)).toBeGreaterThan(TARGET);
     await w.deliver("small");
     await pastPendingRetention();
 

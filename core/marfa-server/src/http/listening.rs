@@ -197,12 +197,12 @@ mod tests {
     use std::time::Instant;
 
     use axum::Extension;
-    use axum::routing::get;
     use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
     use tokio::sync::{Notify, mpsc, oneshot};
     use tokio::time::timeout;
 
+    use super::super::doors::{Doors, get};
     use super::super::observe::RequestContext;
     use super::super::{Routes, finished};
     use super::*;
@@ -239,7 +239,7 @@ mod tests {
     }
 
     async fn router(dir: &TempDir, trust: &str) -> Router {
-        router_of(dir, trust, Router::new().route("/who", get(who))).await
+        router_of(dir, trust, Doors::new().route("/who", get(who))).await
     }
 
     async fn router_of(dir: &TempDir, trust: &str, routes: Routes) -> Router {
@@ -485,9 +485,7 @@ mod tests {
             entered: Arc::new(Notify::new()),
             release: Arc::new(Notify::new()),
         };
-        let routes = Router::new()
-            .route("/slow", get(slow))
-            .layer(Extension(gate.clone()));
+        let routes = Doors::new().route("/slow", get(slow).layer(Extension(gate.clone())));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (stop, stopping) = oneshot::channel::<()>();

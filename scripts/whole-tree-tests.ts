@@ -21,13 +21,8 @@
 export const ROOT_FILTERS: readonly string[] = [
   // Every census reads the server's source to count something in it.
   "census.test.ts",
-  // The committed `openapi.json` and the files beside the routes.
-  "openapi-committed-spec.test.ts",
-  "openapi-open-objects.test.ts",
-  "openapi-operation-order.test.ts",
-  "openapi-routes.test.ts",
-  "openapi-style.test.ts",
-  "openapi-version-integers.test.ts",
+  // The committed `openapi.json` and the files beside the routes. The
+  // document's own tests are under `ci/`, matched last.
   "packages/client/src/client.test.ts",
   "webhooks/retry.test.ts",
   // Walks of the server's source for a pattern.

@@ -1,5 +1,3 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { chunkedUpload } from "../../utils/chunked-upload.js";
@@ -10,12 +8,8 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  blobFolder,
-  clientsFor,
-  diskPath,
-  DISK_ONLY,
-} from "../../utils/own-blob-server.js";
+import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
+import { diskHolds, spooled, spooledBytes } from "../../utils/store-faults.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -143,12 +137,6 @@ function bytes(size: number, fill: number): Uint8Array {
   return new Uint8Array(size).fill(fill);
 }
 
-/** What is in the folder the upload spools into. */
-function spooled(): string[] {
-  const folder = join(blobFolder(server), "tmp");
-  return existsSync(folder) ? readdirSync(folder) : [];
-}
-
 describe("an upload whose body declares no length", () => {
   it("is stored while the room holds, which is the witness for the refusal below", async () => {
     await room({ database: 1024 * MiB, blobs: 1024 * MiB });
@@ -163,13 +151,16 @@ describe("an upload whose body declares no length", () => {
       },
     );
     expect(done.status, done.body).toBe(201);
-    expect(existsSync(diskPath(server, blobHash(body)))).toBe(true);
+    expect(await diskHolds(server.controlSocket, blobHash(body))).toBe(true);
   });
 
   it("is answered 507 insufficient_storage and leaves nothing when the volume falls inside the reserve as the bytes arrive", async () => {
     await room({ database: 1024 * MiB, blobs: 1024 * MiB });
-    const before = readdirSync(blobFolder(server)).sort();
-    expect(spooled()).toEqual([]);
+    expect(await spooled(server.controlSocket)).toEqual([]);
+    const whole = Buffer.concat([
+      Buffer.alloc(2 * MiB, 11),
+      Buffer.alloc(4 * MiB, 12),
+    ]);
     const refused = await chunkedUpload(
       server.apiUrl,
       server.workingKey,
@@ -180,14 +171,11 @@ describe("an upload whose body declares no length", () => {
         // admit this upload and spool its initial bytes before filling the volume.
         await waitFor(
           "the upload to spool its initial 2 MiB",
-          () => {
+          async () => {
             signal.throwIfAborted();
-            const size = spooled().reduce(
-              (total, name) =>
-                total + statSync(join(blobFolder(server), "tmp", name)).size,
-              0,
-            );
-            return Promise.resolve(size >= 2 * MiB ? true : undefined);
+            return (await spooledBytes(server.controlSocket)) >= 2 * MiB
+              ? true
+              : undefined;
           },
           10_000,
         );
@@ -206,10 +194,10 @@ describe("an upload whose body declares no length", () => {
       available_bytes: RESERVE - 1,
     });
 
-    await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+    await waitFor("the spool to empty", async () =>
+      (await spooled(server.controlSocket)).length === 0 ? true : undefined,
     );
-    expect(readdirSync(blobFolder(server)).sort()).toEqual(before);
+    expect(await diskHolds(server.controlSocket, blobHash(whole))).toBe(false);
   });
 });
 
@@ -244,9 +232,9 @@ describe("a restore whose archive inflates past the room", () => {
     expect(refused.error?.error.code).toBe("insufficient_storage");
     expect((await working.getItem(itemId)).status).toBe(404);
     expect((await operator.downloadBlob(entryHash)).status).toBe(404);
-    expect(existsSync(diskPath(server, entryHash))).toBe(false);
-    await waitFor("the spool to empty", () =>
-      Promise.resolve(spooled().length === 0 ? true : undefined),
+    expect(await diskHolds(server.controlSocket, entryHash)).toBe(false);
+    await waitFor("the spool to empty", async () =>
+      (await spooled(server.controlSocket)).length === 0 ? true : undefined,
     );
   });
 
@@ -255,7 +243,7 @@ describe("a restore whose archive inflates past the room", () => {
     const done = await ownerClient().restoreArchive(archive());
     expect(done.status, JSON.stringify(done.error)).toBe(200);
     expect((await working.getItem(itemId)).status).toBe(200);
-    expect(existsSync(diskPath(server, entryHash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, entryHash)).toBe(true);
   });
 });
 
@@ -273,12 +261,12 @@ describe("a write that meets a volume with no room", () => {
       (await server.faults()).find((f) => f.name === "fail:blob-write")?.fired,
     ).toBe(1);
     expect((await operator.downloadBlob(hash)).status).toBe(404);
-    expect(existsSync(diskPath(server, hash))).toBe(false);
-    expect(spooled()).toEqual([]);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(false);
+    expect(await spooled(server.controlSocket)).toEqual([]);
 
     const landed = await working.uploadBlob(body, "text/plain");
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
-    expect(existsSync(diskPath(server, hash))).toBe(true);
+    expect(await diskHolds(server.controlSocket, hash)).toBe(true);
   });
 
   it("is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no row", async () => {
@@ -306,7 +294,7 @@ describe("a write that meets a volume with no room", () => {
       (await server.faults()).find((f) => f.name === "fail:blob-write")?.fired,
     ).toBe(1);
     expect((await working.getItem(id)).status).toBe(404);
-    expect(existsSync(diskPath(server, blobHash(entry)))).toBe(false);
+    expect(await diskHolds(server.controlSocket, blobHash(entry))).toBe(false);
 
     await server.clearFault();
     const landed = await ownerClient().restoreArchive(archive);

@@ -31,7 +31,7 @@ interface OpenAPIDoc {
 
 /**
  * The rules that hold across operations, stated once so that no operation
- * repeats them. `packages/server/API-STYLE.md` says what belongs here.
+ * repeats them. `API-STYLE.md` says what belongs here.
  */
 const GENERAL_SECTIONS = [
   "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.",
@@ -103,7 +103,7 @@ export interface PublicTag {
  * describing a surface no operation belongs to reads as a surface the server
  * has and is withholding, which is the same defect as advertising a feature
  * with no door behind it. Every published operation is listed once, under its
- * own tag: `openapi-operation-order.test.ts` holds the lists to the document.
+ * own tag: `ci/openapi/operation-order.test.ts` holds the lists to the document.
  */
 export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
@@ -734,7 +734,7 @@ const IDEMPOTENCY_REFUSALS: {
   refusal: ChainRefusal;
   /**
    * `floor` where the code is already inside whatever the door declares for
-   * the status — `openapi-response-headers.test.ts` holds that — and
+   * the status — `ci/openapi/response-headers.test.ts` holds that — and
    * `branch` where the door answers the status with a shape of its own.
    */
   merge: "floor" | "branch";
