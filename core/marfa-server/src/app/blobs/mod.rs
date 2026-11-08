@@ -1,9 +1,11 @@
 //! Blobs: bytes kept under the hash of what they hold, and who may read them.
 
+mod digests;
 mod disk;
 mod hash;
 pub mod link;
 pub mod range;
+pub mod references;
 mod rows;
 
 use std::fs::File;
@@ -311,15 +313,10 @@ impl App {
         let Some(blob) = rows::find(tx, hash)? else {
             return Err(not_found());
         };
-        if let Some(caller) = caller {
-            let lenders = if caller.reads_every_blob() {
-                Vec::new()
-            } else {
-                rows::lenders(tx, hash)?
-            };
-            if !caller.may_read_blob(&lenders) {
-                return Err(not_found());
-            }
+        if let Some(caller) = caller
+            && !caller.may_read_blob(rows::lenders(tx, hash))?
+        {
+            return Err(not_found());
         }
         let held = rows::held_in(tx, hash, store_id)?;
         Ok(Found { blob, held })

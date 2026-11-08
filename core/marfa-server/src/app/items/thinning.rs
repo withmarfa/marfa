@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use super::super::App;
 use super::super::access::Caller;
+use super::super::blobs::references;
 use super::super::catalog::{self, Catalog, Snapshot};
 use super::super::faults::HOLD_THINNING_ITEM;
 use super::super::housekeeping::{DAY_MS, Report, Run};
@@ -221,6 +222,7 @@ fn remove(unit: &Unit<'_, '_>, app: &App, seq: i64) -> Result<usize> {
         return Ok(0);
     }
     for snapshot in &doomed {
+        references::forget(tx, references::Row::Version(seq, snapshot.version))?;
         tx.prepare_cached("DELETE FROM item_versions WHERE item_seq = ?1 AND version = ?2")?
             .execute(params![seq, snapshot.version])?;
     }
