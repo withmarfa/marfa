@@ -1356,13 +1356,13 @@ When an authorized caller sends `DELETE /connectors/{id}/state`, the server MUST
 
 ### `connectors/problems-bounds`
 
-If a `problems` map in `PUT /connectors/{id}/state` exceeds 200 entries, 500 UTF-16 code units in one message or 512 KiB serialized as UTF-8 within the state request cap, then the server MUST answer `400 validation_error`.
+If a `problems` map in `PUT /connectors/{id}/state` exceeds 200 entries, 500 characters in one message or 512 KiB serialized as UTF-8 within the state request cap, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
 
 ### `connectors/problems-independent-cap`
 
-When `PUT /connectors/{id}/state` carries a state and a problems map each within its own 512 KiB serialized UTF-8 cap, with a valid process name of at most 100 UTF-16 code units, the server MUST admit their combined compact JSON envelope within its state request cap of 1049211 bytes.
+When `PUT /connectors/{id}/state` carries a state and a problems map each within its own 512 KiB serialized UTF-8 cap, with a valid process name of at most 100 characters, the server MUST admit their combined compact JSON envelope within its state request cap of 1049211 bytes.
 
 **Tests:** `compliance/connector-interfaces.test.ts › accepts independent maximum documents and rejects problem bounds without partial writes`.
 
