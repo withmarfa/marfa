@@ -606,8 +606,7 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     updated_at TEXT NOT NULL
 ) STRICT;
 
--- The latest report of each folder copy under each sign-in. Reports are
--- operational: a physical backup keeps them and the portable archive does not.
+-- Physical backups keep reports; portable archives exclude them.
 CREATE TABLE IF NOT EXISTS folder_status (
     folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
     sign_in_kind TEXT NOT NULL CHECK (sign_in_kind IN ('app', 'key')),

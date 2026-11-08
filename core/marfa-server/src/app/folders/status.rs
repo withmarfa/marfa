@@ -59,8 +59,7 @@ fn problems_json(problems: &[(String, i64)]) -> Value {
     )
 }
 
-/// Reports a copy under the credential that sent it, replacing the copy's report when the
-/// sequence is greater and leaving it, receipt time included, when it is not.
+/// A repeated or older sequence preserves the receipt time too.
 pub async fn report(
     app: &App,
     caller: &Caller,

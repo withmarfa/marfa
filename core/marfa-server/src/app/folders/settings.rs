@@ -34,8 +34,7 @@ const MAX_DEFAULT_EDGE_TARGETS: usize = 100;
 const MOST_FILES: f64 = 9_007_199_254_740_991.0;
 const FULL_PASS_SECONDS: std::ops::RangeInclusive<f64> = 60.0..=86_400.0;
 
-/// Every key the body or one of its settings names that the folder does not declare, by its path
-/// from the body.
+/// Undeclared keys, by path from the request body.
 pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
     let mut paths = Vec::new();
     undeclared_in(body, allowed, "", &mut paths);

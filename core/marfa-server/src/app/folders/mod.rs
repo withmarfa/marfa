@@ -1,5 +1,4 @@
-//! Folders: a `system.folder` item holds a folder's settings, and each copy of a folder reports how
-//! its sync stands.
+//! Folder settings and per-copy sync reports.
 
 mod inventory;
 mod report;

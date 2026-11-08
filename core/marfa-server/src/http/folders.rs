@@ -1,5 +1,4 @@
-//! `/folders`, the only door that writes a `system.folder`, and the status each folder copy
-//! reports. A browser's cookie reaches none of it.
+//! Folder settings and sync status; browser cookies grant no access.
 
 use std::sync::Arc;
 

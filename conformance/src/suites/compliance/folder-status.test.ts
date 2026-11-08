@@ -6,7 +6,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
-  DAY_MS,
   HOUR_MS,
   MINUTE_MS,
   movedClock,
@@ -820,7 +819,7 @@ describe("folder sync reports", () => {
       expect(r.status, `${method} ${path}`).toBe(401);
       expect(await r.json()).toMatchObject({ error: { code: "unauthorized" } });
     }
-    // The witness: the key reaches every door the session was refused.
+    // The key can still read status and change settings.
     expect((await get(id)).sign_ins).toHaveLength(1);
     expect(
       (await call("PATCH", `/folders/${id}`, { version: 1, title: "Renamed" }))

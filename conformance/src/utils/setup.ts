@@ -469,8 +469,7 @@ export async function cleanup(ctx: TestContext): Promise<void> {
       ctx.trackedFolders,
       async (id) => {
         const revoked = await scoped.revokeFolder(id);
-        // 400 is `invalid_transition`: the fixture revoked it already. A
-        // revoked folder is final, and no item door purges a `system.*` row.
+        // Already-revoked folders cannot be purged through an item door.
         return revoked.status === 400 ? { ok: true, status: 200 } : revoked;
       },
       "Folder",
