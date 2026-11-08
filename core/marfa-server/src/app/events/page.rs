@@ -11,9 +11,10 @@ pub(super) struct Bounds {
     pub oldest: Option<i64>,
 }
 
+/// Two subqueries, because `MAX` and `MIN` in one select scan the whole log, where each alone is one seek.
 pub(super) fn bounds(tx: &Transaction<'_>) -> Result<Bounds> {
     Ok(tx.query_row(
-        "SELECT COALESCE(MAX(id), 0), MIN(id) FROM event_log",
+        "SELECT (SELECT COALESCE(MAX(id), 0) FROM event_log), (SELECT MIN(id) FROM event_log)",
         [],
         |row| {
             Ok(Bounds {

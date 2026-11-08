@@ -105,6 +105,12 @@ struct Run {
     _viewer: Viewer,
 }
 
+/// Waits up to `patience` for the reader to take `text`. The channel holds one chunk, so a reader that
+/// stops reading holds back the next page's read, and is let go once it has taken nothing for `patience`.
+async fn hand_over(frames: &mpsc::Sender<String>, text: String, patience: Duration) -> bool {
+    matches!(timeout(patience, frames.send(text)).await, Ok(Ok(())))
+}
+
 enum Ending {
     /// The reader left, or stopped reading.
     Gone,
@@ -303,7 +309,7 @@ impl Run {
             read_page(read, &filter, after, replay.as_deref())
         })
         .await;
-        let page = match read {
+        let mut page = match read {
             Ok(page) => page,
             Err(refusal) => return Err(self.failure(&refusal)),
         };
@@ -320,8 +326,9 @@ impl Run {
         if page.gap {
             return Err(self.too_old(page.oldest.unwrap_or(after), after));
         }
-        if !page.text.is_empty() {
-            self.send(page.text.clone()).await?;
+        let text = std::mem::take(&mut page.text);
+        if !text.is_empty() {
+            self.send(text).await?;
             self.sent = page.last_sent;
         }
         self.position = page.position;
@@ -343,13 +350,11 @@ impl Run {
     }
 
     async fn send(&mut self, text: String) -> std::result::Result<(), Ending> {
-        match timeout(PING, self.frames.send(text)).await {
-            Ok(Ok(())) => {
-                self.last_output = Instant::now();
-                Ok(())
-            }
-            _ => Err(Ending::Gone),
+        if hand_over(&self.frames, text, PING).await {
+            self.last_output = Instant::now();
+            return Ok(());
         }
+        Err(Ending::Gone)
     }
 
     fn failure(&self, refusal: &Refusal) -> Ending {
@@ -385,4 +390,61 @@ fn frame(text: Result<String>) -> std::result::Result<String, Ending> {
 
 fn ending(text: Result<String>) -> Ending {
     text.map_or(Ending::Gone, Ending::Closing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_viewer_is_counted_until_it_is_dropped() {
+        let viewers = Viewers::default();
+        let first = viewers.admit(2).unwrap();
+        let second = viewers.admit(2).unwrap();
+        assert_eq!(viewers.open(), 2);
+        assert!(viewers.admit(2).is_none());
+        assert_eq!(viewers.open(), 2, "a refused viewer is not counted");
+        drop(first);
+        assert_eq!(viewers.open(), 1);
+        let third = viewers.admit(2).unwrap();
+        assert!(viewers.admit(2).is_none());
+        drop((second, third));
+        assert_eq!(viewers.open(), 0);
+    }
+
+    #[test]
+    fn a_cap_of_zero_admits_every_viewer() {
+        let viewers = Viewers::default();
+        let held: Vec<_> = (0..100).map(|_| viewers.admit(0).unwrap()).collect();
+        assert_eq!(viewers.open(), 100);
+        drop(held);
+        assert_eq!(viewers.open(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_reader_that_takes_nothing_holds_back_the_producer_and_is_let_go() {
+        let (frames, mut feed) = mpsc::channel(1);
+        let patience = Duration::from_millis(60);
+        assert!(hand_over(&frames, "one".into(), patience).await);
+        let started = std::time::Instant::now();
+        assert!(
+            !hand_over(&frames, "two".into(), patience).await,
+            "the second chunk waits for a reader that is not reading"
+        );
+        assert!(started.elapsed() >= patience);
+        assert_eq!(feed.recv().await.as_deref(), Some("one"));
+        assert!(
+            feed.try_recv().is_err(),
+            "the chunk that timed out was never queued"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reader_that_leaves_ends_the_wait_at_once() {
+        let (frames, feed) = mpsc::channel(1);
+        drop(feed);
+        let started = std::time::Instant::now();
+        assert!(!hand_over(&frames, "one".into(), Duration::from_secs(30)).await);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }
