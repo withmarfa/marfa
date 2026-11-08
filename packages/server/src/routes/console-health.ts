@@ -9,6 +9,8 @@ import {
   type HealthReading,
 } from "./health.js";
 import type { HealthProbes } from "./health-probes.js";
+import { faultsArmed } from "../control/faults.js";
+import { failRead } from "../storage/sqlite/injected-failure.js";
 
 /**
  * What the owner console reads to say how Marfa is running: the same
@@ -33,6 +35,9 @@ export function consoleHealth(sources: {
   return {
     read: () => readHealth(storage, blobs, config, probes),
     objectStore: (budgetMs) => objectStoreComponent(blobs, budgetMs),
-    jobs: () => housekeeping.list(),
+    jobs: () => {
+      if (faultsArmed()) failRead("housekeeping-read");
+      return housekeeping.list();
+    },
   };
 }

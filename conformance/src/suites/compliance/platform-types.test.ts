@@ -1,52 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
+import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  createTestContext,
-  getManagementClient,
-  cleanup,
-} from "../../utils/setup.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import { createTestContext, cleanup } from "../../utils/setup.js";
 
 let client: MarfaClient;
-let manager: MarfaClient;
 let ctx: TestContext;
-let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
-    "compliance",
-    "platform-types",
-  ));
-  manager = getManagementClient();
+  ({ ctx, client } = await createTestContext("compliance", "platform-types"));
 });
 
 afterAll(async () => {
   await cleanup(ctx);
 });
 
-/**
- * A retired platform type is one the database holds and the build no
- * longer ships. Nothing over the wire can register a platform type, so a
- * retired type is arranged on a server of its own in
- * `retired-platform-types.test.ts`; the shared server's listing and the
- * refusals that need none are asserted here.
- */
-describe("platform type maintenance", () => {
-  it("lists no retired platform types on an instance whose types match the build", async () => {
-    const r = await manager.listRetiredPlatformTypes();
-    expect(r.ok).toBe(true);
-    await expectMatchesSchema("GET", "/platform-types/retired", 200, r.data);
-    expect(r.data.data).toEqual([]);
-  });
-
+describe("the shipped types", () => {
   it("serves no type named by a word the glossary bans", async () => {
-    // The seed upserts and never prunes, so a platform type a build stops
-    // shipping keeps resolving and listing on an instance an earlier build
-    // seeded. This instance is seeded by this build, so the listing is the
-    // shipped set and the banned identifier must be absent from it, which
-    // reddens if one is ever put back into the shipped catalog: the only
-    // half of the problem a black-box run can reach.
     const listed = await client.listTypes();
     expect(listed.ok).toBe(true);
     const ids = listed.data.data.map((t) => t.id);
@@ -55,60 +24,5 @@ describe("platform type maintenance", () => {
     const missing = await client.getType("system.integration");
     expect(missing.status).toBe(404);
     expect(missing.error?.error.code).toBe("type_not_found");
-  });
-
-  it("refuses the listing without instance.read and to no credential", async () => {
-    const working = await client.listRetiredPlatformTypes();
-    expect(working.status).toBe(403);
-    expect(working.error?.error.code).toBe("forbidden");
-    const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
-    expect((await anonymous.listRetiredPlatformTypes()).status).toBe(401);
-  });
-
-  it("refuses to remove a type the build still ships", async () => {
-    const r = await manager.deleteRetiredPlatformType("core.note");
-    expect(r.status).toBe(409);
-    expect(r.error?.error.code).toBe("conflict");
-    expect(r.error?.error.details?.type).toBe("core.note");
-    const still = await client.getType("core.note");
-    expect(still.ok).toBe(true);
-  });
-
-  it("answers 404 for an identifier no platform row carries", async () => {
-    // Two different refusals, told apart. An identifier no row carries is
-    // absent, and a refusal names its reason: `404`. The `409` beside it
-    // is for an identifier a row does carry and the build still ships,
-    // which is a refusal about the state of the row rather than about
-    // whether there is one.
-    const r = await manager.deleteRetiredPlatformType("core.never-existed");
-    expect(r.status).toBe(404);
-    expect(r.error?.error.code).toBe("type_not_found");
-  });
-
-  it("answers 409 for a type registered at run time, which no platform row carries", async () => {
-    const id = `user.platform-door-${ctx.runId}`;
-    const registered = await client.registerType({
-      id,
-      fields: { name: { type: "string" } },
-    });
-    expect(registered.status).toBe(201);
-
-    const r = await manager.deleteRetiredPlatformType(id);
-    expect(r.status).toBe(409);
-    expect(r.error?.error.code).toBe("conflict");
-    expect(r.error?.error.details?.type).toBe(id);
-    // The witness: an identifier no row carries is the `404` beside it, and
-    // the registration is still there after the refusal.
-    const absent = await manager.deleteRetiredPlatformType(
-      `user.platform-door-absent-${ctx.runId}`,
-    );
-    expect(absent.status).toBe(404);
-    expect((await client.getType(id)).status).toBe(200);
-  });
-
-  it("refuses removal without instance.maintain", async () => {
-    const r = await client.deleteRetiredPlatformType("core.note");
-    expect(r.status).toBe(403);
-    expect(r.error?.error.code).toBe("forbidden");
   });
 });

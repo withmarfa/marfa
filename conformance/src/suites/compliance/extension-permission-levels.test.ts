@@ -4,7 +4,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 let server: FreshServer;
 let itemId: string;
@@ -66,17 +65,29 @@ afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-function storedMap(map: Record<string, unknown>): void {
-  withInstanceDatabase(server.sqlitePath, (db) => {
-    expect(
-      db
-        .prepare("UPDATE api_keys SET extension_permissions = ? WHERE id = ?")
-        .run(JSON.stringify(map), key.id).changes,
-    ).toBe(1);
+let holders = 0;
+async function mint(
+  extensions: Record<string, "read" | "write">,
+): Promise<{ id: string; key: string }> {
+  const minted = await fetch(`${server.apiUrl}/keys`, {
+    method: "POST",
+    headers: {
+      cookie: server.ownerCookie,
+      origin: server.apiUrl,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      label: "extension-levels-held",
+      source: `extension-levels-held-${String(++holders)}`,
+      type_permissions: { "*": "write" },
+      extension_permissions: extensions,
+    }),
   });
+  expect(minted.status).toBe(201);
+  return (await minted.json()) as { id: string; key: string };
 }
 
-describe("stored extension permission levels", () => {
+describe("extension permission levels", () => {
   it("keeps an exact read ceiling when minting or updating wildcard write", async () => {
     // Set the valid map through the API, without changing a stored row.
     const narrowed = await api(
@@ -139,68 +150,35 @@ describe("stored extension permission levels", () => {
     });
     expect(witness.status).toBe(200);
   });
-  it.each(["read", "write"])("grants a normal %s level", async (level) => {
-    storedMap({ named: level });
-    const read = await api(
-      "GET",
-      `/items/${itemId}/extensions/named`,
-      undefined,
-      key.key,
-    );
-    expect(read.status).toBe(200);
-    expect(await read.text()).toContain("named-extension-value");
-  });
-
-  it.each(["unknown", "", false, 0, null])(
-    "denies malformed exact level %j ahead of wildcard access",
-    async (level) => {
-      storedMap({ "*": "write", named: level });
-      const answer = await api("GET", `/items/${itemId}`, undefined, key.key);
-      expect(answer.status).toBe(200);
-      const text = await answer.text();
-      expect(text).toContain("other-extension-value");
-      expect(text).not.toContain("named-extension-value");
-      for (const method of ["GET", "PUT", "DELETE"]) {
-        expect(
-          (
-            await api(
-              method,
-              `/items/${itemId}/extensions/named`,
-              method === "PUT" ? { marker: "replacement" } : undefined,
-              key.key,
-            )
-          ).status,
-        ).toBe(403);
-      }
-      expect(
-        (
-          await api(
-            "POST",
-            "/keys",
-            {
-              label: "narrowed",
-              source: "narrowed",
-              extension_permissions: { "*": "read" },
-            },
-            key.key,
-          )
-        ).status,
-      ).toBe(403);
-      const witness = await api("GET", `/items/${itemId}/extensions/named`);
-      expect(witness.status).toBe(200);
-      expect(await witness.text()).toContain("named-extension-value");
-    },
-  );
-
-  it.each(["unknown", "", false, 0, null])(
-    "denies malformed wildcard level %j",
-    async (level) => {
-      storedMap({ "*": level, other: "read" });
-      const answer = await api("GET", `/items/${itemId}`, undefined, key.key);
-      expect(answer.status).toBe(200);
-      const text = await answer.text();
-      expect(text).toContain("other-extension-value");
-      expect(text).not.toContain("named-extension-value");
+  it.each([
+    ["read", "write"],
+    ["write", "read"],
+  ] as const)(
+    "grants a normal %s level on its namespace in place of the wildcard's",
+    async (level, wildcard) => {
+      const held = await mint({ "*": wildcard, named: level });
+      const read = await api(
+        "GET",
+        `/items/${itemId}/extensions/named`,
+        undefined,
+        held.key,
+      );
+      expect(read.status).toBe(200);
+      expect(await read.text()).toContain("named-extension-value");
+      const writeNamed = await api(
+        "PUT",
+        `/items/${itemId}/extensions/named`,
+        { marker: "named-extension-value" },
+        held.key,
+      );
+      expect(writeNamed.status).toBe(level === "write" ? 200 : 403);
+      const writeOther = await api(
+        "PUT",
+        `/items/${itemId}/extensions/other`,
+        { marker: "other-extension-value" },
+        held.key,
+      );
+      expect(writeOther.status).toBe(wildcard === "write" ? 200 : 403);
     },
   );
 });

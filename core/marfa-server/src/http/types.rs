@@ -91,21 +91,3 @@ pub async fn clear_icon(
     let answered = types::clear_icon(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "type": answered })))
 }
-
-pub async fn retired(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    query::only(&uri, &[])?;
-    let data = types::retired(&app, &caller).await?;
-    Ok(json_answer(
-        StatusCode::OK,
-        &json!({ "data": data, "next_cursor": null }),
-    ))
-}
-
-pub async fn remove_retired(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Path(id): Path<String>,
-) -> Answer {
-    let removed = types::remove_retired(&app, &caller, id).await?;
-    Ok(json_answer(StatusCode::OK, &removed))
-}

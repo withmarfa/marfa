@@ -5,7 +5,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   authorize,
   authorizeQuery,
@@ -21,13 +20,13 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
- * A change to a credential the database cannot carry out or account for: a
+ * A change to a credential the server cannot carry out or account for: a
  * browser sign-out, a key's mint, update and revoke, a consent and a grant's
- * withdrawal. The fault is a table moved aside, or a trigger that refuses a
- * delete, in the database of a server of the fixture's own, removed before
- * the change is asked again; or, where the change is one the audit log must
- * account for, the target's `fail:audit` and `fail:commit` faults, which fail
- * the change's audit entry or its commit once.
+ * withdrawal. The fault is the server's `fail:session-lookup` and
+ * `fail:session-delete`, which fail a sign-out's session lookup or delete
+ * once, or, where the change is one the audit log must account for, its
+ * `fail:audit` and `fail:commit` faults, which fail the change's audit entry
+ * or its commit once.
  */
 let server: FreshServer;
 let origin: string;
@@ -81,24 +80,10 @@ async function failing<T>(fault: string, during: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Runs `during` with `table` moved aside, and puts it back. */
-async function without<T>(table: string, during: () => Promise<T>): Promise<T> {
-  withInstanceDatabase(server.sqlitePath, (db) =>
-    db.exec(`ALTER TABLE ${table} RENAME TO ${table}_aside`),
-  );
-  try {
-    return await during();
-  } finally {
-    withInstanceDatabase(server.sqlitePath, (db) =>
-      db.exec(`ALTER TABLE ${table}_aside RENAME TO ${table}`),
-    );
-  }
-}
-
 describe("a browser sign-out", () => {
   it("that cannot look its session up answers 500 and clears no cookie, and a retry signs out", async () => {
     const cookie = await signIn(server, origin);
-    const refused = await without("auth_session", () => signOut(cookie));
+    const refused = await failing("fail:session-lookup", () => signOut(cookie));
     expect(refused.status).toBe(500);
     expect(clearsSession(refused)).toBe(false);
     expect(await signedIn(cookie)).toBe(true);
@@ -111,19 +96,7 @@ describe("a browser sign-out", () => {
 
   it("that cannot delete its session answers 500 and clears no cookie, and a retry signs out", async () => {
     const cookie = await signIn(server, origin);
-    withInstanceDatabase(server.sqlitePath, (db) =>
-      db.exec(
-        "CREATE TRIGGER keep_sessions BEFORE DELETE ON auth_session BEGIN SELECT RAISE(ABORT, 'kept'); END",
-      ),
-    );
-    let refused: Response;
-    try {
-      refused = await signOut(cookie);
-    } finally {
-      withInstanceDatabase(server.sqlitePath, (db) =>
-        db.exec("DROP TRIGGER keep_sessions"),
-      );
-    }
+    const refused = await failing("fail:session-delete", () => signOut(cookie));
     expect(refused.status).toBe(500);
     expect(clearsSession(refused)).toBe(false);
     expect(await signedIn(cookie)).toBe(true);

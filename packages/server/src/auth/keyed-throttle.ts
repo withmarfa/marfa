@@ -31,8 +31,8 @@ export interface KeyedThrottleOptions {
   /** The family on the `rate_limit_windows` table, one per throttle, so two
    *  throttles counting the same key keep separate windows. */
   family: string;
-  /** Attempts allowed per key per window. */
-  limit: number;
+  /** Attempts allowed per key per window, read at each attempt. */
+  limit: number | (() => number);
   /** Window length in ms. */
   windowMs: number;
 }
@@ -52,7 +52,7 @@ export type ThrottlePeek =
 
 export class KeyedThrottle {
   private readonly family: string;
-  private readonly limit: number;
+  private readonly limit: () => number;
   private readonly windowMs: number;
 
   constructor(
@@ -60,7 +60,8 @@ export class KeyedThrottle {
     options: KeyedThrottleOptions,
   ) {
     this.family = options.family;
-    this.limit = options.limit;
+    const limit = options.limit;
+    this.limit = typeof limit === "number" ? () => limit : limit;
     this.windowMs = options.windowMs;
   }
 
@@ -82,9 +83,9 @@ export class KeyedThrottle {
       nowIso,
     );
     return {
-      allowed: row.count <= this.limit,
+      allowed: row.count <= this.limit(),
       count: row.count,
-      limit: this.limit,
+      limit: this.limit(),
       resetAt: new Date(row.expires_at).getTime(),
     };
   }
@@ -102,7 +103,7 @@ export class KeyedThrottle {
       key,
       nowIso,
     );
-    if (!row || row.count < this.limit) return { allowed: true };
+    if (!row || row.count < this.limit()) return { allowed: true };
     return { allowed: false, resetAt: new Date(row.expires_at).getTime() };
   }
 }

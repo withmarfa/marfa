@@ -4,24 +4,20 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
- * A type whose stored parent chain cannot be resolved answers `409
+ * A type whose stored definition does not read answers `409
  * type_chain_unresolvable`, and can be corrected through `PUT /types/{id}`.
  *
- * **Arranged in the stored file, on a server of its own.** Every door that
- * writes a type refuses a cycle and a chain past the bound, so no request
- * produces one. What produces one is a registry that already held it, a file
- * written by an earlier build or by hand. The fixture registers two types
- * over HTTP, stops the server, points the root's `parent` at its child in the
- * stored row, and boots the server on that file. What is asserted is what the
- * instance then answers.
+ * **Arranged by a fault.** Every door that writes a type judges what it
+ * writes, so no request stores a definition the server cannot read. The
+ * `unreadable:type-definition` fault makes the server read the stored
+ * definition of one type as damaged, as a registry that already held it would
+ * be read. What is asserted is what the instance then answers.
  */
 let server: FreshServer | undefined;
 
-const ROOT = "chain.root";
-const CHILD = "chain.child";
+const TYPE = "chain.damaged";
 
 beforeAll(async () => {
   server = await bootFreshServer("type-chain-unresolvable");
@@ -46,84 +42,44 @@ async function send(
   });
 }
 
-describe("a type whose stored parent chain is a cycle", () => {
-  it(
-    "answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}",
-    async () => {
-      const root = await send("POST", "/types", {
-        id: ROOT,
-        version: 1,
-        fields: {},
-      });
-      expect(root.status).toBe(201);
-      const child = await send("POST", "/types", {
-        id: CHILD,
-        version: 1,
-        parent: ROOT,
-        fields: {},
-      });
-      expect(child.status).toBe(201);
-      // The control: the chain resolves until the file is changed.
-      expect((await send("GET", `/types/${CHILD}`)).status).toBe(200);
+describe("a type whose stored definition does not read", () => {
+  it("answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}", async () => {
+    const registered = await send("POST", "/types", {
+      id: TYPE,
+      version: 1,
+      fields: {},
+    });
+    expect(registered.status).toBe(201);
+    // The control: the type reads until the fault is set.
+    expect((await send("GET", `/types/${TYPE}`)).status).toBe(200);
 
-      // The doors refuse the cycle, which is why it is written into the file.
-      const refused = await send("PUT", `/types/${ROOT}`, {
-        version: 1,
-        parent: CHILD,
-        fields: {},
-      });
-      expect(refused.status).toBe(400);
-      expect(
-        ((await refused.json()) as { error: { code: string } }).error.code,
-      ).not.toBe("type_chain_unresolvable");
+    await server!.setFault(`unreadable:type-definition=${TYPE}`);
 
-      await server!.restart(() => {
-        const changed = withInstanceDatabase(server!.sqlitePath, (db) =>
-          db
-            .prepare(
-              "UPDATE types SET schema = json_set(schema, '$.parent', ?) WHERE id = ?",
-            )
-            .run(CHILD, ROOT),
-        );
-        expect(Number(changed.changes)).toBe(1);
-      });
+    const unresolved = await send("GET", `/types/${TYPE}`);
+    expect(unresolved.status).toBe(409);
+    expect(unresolved.headers.get("X-Error-Code")).toBe(
+      "type_chain_unresolvable",
+    );
+    const body = (await unresolved.json()) as {
+      error: { code: string; details: { type_id: string } };
+    };
+    expect(body.error.code).toBe("type_chain_unresolvable");
+    expect(body.error.details.type_id).toBe(TYPE);
 
-      const unresolved = await send("GET", `/types/${CHILD}`);
-      expect(unresolved.status).toBe(409);
-      expect(unresolved.headers.get("X-Error-Code")).toBe(
-        "type_chain_unresolvable",
-      );
-      const body = (await unresolved.json()) as {
-        error: {
-          code: string;
-          details: { type_id: string; at: string };
-        };
-      };
-      expect(body.error.code).toBe("type_chain_unresolvable");
-      expect(body.error.details.type_id).toBe(CHILD);
+    // The way back: the write door accepts a corrected definition although
+    // the stored one does not read.
+    const corrected = await send("PUT", `/types/${TYPE}`, {
+      version: 1,
+      description: "Corrected.",
+      fields: {},
+    });
+    expect(corrected.status).toBe(200);
 
-      const normalized = await send("POST", "/types/normalize", {
-        id: CHILD,
-        fields: {},
-      });
-      expect(normalized.status).toBe(409);
-      expect(normalized.headers.get("X-Error-Code")).toBe(
-        "type_chain_unresolvable",
-      );
-
-      // The way back: the write door reads the stored schema without walking
-      // the chain, so it answers, and the read resolves once the cycle is gone.
-      const corrected = await send("PUT", `/types/${ROOT}`, {
-        version: 1,
-        fields: {},
-      });
-      expect(corrected.status).toBe(200);
-      const resolved = await send("GET", `/types/${CHILD}`);
-      expect(resolved.status).toBe(200);
-      expect(((await resolved.json()) as { parent?: string }).parent).toBe(
-        ROOT,
-      );
-    },
-    2 * FRESH_SERVER_TIMEOUT_MS,
-  );
+    await server!.clearFault();
+    const resolved = await send("GET", `/types/${TYPE}`);
+    expect(resolved.status).toBe(200);
+    expect(
+      ((await resolved.json()) as { description?: string }).description,
+    ).toBe("Corrected.");
+  });
 });

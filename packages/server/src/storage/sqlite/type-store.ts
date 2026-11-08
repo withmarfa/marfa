@@ -6,7 +6,6 @@ import {
   getTypeSchema,
   registerTypeSchema,
   unregisterTypeSchema,
-  removePlatformRegistryType,
   stagePlatformRegistryType,
   MarfaError,
   ErrorCode,
@@ -330,22 +329,6 @@ export class SqliteTypeStore implements TypeStore {
         )
         .all();
       return rows.map((r) => r.id);
-    });
-  }
-
-  async deleteRetiredPlatformType(id: string): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      const shapes = indexShapes(id);
-      const deleted = await tx
-        .delete(types)
-        .where(and(eq(types.id, id), eq(types.origin, "platform")))
-        .returning({ id: types.id });
-      if (deleted.length > 0) {
-        markStructuralReadChange();
-        removePlatformRegistryType(id);
-        await reindexChangedTypes(tx, id, shapes);
-      }
-      return deleted.length > 0;
     });
   }
 

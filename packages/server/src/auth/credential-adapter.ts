@@ -9,6 +9,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import * as clock from "../clock.js";
+import { faultsArmed } from "../control/faults.js";
+import { failRead } from "../storage/sqlite/injected-failure.js";
 
 interface CredentialRequest {
   actor?: VersionWriter;
@@ -279,6 +281,13 @@ export function withCredentialAudit<
         const request = credentialRequest.getStore();
         if (request && !request.active)
           throw new Error("Credential request is closed");
+        if (
+          faultsArmed() &&
+          request?.path === "/sign-out" &&
+          args.model === "session" &&
+          operation.startsWith("delete")
+        )
+          failRead("session-delete");
         if (
           operation === "create" &&
           args.model === "oauthClient" &&
@@ -693,12 +702,19 @@ export function withCredentialAudit<
           args.limit === undefined
             ? { ...args, limit: -1 }
             : args;
-        const work = async () =>
-          withDeviceOffer(
+        const work = async () => {
+          if (
+            faultsArmed() &&
+            request?.path === "/sign-out" &&
+            args.model === "session"
+          )
+            failRead("session-lookup");
+          return withDeviceOffer(
             request,
             args,
             await (original as Operation)(readArgs),
           );
+        };
         return request?.phase?.run(false, work) ?? work();
       };
     }

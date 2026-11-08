@@ -29,6 +29,7 @@ import type {
   TypeSchema,
 } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
+import { unreadableFault } from "../control/faults.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   authorityId,
@@ -875,6 +876,12 @@ function withoutReadBackHints<T extends TypeSchema>(
 /** The registry as the owner sees it: each type with their icon, if any. */
 function ownerResolver(owned: ReadonlyMap<string, string>): TypeResolver {
   return (id) => {
+    if (unreadableFault("type-definition", id))
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
+        `The stored definition of type "${id}" does not read`,
+        { type_id: id, at: id },
+      );
     const schema = getTypeSchema(id);
     return schema && withOwnerIcon(schema, owned);
   };
@@ -981,7 +988,7 @@ const getTypeRoute = createRoute({
         },
       },
       description:
-        "`type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it.",
+        "`type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it.",
     },
   },
 });
