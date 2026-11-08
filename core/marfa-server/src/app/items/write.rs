@@ -212,6 +212,14 @@ impl Change {
             Change::Page(_) | Change::Entry { .. } => "items.bulk",
         }
     }
+
+    fn fans_out(&self) -> bool {
+        match self {
+            Change::Page(page) => page.fanout,
+            Change::Entry { note, .. } => note.fanout,
+            _ => true,
+        }
+    }
 }
 
 type Outcome = (Map<String, Value>, Option<Value>, Option<Item>);
@@ -249,13 +257,15 @@ pub fn apply(
     claim: Option<&Claim>,
     change: Change,
 ) -> Result<Done> {
-    let job = Job {
-        unit,
-        catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
-        claim,
-        server_own: false,
-    };
-    job.run(change)
+    unit.fanning(change.fans_out(), |unit| {
+        let job = Job {
+            unit,
+            catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+            claim,
+            server_own: false,
+        };
+        job.run(change)
+    })
 }
 
 pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
@@ -1634,6 +1644,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             operation,
             pulse,
             faults,
+            fanout: _,
         } = page;
         for (index, entry) in entries.iter().enumerate() {
             entry

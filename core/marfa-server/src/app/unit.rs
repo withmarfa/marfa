@@ -14,6 +14,7 @@ pub struct Unit<'t, 'c> {
     action: &'static str,
     pub caller: Caller,
     pub at: String,
+    fanout: bool,
 }
 
 impl<'c> Unit<'_, 'c> {
@@ -27,11 +28,24 @@ impl<'c> Unit<'_, 'c> {
             action,
             caller: self.caller.clone(),
             at: self.at.clone(),
+            fanout: self.fanout,
         }
     }
 
+    /// Runs `job` on this write, with what it announces held back from outbound webhooks
+    /// unless `fanout`.
+    pub fn fanning<T>(&self, fanout: bool, job: impl FnOnce(&Unit<'_, 'c>) -> T) -> T {
+        if fanout || !self.fanout {
+            return job(self);
+        }
+        job(&Unit {
+            fanout: false,
+            ..self.under(self.action)
+        })
+    }
+
     pub fn announce(&self, event: &Event<'_>) -> Result<()> {
-        events::append(self.tx, &self.at, event)
+        events::append(self.tx, &self.at, self.fanout, event)
     }
 
     pub fn audit(
@@ -102,6 +116,7 @@ impl App {
                     action,
                     caller,
                     at,
+                    fanout: true,
                 })
             })
             .await
