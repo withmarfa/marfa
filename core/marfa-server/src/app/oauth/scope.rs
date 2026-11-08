@@ -932,6 +932,47 @@ mod tests {
         );
     }
 
+    /// The literals the combining property draws for `picks`, which a saved case names.
+    fn picked(picks: &[usize]) -> ScopeSet {
+        let allowed = registries().allowed();
+        let literals = allowed.literals();
+        picks
+            .iter()
+            .map(|pick| literals[pick % literals.len()].as_str())
+            .collect()
+    }
+
+    #[test]
+    fn combining_all_data_read_with_all_data_and_content_write_reaches_nothing_new() {
+        // `*:read`, and `*:write content:write`.
+        let (held, added) = (picked(&[26]), picked(&[173, 172]));
+        let both = combined(&held, &added);
+        let (held_reach, added_reach, reach) =
+            (to_grants(&held), to_grants(&added), to_grants(&both));
+        let case = format!(
+            "{} + {} = {}",
+            held.to_text(),
+            added.to_text(),
+            both.to_text()
+        );
+        assert!(reach.first_beyond("", &held_reach).is_none(), "{case}");
+        for name in [
+            "core.note",
+            "core.task",
+            "system.connection",
+            "marfa.thing",
+            "acme.x",
+        ] {
+            let most = Axis::Type
+                .level(held_reach.map(Axis::Type), name)
+                .max(Axis::Type.level(added_reach.map(Axis::Type), name));
+            assert!(
+                Axis::Type.level(reach.map(Axis::Type), name) <= most,
+                "{name}: {case}"
+            );
+        }
+    }
+
     #[test]
     fn combining_all_data_with_content_reaches_nothing_new() {
         // What the two sets reach together is no more than what either
