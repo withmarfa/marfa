@@ -49,7 +49,7 @@ impl Caller {
     }
 
     /// A working credential may not name as a file's bytes a blob it did not prove. The answer
-    /// is one whether or not the bytes are held.
+    /// is the same whether or not the bytes are held.
     pub fn require_file_bytes(&self, proved: bool) -> Result<()> {
         if proved || !matches!(self, Caller::Key(_) | Caller::App { .. }) {
             return Ok(());

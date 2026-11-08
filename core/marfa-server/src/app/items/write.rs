@@ -1318,7 +1318,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Naming {
                 base: Some(&base),
                 inherited: Some(&inherited),
-                bytes: None,
+                ..Naming::default()
             },
         )?;
         let at = self.unit.at.as_str();
