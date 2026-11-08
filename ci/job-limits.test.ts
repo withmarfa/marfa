@@ -46,6 +46,7 @@ const KEPT_ON_SUCCESS = new Set([
   // The score job reads every shard's report, and each shard downloads the
   // server the build job made, so both are inputs and not diagnostics.
   "ci.yml:rust-contract:Keep the server",
+  "ci.yml:rust-contract:Keep the server without test hooks",
   "ci.yml:rust-contract-shards:Keep the report",
   // `Conformance statuses` reads the statuses the Rust shards drew.
   "ci.yml:rust-contract-shards:Keep the server log",

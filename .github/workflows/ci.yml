@@ -1092,6 +1092,19 @@ jobs:
           path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
           if-no-files-found: error
           retention-days: 3
+      # The program a release ships has no hooks, and what the contract says of
+      # it can only be seen by starting that program: `hook-free-server.test.ts`
+      # names it with `MARFA_SERVER_RELEASE_BIN`. The libraries and the cargo
+      # build are the ones above, so this is the link and the last crate.
+      - name: Build the Rust server without test hooks
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      - name: Keep the server without test hooks
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-release-server
+          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          if-no-files-found: error
+          retention-days: 3
 
   rust-contract-shards:
     needs: [changes, rust-contract]
@@ -1264,6 +1277,14 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-release-server
+          path: ${{ runner.temp }}/rust-contract-release-server
+      - name: Name the server a release ships
+        run: |
+          chmod +x "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
+          echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
 
       # The CLI and device fixtures drive the `marfa` binary, and the device
       # fixtures the Node module, as in `Conformance shard`. The keys leave

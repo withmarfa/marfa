@@ -71,6 +71,31 @@ describe("the Rust server's release build", () => {
     );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
   });
+
+  it("builds the program a release ships a second time, without the test hooks, and uploads it for the shards", () => {
+    const names = (build?.steps ?? []).map((candidate) => candidate.name);
+    // After the hooked server is kept: the second build replaces the output.
+    expect(names.indexOf("Keep the server")).toBeGreaterThan(-1);
+    expect(names.indexOf("Build the Rust server without test hooks")).toBeGreaterThan(
+      names.indexOf("Keep the server"),
+    );
+    const free = step(build, "Build the Rust server without test hooks");
+    expect(free.run).toBe('core/marfa-enrichment/native/release.sh "$TARGET" --server');
+    expect(free.env?.MARFA_SERVER_FEATURES).toBeUndefined();
+    const upload = step(build, "Keep the server without test hooks");
+    expect(upload.with?.name).toBe("rust-contract-release-server");
+    expect(upload.with?.["if-no-files-found"]).toBe("error");
+    expect(
+      shards?.steps.some(
+        (candidate) =>
+          candidate.uses?.startsWith("actions/download-artifact") &&
+          candidate.with?.name === "rust-contract-release-server",
+      ),
+    ).toBe(true);
+    expect(step(shards, "Name the server a release ships").run).toContain(
+      "MARFA_SERVER_RELEASE_BIN=",
+    );
+  });
 });
 
 describe("the Rust contract shards", () => {
