@@ -266,3 +266,40 @@ async fn a_stop_behind_unsent_bytes_does_not_hold_the_server() {
             .unwrap();
     }
 }
+
+#[tokio::test]
+async fn a_key_revoked_before_the_first_frame_ends_the_stream_before_any_frame_to_a_reader_that_keeps_reading()
+ {
+    let witness = Instance::start().await;
+    let (_, token) = witness.key().await;
+    let (_near, seen) = witness.stream(&token, None, "event: stream_live").await;
+    assert!(seen.contains("event: stream_cursor"));
+
+    let instance = Instance::start().await;
+    let (id, token) = instance.key().await;
+    instance.app.faults.set("hold:stream-head", None).unwrap();
+    let (mut near, far) = duplex(PIPE_BYTES);
+    instance.connect.send(far).unwrap();
+    let asked = format!("GET /events HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\n\r\n");
+    near.write_all(asked.as_bytes()).await.unwrap();
+    timeout(Duration::from_secs(10), async {
+        while !instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the stream never reached its hold");
+    instance.revoke(&id).await;
+    instance.app.faults.clear(Some("hold:stream-head"));
+
+    let (text, closed) = rest(&mut near, Duration::from_secs(10)).await;
+    assert!(closed, "the connection stayed open");
+    assert!(
+        text.contains("\"reason\":\"credential_ended\""),
+        "the stream did not end with credential_ended: {text}"
+    );
+    assert!(
+        !text.contains("event: stream_cursor") && !text.contains("event: stream_live"),
+        "a frame followed the revocation: {text}"
+    );
+}

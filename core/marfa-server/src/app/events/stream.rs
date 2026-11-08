@@ -30,6 +30,8 @@ const PAGE_BYTES: usize = 1 << 20;
 const PIECE_BYTES: usize = 64 * 1024;
 /// How long a closing frame and the end of the response may take before the connection is closed.
 const CLOSING_SEND: Duration = Duration::from_secs(3);
+/// How long a connection told to close may take to confirm it.
+const CLOSE_ACK: Duration = Duration::from_secs(1);
 /// The credential is read again at least this soon before a key's `expires_at`.
 const MIN_EXPIRY_WAIT: Duration = Duration::from_millis(50);
 
@@ -234,6 +236,18 @@ fn read_page(
     Ok(page)
 }
 
+/// The viewer's slot is freed once the connection is closed, or `ack` after it was told to close.
+async fn release(hangup: Option<Hangup>, viewer: Viewer, deadline: Instant, ack: Duration) {
+    if let Some(Hangup { close, closed }) = hangup {
+        let mut closed = closed;
+        if timeout_at(deadline, &mut closed).await.is_err() {
+            close();
+            let _ = timeout(ack, closed).await;
+        }
+    }
+    drop(viewer);
+}
+
 impl Run {
     /// Hyper can hold a response's end for a reader that takes nothing, so its connection is closed at the deadline.
     async fn drive(mut self) {
@@ -249,12 +263,7 @@ impl Run {
             ..
         } = self;
         drop(frames);
-        if let Some(Hangup { close, closed }) = hangup
-            && timeout_at(deadline, closed).await.is_err()
-        {
-            close();
-        }
-        drop(viewer);
+        release(hangup, viewer, deadline, CLOSE_ACK).await;
     }
 
     async fn run(&mut self) -> std::result::Result<(), Ending> {
@@ -452,7 +461,7 @@ impl Run {
         Ok(())
     }
 
-    /// A stop, a commit, a heartbeat and the credential's expiry each interrupt a blocked handover.
+    /// A stop, a commit, a heartbeat and the credential's expiry come before the send.
     async fn hand(&mut self, piece: Vec<u8>, tail: Tail) -> std::result::Result<(), Ending> {
         let mut stopping = self.stopping.clone();
         // A clone, so the live loop still sees a commit made while this waits.
@@ -468,7 +477,6 @@ impl Run {
             let stopped = tokio::select! {
                 biased;
                 _ = stopping.wait_for(|stopping| *stopping) => true,
-                handed = &mut handing => break handed,
                 changed = commits.changed() => {
                     if changed.is_err() {
                         return Err(Ending::Gone);
@@ -476,6 +484,7 @@ impl Run {
                     false
                 }
                 () = sleep_until(recheck) => false,
+                handed = &mut handing => break handed,
             };
             if stopped {
                 return Err(self.cut_short("server_stopping"));
@@ -582,6 +591,10 @@ fn ending(text: Result<String>) -> Ending {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use tokio::time::sleep;
+
     use super::*;
 
     #[test]
@@ -702,5 +715,59 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(!hand_over(&frames, Bytes::from_static(b"one"), Duration::from_secs(30)).await);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn a_viewer_slot_is_held_until_the_connection_has_closed() {
+        let viewers = Viewers::default();
+        let viewer = viewers.admit(1).unwrap();
+        let asked = Arc::new(AtomicBool::new(false));
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
+        let hangup = Hangup {
+            close: Box::new({
+                let asked = asked.clone();
+                move || asked.store(true, Ordering::Release)
+            }),
+            closed: Box::pin(async move {
+                let _ = closed_rx.await;
+            }),
+        };
+        let releasing = tokio::spawn(release(
+            Some(hangup),
+            viewer,
+            Instant::now(),
+            Duration::from_secs(30),
+        ));
+        while !asked.load(Ordering::Acquire) {
+            sleep(Duration::from_millis(5)).await;
+        }
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(viewers.open(), 1, "the slot was freed before the close");
+        assert!(viewers.admit(1).is_none());
+        closed_tx.send(()).unwrap();
+        releasing.await.unwrap();
+        assert_eq!(viewers.open(), 0);
+        assert!(viewers.admit(1).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_never_confirms_its_close_does_not_hold_the_slot_forever() {
+        let viewers = Viewers::default();
+        let viewer = viewers.admit(1).unwrap();
+        let hangup = Hangup {
+            close: Box::new(|| {}),
+            closed: Box::pin(std::future::pending()),
+        };
+        let started = std::time::Instant::now();
+        release(
+            Some(hangup),
+            viewer,
+            Instant::now(),
+            Duration::from_millis(80),
+        )
+        .await;
+        assert!(started.elapsed() >= Duration::from_millis(80));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(viewers.open(), 0);
     }
 }
