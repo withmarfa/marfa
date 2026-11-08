@@ -91,7 +91,7 @@ A picture whose text is refused still gives a `Reading`, with its size in `Readi
 `marfa-enrichment-read` reads files through the same path, prints the text, and exits non-zero on a refusal:
 
 ```sh
-cargo run -p marfa-enrichment --features native -- read scan.pdf --languages eng+deu
+cargo run -p marfa-enrichment --bin marfa-enrichment-read --features native -- read scan.pdf --languages eng+deu
 ```
 
 Its options are `--type <mime>`, `--languages <a+b>`, `--data-dir <folder>`, `--no-ocr`, `--time-limit <seconds>`, and `--max-memory <bytes>`.
