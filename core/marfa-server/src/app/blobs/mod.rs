@@ -255,8 +255,7 @@ impl Blobs {
         self.attached().into_iter().find(|store| store.id() == id)
     }
 
-    /// What the store answers for the blob in `object`, within the time a store is given. An
-    /// object store answers for an object only with the id of the store that wrote it.
+    /// Object-store confirmations require the writer's store id.
     async fn answer_of(
         &self,
         store: &Store,
@@ -407,8 +406,7 @@ impl Blobs {
         }
     }
 
-    /// Whether an object store answers with its own marker, as each change to the copy record on
-    /// its answers needs.
+    /// Whether the object store answers with its own marker.
     async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;

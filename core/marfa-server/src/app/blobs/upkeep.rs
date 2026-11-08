@@ -178,8 +178,7 @@ async fn copy_to(
     Ok(Copy::Skipped)
 }
 
-/// Whether an object store's new copy answers as the object this store wrote, at its size, and
-/// the store then answers with its own marker.
+/// Confirmation needs both the object's writer and the bucket's marker.
 async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object: &str) -> bool {
     if matches!(target, Store::Disk(_)) {
         return true;
@@ -309,8 +308,7 @@ enum Checked {
     Silent,
 }
 
-/// Reads a disk copy through, or asks the object store for the object it wrote. Only a store
-/// that answers can show a copy missing or altered.
+/// Only a store that answers can show a copy missing or altered.
 async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
     let blobs = &app.blobs;
     match store {

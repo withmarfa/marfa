@@ -965,9 +965,7 @@ async fn integrity_strikes_a_copy_whose_object_the_store_did_not_write_and_it_is
     assert_eq!(instance.copies(&replaced).await.len(), 2);
 }
 
-/// Replaces the blob's object-store copy while an integrity run waits on the store's marker,
-/// keeping the replaced object in the store if `kept`. Answers the run's result, the blob and
-/// the object store's id.
+/// Replaces the copy during its marker check, retaining the old object if `kept`.
 async fn replaced_during_integrity(kept: bool) -> (Instance, FakeS3, Value, String, String) {
     let s3 = FakeS3::start().await;
     let env = s3.settings(BUCKET, "blobs");

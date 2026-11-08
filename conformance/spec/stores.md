@@ -226,7 +226,7 @@ If an object store answers for a copy's object with an object whose `marfa-store
 
 While an attached object store does not answer with the `.marfa-store` marker of the store the server attached, the server MUST NOT change the copy record on that store's answers.
 
-**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone, and a copy stamped on its answer would claim a check that never reached the store. The server reads the marker after an answer it records a copy, confirms a drop or strikes a copy on, and also before a run of `blob-integrity` takes the store's first answer, and counts a store that answers with another marker as one it cannot reach.
+**Reason:** an endpoint or proxy reaching another bucket cannot establish whether the attached store holds a copy. The server checks the marker before integrity's first answer from the store and after an answer used to record a copy, confirm a drop or strike a missing copy; a marker mismatch counts as unreachable.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 
