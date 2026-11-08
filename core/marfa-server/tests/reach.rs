@@ -561,29 +561,52 @@ impl Instance {
     }
 }
 
-/// The frames a stream sends, as (event name, data), read until it closes or one named by `stop` arrives.
-async fn frames(mut body: Body, stop: &[&str]) -> (Vec<(String, Value)>, bool) {
-    let mut text = String::new();
-    let mut closed = false;
-    let read = async {
-        while let Some(frame) = body.frame().await {
-            let Ok(data) = frame.unwrap().into_data() else {
-                continue;
-            };
-            text.push_str(&String::from_utf8_lossy(&data));
-            if blocks(&text)
-                .iter()
-                .any(|(name, _)| stop.contains(&name.as_str()))
-            {
-                return false;
-            }
+/// A stream's body, read a little at a time, so a test decides when the stream finds room to send.
+struct Tap {
+    body: Body,
+    text: String,
+}
+
+impl Tap {
+    fn new(body: Body) -> Tap {
+        Tap {
+            body,
+            text: String::new(),
         }
-        true
-    };
-    if let Ok(done) = tokio::time::timeout(std::time::Duration::from_secs(5), read).await {
-        closed = done;
     }
-    (blocks(&text), closed)
+
+    /// Reads until a frame named by `stop` has arrived, or the stream closes; true when it closed.
+    async fn until(&mut self, stop: &[&str]) -> bool {
+        let read = async {
+            while let Some(frame) = self.body.frame().await {
+                let Ok(data) = frame.unwrap().into_data() else {
+                    continue;
+                };
+                self.text.push_str(&String::from_utf8_lossy(&data));
+                if blocks(&self.text)
+                    .iter()
+                    .any(|(name, _)| stop.contains(&name.as_str()))
+                {
+                    return false;
+                }
+            }
+            true
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), read)
+            .await
+            .unwrap_or(false)
+    }
+
+    /// The frames read so far, as (event name, data).
+    fn events(&self) -> Vec<(String, Value)> {
+        blocks(&self.text)
+    }
+}
+
+async fn frames(body: Body, stop: &[&str]) -> (Vec<(String, Value)>, bool) {
+    let mut tap = Tap::new(body);
+    let closed = tap.until(stop).await;
+    (tap.events(), closed)
 }
 
 fn blocks(text: &str) -> Vec<(String, Value)> {
@@ -603,28 +626,52 @@ fn names(events: &[(String, Value)]) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn a_reach_that_moves_while_the_last_page_is_handed_over_ends_the_stream_before_stream_live()
-{
+async fn a_reach_that_moves_while_a_page_is_handed_over_ends_the_stream_before_its_last_piece() {
     let instance = Instance::start().await;
     let reader = instance.reader().await;
     instance.app.faults.set("hold:stream-drain", None).unwrap();
-    // The reader takes nothing yet, so the page the drain finds waits to be handed over.
-    let body = instance.copy_stream(&reader.key, None).await;
+    let mut tap = Tap::new(instance.copy_stream(&reader.key, None).await);
     instance.held_at_drain().await;
     // Each note fills a piece of its own, and the channel holds one piece ahead of the reader.
     let first = instance.note(&"a".repeat(40_000)).await;
-    let second = instance.note(&"b".repeat(40_000)).await;
+    instance.note(&"b".repeat(40_000)).await;
+    let last = instance.note(&"c".repeat(40_000)).await;
     instance.app.faults.clear(Some("hold:stream-drain"));
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // The first note arrives only once the drain has read the page, whose pieces the reader now takes one by one.
+    assert!(!tap.until(&["item.created"]).await);
+    assert_eq!(tap.events()[1].1["item"]["id"], first["id"]);
+    // The last piece cannot be handed over before the reader takes the one ahead of it, which it does not yet.
     instance.narrow(&reader).await;
 
-    let (events, closed) = frames(body, &["stream_live"]).await;
-    assert_eq!(
-        names(&events),
-        ["stream_cursor", "item.created", "reach_changed"]
+    let closed = tap.until(&["stream_live"]).await;
+    let events = tap.events();
+    let names = names(&events);
+    assert_eq!(names.first(), Some(&"stream_cursor"));
+    assert_eq!(names.last(), Some(&"reach_changed"));
+    assert!(!names.contains(&"stream_live"));
+    assert!(
+        !events
+            .iter()
+            .any(|(_, data)| data["item"]["id"] == last["id"]),
+        "the last piece was sent after the reach moved"
     );
-    assert_eq!(events[1].1["item"]["id"], first["id"]);
-    assert_ne!(events[1].1["item"]["id"], second["id"]);
+    assert!(closed);
+}
+
+#[tokio::test]
+async fn a_reach_that_moves_before_stream_live_is_handed_over_ends_the_stream_before_it() {
+    let instance = Instance::start().await;
+    let reader = instance.reader().await;
+    instance.app.faults.set("hold:stream-drain", None).unwrap();
+    let mut tap = Tap::new(instance.copy_stream(&reader.key, None).await);
+    instance.held_at_drain().await;
+    instance.app.faults.clear(Some("hold:stream-drain"));
+    // The reader has taken nothing, so stream_cursor fills the channel and stream_live cannot
+    // be handed over before the narrowing commits, wherever the stream has got to by then.
+    instance.narrow(&reader).await;
+
+    let closed = tap.until(&["stream_live"]).await;
+    assert_eq!(names(&tap.events()), ["stream_cursor", "reach_changed"]);
     assert!(closed);
 }
 
