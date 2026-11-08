@@ -1,0 +1,13 @@
+<h1>Enter your code</h1>
+<p class="lede">Enter the code your device is showing to connect it to Marfa.</p>
+{% if let Some(message) = problem_message %}
+<p class="notice error" id="code-problem" role="alert">{{ message }}</p>
+{% endif %}
+<form method="post" action="/auth/device" class="stack">
+<div class="field">
+<label for="user_code">Code</label>
+<input id="user_code" class="code" type="text" name="user_code" value="{{ view.user_code }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="code-problem"{% endif %}{% if invalid_code %} aria-invalid="true"{% endif %}>
+{% if show_lifetime %}<p class="hint">Codes end after 10 minutes.</p>{% endif %}
+</div>
+<button type="submit" class="button primary wide">Continue</button>
+</form>

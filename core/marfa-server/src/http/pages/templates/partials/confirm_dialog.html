@@ -1,0 +1,18 @@
+<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+<form method="dialog" class="stack">
+<h2 id="confirm-title">Confirm it's you</h2>
+<p id="confirm-text" class="lede">This change needs a recent sign-in. Enter your password to continue.</p>
+<p class="notice error" role="alert" data-confirm-error="password" hidden>That password isn't right. Try again.</p>
+<p class="notice error" role="alert" data-confirm-error="locked" hidden>Too many attempts. Try again in <span data-wait></span>.</p>
+<p class="notice error" role="alert" data-confirm-error="other" hidden>Something went wrong. Try again.</p>
+<div class="field">
+<label for="confirm-password">Password</label>
+<input id="confirm-password" type="password" name="password" autocomplete="current-password" required>
+</div>
+<div class="actions">
+<button type="button" class="button" data-confirm-cancel>Cancel</button>
+<button type="submit" class="button primary">Confirm</button>
+</div>
+<button type="button" class="button wide" data-passkey="confirm" hidden>Use a passkey</button>
+</form>
+</dialog>

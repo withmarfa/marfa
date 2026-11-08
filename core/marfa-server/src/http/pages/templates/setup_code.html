@@ -1,0 +1,19 @@
+<h1>Claim this Marfa</h1>
+<p class="lede">Enter the setup code to become its owner.</p>
+<p class="notice" role="status" data-handoff-working hidden>Checking your setup link.</p>
+<p class="notice error" role="alert" data-handoff-failed hidden>That setup link has expired or was already used. Enter the setup code, or run <code>marfa setup open</code> again for a new link.</p>
+{% if let Some(message) = problem_message %}
+<p class="notice error" id="setup-problem" role="alert">{{ message }}</p>
+{% endif %}
+<form method="post" action="/setup/exchange" class="stack">
+<div class="field">
+<label for="code">Setup code</label>
+<input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="setup-problem" aria-invalid="true"{% endif %}>
+</div>
+<details>
+<summary>Where's my setup code?</summary>
+<p>Marfa prints a setup code in its log when it starts without an owner.</p>
+<p>To make a new one, run <code>marfa setup code</code> on the computer that runs Marfa. To skip typing it, run <code>marfa setup open</code> instead. It opens a link that works once.</p>
+</details>
+<button type="submit" class="button primary wide">Continue</button>
+</form>
