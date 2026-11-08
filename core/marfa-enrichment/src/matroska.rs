@@ -145,6 +145,7 @@ pub(crate) fn read(file: &mut Source) -> Result<Media, Refusal> {
         segment.data.saturating_add(size).min(source.len())
     });
     let mut walked = ending_early(walk(source, &mut found, end, true))?;
+    let first_cut = walked == Walked::Cut;
     if found.duration.is_none() {
         let (from, until) = match walked {
             Walked::Done => found.last_cluster.unzip(),
@@ -163,10 +164,14 @@ pub(crate) fn read(file: &mut Source) -> Result<Media, Refusal> {
             found.cluster_time = 0;
             found.block_start = 0;
             source.seek(SeekFrom::Start(from)).map_err(io_refusal)?;
-            walked = ending_early(walk(source, &mut found, until.unwrap_or(end), false))?;
+            walked = match walk(source, &mut found, until.unwrap_or(end), false) {
+                Err(error) if error.kind() == ErrorKind::InvalidData => Walked::Cut,
+                other => ending_early(other)?,
+            };
         }
     }
-    if walked == Walked::Cut {
+    // A walk cut before the header gave its scale cannot turn ticks into time.
+    if walked == Walked::Cut || (first_cut && found.scale.is_none()) {
         // Only part of the file was seen, and a length from part of it is wrong.
         found.latest = None;
     }
