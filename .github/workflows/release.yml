@@ -803,9 +803,13 @@ jobs:
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
             modes: native-user
+            # The runner's /home carries an access control list, which the server
+            # refuses above its private socket.
+            root: /var/tmp/marfa-proof
     env:
       VERSION: ${{ needs.version.outputs.version }}
       MODES: ${{ matrix.modes }}
+      MARFA_PROOF_ROOT: ${{ matrix.root }}
     steps:
       - uses: actions/checkout@v7
 
