@@ -346,6 +346,14 @@ If a body has not arrived whole within `MARFA_INBOUND_READ_TIMEOUT_MS`, 30000 mi
 
 **Tests:** `compliance/inbound-webhooks.test.ts › answers request_timeout to a body that does not arrive in time, and stores nothing`, `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the body's 408`.
 
+### `inbound-webhooks/body-timeout-ceiling`
+
+If `MARFA_INBOUND_READ_TIMEOUT_MS` is set to more than 300000, then the server MUST refuse to start and name the setting.
+
+**Reason:** a sender slower than five minutes holds a connection and its bytes in flight, and a webhook sender sends the delivery again.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › is five minutes: a longer time is refused at start, naming the setting, and five minutes is taken`.
+
 ### `inbound-webhooks/body-timeout-stores-nothing`
 
 If the server answers `408 request_timeout`, then the server MUST NOT store a delivery for it.
@@ -931,6 +939,22 @@ When the server logs a request to an inbound address, the server MUST NOT write 
 When the server logs a request to an inbound address, the server MUST NOT write a header, the query string or the body of the request.
 
 **Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+
+### `inbound-webhooks/request-id-own`
+
+When a request to an inbound address carries an `X-Request-ID` header, the server MUST answer with an `X-Request-ID` of its own.
+
+**Reason:** an inbound sender is not a Marfa client, and its headers are content (`inbound-webhooks/log-no-content`).
+
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its metadata fails`.
+
+### `inbound-webhooks/trace-headers-not-written`
+
+When a request to an inbound address carries an `X-Request-ID`, `traceparent`, `tracestate` or `baggage` header, the server MUST NOT write its value to its log, a span, a telemetry record or an error report.
+
+**Reason:** a sender chooses these values, and they are as much its content as any other header.
+
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its metadata fails`, `› keeps the address, headers, query and body out of every report when the statement storing its body fails`.
 
 ### `inbound-webhooks/fault-keeps-content`
 

@@ -134,14 +134,21 @@ fn charge(sent: &Sent) -> i64 {
         .saturating_add(headers)
 }
 
-/// Rechecks authority and capacity in the receipt's transaction.
-pub async fn receive(app: &App, place: Place, sent: Sent) -> Result<Landed> {
+/// Rechecks authority and capacity in the receipt's transaction. The reservation lives in the
+/// write with the body, so a cancelled request gives back no bytes its body still holds.
+pub async fn receive(
+    app: &App,
+    place: Place,
+    sent: Sent,
+    reservation: Reservation,
+) -> Result<Landed> {
     let live = app.settings.live();
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     let id = uuid::Uuid::now_v7().to_string();
     app.db
         .write(Write::caller("inbound.receive"), move |tx| {
+            let _held = reservation;
             let at = clock.stamp();
             let (target, expires_at) =
                 store::target(tx, &place.token_hash)?.ok_or_else(not_found)?;

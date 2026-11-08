@@ -67,7 +67,24 @@ describe("the server's log", () => {
     const header = sentinel("header");
     const body = sentinel("body");
     const named = (path: string) => `${path}?q=${query}`;
-    const headers = ["X-Sentinel", header];
+    // A request id and trace context are headers a sender chooses, so they
+    // are its content: the server makes its own and writes none of these.
+    const callerId = sentinel("request-id");
+    const trace = randomBytes(16).toString("hex");
+    const state = sentinel("tracestate");
+    const baggage = sentinel("baggage");
+    const headers = [
+      "X-Sentinel",
+      header,
+      "X-Request-ID",
+      callerId,
+      "traceparent",
+      `00-${trace}-${randomBytes(8).toString("hex")}-01`,
+      "tracestate",
+      `vendor=${state}`,
+      "baggage",
+      `key=${baggage}`,
+    ];
 
     const roomy = await registration("logs-roomy");
     const tight = await registration("logs-tight");
@@ -76,9 +93,11 @@ describe("the server's log", () => {
     const shouted = `/INBOUND/${randomBytes(32).toString("base64url")}`;
 
     idOf(await send(server.apiUrl, named(roomy.endpoint.path), body, headers));
-    expect(
-      (await send(server.apiUrl, named(unknown), body, headers)).status,
-    ).toBe(404);
+    const refused = await send(server.apiUrl, named(unknown), body, headers);
+    expect(refused.status).toBe(404);
+    const ownId = String(refused.headers["x-request-id"]);
+    expect(ownId).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
+    expect(ownId).not.toBe(callerId);
     expect(
       (await send(server.apiUrl, named(shouted), body, headers)).status,
     ).toBe(404);
@@ -167,7 +186,16 @@ describe("the server's log", () => {
       expect(log, address).not.toContain(token.slice(0, token.length - 4));
       expect(log, address).not.toContain(token.slice(-5));
     }
-    for (const value of [query, header, body]) {
+    expect(log).toContain(ownId);
+    for (const value of [
+      query,
+      header,
+      body,
+      callerId,
+      trace,
+      state,
+      baggage,
+    ]) {
       expect(log, value).not.toContain(value);
     }
   });

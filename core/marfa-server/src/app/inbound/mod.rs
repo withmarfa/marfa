@@ -346,15 +346,24 @@ fn unescaped(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Where the address credential starts in `path`, read in any case or escaping.
+fn address_in(path: &str) -> Option<(String, usize)> {
+    let decoded = unescaped(path);
+    let start = decoded.to_ascii_lowercase().find(PREFIX)?;
+    Some((decoded, start))
+}
+
+/// Whether `path` is a receiving address, in any case or escaping.
+pub fn is_address(path: &str) -> bool {
+    address_in(path).is_some()
+}
+
 /// Redacts address credentials regardless of case or URL escaping.
 pub fn loggable(path: &str) -> String {
-    let decoded = unescaped(path);
-    let lowered = decoded.to_ascii_lowercase();
-    let Some(start) = lowered.find(PREFIX) else {
+    let Some((decoded, start)) = address_in(path) else {
         return path.to_string();
     };
-    let token = &decoded[start + PREFIX.len()..];
-    let tail = last_four(token);
+    let tail = last_four(&decoded[start + PREFIX.len()..]);
     format!("{}{PREFIX}****{tail}", &decoded[..start])
 }
 
@@ -375,6 +384,8 @@ mod tests {
             loggable("/connectors/abc/endpoints"),
             "/connectors/abc/endpoints"
         );
+        assert!(is_address(&format!("/%49NBOUND/{TOKEN}")));
+        assert!(!is_address("/connectors/abc/endpoints"));
     }
 
     #[test]

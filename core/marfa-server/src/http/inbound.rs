@@ -228,9 +228,9 @@ pub async fn receive(
             headers,
             body: bytes,
         },
+        reservation,
     )
     .await;
-    drop(reservation);
     match landed {
         Ok(inbound::Landed(id)) => json_answer(StatusCode::ACCEPTED, &json!({ "id": id })),
         Err(refusal) => refusal_answer(&refusal),

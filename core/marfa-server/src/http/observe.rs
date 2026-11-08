@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, MatchedPath, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -82,6 +82,8 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
     let logged = crate::app::inbound::loggable(&path);
+    // A sender's headers are its content, so nothing from them reaches the log or a span.
+    let from_sender = crate::app::inbound::is_address(&path);
     let wants_html = asks_for_html(
         request
             .headers()
@@ -91,6 +93,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let request_id = request
         .headers()
         .get("x-request-id")
+        .filter(|_| !from_sender)
         .and_then(|value| value.to_str().ok())
         .filter(|id| acceptable_id(id))
         .map(str::to_string)
@@ -109,7 +112,11 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         notes: notes.clone(),
     });
 
-    let span = observed.app.telemetry.begin(request.headers(), &method);
+    let span = if from_sender {
+        observed.app.telemetry.begin(&HeaderMap::new(), &method)
+    } else {
+        observed.app.telemetry.begin(request.headers(), &method)
+    };
     let upload = super::blobs::is_upload(&request);
     let origin = Origin {
         client_ip: caller_address.map(|address| address.to_string()),
