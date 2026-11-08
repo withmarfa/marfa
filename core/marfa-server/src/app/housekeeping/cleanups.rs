@@ -11,7 +11,7 @@ use super::super::access::Caller;
 use super::super::auth::limits;
 use super::super::keys::reap;
 use super::super::refusal::Result;
-use super::super::{App, audit, events, idempotency};
+use super::super::{App, audit, events, idempotency, webhooks};
 use super::{DAY_MS, HOUR_MS, Report, Run, cutoff};
 use crate::db::Write;
 use crate::settings::registry::{
@@ -56,6 +56,11 @@ async fn expire(
         .await
 }
 
+/// The log keeps what the webhook sender has not yet passed.
+fn expire_events(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
+    events::expire(tx, before, limit, webhooks::scheduled_through(tx)?)
+}
+
 pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
     let (purged_records, records_done) = drain(&run, BATCH, || {
         expire(
@@ -67,7 +72,7 @@ pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
     })
     .await?;
     let (deleted, events_done) = drain(&run, BATCH, || {
-        expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, events::expire)
+        expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, expire_events)
     })
     .await?;
     Ok(Report {
@@ -77,13 +82,22 @@ pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
-    let (deleted, done) = drain(&run, BATCH, || {
+    let (deleted, entries_done) = drain(&run, BATCH, || {
         expire(&app, AUDIT_RETENTION_DAYS, DAY_MS, audit::expire)
     })
     .await?;
+    let (deliveries, deliveries_done) = drain(&run, BATCH, || {
+        expire(
+            &app,
+            AUDIT_RETENTION_DAYS,
+            DAY_MS,
+            webhooks::expire_deliveries,
+        )
+    })
+    .await?;
     Ok(Report {
-        result: json!({ "deleted": deleted }),
-        again: !done,
+        result: json!({ "deleted": deleted, "deliveries": deliveries }),
+        again: !(entries_done && deliveries_done),
     })
 }
 

@@ -82,6 +82,10 @@ pub const DECLARED: &[Declared] = &[
         "How long a notice of a server error may take to send, in milliseconds.",
     ),
     secret("MARFA_HEARTBEAT_URL", "Where the heartbeat is sent."),
+    plain(
+        "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES",
+        "Lets outbound webhooks reach loopback, private and other addresses that are not public.",
+    ),
     plain("MARFA_POSTHOG_HOST", "Where exception reports are sent."),
     secret(
         "MARFA_POSTHOG_PROJECT_TOKEN",

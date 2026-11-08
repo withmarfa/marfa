@@ -58,6 +58,7 @@ pub struct Entry<'a> {
     pub action: &'a str,
     pub resource_type: &'a str,
     pub resource_id: Option<&'a str>,
+    /// `None` is recorded as an empty object, which is what an entry with nothing more to say answers.
     pub details: Option<Value>,
 }
 
@@ -85,7 +86,10 @@ pub fn record_from(
             entry.resource_type,
             entry.resource_id,
             client_ip,
-            entry.details.map(|details| details.to_string()),
+            entry
+                .details
+                .unwrap_or_else(|| Value::Object(Map::new()))
+                .to_string(),
         ],
     )?;
     Ok(())

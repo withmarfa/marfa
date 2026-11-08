@@ -6,8 +6,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { issuerOrigin } from "../../utils/signed-in.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 import { waitFor } from "../../utils/wait.js";
 let server: FreshServer;
@@ -21,6 +19,14 @@ function owner(path: string, init: RequestInit = {}) {
   headers.set("cookie", server.ownerCookie);
   headers.set("origin", server.apiUrl);
   return fetch(server.apiUrl + path, { ...init, headers });
+}
+/** The private local socket, which holds the owner's authority without a credential. */
+async function local(
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+) {
+  const result = await controlRequest(server.controlSocket, path, init);
+  return new Response(JSON.stringify(result.body), { status: result.status });
 }
 function credential(path: string, key: string, method = "GET", body?: unknown) {
   return fetch(server.apiUrl + path, {
@@ -65,44 +71,53 @@ afterAll(async () => {
   await receiver?.close();
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
-it("reads every maker through owner and local authority while ordinary keys stay isolated", async () => {
+it("reads every maker through local authority while ordinary keys stay isolated", async () => {
   const before = await (await owner("/keys")).json();
-  for (const read of [
-    owner,
-    async (path: string, init?: RequestInit) => {
-      const result = await controlRequest(server.controlSocket, path, {
-        method: init?.method,
-      });
-      return new Response(JSON.stringify(result.body), {
-        status: result.status,
-      });
-    },
-  ]) {
-    const listed = await read("/webhooks");
-    expect(listed.status).toBe(200);
-    const body = (await listed.json()) as {
-      data: {
-        id: string;
-        maker: { kind: string; id: string; name: string | null };
-      }[];
-      next_cursor: null;
-    };
-    expect(body.next_cursor).toBeNull();
-    expect(body.data.map((w) => w.id).sort()).toEqual([...ids].sort());
-    expect(body.data.map((w) => w.maker.kind).sort()).toEqual([
-      "app",
-      "key",
-      "key",
-    ]);
-    expect(JSON.stringify(body)).not.toContain("private-signing-secret");
-    for (const id of ids) {
-      expect((await read(`/webhooks/${id}`)).status).toBe(200);
-      expect((await read(`/webhooks/${id}/deliveries`)).status).toBe(200);
-      expect((await read(`/webhooks/${id}`, { method: "DELETE" })).status).toBe(
-        401,
-      );
-    }
+  const listed = await local("/webhooks");
+  expect(listed.status).toBe(200);
+  const body = (await listed.json()) as {
+    data: {
+      id: string;
+      maker: { kind: string; id: string; name: string | null };
+    }[];
+    next_cursor: null;
+  };
+  expect(body.next_cursor).toBeNull();
+  expect(body.data.map((w) => w.id).sort()).toEqual([...ids].sort());
+  expect(body.data.map((w) => w.maker.kind).sort()).toEqual([
+    "app",
+    "key",
+    "key",
+  ]);
+  expect(JSON.stringify(body)).not.toContain("private-signing-secret");
+  for (const id of ids) {
+    expect((await local(`/webhooks/${id}`)).status).toBe(200);
+    expect((await local(`/webhooks/${id}/deliveries`)).status).toBe(200);
+    expect(
+      (
+        await local(`/webhooks/${id}`, {
+          method: "PATCH",
+          body: { active: false },
+        })
+      ).status,
+    ).toBe(401);
+    expect((await local(`/webhooks/${id}`, { method: "DELETE" })).status).toBe(
+      401,
+    );
   }
+  expect(
+    (
+      await local("/webhooks", {
+        method: "POST",
+        body: { url: receiver.hookUrl("local"), events: ["item.created"] },
+      })
+    ).status,
+  ).toBe(401);
+  expect((await local("/webhooks")).status).toBe(200);
+  expect(
+    ((await (await local("/webhooks")).json()) as { data: unknown[] }).data,
+    "nothing was created, changed or removed",
+  ).toHaveLength(ids.length);
   expect(
     (
       (await (await credential("/webhooks", second)).json()) as {
@@ -113,7 +128,46 @@ it("reads every maker through owner and local authority while ordinary keys stay
   expect((await credential(`/webhooks/${ids[0]!}`, second)).status).toBe(404);
   expect(await (await owner("/keys")).json()).toEqual(before);
 });
-it("retries a failed delivery through owner authority without exposing its frame", async () => {
+
+it("refuses an owner's browser session on every webhook door with 401", async () => {
+  // The witness: the same session is the owner's, and other doors admit it.
+  expect((await owner("/keys")).status).toBe(200);
+  const id = ids[0]!;
+  const doors: [string, string, unknown?][] = [
+    ["GET", "/webhooks"],
+    [
+      "POST",
+      "/webhooks",
+      { url: receiver.hookUrl("owner"), events: ["item.created"] },
+    ],
+    ["GET", `/webhooks/${id}`],
+    ["PATCH", `/webhooks/${id}`, { active: false }],
+    ["DELETE", `/webhooks/${id}`],
+    ["GET", `/webhooks/${id}/deliveries`],
+    ["POST", `/webhooks/${id}/deliveries/whd_unknown/redeliver`],
+  ];
+  for (const [method, path, body] of doors) {
+    const response = await owner(path, {
+      method,
+      ...(body === undefined
+        ? {}
+        : {
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+    });
+    expect(response.status, `${method} ${path}`).toBe(401);
+    expect(response.headers.get("x-error-code"), `${method} ${path}`).toBe(
+      "unauthorized",
+    );
+    await response.body?.cancel();
+  }
+  expect((await credential(`/webhooks/${id}`, server.workingKey)).status).toBe(
+    200,
+  );
+});
+
+it("retries a failed delivery through local authority without exposing its frame", async () => {
   expect(
     (
       await credential("/items", server.workingKey, "POST", {
@@ -124,7 +178,7 @@ it("retries a failed delivery through owner authority without exposing its frame
   ).toBe(201);
   const path = `/webhooks/${ids[0]!}/deliveries`;
   const failed = await waitFor("failed delivery", async () => {
-    const response = await owner(path);
+    const response = await local(path);
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(body).not.toContain(privateBody);
@@ -136,7 +190,7 @@ it("retries a failed delivery through owner authority without exposing its frame
   );
   const localFailed = await waitFor("second failed delivery", async () => {
     const page = (await (
-      await owner(`/webhooks/${ids[1]!}/deliveries`)
+      await local(`/webhooks/${ids[1]!}/deliveries`)
     ).json()) as { data: { id: string; status: string }[] };
     return page.data.find((d) => d.status === "dead_letter");
   });
@@ -150,7 +204,7 @@ it("retries a failed delivery through owner authority without exposing its frame
       )
     ).status,
   ).toBe(202);
-  const response = await owner(`${path}/${failed.id}/redeliver`, {
+  const response = await local(`${path}/${failed.id}/redeliver`, {
     method: "POST",
   });
   expect(response.status).toBe(202);
@@ -158,7 +212,7 @@ it("retries a failed delivery through owner authority without exposing its frame
   await waitFor(
     "retried delivery",
     async () => {
-      const page = (await (await owner(path)).json()) as {
+      const page = (await (await local(path)).json()) as {
         data: { id: string; status: string }[];
       };
       return page.data.find(
@@ -174,7 +228,7 @@ it("retries a failed delivery through owner authority without exposing its frame
   ).toHaveLength(2);
 });
 
-it("reads a full last delivery page through owner authority", async () => {
+it("reads a full last delivery page through local authority", async () => {
   for (let i = 0; i < 11; i++)
     expect(
       (
@@ -186,17 +240,17 @@ it("reads a full last delivery page through owner authority", async () => {
     ).toBe(201);
   await waitFor("all delivery rows", async () => {
     const page = (await (
-      await owner(`/webhooks/${ids[0]!}/deliveries?limit=20`)
+      await local(`/webhooks/${ids[0]!}/deliveries?limit=20`)
     ).json()) as { data: unknown[] };
     return page.data.length === 12 ? true : undefined;
   });
   const first = (await (
-    await owner(`/webhooks/${ids[0]!}/deliveries?limit=6`)
+    await local(`/webhooks/${ids[0]!}/deliveries?limit=6`)
   ).json()) as { data: { id: string }[]; next_cursor: string };
   expect(first.data).toHaveLength(6);
   expect(first.next_cursor).toEqual(expect.any(String));
   const last = (await (
-    await owner(
+    await local(
       `/webhooks/${ids[0]!}/deliveries?limit=6&cursor=${encodeURIComponent(first.next_cursor)}`,
     )
   ).json()) as { data: { id: string }[]; next_cursor: null };
@@ -205,7 +259,7 @@ it("reads a full last delivery page through owner authority", async () => {
   expect(new Set([...first.data, ...last.data].map((d) => d.id)).size).toBe(12);
 });
 
-it("names a maker that no longer holds webhooks.manage as the reason the owner's redelivery is refused", async () => {
+it("names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused", async () => {
   fail = true;
   expect(
     (
@@ -217,20 +271,20 @@ it("names a maker that no longer holds webhooks.manage as the reason the owner's
   ).toBe(201);
   const path = `/webhooks/${ids[1]!}/deliveries`;
   const failed = await waitFor("a failed delivery", async () => {
-    const page = (await (await owner(path)).json()) as {
+    const page = (await (await local(path)).json()) as {
       data: { id: string; status: string }[];
     };
     return page.data.find((d) => d.status === "dead_letter");
   });
 
-  // The witness: while the maker holds the permission the owner's request is
+  // The witness: while the maker holds the permission the local request is
   // accepted, so the refusal below is about the maker.
-  const accepted = await owner(`${path}/${failed.id}/redeliver`, {
+  const accepted = await local(`${path}/${failed.id}/redeliver`, {
     method: "POST",
   });
   expect(accepted.status).toBe(202);
   const failedAgain = await waitFor("the delivery to fail again", async () => {
-    const page = (await (await owner(path)).json()) as {
+    const page = (await (await local(path)).json()) as {
       data: { id: string; status: string }[];
     };
     return page.data.find(
@@ -249,50 +303,11 @@ it("names a maker that no longer holds webhooks.manage as the reason the owner's
     body: JSON.stringify({ permissions: [] }),
   });
   expect(narrowed.status).toBe(200);
-  const refused = await owner(`${path}/${failedAgain.id}/redeliver`, {
+  const refused = await local(`${path}/${failedAgain.id}/redeliver`, {
     method: "POST",
   });
   expect(refused.status).toBe(409);
   expect(await refused.json()).toMatchObject({
     error: { code: "conflict", details: { reason: "credential_unavailable" } },
   });
-});
-
-// Last in the file: the server's clock only moves forward, and every case
-// above reads with the owner's session from the start.
-it("refuses the owner's redelivery to a browser session that signed in more than five minutes ago, and accepts it from a recent one", async () => {
-  const path = `/webhooks/${ids[0]!}/deliveries`;
-  const failed = await waitFor("a failed delivery", async () => {
-    const page = (await (await owner(path)).json()) as {
-      data: { id: string; status: string }[];
-    };
-    return page.data.find((d) => d.status === "dead_letter");
-  });
-  await server.advanceClock(6 * 60_000);
-  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: await issuerOrigin(server),
-    },
-    body: JSON.stringify(TEST_OWNER),
-  });
-  expect(signedIn.status).toBe(200);
-  const recent = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    signedIn.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(recent, "sign-in set no session cookie").toBeTruthy();
-
-  const redeliver = (cookie: string) =>
-    fetch(`${server.apiUrl}${path}/${failed.id}/redeliver`, {
-      method: "POST",
-      headers: { cookie, origin: server.apiUrl },
-    });
-  const refused = await redeliver(server.ownerCookie);
-  expect(refused.status).toBe(403);
-  expect(refused.headers.get("x-error-code")).toBe("forbidden");
-  await refused.body?.cancel();
-  const accepted = await redeliver(recent!);
-  expect(accepted.status).toBe(202);
-  await accepted.body?.cancel();
 });
