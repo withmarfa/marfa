@@ -232,8 +232,7 @@ impl Settings {
         Ok(settings)
     }
 
-    /// The complete settings judged by the one judgment the server refuses
-    /// them by. Without a `catalog` a default type is not judged.
+    /// A catalog is needed to check whether the query holds the default type.
     fn check(&self, catalog: Option<&Catalog>) -> Result<()> {
         let placements: Vec<(&str, &str)> = self
             .first_placement
@@ -279,7 +278,7 @@ impl Settings {
         })
     }
 
-    /// The settings judged whole, with the types the copy's catalog holds.
+    /// Checks settings against the working copy's catalog.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
         self.check(Some(catalog))
     }

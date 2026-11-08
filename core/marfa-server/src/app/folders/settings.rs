@@ -269,14 +269,12 @@ fn threshold(settings: &Map<String, Value>, name: &str) -> rules::Threshold {
     }
 }
 
-/// What a device needs to attach the folder, judged on the complete settings
-/// the write leaves: a partial update changes one setting beside the others.
+/// Cross-setting checks require the complete settings after merging a patch.
 pub fn judge(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     judged(settings, catalog, true)
 }
 
-/// `complete` is whether `settings` are all the folder's: a default is judged
-/// only against a query that is there to hold it.
+/// A partial patch cannot establish whether the query holds a default.
 fn judged(settings: &Map<String, Value>, catalog: &Catalog, complete: bool) -> Result<()> {
     let query = settings.get("query");
     let defaults = settings.get("defaults");

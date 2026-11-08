@@ -174,10 +174,7 @@ fn check_filter(text: &str) -> Result<(), Violation> {
     Ok(())
 }
 
-/// The one judgment of a folder's complete settings: what the server refuses
-/// before it stores them and what a device refuses before it follows them.
-/// Without a `catalog` a default type is not judged, since whether a query
-/// holds a type depends on the types registered.
+/// Checks complete settings; checking the default type requires a catalog.
 pub fn check(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Violation> {
     if let Some(states) = settings.state {
         check_states(states).map_err(|fault| match fault {
