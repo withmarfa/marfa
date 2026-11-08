@@ -451,6 +451,14 @@ The server MUST send an item event as `item.created`, `item.updated`, `item.dele
 
 **Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
+### `events/item-frame-metadata`
+
+The server MUST carry on every item event `metadata`, holding the item's tags and the extension namespaces the subscriber may read, as the item held them after the write, or before the purge for `item.purged`.
+
+**Reason:** a working copy holds the tags of a row an event brings in from the frame (`device/catch-up-entering-tags`), and reads the row only when the frame carries none (`device/catch-up-entering-read-tags`), so a frame without them leaves a row created with tags in the copy with none.
+
+**Tests:** `compliance/event-frame-metadata.test.ts › carries on every item event the tags and extensions the write left, only the namespaces the subscriber may read, on a live stream`, `› carries the same metadata on an event a stream replays`.
+
 ### `events/deleted-trashed-at`
 
 When the server sends `item.deleted`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that row, for the row a delete or a transition named and for each row a cascade took with it.

@@ -441,6 +441,72 @@ async fn a_bulk_entry_is_judged_on_the_entries_before_it() {
 }
 
 #[tokio::test]
+async fn a_bulk_write_fans_out_only_when_it_asks() {
+    let instance = Instance::start().await;
+    let marks = || -> Vec<(String, i64)> {
+        let db = instance.db();
+        let mut read = db
+            .prepare("SELECT event_type, fanout FROM event_log ORDER BY id")
+            .unwrap();
+        read.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let parent = instance.note().await;
+    let note = |body: &str| json!({ "type": "core.note", "properties": { "body": body }, "edges": { "references": [&parent] } });
+    for (atomic, asked) in [
+        (true, None),
+        (false, Some(false)),
+        (true, Some(true)),
+        (false, Some(true)),
+    ] {
+        let mut page = json!({ "atomic": atomic, "items": [note("a")] });
+        if let Some(asked) = asked {
+            page["enable_fanout"] = json!(asked);
+        }
+        let answer = instance
+            .local(Method::POST, "/items/bulk", Some(page))
+            .await;
+        assert_eq!(answer.landed(StatusCode::OK)["counts"]["created"], 1);
+    }
+    let (a, b) = (instance.note().await, instance.note().await);
+    let edge = json!({ "source_id": a, "target_id": b, "edge_type": "references" });
+    for (atomic, asked) in [(true, None), (false, Some(false)), (false, Some(true))] {
+        let mut page = json!({ "atomic": atomic, "mode": "upsert", "edges": [&edge] });
+        if let Some(asked) = asked {
+            page["enable_fanout"] = json!(asked);
+        }
+        let answer = instance
+            .local(Method::POST, "/edges/bulk", Some(page))
+            .await;
+        assert_eq!(answer.landed(StatusCode::OK)["counts"]["errored"], 0);
+    }
+    let page = json!({ "edges": [&edge], "enable_fanout": "yes" });
+    instance
+        .local(Method::POST, "/edges/bulk", Some(page))
+        .await
+        .refused(StatusCode::BAD_REQUEST, "validation_error");
+
+    let held = [("item.created", 0), ("edge.created", 0)];
+    let told = [("item.created", 1), ("edge.created", 1)];
+    let mut expected = vec![("item.created", 1)];
+    expected.extend(held.repeat(2));
+    expected.extend(told.repeat(2));
+    expected.extend([("item.created", 1), ("item.created", 1)]);
+    expected.extend([
+        ("edge.created", 0),
+        ("edge.updated", 0),
+        ("edge.updated", 1),
+    ]);
+    let expected: Vec<_> = expected
+        .into_iter()
+        .map(|(event_type, fanout)| (event_type.to_string(), fanout))
+        .collect();
+    assert_eq!(marks(), expected);
+}
+
+#[tokio::test]
 async fn a_bulk_entry_with_an_inexact_integer_is_refused_by_its_position() {
     let instance = Instance::start().await;
     let token = instance

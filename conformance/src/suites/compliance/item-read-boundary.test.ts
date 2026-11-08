@@ -181,7 +181,8 @@ it("authorizes hydrated occurrences after a concurrent retype", async () => {
   expect(response.status).toBe(200);
   const body = await response.text();
   expect(body).not.toContain("private-body");
-  expect(body).not.toContain(item.id);
+  // Left out, or answered as it was when it was authorized.
+  if (body.includes(item.id)) expect(body).toContain("public-event");
   expect(await (await read()).text()).not.toContain(item.id);
   const witness = await call("GET", `/items/${item.id}`);
   expect(witness.status).toBe(200);

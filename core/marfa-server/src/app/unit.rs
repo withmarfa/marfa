@@ -1,10 +1,17 @@
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
+use chrono::SecondsFormat;
 use rusqlite::Transaction;
 use serde_json::Value;
 
 use super::App;
 use super::access::Caller;
 use super::audit::{self, Entry};
+use super::catalog::Snapshot;
+use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
+use super::provenance::{self, Origin};
 use super::refusal::Result;
 use crate::db::Write;
 
@@ -14,11 +21,21 @@ pub struct Unit<'t, 'c> {
     action: &'static str,
     pub caller: Caller,
     pub at: String,
+    fanout: bool,
+    /// The same instant as `at`, in milliseconds.
+    pub at_ms: i64,
+    origin: Origin,
+    read_only: Arc<ArcSwap<Registry>>,
 }
 
 impl<'c> Unit<'_, 'c> {
     pub fn tx(&self) -> &Transaction<'c> {
         self.tx
+    }
+
+    /// Which items connectors hold read only, as this write leaves them.
+    pub fn read_only(&self) -> Result<ReadOnly> {
+        read_only::current(&self.read_only, self.tx, &self.at, Snapshot::Pending)
     }
 
     pub fn under(&self, action: &'static str) -> Unit<'_, 'c> {
@@ -27,11 +44,26 @@ impl<'c> Unit<'_, 'c> {
             action,
             caller: self.caller.clone(),
             at: self.at.clone(),
+            fanout: self.fanout,
+            at_ms: self.at_ms,
+            origin: self.origin.clone(),
+            read_only: self.read_only.clone(),
         }
     }
 
+    /// An inner write cannot re-enable fan-out disabled by its caller.
+    pub fn fanning<T>(&self, fanout: bool, job: impl FnOnce(&Unit<'_, 'c>) -> T) -> T {
+        if fanout || !self.fanout {
+            return job(self);
+        }
+        job(&Unit {
+            fanout: false,
+            ..self.under(self.action)
+        })
+    }
+
     pub fn announce(&self, event: &Event<'_>) -> Result<()> {
-        events::append(self.tx, &self.at, event)
+        events::append(self.tx, &self.at, self.fanout, event)
     }
 
     pub fn audit(
@@ -50,29 +82,31 @@ impl<'c> Unit<'_, 'c> {
         resource_id: &str,
         details: Option<Value>,
     ) -> Result<()> {
-        audit::record(
+        audit::record_from(
             self.tx,
             &self.at,
-            &self.caller,
+            Some(&self.caller),
+            self.origin.client_ip.as_deref(),
             Entry {
                 action,
                 resource_type,
                 resource_id: Some(resource_id),
-                details,
+                details: self.origin.mark(details),
             },
         )
     }
 
     pub fn audit_set(&self, resource_type: &str, details: Option<Value>) -> Result<()> {
-        audit::record(
+        audit::record_from(
             self.tx,
             &self.at,
-            &self.caller,
+            Some(&self.caller),
+            self.origin.client_ip.as_deref(),
             Entry {
                 action: self.action,
                 resource_type,
                 resource_id: None,
-                details,
+                details: self.origin.mark(details),
             },
         )
     }
@@ -88,6 +122,8 @@ impl App {
     {
         let caller = caller.clone();
         let clock = self.clock.clone();
+        let origin = provenance::current();
+        let read_only = self.read_only_handle();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -95,14 +131,50 @@ impl App {
         };
         self.db
             .write(write, move |tx| {
-                let at = clock.stamp();
+                let now = clock.now();
+                let at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+                let at_ms = now.timestamp_millis();
                 let caller = caller.current(tx, &at)?;
                 job(&Unit {
                     tx,
                     action,
                     caller,
                     at,
+                    fanout: true,
+                    at_ms,
+                    origin,
+                    read_only,
                 })
+            })
+            .await
+    }
+
+    /// Records an attempt made with `caller`'s credential, whatever its authority is now. Writes only the audit entry.
+    pub async fn audit_attempt(
+        &self,
+        caller: &Caller,
+        action: &'static str,
+        resource_type: &'static str,
+        details: Value,
+    ) -> Result<()> {
+        let caller = caller.clone();
+        let clock = self.clock.clone();
+        let origin = provenance::current();
+        self.db
+            .write(Write::caller(action), move |tx| {
+                let at = clock.stamp();
+                audit::record_from(
+                    tx,
+                    &at,
+                    Some(&caller),
+                    origin.client_ip.as_deref(),
+                    Entry {
+                        action,
+                        resource_type,
+                        resource_id: None,
+                        details: origin.mark(Some(details)),
+                    },
+                )
             })
             .await
     }
