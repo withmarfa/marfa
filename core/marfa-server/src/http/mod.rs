@@ -205,7 +205,7 @@ fn item_doors(app: Arc<App>) -> Routes {
 }
 
 fn blob_doors() -> Routes {
-    Router::new()
+    Doors::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
         .route("/blobs/orphans", get(blobs::orphans))

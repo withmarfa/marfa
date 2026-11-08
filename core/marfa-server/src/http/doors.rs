@@ -85,6 +85,17 @@ impl Handlers {
         self
     }
 
+    pub fn head<H, T>(mut self, handler: H) -> Self
+    where
+        H: Handler<T, Arc<App>>,
+        T: 'static,
+    {
+        #[cfg(test)]
+        self.methods.push(Method::HEAD);
+        self.router = self.router.head(handler);
+        self
+    }
+
     pub fn layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,
