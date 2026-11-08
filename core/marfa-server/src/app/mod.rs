@@ -31,7 +31,7 @@ pub mod views;
 use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
@@ -64,6 +64,8 @@ pub struct App {
     pub telemetry: Telemetry,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
+    pub viewers: events::Viewers,
+    stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
     bound_port: OnceLock<u16>,
     pub(crate) documents: oauth::clients::Documents,
@@ -112,6 +114,8 @@ impl App {
             instance_id,
             cursor_secret,
             reindexing: Arc::new(Notify::new()),
+            viewers: events::Viewers::default(),
+            stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),
             key_limit: Limiter::default(),
@@ -127,6 +131,15 @@ impl App {
             .map_err(|refused| Failure::start(refused.to_string()))?;
         reindex::start(&app);
         Ok(app)
+    }
+
+    /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.
+    pub fn stopping(&self) -> watch::Receiver<bool> {
+        self.stop.subscribe()
+    }
+
+    pub fn begin_stop(&self) {
+        self.stop.send_replace(true);
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {

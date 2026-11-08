@@ -790,7 +790,7 @@ pub(crate) fn announce(
         type_id: &source.type_id,
         source: &source.source,
         payload: format!(
-            "{{\"event_type\":\"{event_type}\",\"edge\":{},\"source_type\":{}{also}}}",
+            "{{\"edge\":{},\"source_type\":{}{also}}}",
             edge.answered()?,
             Value::from(source.type_id.as_str())
         ),

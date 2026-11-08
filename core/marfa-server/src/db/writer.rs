@@ -213,7 +213,9 @@ impl Writer {
                 .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
-                let _ = answer.send(run_transaction(conn, write, deadline, &faults, &commits, job));
+                let _ = answer.send(run_transaction(
+                    conn, write, deadline, &faults, &commits, job,
+                ));
             }
         });
         let send = self.queue.send(Message::Run(run));

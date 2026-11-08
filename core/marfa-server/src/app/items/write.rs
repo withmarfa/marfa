@@ -474,10 +474,7 @@ pub(super) fn announce(unit: &Unit<'_, '_>, event_type: &'static str, item: &Ite
         item_id: &item.id,
         type_id: &item.type_id,
         source: &item.source,
-        payload: format!(
-            "{{\"event_type\":\"{event_type}\",\"item\":{}}}",
-            item.logged()?
-        ),
+        payload: format!("{{\"item\":{}}}", item.logged()?),
     })
 }
 
@@ -742,7 +739,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             type_id: &item.type_id,
             source: &item.source,
             payload: format!(
-                "{{\"event_type\":\"metadata.changed\",\"item\":{},\"metadata\":{}}}",
+                "{{\"item\":{},\"metadata\":{}}}",
                 item.logged()?,
                 metadata_text(tx, item, |_| true)?
             ),
@@ -1730,7 +1727,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 type_id: &item.type_id,
                 source: &item.source,
                 payload: format!(
-                    "{{\"event_type\":\"item.restored\",\"item\":{},\"restored_with\":{},\
+                    "{{\"item\":{},\"restored_with\":{},\
                      \"restored_with_type\":{}}}",
                     item.logged()?,
                     Value::from(back.with),

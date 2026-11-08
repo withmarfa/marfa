@@ -258,6 +258,7 @@ registry! {
     AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", Some("AUDIT_CLEANUP_INTERVAL_MS"), INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
     AUTH_SESSION_CLEANUP_INTERVAL_MS: u64 = "auth_session_cleanup_interval_ms", Some("AUTH_SESSION_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `auth-session-cleanup` job runs, in milliseconds.";
     DCR_CLIENT_CLEANUP_INTERVAL_MS: u64 = "dcr_client_cleanup_interval_ms", Some("MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `dcr-client-cleanup` job runs, in milliseconds.";
+    SSE_MAX_VIEWERS: u64 = "sse_max_viewers", Some("MARFA_SSE_MAX_VIEWERS"), Rule::Whole { min: 0, max: rule::SAFE_INTEGER }, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
     EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", Some("MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"), INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
     FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", Some("FEED_EXPIRY_INTERVAL_MS"), INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
     HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", Some("MARFA_HEARTBEAT_INTERVAL_MS"), INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
