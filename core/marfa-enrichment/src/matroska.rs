@@ -2,9 +2,10 @@
 //!
 //! The file is walked by element headers and each element it does not need is stepped
 //! over. A walk reads at most `MOST_ELEMENTS` headers, so the cost does not grow with
-//! the size of the file. When a file states no duration and a walk is cut off before
-//! its end, the length comes from the last cluster, found by searching back from the
-//! end of the file; if that cannot be read either, no length is told.
+//! the size of the file. When a file states no duration, the length comes from the last
+//! cluster: the last one of stated size the walk stepped over, or, when the walk is cut
+//! off before its end, the last one found by searching back from the end of the
+//! segment. If a cut-off walk finds none, no length is told.
 
 use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
 
