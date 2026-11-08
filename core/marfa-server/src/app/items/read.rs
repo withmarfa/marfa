@@ -494,7 +494,9 @@ pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>>
     let rules = &read.catalog.rules;
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
-        if read.caller.may_read_type(&type_id) && read.caller.levers()?.lists(rules, &type_id, &source) {
+        if read.caller.may_read_type(&type_id)
+            && read.caller.levers()?.lists(rules, &type_id, &source)
+        {
             *counts.entry(tag).or_default() += count;
         }
     }
