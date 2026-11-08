@@ -69,6 +69,7 @@ jobs:
       mcp-conformance: ${{ steps.classify.outputs.mcp-conformance }}
       conformance-shards: ${{ steps.classify.outputs.conformance-shards }}
       cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
+      rust-contract: ${{ steps.classify.outputs.rust-contract }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
       image: ${{ steps.classify.outputs.image }}
       types-freshness: ${{ steps.classify.outputs.types-freshness }}
@@ -305,7 +306,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks-linux != 'false') }}
     name: Core checks (Linux)
-    timeout-minutes: 17
+    timeout-minutes: 35
     runs-on: ubuntu-latest
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -616,7 +617,7 @@ jobs:
   # which statuses the others would have drawn, and the push to `main`
   # after it runs them all.
   conformance-statuses:
-    needs: [changes, conformance-shards]
+    needs: [changes, conformance-shards, rust-contract-shards]
     if: ${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}
     name: Conformance statuses
     timeout-minutes: 8
@@ -635,9 +636,24 @@ jobs:
         with:
           pattern: marfa-server-log-*
           path: ${{ runner.temp }}/shard-logs
+      # The files the Rust server judges run only in its shards, so the
+      # statuses they draw are read from its logs, and every declared status
+      # is held to a request only when those shards ran.
+      - uses: actions/download-artifact@v8
+        if: ${{ needs.rust-contract-shards.result == 'success' }}
+        with:
+          pattern: rust-contract-server-log-*
+          path: ${{ runner.temp }}/rust-shard-logs
       - name: Hold every declared status to a request
         working-directory: conformance
-        run: pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete
+        env:
+          RUST_SHARDS: ${{ needs.rust-contract-shards.result }}
+        run: |
+          if [ "$RUST_SHARDS" = success ]; then
+            pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs" --complete --drawn "$RUNNER_TEMP/rust-shard-logs"
+          else
+            pnpm check:statuses --shards "$RUNNER_TEMP/shard-logs"
+          fi
 
   # The MCP project's own conformance tool, against `/mcp` on a server booted
   # from this checkout. `conformance/scripts/mcp-conformance.ts` names the
@@ -838,6 +854,384 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa-cli"
+
+  # The contract, run against the Rust server (`core/marfa-server/`) and
+  # scored. Three jobs: the release build, the shards that boot it through
+  # the meter (`MARFA_SERVER_BIN`, `conformance/scripts/marfa-server.ts`)
+  # and run the same fixtures as `Conformance shard`, and the score.
+  #
+  # A shard does not fail because a test failed: the Rust server answers
+  # part of the contract today, and the score says how much. It fails when it
+  # has no report to give. The files the Rust server judges
+  # (`conformance/src/utils/rust-judged.ts`) are the part that must pass whole;
+  # the score job fails if one does not, and `Full CI` waits for it. The
+  # backup fixtures are not run: they boot the server through the container's
+  # entrypoint, which starts the Node server. There is no object store beside
+  # the server here, so the blob chapters' object-store half is not asserted.
+  rust-contract:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
+    name: Rust server (release build)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the Rust server
+        working-directory: core
+        run: cargo build --locked --release -p marfa-server
+      # Every shard downloads it, and a re-run of one shard does too, so it
+      # is kept as long as the shards' reports. It is an input, not a
+      # diagnostic, so it is kept on success like the reports.
+      - name: Keep the server
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-server
+          path: core/target/release/marfa-server
+          if-no-files-found: error
+          retention-days: 3
+
+  rust-contract-shards:
+    needs: [changes, rust-contract]
+    if: ${{ !cancelled() && needs.rust-contract.result == 'success' }}
+    name: Rust contract shard (${{ matrix.name }})
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard reports, so one failure shows all the others there are.
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              name: "correctness and sync",
+              slug: correctness-sync,
+              args: "--project correctness --project sync",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "cli",
+              slug: cli,
+              args: "--project cli",
+              binary: true,
+              module: false,
+            }
+          - {
+              name: "compliance 1/12",
+              slug: compliance-1,
+              args: "--project compliance --shard=1/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 2/12",
+              slug: compliance-2,
+              args: "--project compliance --shard=2/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 3/12",
+              slug: compliance-3,
+              args: "--project compliance --shard=3/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 4/12",
+              slug: compliance-4,
+              args: "--project compliance --shard=4/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 5/12",
+              slug: compliance-5,
+              args: "--project compliance --shard=5/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 6/12",
+              slug: compliance-6,
+              args: "--project compliance --shard=6/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 7/12",
+              slug: compliance-7,
+              args: "--project compliance --shard=7/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 8/12",
+              slug: compliance-8,
+              args: "--project compliance --shard=8/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 9/12",
+              slug: compliance-9,
+              args: "--project compliance --shard=9/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 10/12",
+              slug: compliance-10,
+              args: "--project compliance --shard=10/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 11/12",
+              slug: compliance-11,
+              args: "--project compliance --shard=11/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 12/12",
+              slug: compliance-12,
+              args: "--project compliance --shard=12/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "device 1/6",
+              slug: device-1,
+              args: "--project device --shard=1/6",
+              binary: true,
+              module: true,
+            }
+          - {
+              name: "device 2/6",
+              slug: device-2,
+              args: "--project device --shard=2/6",
+              binary: true,
+              module: true,
+            }
+          - {
+              name: "device 3/6",
+              slug: device-3,
+              args: "--project device --shard=3/6",
+              binary: true,
+              module: true,
+            }
+          - {
+              name: "device 4/6",
+              slug: device-4,
+              args: "--project device --shard=4/6",
+              binary: true,
+              module: true,
+            }
+          - {
+              name: "device 5/6",
+              slug: device-5,
+              args: "--project device --shard=5/6",
+              binary: true,
+              module: true,
+            }
+          - {
+              name: "device 6/6",
+              slug: device-6,
+              args: "--project device --shard=6/6",
+              binary: true,
+              module: true,
+            }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Nothing in the workspace is built for the Rust server.
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-server
+          path: ${{ runner.temp }}/rust-contract-server
+      - name: Name the server under test
+        run: |
+          chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
+          echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
+
+      # The CLI and device fixtures drive the `marfa` binary, and the device
+      # fixtures the Node module, as in `Conformance shard`. The keys leave
+      # out `core/marfa-server/`, which neither is built from, so a change to
+      # the server alone reuses what `main` built.
+      - name: Key the device under test
+        id: device-key
+        if: ${{ matrix.binary }}
+        run: echo "key=marfa-rust-contract-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the device under test
+        id: device
+        if: ${{ matrix.binary && github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      # Restored with the time it was built, which the device suite reads as
+      # older than this checkout's sources; the key vouches that they match.
+      - if: ${{ matrix.binary && steps.device.outputs.cache-hit == 'true' }}
+        run: touch core/target/debug/marfa
+      - name: Key the Node module under test
+        id: module-key
+        if: ${{ matrix.module }}
+        run: echo "key=marfa-rust-contract-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the Node module under test
+        id: module
+        if: ${{ matrix.module && github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: core/bindings/node/*.node
+          key: ${{ steps.module-key.outputs.key }}
+      - if: ${{ matrix.module && steps.module.outputs.cache-hit == 'true' }}
+        run: touch core/bindings/node/*.node
+      - if: ${{ (matrix.binary && steps.device.outputs.cache-hit != 'true') || (matrix.module && steps.module.outputs.cache-hit != 'true') }}
+        uses: dtolnay/rust-toolchain@stable
+      - if: ${{ (matrix.binary && steps.device.outputs.cache-hit != 'true') || (matrix.module && steps.module.outputs.cache-hit != 'true') }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the device under test
+        if: ${{ matrix.binary && steps.device.outputs.cache-hit != 'true' }}
+        working-directory: core
+        run: cargo build -p marfa-cli
+      - if: ${{ matrix.binary && steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      # Outside the pnpm workspace, so every call carries the flag.
+      - name: Build the Node module under test
+        if: ${{ matrix.module && steps.module.outputs.cache-hit != 'true' }}
+        working-directory: core/bindings/node
+        run: |
+          pnpm --ignore-workspace install --frozen-lockfile
+          pnpm --ignore-workspace run build:debug
+      - if: ${{ matrix.module && steps.module.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: core/bindings/node/*.node
+          key: ${{ steps.module-key.outputs.key }}
+      - if: ${{ matrix.binary }}
+        run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
+      # The one module `napi build --platform` wrote for this machine.
+      - if: ${{ matrix.module }}
+        run: echo "MARFA_DEVICE_MODULE=$(ls "$PWD"/core/bindings/node/*.node)" >> "$GITHUB_ENV"
+
+      - name: Boot the Rust server
+        working-directory: conformance
+        # A shard's fixtures can keep it busy on servers of their own for
+        # longer than the harness's idle limit; the job's limit bounds it.
+        env:
+          CONFORMANCE_SERVER_IDLE_MS: "0"
+        run: |
+          pnpm marfa:up --state "$RUNNER_TEMP/marfa"
+          cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
+
+      # A failed test does not fail the step: the score job counts it. A run
+      # that wrote no report does.
+      - name: Run the shard
+        working-directory: conformance
+        env:
+          ARGS: ${{ matrix.args }}
+        run: |
+          report="$RUNNER_TEMP/rust-contract-report/vitest.json"
+          mkdir -p "$(dirname "$report")"
+          read -r -a args <<< "$ARGS"
+          args+=(--reporter=default --reporter=json "--outputFile.json=$report")
+          status=0
+          pnpm exec vitest run "${args[@]}" || status=$?
+          echo "Vitest exited with status $status."
+          test -s "$report"
+
+      # Kept whether or not the shard passed: the score job reads every one.
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-report-${{ matrix.slug }}
+          overwrite: true
+          path: ${{ runner.temp }}/rust-contract-report/vitest.json
+          if-no-files-found: error
+          retention-days: 3
+
+      # Before the stop, because `marfa:down` clears the state directory and
+      # the log is in it.
+      - name: Keep the server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-server-log-${{ matrix.slug }}
+          overwrite: true
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/marfa/server.log
+            ${{ runner.temp }}/marfa/server.stderr
+            ${{ runner.temp }}/marfa/fresh-server-logs/
+          if-no-files-found: ignore
+
+      # The detached server must be reaped even when the selection fails.
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+  # The score of the Rust server against the contract: tests passing out of
+  # all, by file, in the job summary (`conformance/README.md` says how it is
+  # counted). It fails when a file the Rust server judges did not pass whole,
+  # when a shard wrote no report, and when the build or a shard failed. A
+  # skipped job passes only when the classifier skipped it; this job runs
+  # exactly when the classifier owes a run, so a build or shard skipped while
+  # a run is owed fails here.
+  rust-contract-score:
+    needs: [changes, rust-contract, rust-contract-shards]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
+    name: Rust contract score
+    timeout-minutes: 8
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the build and every shard to have run
+        env:
+          BUILD: ${{ needs.rust-contract.result }}
+          SHARDS: ${{ needs.rust-contract-shards.result }}
+        run: |
+          echo "Build: $BUILD. Shards: $SHARDS."
+          if [ "$BUILD" != success ] || [ "$SHARDS" != success ]; then
+            echo "::error::The Rust server was owed a build and every shard, and one did not pass."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rust-contract-report-*
+          path: ${{ runner.temp }}/rust-contract-reports
+      - name: Score the run
+        working-directory: conformance
+        run: pnpm rust:score --reports "$RUNNER_TEMP/rust-contract-reports" --markdown "$GITHUB_STEP_SUMMARY"
 
   # The restore drill: a fresh instance rebuilt from the bucket alone, to
   # the byte, against the same local object store the conformance shards
@@ -1127,6 +1521,9 @@ jobs:
         mcp-conformance,
         conformance,
         cli-scenarios,
+        rust-contract,
+        rust-contract-shards,
+        rust-contract-score,
         restore-drill,
         image,
         types-freshness,
@@ -1172,6 +1569,9 @@ jobs:
         mcp-conformance,
         conformance,
         cli-scenarios,
+        rust-contract,
+        rust-contract-shards,
+        rust-contract-score,
         restore-drill,
         image,
         types-freshness,

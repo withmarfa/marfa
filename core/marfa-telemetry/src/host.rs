@@ -1,10 +1,7 @@
-//! Which addresses a report may be posted to.
-
 use std::time::Duration;
 
 use url::{Host, Url};
 
-/// The longest a post waits to connect, whatever it may take in all.
 pub const CONNECT_LIMIT: Duration = Duration::from_secs(1);
 
 /// `localhost`, `127.0.0.0/8` and `::1`, which never leave the machine.
@@ -17,19 +14,14 @@ pub fn is_loopback(url: &Url) -> bool {
     }
 }
 
-/// Whether a post to `target` may use a proxy from the environment. A proxy
-/// cannot reach this machine, and the post must not leave in the clear on
-/// the way.
+/// A proxy cannot reach this machine, and the post must not leave in the clear.
 pub fn may_use_proxy(target: &str) -> bool {
     !Url::parse(target).is_ok_and(|url| is_loopback(&url))
 }
 
-/// PostHog's capture endpoints. Both take an `$exception` event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capture {
-    /// `/i/v0/e/`: one event.
     One,
-    /// `/batch/`: several events under one project token.
     Batch,
 }
 
@@ -42,10 +34,8 @@ impl Capture {
     }
 }
 
-/// Where an event is posted, under the host as written. The project token
-/// travels in the body, so only `https` is used, and `http` only to this
-/// machine, which a test or a local PostHog needs. `None` for any other
-/// host, and for one with a user name or password.
+/// `https` only, as the token travels in the body; `http` only to this machine.
+/// `None` for any other host, or one with a user name or password.
 pub fn capture_url(host: &str, capture: Capture) -> Option<String> {
     let mut url = Url::parse(host).ok()?;
     let private = match url.scheme() {

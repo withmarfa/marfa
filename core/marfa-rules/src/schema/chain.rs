@@ -4,11 +4,9 @@ use std::collections::HashSet;
 
 use super::{Issue, Registry, text, validate_type};
 
-/// The most ancestors a type may have, counting the levels of subtypes below
-/// it that would move with it.
+/// The most ancestors a type may have, counting the subtype levels below it that would move with it.
 pub const MAX_REGISTRATION_CHAIN_DEPTH: usize = 10;
 
-/// Why `parent` cannot be the parent of `type_id`, in words, where it cannot.
 pub fn parent_chain_fault(
     registry: &Registry,
     type_id: &str,
@@ -44,7 +42,6 @@ pub fn parent_chain_fault(
     }
 }
 
-/// The levels of subtypes below `id`, the longest path.
 pub fn descendant_depth(registry: &Registry, id: &str) -> usize {
     let mut deepest = 0;
     let mut stack: Vec<(String, usize, HashSet<String>)> =
@@ -63,9 +60,7 @@ pub fn descendant_depth(registry: &Registry, id: &str) -> usize {
     deepest
 }
 
-/// The types with a `compatible_with` claim that a change to `changed`
-/// breaks, each with its faults, sorted by id. A claim is reached when its
-/// type, or a target of it, is changed or below a changed type.
+/// A claim is reached when its type, or a target of it, is changed or below a changed type. Sorted by id.
 pub fn broken_compatible_dependents(
     registry: &Registry,
     changed: &[&str],

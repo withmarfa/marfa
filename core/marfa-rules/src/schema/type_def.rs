@@ -1,5 +1,4 @@
-//! A type registration: every fault it has, and the form the registry
-//! stores it in.
+//! A type registration: every fault it has, and the form the registry stores.
 
 use std::collections::HashSet;
 
@@ -21,7 +20,6 @@ use crate::grammar;
 
 const SEARCHED_NAMES: [&str; 4] = ["title", "body", "description", "name"];
 
-/// The fields in the order declared, replacing in place.
 #[derive(Default)]
 struct Ordered(Vec<(String, Obj)>);
 
@@ -73,8 +71,6 @@ fn required_names(input: &Obj) -> Vec<String> {
     names
 }
 
-/// Judges a registration against the registry it is made in. Answers the
-/// definition as the registry stores it.
 pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
     let Some(obj) = input.as_object() else {
         return Err(vec![Issue::new(

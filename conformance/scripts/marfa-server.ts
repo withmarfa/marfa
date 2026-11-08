@@ -64,6 +64,15 @@ import { tmpdir } from "node:os";
  * run is without them, as a person's is. Nothing that reads the clock or the
  * fault table can run against it. The build must be there already
  * (`pnpm --filter "@withmarfa/server..." build`); it is not made here.
+ *
+ * With `MARFA_SERVER_BIN=<program>` it starts that program instead, a server
+ * of another implementation, with the same settings, supervisor, state
+ * directory and log, and with the state directory as its working directory.
+ * Nothing in the workspace is built for it. The claim and the keys go through
+ * the private socket as for this server. A target whose sign-in door answers
+ * `404 not_found` has no owner sign-in, and the env file then carries no
+ * owner cookie or session file. `clock` and `fault` fail plainly against a
+ * target without the hooks.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -283,6 +292,24 @@ export function builtServer(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARFA_SERVER_BUILT === "true";
 }
 
+/** The program `MARFA_SERVER_BIN` names, when it names one. */
+export function serverProgram(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const program = env.MARFA_SERVER_BIN;
+  if (program === undefined || program === "") return undefined;
+  if (builtServer(env)) {
+    throw new Error(
+      "MARFA_SERVER_BIN and MARFA_SERVER_BUILT are both set; set one",
+    );
+  }
+  const path = resolve(program);
+  if (!existsSync(path) || !statSync(path).isFile()) {
+    throw new Error(`MARFA_SERVER_BIN names ${path}, which is not a file`);
+  }
+  return path;
+}
+
 /** The built server's two entry files, which a build writes. */
 const BUILT_ENTRY = resolve(REPO_ROOT, "packages/server/dist/index.js");
 const BUILT_PRELOAD = resolve(
@@ -439,6 +466,7 @@ function readClockOffset(file: string): number {
 }
 
 async function startServer(args: BootOptions): Promise<Started> {
+  const program = serverProgram();
   const p = paths(args.state);
   const existing = readPid(p.pid);
   if (existing !== undefined && alive(existing)) {
@@ -459,9 +487,11 @@ async function startServer(args: BootOptions): Promise<Started> {
   // it ignores itself rather than relying on the root `.gitignore` knowing
   // the name.
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
-  ensureBuilt();
-  const built = builtServer();
-  if (!built) ensurePageAssets();
+  const built = program === undefined && builtServer();
+  if (program === undefined) {
+    ensureBuilt();
+    if (!built) ensurePageAssets();
+  }
 
   const port =
     args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
@@ -565,9 +595,9 @@ async function startServer(args: BootOptions): Promise<Started> {
   // server; what the supervisor adds is the server's exit status.
   const child = spawn(
     process.execPath,
-    [RUN_SERVER, p.exit, ...serverCommand(built)],
+    [RUN_SERVER, p.exit, ...(program ? [program] : serverCommand(built))],
     {
-      cwd: resolve(REPO_ROOT, "packages/server"),
+      cwd: program ? args.state : resolve(REPO_ROOT, "packages/server"),
       env,
       detached: true,
       stdio: ["ignore", logFd, errFd],
@@ -624,6 +654,42 @@ export async function bootControlServer(
   throw new Error(
     `Control-only server did not start: ${logTail(paths(args.state))}`,
   );
+}
+
+const SIGN_IN_DOOR = "/auth/sign-in/email";
+
+/**
+ * The owner's session cookie, or undefined for a target with no owner
+ * sign-in. The door is asked again only once the sign-in has failed, so a
+ * target that has one spends no extra attempt against its sign-in throttle.
+ */
+async function signInOwner(
+  url: string,
+  retained: string | undefined,
+  serverNow: () => number,
+): Promise<string | undefined> {
+  try {
+    return (await authenticateOwner(url, retained, TEST_OWNER, serverNow))
+      .cookie;
+  } catch (error) {
+    if (await signInDoorAbsent(url)) return undefined;
+    throw error;
+  }
+}
+
+/** Whether the sign-in door answers the contract's 404 for a path it does not serve. */
+async function signInDoorAbsent(url: string): Promise<boolean> {
+  const response = await fetch(`${url}${SIGN_IN_DOOR}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: new URL(url).origin,
+    },
+    body: "{}",
+  });
+  const body = (await response.json().catch(() => undefined)) as
+    { error?: { code?: unknown } } | undefined;
+  return response.status === 404 && body?.error?.code === "not_found";
 }
 
 export async function bootServer(args: BootOptions): Promise<void> {
@@ -709,10 +775,9 @@ export async function bootServer(args: BootOptions): Promise<void> {
     ? (JSON.parse(readFileSync(p.ownerSession, "utf8")) as SharedOwnerSession)
         .cookie
     : previous.MARFA_OWNER_COOKIE;
-  const { cookie: ownerCookie } = await authenticateOwner(
+  const ownerCookie = await signInOwner(
     url,
     retainedSession,
-    TEST_OWNER,
     () =>
       Date.now() +
       (existsSync(p.clock)
@@ -722,14 +787,21 @@ export async function bootServer(args: BootOptions): Promise<void> {
   maskInActions(
     apiKey,
     managementKey,
-    ownerCookie,
+    ownerCookie ?? "",
     TEST_OWNER.password,
     authSecret,
   );
-  await writeOwnerSession(p.ownerSession, {
-    baseUrl: url,
-    cookie: ownerCookie,
-  });
+  if (ownerCookie === undefined) {
+    rmSync(p.ownerSession, { force: true });
+    console.log(
+      "[marfa-server] the target has no owner sign-in (its sign-in door answered 404 not_found); the env file carries no owner cookie or session file",
+    );
+  } else {
+    await writeOwnerSession(p.ownerSession, {
+      baseUrl: url,
+      cookie: ownerCookie,
+    });
+  }
   writeFileSync(
     p.env,
     renderEnvFile(
@@ -739,7 +811,8 @@ export async function bootServer(args: BootOptions): Promise<void> {
         managementKey,
         controlSocket,
         ownerCookie,
-        ownerSessionFile: p.ownerSession,
+        ownerSessionFile:
+          ownerCookie === undefined ? undefined : p.ownerSession,
         authSecret,
       },
       p.blobs,

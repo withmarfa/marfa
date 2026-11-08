@@ -2,9 +2,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeDelta};
 
 use crate::error::{Result, RuleError};
 
-/// Matches the server's flexible timestamp grammar, with a UTC default zone.
-/// Chrono handles the calendar; the adapter preserves Date's reduced precision,
-/// compact offsets, millisecond truncation and special midnight spelling.
+/// A missing zone means UTC; reduced precision and compact offsets are accepted.
 pub fn normalize(value: &str, field: &str) -> Result<String> {
     let instant = parse(value).ok_or_else(|| invalid(field, "expected an RFC 3339 timestamp"))?;
     if !(0..=9999).contains(&instant.year()) {
@@ -17,8 +15,6 @@ pub fn invalid(field: &str, reason: &str) -> RuleError {
     RuleError::validation(format!("Invalid {field}: {reason}"))
 }
 
-/// Invalid queued writes still reach the server's existing refusal path.
-/// Only the displayed projection changes, never the queued request.
 pub fn projected(value: &str) -> String {
     normalize(value, "occurred_at").unwrap_or_else(|_| value.to_string())
 }

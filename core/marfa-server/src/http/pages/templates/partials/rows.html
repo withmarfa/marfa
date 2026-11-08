@@ -1,0 +1,18 @@
+{% macro level(row) %}<div class="row">
+<div class="text">
+<label class="title" for="{{ row.id }}">{{ row.title }}</label>
+{% for line in row.lines %}<div class="line">{{ line }}</div>
+{% endfor %}{% if let Some(ident) = row.ident %}<div class="ident" id="{{ ident.id }}">{{ ident.text }}</div>
+{% endif %}{% if let Some(now) = row.now %}<div class="line">Now: {{ now }}</div>
+{% endif %}</div>
+<select id="{{ row.id }}" name="{{ row.field }}" aria-label="{{ row.title }}"{% if let Some(ident) = row.ident %} aria-describedby="{{ ident.id }}"{% endif %}{% if row.switches_types %} data-types-switch{% endif %}>{% for option in row.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.word }}</option>{% endfor %}</select>
+</div>
+{% endmacro %}
+{% macro power(power) %}<div class="row power">
+<div class="text">
+<label class="title" for="{{ power.id }}">{{ power.title }}</label>
+{% if let Some(line) = power.line %}<div class="line{% if power.cannot_be_undone %} danger{% endif %}" id="{{ power.id }}-note">{{ line }}</div>
+{% endif %}</div>
+<input type="checkbox" role="switch" id="{{ power.id }}" name="scopes" value="{{ power.literal }}"{% if power.line.is_some() %} aria-describedby="{{ power.id }}-note"{% endif %}>
+</div>
+{% endmacro %}

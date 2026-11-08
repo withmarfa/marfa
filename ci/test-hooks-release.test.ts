@@ -54,6 +54,7 @@ describe("the test hooks and what is released", () => {
       for (const path of naming) {
         expect(
           path.startsWith("packages/server/src/") ||
+            path.startsWith("core/marfa-server/") ||
             path.startsWith("conformance/") ||
             path === ".env.example" ||
             path === "ci/test-hooks-release.test.ts",

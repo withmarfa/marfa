@@ -1,6 +1,4 @@
-//! The type catalog as a value: what a type declares and inherits, how a
-//! write's properties are judged against it and how an item is shown by it.
-//! Reading it from a store is the caller's.
+//! The type catalog as a value: what types declare and inherit, how properties are judged against it and how an item is shown by it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -13,8 +11,7 @@ use crate::wire::{WireEdgeType, WireType, label_from_id, label_from_name, plural
 
 const TITLE_PROPERTY: &str = "title";
 
-/// Fields the server takes on every type, optional, which no read of a type
-/// lists (`items/create-null-optional`), and the type of each element.
+/// Optional fields every type takes, though no read of a type lists them, with each element's type.
 const EVERY_TYPE_TAKES: [(&str, &str); 2] = [("attachments", "object"), ("links", "string")];
 const BODY_PROPERTY: &str = "body";
 
@@ -26,13 +23,11 @@ pub struct CatalogEntry {
     pub body_field: Option<String>,
     pub name_from_body: Option<bool>,
     pub icon: Option<String>,
-    /// The properties the type declares itself, not those it inherits.
     pub fields: Vec<String>,
     pub definitions: Map<String, Value>,
 }
 
 impl CatalogEntry {
-    /// The entry for a type as a server lists it.
     pub fn from_wire(held: &WireType) -> CatalogEntry {
         let hints = held.display_hints.clone().unwrap_or_default();
         let definitions = held
@@ -54,7 +49,6 @@ impl CatalogEntry {
     }
 }
 
-/// The field a type declares as its thumbnail, if it does.
 pub fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
     declared
         .get("fields")?
@@ -64,7 +58,6 @@ pub fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
-/// One end of an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum End {
@@ -78,13 +71,11 @@ pub enum End {
 pub enum WrittenAt {
     Source,
     Target,
-    /// No file writes the edge. The server holds it, and a folder never
-    /// renders it as a line or a link.
+    /// No file writes the edge, and a folder never renders it.
     None,
 }
 
 impl WrittenAt {
-    /// The end whose file writes the edge, where one does.
     pub fn end(self) -> Option<End> {
         match self {
             WrittenAt::Source => Some(End::Source),
@@ -112,82 +103,64 @@ impl End {
     }
 }
 
-/// A field of an item type, or a property of an edge type.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TypeField {
     pub name: String,
     #[serde(rename = "type")]
     pub r#type: String,
     pub required: bool,
-    /// The name an app shows for it: the nearest one the chain names, else
-    /// the one its name makes, as `GET /types/{id}` answers it. An edge
-    /// type's property names none, so it takes the one its name makes.
+    /// The nearest label the chain names, else the one its name makes. An edge type's property names none.
     pub label: String,
     pub description: Option<String>,
-    /// The type that declares it: the type itself, or the nearest one it
-    /// inherits the field from.
+    /// The nearest type in the chain that declares it.
     pub declared_by: String,
-    /// The definition whole, as the server answers it.
     pub definition: Value,
 }
 
-/// An item type as the copy holds it, its inheritance resolved as
-/// `GET /types/{id}` resolves it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ItemType {
     pub id: String,
     pub label: Option<String>,
-    /// The type's own plural, else the one its label makes, as the server
-    /// answers it. Never inherited.
+    /// Its own plural, else the one its label makes. Never inherited.
     pub plural: String,
     pub description: Option<String>,
     pub parent: Option<String>,
     pub version: i64,
-    /// By name.
     pub fields: Vec<TypeField>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
-    /// False where an item's body does not name it, such as a highlight's
-    /// passage (`types/item-name-fields`).
+    /// False where an item's body does not name it, such as a highlight's passage.
     pub name_from_body: bool,
-    /// The Iconify icon ID that stands for the type, `<set>:<name>`: the owner's
-    /// choice where they made one, else the nearest author's.
+    /// Iconify icon ID `<set>:<name>`: the owner's choice where made, else the nearest author's.
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
     pub compatible_with: Vec<String>,
 }
 
-/// An edge type as the copy holds it, as `GET /edge-types` lists it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EdgeType {
     pub id: String,
-    /// The name shown on the source end.
     pub label: String,
-    /// The name shown on the target end; the same text as `label` where the
-    /// relation is two-way.
+    /// Same as `label` where the relation is two-way.
     pub reverse_label: String,
     pub description: Option<String>,
     pub cardinality: String,
-    /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
     pub written_at: WrittenAt,
     pub source_type_constraints: Vec<String>,
     pub target_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
-    /// By name.
     pub properties: Vec<TypeField>,
     pub shipped: bool,
-    /// Whether the server refuses an edge of this type that closes a cycle
-    /// through other edges of the type.
+    /// Whether an edge of this type that closes a cycle through edges of the type is refused.
     pub acyclic: bool,
-    /// Whether the server refuses a source its own target constraints admit.
+    /// Whether a source its own target constraints admit is refused.
     pub flat: bool,
 }
 
 impl EdgeType {
-    /// The name a file at `end` writes an edge of this type under, where it
-    /// has one.
+    /// The name a file at `end` writes an edge of this type under, if any.
     pub fn name_at(&self, end: End) -> Option<&str> {
         if self.written_at == WrittenAt::None {
             return None;
@@ -198,7 +171,6 @@ impl EdgeType {
         }
     }
 
-    /// Whether an item at `end` holds at most one edge of this type.
     pub fn one_at(&self, end: End) -> bool {
         matches!(
             (end, self.cardinality.as_str()),
@@ -209,7 +181,6 @@ impl EdgeType {
 }
 
 impl EdgeType {
-    /// An edge type as the copy holds it, from the row it was listed as.
     pub fn from_wire(wire: WireEdgeType) -> Result<EdgeType, RuleError> {
         let properties = wire
             .property_schema
@@ -235,13 +206,9 @@ impl EdgeType {
     }
 }
 
-/// The roots a type of the app's own can never be registered under: Marfa's.
 const SHIPPED_ROOTS: [&str; 3] = ["core", "system", "marfa"];
 
-/// A type the app declares, read as the server reads a registration: an
-/// object naming an identifier outside Marfa's, whose fields each have a type
-/// and whose parent is one this copy knows. Answers its id and the JSON it is
-/// kept as, with what a registration requires and the app left out filled in.
+/// An object naming an identifier outside Marfa's, whose fields each have a type and whose parent this copy knows. Answers its id and the JSON it is kept as, with what a registration requires filled in.
 pub fn declaration(
     definition: &Value,
     known: &dyn Fn(&str) -> bool,
@@ -273,8 +240,6 @@ pub fn declaration(
             row.insert("fields".into(), Value::Object(Map::new()));
         }
         Some(Value::Object(_)) => {
-            // Judged as the registry holds it: a string whose format is a kind
-            // of its own is that kind.
             let folded = normalized_type(definition)?;
             let fields = folded["fields"].as_object().into_iter().flatten();
             let kinds = crate::builtin::field_types()?;
@@ -322,12 +287,9 @@ pub fn declaration(
     Ok((id.to_string(), Value::Object(row).to_string()))
 }
 
-/// Refuses a declared type whose `status` field has no words anywhere in its
-/// chain, the declared set's and the shipped types', as the server refuses
-/// such a registration (`types/status-refused`, `types/status-parent-wordless`).
+/// Refuses a declared type whose `status` field has no words anywhere in its chain, the declared set's and the shipped types'.
 pub fn refuse_wordless_status(types: &[Value]) -> Result<(), RuleError> {
     let shipped = crate::builtin::catalog()?;
-    // Each type's parent and the fields it declares itself.
     type Link<'a> = (Option<&'a str>, Option<&'a Map<String, Value>>);
     let mut chain: HashMap<&str, Link> = shipped
         .types
@@ -402,11 +364,10 @@ pub fn refuse_wordless_status(types: &[Value]) -> Result<(), RuleError> {
     Ok(())
 }
 
-/// The groups every status word belongs to one of, fixed for every type.
+/// The groups every status word belongs to one of.
 pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
 
-/// A status word: a lowercase letter, then up to 63 lowercase letters,
-/// digits and underscores.
+/// A lowercase letter, then up to 63 lowercase letters, digits and underscores.
 pub fn status_word(text: &str) -> bool {
     let mut chars = text.chars();
     text.len() <= 64
@@ -414,11 +375,7 @@ pub fn status_word(text: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-/// What the server refuses in a field's status words: a list where the field
-/// is not `status`, a list that is not `{ value, group }` pairs naming each
-/// word once in one of the four groups, `enum_values` on a status field, or
-/// `status` as an array's element type. A status field that leaves its words
-/// out is judged against its chain by [`refuse_wordless_status`].
+/// Refuses a status word list on a field that is not `status`, a list that is not `{ value, group }` pairs naming each word once in one of the four groups, `enum_values` on a status field, and `status` as an array's element type. A status field with no words is judged by [`refuse_wordless_status`].
 pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     if definition.get("items_type").and_then(Value::as_str) == Some("status") {
         return Some(
@@ -472,12 +429,7 @@ pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     None
 }
 
-/// What the server refuses in a field's currency bound and list entries
-/// (`types/field-grammar`, `types/items-fields-refused`): a `maxLength` on a
-/// currency, `items_fields` on anything but an array of objects, no member in
-/// it, or a member that is not an object with the kind of a plain value. A
-/// member is held to the checks of a field: a status word list it may not
-/// take, a currency's `maxLength` and `items_fields`.
+/// Refuses a `maxLength` on a currency, `items_fields` on anything but an array of objects, no member in it, or a member that is not an object with a plain value's kind. A member is held to a field's checks: no status word list, no currency `maxLength`, no `items_fields`.
 fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>, RuleError> {
     let currency_length = |definition: &Value| {
         definition.get("format").and_then(Value::as_str) == Some("currency")
@@ -513,7 +465,6 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
                 kinds.join(", ")
             )));
         }
-        // A member meets the checks a field of its own meets.
         if let Some(problem) = status_declaration(held_kind, held) {
             return Ok(Some(format!("with the member {member} {problem}")));
         }
@@ -524,13 +475,7 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
     Ok(None)
 }
 
-/// A field's definition as the registry holds it (`normalizeFieldDefinition`):
-/// a string whose `format` is a kind of its own is that kind, an array of
-/// strings whose `format` is `url`, `email`, `datetime` or `date` is an array
-/// of that kind, and each member of a list's entries is folded the same way.
-/// The format is then carried by the kind alone. Every other format annotates
-/// the string and stays, and so does a `thumbnail` format on an array, which
-/// the server refuses (`types/format-collapses`).
+/// A string whose `format` is a kind of its own is that kind; an array of strings whose `format` is `url`, `email`, `datetime` or `date` is an array of that kind; each member of a list's entries is folded the same way. Every other format annotates the string and stays, as does a `thumbnail` format on an array, which is refused.
 fn normalized(definition: &Value) -> Result<Value, RuleError> {
     let Some(row) = definition.as_object() else {
         return Ok(definition.clone());
@@ -564,9 +509,7 @@ fn normalized(definition: &Value) -> Result<Value, RuleError> {
     Ok(Value::Object(row))
 }
 
-/// A type as the registry holds it: each of its fields folded by [`normalized`].
-/// A type the app declares is folded as it is read into the copy's catalog,
-/// where a server's is already folded.
+/// Each field folded by [`normalized`]. A declared type is folded as it is read; a listed one already is.
 pub fn normalized_type(definition: &Value) -> Result<Value, RuleError> {
     let mut row = definition.clone();
     if let Some(Value::Object(fields)) = row.get("fields") {
@@ -619,9 +562,7 @@ fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField,
     })
 }
 
-/// The definition with every label filled, as `GET /types/{id}` answers it:
-/// a field or a member of its entries that names none takes the one its name
-/// makes. `withFieldLabels` in `@withmarfa/types` does the same.
+/// Every label filled: a field or entry member that names none takes the one its name makes.
 fn with_labels(name: &str, definition: &Value) -> Value {
     let mut definition = definition.clone();
     let Value::Object(fields) = &mut definition else {
@@ -676,9 +617,7 @@ pub fn merge_field_definition(inherited: Option<&Value>, own: &Value) -> Value {
     Value::Object(merged)
 }
 
-/// A declaration that names no label keeps the one above it, for the field
-/// and for each member of its entries; `withLabelsAbove` in
-/// `@withmarfa/types` does the same.
+/// A declaration that names no label keeps the one above it, for the field and each entry member.
 fn with_labels_above(above: &Map<String, Value>, below: &Map<String, Value>) -> Map<String, Value> {
     let mut merged = below.clone();
     if !merged.contains_key("label")
@@ -706,8 +645,7 @@ fn status_kind(definition: &Map<String, Value>) -> Option<&str> {
     definition.get("type").and_then(Value::as_str)
 }
 
-/// A type's one `status` field as it resolves: its name and its words, each
-/// with its group, in the order the chain declares them.
+/// A type's one `status` field as it resolves: its name and its words, each with its group, in chain order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusField {
     pub type_id: String,
@@ -739,7 +677,6 @@ impl StatusField {
         })
     }
 
-    /// The group `value` is in, where it is a word the field declares.
     pub fn group_of(&self, value: &Value) -> Option<&str> {
         let word = value.as_str()?;
         self.words
@@ -749,10 +686,7 @@ impl StatusField {
     }
 }
 
-/// The server's resolution of `GET /types/{id}`: fields merged from the root
-/// down, the nearer declaration winning, and the hints by the rule every
-/// reader of the copy takes them by. The listing already answers `roles`
-/// resolved.
+/// Fields merged from the root down, the nearer declaration winning. The listing already answers `roles` resolved.
 pub fn resolve_item_type(
     id: &str,
     held: &HashMap<String, Map<String, Value>>,
@@ -817,8 +751,7 @@ pub fn resolve_item_type(
     }))
 }
 
-/// A held type with the types above it, itself first, and every role it
-/// plays, declared or inherited, as an edge type's constraint reads them.
+/// A held type with the types above it, itself first, and every role it plays.
 pub struct Lineage {
     pub ancestors: Vec<String>,
     pub roles: Vec<String>,
@@ -828,11 +761,7 @@ pub struct Lineage {
 }
 
 impl Lineage {
-    /// Whether an edge type's constraint list for one end admits this type,
-    /// by the server's rule: an empty list or `*` admits every type, a
-    /// `role:<name>` a type that plays it, and a type id that type and every
-    /// type beneath it. `None` where only the part of the chain the copy
-    /// could not read would tell.
+    /// By the server's rule: an empty list or `*` admits every type, `role:<name>` a type that plays it, a type id that type and every type beneath it. `None` where only the unreadable part of the chain would tell.
     pub fn admitted_by(&self, constraints: &[String]) -> Option<bool> {
         let admitted = constraints.is_empty()
             || constraints.iter().any(|allowed| {
@@ -846,7 +775,6 @@ impl Lineage {
     }
 }
 
-/// `None` for a type `held` does not hold.
 pub fn lineage_of(held: &HashMap<String, Map<String, Value>>, id: &str) -> Option<Lineage> {
     if !held.contains_key(id) {
         return None;
@@ -864,8 +792,7 @@ pub fn lineage_of(held: &HashMap<String, Map<String, Value>>, id: &str) -> Optio
             lineage.whole = false;
             break;
         }
-        // A parent the copy does not hold is still an ancestor a type
-        // constraint can name.
+        // A parent the copy does not hold is still an ancestor a type constraint can name.
         lineage.ancestors.push(at.to_string());
         let Some(row) = held.get(at) else {
             lineage.whole = false;
@@ -881,38 +808,30 @@ pub fn lineage_of(held: &HashMap<String, Map<String, Value>>, id: &str) -> Optio
     Some(lineage)
 }
 
-/// The four properties search reads whether or not a type declares them,
-/// as the server's index does. A thumbnail may not take one of these names.
+/// The four properties search reads whether or not a type declares them. A thumbnail may not take one of these names.
 pub const CORE_TEXT_FIELDS: [&str; 4] = ["title", "body", "description", "name"];
 
-/// What the local index reads from an item's properties: the server's rule,
-/// which `search-and-filters.md` states.
+/// What the local index reads from an item's properties.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Indexing {
-    /// Core properties the type declares as strings and marks
-    /// `searchable: false`.
+    /// Core properties declared as strings and marked `searchable: false`.
     pub opted_out: Vec<String>,
-    /// The string properties the type declares or inherits beyond the core
-    /// four, not marked `searchable: false`, in name order.
+    /// Other declared or inherited string properties not marked `searchable: false`, in name order.
     pub extra: Vec<String>,
 }
 
-/// The server's type catalog as last hydrated, answering the same subtree
-/// question `?type=` answers on the server: exact name, dotted-name
-/// descendant, or a type whose declared parent chain reaches the root.
+/// The type catalog as last hydrated, answering the subtree question `?type=` answers: exact name, dotted-name descendant, or a type whose declared parent chain reaches the root.
 #[derive(Debug)]
 pub struct Catalog {
     entries: HashMap<String, CatalogEntry>,
-    /// What the root last said a request may carry, which a write is held to
-    /// as a field is held to its type.
+    /// What the root last said a request may carry; a write is held to it.
     request_limit: Option<usize>,
 }
 
 const MAX_PARENT_WALK: usize = 64;
 
 impl Catalog {
-    /// A catalog that declares no type, where every type reads its title and
-    /// body from the default properties.
+    /// A catalog that declares no type: every type reads its title and body from the default properties.
     pub fn empty() -> Catalog {
         Catalog {
             entries: HashMap::new(),
@@ -920,8 +839,6 @@ impl Catalog {
         }
     }
 
-    /// A catalog of the entries by type id, and the request limit the root last
-    /// said.
     pub fn new(entries: HashMap<String, CatalogEntry>, request_limit: Option<usize>) -> Catalog {
         Catalog {
             entries,
@@ -929,7 +846,6 @@ impl Catalog {
         }
     }
 
-    /// A catalog of the types as a server lists them.
     pub fn from_wire(types: &[WireType], request_limit: Option<usize>) -> Catalog {
         Catalog::new(
             types
@@ -944,11 +860,7 @@ impl Catalog {
         self.request_limit
     }
 
-    /// Refuses `properties` where the server would refuse them as an item
-    /// of `type_id`, `complete` where they are the whole item. A status word
-    /// is judged only where the write itself sets it, so this is for
-    /// properties a write names; `validate_merged` judges the item a write
-    /// leaves.
+    /// Refuses `properties` as an item of `type_id`, `complete` where they are the whole item. A status word is judged only where the write sets it; `validate_merged` judges the item a write leaves.
     pub fn validate_properties(
         &self,
         type_id: &str,
@@ -958,10 +870,7 @@ impl Catalog {
         self.validate_merged(type_id, properties, complete, properties)
     }
 
-    /// Refuses `properties` where the server would, judging a status word
-    /// only where `written`, the properties the write changes, sets it: a
-    /// stored word the type does not declare does not refuse a write that
-    /// leaves it alone or sends it back unchanged.
+    /// A status word is judged only where `written`, the properties the write changes, sets it: a stored word the type does not declare does not refuse a write that leaves it alone or sends it back unchanged.
     pub fn validate_merged(
         &self,
         type_id: &str,
@@ -1021,8 +930,7 @@ impl Catalog {
         Ok(())
     }
 
-    /// The fields `type_id` declares and inherits, merged root to leaf as the
-    /// server merges them. A type the copy does not hold declares none.
+    /// Merged root to leaf. A type the copy does not hold declares none.
     pub fn resolved(&self, type_id: &str) -> Result<Map<String, Value>, RuleError> {
         let mut chain = Vec::new();
         let mut current = Some(type_id);
@@ -1048,8 +956,7 @@ impl Catalog {
         Ok(fields)
     }
 
-    /// Each held type that resolves to a status field, with the field. A type
-    /// whose chain cannot be resolved has none.
+    /// A type whose chain cannot be resolved has none.
     pub fn status_fields(&self) -> Vec<StatusField> {
         let mut fields: Vec<StatusField> = self
             .entries
@@ -1060,9 +967,7 @@ impl Catalog {
         fields
     }
 
-    /// A create's properties as the server holds them: a null on a field
-    /// the type declares and does not require is dropped, and one on a
-    /// property it does not declare is kept (`items/create-null-optional`).
+    /// A null on a field the type declares and does not require is dropped; one on an undeclared property is kept.
     pub fn created_properties(
         &self,
         type_id: &str,
@@ -1084,10 +989,7 @@ impl Catalog {
             .collect()
     }
 
-    /// The properties as the server keeps them: a `url` field, an array of
-    /// `url` elements and a `url` member of a list's entries hold the trimmed
-    /// address (`types/url-stored`). A value the field would refuse is left
-    /// for the validation to name.
+    /// A `url` field, an array of `url` elements and a `url` list member hold the trimmed address. A value the field would refuse is left for validation to name.
     pub fn coerced_properties(
         &self,
         type_id: &str,
@@ -1154,7 +1056,6 @@ impl Catalog {
             .collect()
     }
 
-    /// Whether `type_id` declares or inherits `name` as a required field.
     pub fn requires(&self, type_id: &str, name: &str) -> bool {
         self.resolved(type_id)
             .ok()
@@ -1166,8 +1067,7 @@ impl Catalog {
         definition.get("required").and_then(Value::as_bool) == Some(true)
     }
 
-    /// Match the server's null rule in the local projection; the queued
-    /// request stays unchanged so the server validates what the caller sent.
+    /// Applies the null rule to the local projection; the queued request stays unchanged so the server validates what the caller sent.
     pub fn projected_properties(
         &self,
         type_id: &str,
@@ -1191,11 +1091,7 @@ impl Catalog {
             .collect()
     }
 
-    /// A create's properties in the order the server answers them
-    /// (`items/property-order-create`): the fields the type declares, in the
-    /// order a read of the type lists them, its parent's before its own and a
-    /// field declared again keeping the place it first took, then the rest as
-    /// given.
+    /// The fields the type declares come first, in the order a read of the type lists them (parent's before its own; a redeclared field keeps its first place), then the rest as given.
     pub fn in_answer_order(
         &self,
         type_id: &str,
@@ -1244,7 +1140,6 @@ impl Catalog {
         self.descends_from(actual, root)
     }
 
-    /// Every type under `root`, by its name or by declared parentage.
     pub fn descendants<'a>(&'a self, root: &'a str) -> impl Iterator<Item = &'a str> {
         self.entries
             .keys()
@@ -1267,54 +1162,42 @@ impl Catalog {
         ids
     }
 
-    /// A create of a type the catalog does not know is refused `400 unknown_type`
-    /// by the server, after the caller was told it was queued, so it is checked
-    /// here first.
+    /// The server refuses a create of an unknown type with `400 unknown_type` after the caller was told it was queued, so it is checked here first.
     pub fn known(&self, type_id: &str) -> bool {
         self.entries.contains_key(type_id)
     }
 
-    /// From the nearest type that sets a title field, as `GET /types/{id}`
-    /// resolves it: each display hint is inherited on its own, so a subtype
-    /// naming only its body keeps its parent's title.
+    /// Each display hint is inherited on its own, so a subtype naming only its body keeps its parent's title.
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
         self.nearest(type_id, |entry| entry.title_field.as_deref())
     }
 
-    /// Whether an item of the type with no title is named by its body, from
-    /// the nearest type that says, and true where none does.
+    /// True where no type says.
     pub fn name_from_body(&self, type_id: &str) -> bool {
         self.nearest(type_id, |entry| entry.name_from_body)
             .unwrap_or(true)
     }
 
-    /// The property a type's text lives in, from the nearest type that sets
-    /// one.
     pub fn body_field(&self, type_id: &str) -> Option<&str> {
         self.nearest(type_id, |entry| entry.body_field.as_deref())
     }
 
-    /// The icon ID of the nearest type that sets one. The catalog holds
-    /// the owner's choice for a type in that type's place, so it is this
-    /// icon where a type has one and is inherited like any other.
+    /// The catalog holds the owner's choice in the type's own place, so it is inherited like any other.
     pub fn icon(&self, type_id: &str) -> Option<&str> {
         self.nearest(type_id, |entry| entry.icon.as_deref())
     }
 
-    /// The property an item of the type is titled by: its hints' title field,
-    /// or `title` where they name none (`folders/title-property`).
+    /// Its hints' title field, or `title`.
     pub fn title_property(&self, type_id: &str) -> &str {
         self.title_field(type_id).unwrap_or(TITLE_PROPERTY)
     }
 
-    /// The property an item of the type keeps its text in: its hints' body
-    /// field, or `body` where they name none (`folders/body-property`).
+    /// Its hints' body field, or `body`.
     pub fn body_property(&self, type_id: &str) -> &str {
         self.body_field(type_id).unwrap_or(BODY_PROPERTY)
     }
 
-    /// The text properties hold under the title and body properties of
-    /// `type_id`; a value that is not a string shows as none.
+    /// A value that is not a string shows as none.
     pub fn title_and_body(
         &self,
         type_id: &str,
@@ -1332,7 +1215,6 @@ impl Catalog {
         )
     }
 
-    /// The name and preview an item of `type_id` with these properties shows.
     pub fn display(&self, type_id: &str, properties: &Map<String, Value>) -> ItemDisplay {
         crate::display::display(
             properties,
@@ -1342,22 +1224,18 @@ impl Catalog {
         )
     }
 
-    /// Every type the copy holds, with the properties each declares itself.
     pub fn declared(&self) -> impl Iterator<Item = (&str, &[String])> {
         self.entries
             .iter()
             .map(|(id, entry)| (id.as_str(), entry.fields.as_slice()))
     }
 
-    /// The thumbnail a type carries, its own or the one it inherits: the
-    /// server's `GET /types` answers each type as declared, not resolved.
+    /// Its own or inherited; the listing answers each type as declared, not resolved.
     pub fn thumbnail_field(&self, type_id: &str) -> Option<&str> {
         self.nearest(type_id, |entry| entry.thumbnail_field.as_deref())
     }
 
-    /// A type the catalog does not hold, or one whose parent it does not,
-    /// resolves as far as the catalog reaches: a row of an unknown type
-    /// contributes its core properties alone.
+    /// A type the catalog does not hold, or one whose parent it does not, resolves as far as the catalog reaches; an unknown type contributes its core properties alone.
     pub fn indexing(&self, type_id: &str) -> Indexing {
         let mut chain: Vec<&CatalogEntry> = Vec::new();
         let mut current = type_id;
@@ -1394,8 +1272,7 @@ impl Catalog {
                 indexing.extra.push(name.clone());
             }
         }
-        // In name order, the server's: a phrase that crosses two fields
-        // then matches on both or on neither.
+        // Name order, so a phrase that crosses two fields matches on both or on neither.
         indexing.extra.sort();
         indexing
     }
@@ -1463,8 +1340,6 @@ mod tests {
         }
     }
 
-    /// A catalog of `parent`, naming `parent_body` as its body, and `child`
-    /// beneath it, naming `child_body` where it names one.
     fn with_bodies(parent_body: Option<&str>, child_body: Option<&str>) -> Catalog {
         let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
         let parent = catalog.entries.get_mut("parent").unwrap();
@@ -1480,7 +1355,6 @@ mod tests {
         catalog
     }
 
-    /// The field named by a refusal, or `None` where the value is taken.
     fn refused_field(
         catalog: &Catalog,
         type_id: &str,
@@ -1667,8 +1541,6 @@ mod tests {
 
     #[test]
     fn a_create_is_held_in_the_order_the_server_answers_it() {
-        // The server answers this create `zeta, alpha, mid, beta, extra1,
-        // extra0`.
         let types = held(serde_json::json!([
             { "id": "acme.parent",
               "fields": { "zeta": { "type": "string" }, "alpha": { "type": "string" } } },
@@ -1827,9 +1699,6 @@ mod tests {
                 extra: vec!["blurb".into()],
             }
         );
-        // The nearer declaration replaces the farther and keeps its place:
-        // `secret` is searchable again, `blurb` is not, and the display hint
-        // that named `blurb` the title changes nothing.
         assert_eq!(
             catalog.indexing("acme.leaf"),
             Indexing {

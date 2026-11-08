@@ -1,17 +1,10 @@
-//! Where the `url` crate and the WHATWG URL standard part on the authority of
-//! a URL, which the server judges as the standard does.
+//! Where the `url` crate and the WHATWG URL standard part on a URL's authority.
 //!
-//! The crate refuses a host that is ASCII once percent-decoded and has an
-//! `xn--` label that is not Punycode. The standard lowercases such a host and
-//! does not judge its labels. The crate takes two authorities of a scheme that
-//! is not special that the standard refuses: an empty host after credentials,
-//! and a port followed by a backslash.
+//! The crate refuses a host that is ASCII once percent-decoded and has an `xn--` label that is not Punycode; the standard lowercases such a host and does not judge its labels. The crate takes two authorities of a non-special scheme that the standard refuses: an empty host after credentials, and a port followed by a backslash.
 
 const SPECIAL: [&str; 5] = ["http", "https", "ftp", "ws", "wss"];
 
-/// Whether `text`, which `url::Url::parse` refuses, is refused only because of
-/// an ASCII host with an `xn--` label: the URL is judged again with that host
-/// replaced by a plain one.
+/// Whether `text`, which `url::Url::parse` refuses, is refused only because of an ASCII host with an `xn--` label: it is judged again with that host replaced by a plain one.
 pub fn ascii_host_is_taken(text: &str) -> bool {
     let text = text.trim_matches(|ch: char| ch <= ' ');
     let Some((span, host)) = host_span(text) else {
@@ -33,9 +26,7 @@ pub fn ascii_host_is_taken(text: &str) -> bool {
     url::Url::parse(&replaced).is_ok()
 }
 
-/// Where the host sits in `text`, and the host as written, for a special
-/// scheme with a domain host. Tabs and line breaks are already gone from
-/// `text`.
+/// The host's span in `text` and the host as written, for a special scheme with a domain host. Tabs and line breaks are already gone from `text`.
 fn host_span(text: &str) -> Option<((usize, usize), &str)> {
     let colon = text.find(':')?;
     let scheme = &text[..colon];
@@ -81,7 +72,6 @@ fn host_span(text: &str) -> Option<((usize, usize), &str)> {
     (start < end).then(|| ((start, end), &text[start..end]))
 }
 
-/// The host percent-decoded, where that is ASCII.
 fn ascii_host(host: &str) -> Option<String> {
     let bytes = host.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -109,7 +99,6 @@ fn ascii_host(host: &str) -> Option<String> {
         .flatten()
 }
 
-/// Whether the standard refuses the decoded host for a code point in it.
 fn forbidden(host: &str) -> bool {
     host.bytes().any(|b| {
         b <= b' '
@@ -132,8 +121,7 @@ fn forbidden(host: &str) -> bool {
     })
 }
 
-/// Whether the standard reads the host as an IPv4 address, which an `xn--`
-/// label never is, so the host is refused.
+/// An `xn--` label is never a number, so such a host is refused.
 fn ends_in_a_number(host: &str) -> bool {
     let mut labels: Vec<&str> = host.split('.').collect();
     if labels.last() == Some(&"") && labels.len() > 1 {
@@ -147,8 +135,6 @@ fn ends_in_a_number(host: &str) -> bool {
     !last.is_empty() && (last.bytes().all(|b| b.is_ascii_digit()) || hex)
 }
 
-/// Whether `text`, which `url::Url::parse` takes, has an authority that the
-/// standard refuses.
 pub fn authority_is_refused(text: &str) -> bool {
     let text = text.trim_matches(|ch: char| ch <= ' ');
     let Some((scheme, rest)) = text.split_once(':') else {

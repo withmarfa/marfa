@@ -1,21 +1,15 @@
-//! Marfa holds a number as a 64-bit float and serves it as JavaScript prints
-//! it: the shortest digits that name the float. A whole number written with
-//! other digits would come back as a different number, so it is kept only
-//! when its digits are the ones JavaScript prints for the float it parses to.
-//! A number with a fraction or an exponent names a float, not digits, and is
-//! never judged.
+//! A whole number is kept only when its digits are the ones the float it parses to prints as.
+//! A number with a fraction or an exponent names a float, not digits, and is never judged.
 
 use serde_json::{Map, Value};
 
 use crate::error::{Code, FieldError, RuleError, field_code};
 use crate::js;
 
-/// Fewest digits a whole number can have and still be beyond a float's exact
-/// range, 2^53.
+/// Fewest digits a whole number can have and still be beyond a float's exact range, 2^53.
 const MIN_DIGITS: usize = 16;
 
-/// The digits JavaScript prints for the float the whole number `source`
-/// (optional minus, then digits) rounds to, where it is finite.
+/// The digits the float that `source` rounds to prints as, where it is finite.
 fn served_as(source: &str) -> Option<String> {
     source
         .parse::<f64>()
@@ -24,9 +18,7 @@ fn served_as(source: &str) -> Option<String> {
         .map(js::number)
 }
 
-/// Whether the whole number written as `source` is served back with the
-/// digits it was written with. Every safe integer is but `-0`, which is served
-/// as `0`.
+/// Every safe integer is kept except `-0`, which is served as `0`.
 pub fn kept(source: &str) -> bool {
     if source == "-0" {
         return false;
@@ -35,8 +27,6 @@ pub fn kept(source: &str) -> bool {
     digits.len() < MIN_DIGITS || served_as(source).is_some_and(|served| served == source)
 }
 
-/// What a write is told of a whole number that is not kept as written: the
-/// digits the float would be served as, where it has any.
 fn message(source: &str) -> String {
     let kept = served_as(source).map_or_else(String::new, |served| {
         format!(", which it serves as {served}")
@@ -46,7 +36,6 @@ fn message(source: &str) -> String {
     )
 }
 
-/// What a write is told of the whole number `source` at `path`.
 pub fn refusal_message(path: &[String], source: &str) -> String {
     format!("{}: {}", path.join("."), message(source))
 }
@@ -57,10 +46,7 @@ fn refusal(path: &[String], source: &str) -> RuleError {
     ])
 }
 
-/// Refuses the first whole number in the properties that a float would
-/// change, at any depth. A number the parse already rounded (one beyond 64
-/// bits, from text) cannot be told here; the text is read by
-/// [`refuse_inexact_integers`].
+/// A number the parse already rounded (beyond 64 bits) is not seen here; see [`refuse_inexact_integers`].
 pub fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), RuleError> {
     let mut stack: Vec<(Vec<String>, &Value)> = properties
         .iter()
@@ -95,10 +81,7 @@ pub fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), RuleError>
     Ok(())
 }
 
-/// Refuses the first whole number in `text`, a JSON object of properties,
-/// that a float would change, read as written: a number beyond 64 bits is
-/// already a float once parsed. Text that is not JSON is left to the caller's
-/// own parse.
+/// Reads `text` as written, since a number beyond 64 bits is already a float once parsed. Text that is not JSON is left to the caller's parse.
 pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
     match inexact_integers(text, None, true).into_iter().next() {
         Some((path, source)) => Err(refusal(&path, &source)),
@@ -106,9 +89,7 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
     }
 }
 
-/// Refuses each whole number that a float would change in the member `bag` of
-/// `text`, a JSON object, or in all of it where `bag` is `None`. A path is
-/// named from inside the bag.
+/// A path is named from inside the bag; `bag` of `None` covers the whole object.
 pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), RuleError> {
     let found = inexact_integers(text, bag, false);
     if found.is_empty() {
@@ -117,9 +98,7 @@ pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), R
     Err(inexact_refusal(&found))
 }
 
-/// The first entry of the array `list` of `text`, a JSON object, whose member
-/// `bag` holds a whole number a float would change, and its refusal. A path is
-/// named from inside the bag.
+/// A path is named from inside the bag.
 pub fn inexact_entry(text: &str, list: &str, bag: &str) -> Option<(usize, RuleError)> {
     inexact_integers(text, None, false)
         .into_iter()
@@ -162,8 +141,6 @@ fn inexact_integers(text: &str, bag: Option<&str>, first: bool) -> Vec<(Vec<Stri
     {
         return found;
     }
-    // One frame per open container: an object's current member name, or an
-    // array's current index.
     let mut frames: Vec<(bool, String)> = Vec::new();
     let mut expecting_key = false;
     let mut at = 0;

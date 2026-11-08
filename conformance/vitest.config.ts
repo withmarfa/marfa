@@ -1,9 +1,19 @@
 import "dotenv/config";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { ciReporters, ciRetry, silenceTelemetry } from "../vitest.shared.js";
+import { withoutRustJudged } from "./src/utils/rust-judged.js";
 import WeightedShards from "./src/utils/shard-sequencer.js";
 
 silenceTelemetry();
+
+// The files the Rust server judges, which a run against the TypeScript server
+// leaves out (`src/utils/rust-judged.ts`).
+const rustJudged = withoutRustJudged();
+const exclude = (...own: string[]) => [
+  ...configDefaults.exclude,
+  ...own,
+  ...rustJudged,
+];
 
 export default defineConfig({
   test: {
@@ -39,6 +49,7 @@ export default defineConfig({
           name: "correctness",
           ...ciRetry,
           include: ["src/suites/correctness/**/*.test.ts"],
+          exclude: exclude(),
           // Budgeted for the heavy bodies rather than the typical one: 100+
           // edge hydration and pagination, and archive operations, run slowly
           // under the sustained load of a full serial run. Every file also
@@ -62,6 +73,7 @@ export default defineConfig({
           name: "compliance",
           ...ciRetry,
           include: ["src/suites/compliance/**/*.test.ts"],
+          exclude: exclude(),
           setupFiles: ["src/utils/fresh-server-teardown.ts"],
           // Matches correctness, for the same reasons: archive, bulk and
           // export bodies are slow under full-run load, and every file pays
@@ -80,7 +92,7 @@ export default defineConfig({
           ...ciRetry,
           include: ["src/suites/sync/**/*.test.ts"],
           // Runs in the no-network lane instead; see the generators project.
-          exclude: ["src/suites/sync/**/*.decision.test.ts"],
+          exclude: exclude("src/suites/sync/**/*.decision.test.ts"),
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
@@ -95,7 +107,7 @@ export default defineConfig({
           include: ["src/suites/device/**/*.test.ts"],
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
           // Runs in the no-network lane instead; see the generators project.
-          exclude: ["src/suites/device/**/*.decision.test.ts"],
+          exclude: exclude("src/suites/device/**/*.decision.test.ts"),
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
@@ -108,6 +120,7 @@ export default defineConfig({
           name: "cli",
           ...ciRetry,
           include: ["src/suites/cli/**/*.test.ts"],
+          exclude: exclude(),
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,

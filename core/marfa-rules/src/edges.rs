@@ -1,7 +1,5 @@
-//! The rules of the edge graph: what an edge write may leave, and what a bin
-//! takes. They read the graph through [`Graph`], so a store judges them on
-//! the state its transaction holds, and they never recurse: stored data can
-//! hold a cycle or a chain of any depth.
+//! Rules of the edge graph, read through [`Graph`] so a store judges them on its transaction's state.
+//! They never recurse: stored data can hold a cycle or a chain of any depth.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -9,7 +7,6 @@ use serde_json::{Map, Value, json};
 
 use crate::catalog::{EdgeType, End};
 
-/// What deleting one end of an edge does to the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnDelete {
     Orphan,
@@ -19,8 +16,7 @@ pub enum OnDelete {
 }
 
 impl OnDelete {
-    /// The behavior a stored word names. A type no longer registered holds
-    /// nothing back and takes nothing with it.
+    /// A type no longer registered holds nothing back and takes nothing with it.
     pub fn of(word: Option<&str>) -> OnDelete {
         match word {
             Some("cascade") => OnDelete::Cascade,
@@ -31,7 +27,6 @@ impl OnDelete {
     }
 }
 
-/// An edge as the graph holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub id: String,
@@ -40,47 +35,38 @@ pub struct Link {
     pub target: String,
 }
 
-/// The graph as a store holds it now.
 pub trait Graph {
     type Error;
 
-    /// The edges leaving `id`, whatever their types.
     fn outbound(&self, id: &str) -> Result<Vec<Link>, Self::Error>;
-    /// The edges arriving at `id`, whatever their types.
     fn inbound(&self, id: &str) -> Result<Vec<Link>, Self::Error>;
-    /// The id of the edge holding this triple.
     fn triple(
         &self,
         source: &str,
         target: &str,
         edge_type: &str,
     ) -> Result<Option<String>, Self::Error>;
-    /// Whether `id` is a row in the bin. A row the store does not hold is not.
+    /// A row the store does not hold is not in the bin.
     fn in_bin(&self, id: &str) -> Result<bool, Self::Error>;
-    /// Whether the store holds a row for `id`.
     fn holds(&self, id: &str) -> Result<bool, Self::Error>;
     fn on_delete(&self, edge_type: &str) -> OnDelete;
 }
 
-/// An edge as a write would leave it.
 #[derive(Debug, Clone, Copy)]
 pub struct Proposed<'a> {
     pub edge_type: &'a str,
     pub source: &'a str,
     pub target: &'a str,
-    /// The stored edge this write moves, which counts for nothing against it.
     pub moving: Option<&'a str>,
 }
 
-/// The stored edge that already holds this triple, the moved edge aside.
 pub fn duplicate<G: Graph>(graph: &G, edge: &Proposed<'_>) -> Result<Option<String>, G::Error> {
     Ok(graph
         .triple(edge.source, edge.target, edge.edge_type)?
         .filter(|held| Some(held.as_str()) != edge.moving))
 }
 
-/// The end that would hold more edges of the type than its cardinality
-/// allows, the source judged first.
+/// The source is judged first.
 pub fn full_end<G: Graph>(
     graph: &G,
     edge_type: &EdgeType,
@@ -100,8 +86,6 @@ pub fn full_end<G: Graph>(
     Ok(None)
 }
 
-/// Whether the edge would close a cycle through edges whose types `follows`
-/// admits, the moved edge aside.
 pub fn closes_cycle<G: Graph>(
     graph: &G,
     edge: &Proposed<'_>,
@@ -125,27 +109,17 @@ pub fn closes_cycle<G: Graph>(
     Ok(false)
 }
 
-/// What moving the named rows to the bin together takes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Closure {
-    /// Every row reached, leaves first, each group together and its root last.
     pub ordered: Vec<String>,
-    /// The named row each reached row goes with.
     pub root_of: HashMap<String, String>,
-    /// What lies beneath each named row, leaves first. A row two named rows
-    /// share is beneath both.
+    /// A row two named rows share is beneath both.
     pub beneath: HashMap<String, Vec<String>>,
-    /// The rows taken as parts, which no cascading edge reached.
     pub with_hosts: HashSet<String>,
 }
 
-/// One closure over two rules, run until nothing new joins: the target of a
-/// cascading edge from a row in the set, and the source of a `with-hosts`
-/// edge once every host it holds is in the set or the bin. A named part is
-/// judged only once the set is known: where its hosts all go it goes beneath
-/// them, and where one stays it heads its own group. Rows already in the bin
-/// are walked through and stand in `ordered`; moving them is the caller's to
-/// skip.
+/// Runs until nothing new joins: cascade targets of rows in the set, and `with-hosts` sources once all their hosts are in the set or the bin.
+/// A named part goes beneath its hosts when they all go, else heads its own group. Rows already in the bin are walked and stand in `ordered`; the caller skips moving them.
 pub fn closure<G: Graph>(graph: &G, named: &[String]) -> Result<Closure, G::Error> {
     let mut roots = Vec::new();
     let mut named_once = HashSet::new();
@@ -180,14 +154,11 @@ pub fn closure<G: Graph>(graph: &G, named: &[String]) -> Result<Closure, G::Erro
     Ok(walk.settled(&roots))
 }
 
-/// One closure as it grows.
 struct Walk<'g, G> {
     graph: &'g G,
     set: HashSet<String>,
     cascaded: HashSet<String>,
-    /// Each row's children in the plan: its cascade targets and its parts.
     children: HashMap<String, Vec<String>>,
-    /// The sources of `with-hosts` edges into the set, with the hosts in it.
     candidates: BTreeMap<String, Vec<String>>,
     waiting: VecDeque<String>,
 }
@@ -221,7 +192,6 @@ impl<G: Graph> Walk<'_, G> {
         Ok(())
     }
 
-    /// The hosts of `part`, each once.
     fn hosts(&self, part: &str) -> Result<Vec<String>, G::Error> {
         let mut seen = HashSet::new();
         Ok(self
@@ -243,8 +213,7 @@ impl<G: Graph> Walk<'_, G> {
         Ok(true)
     }
 
-    /// The candidates whose hosts are now all in the set or the bin. One not
-    /// joining now may join once more of its hosts are in.
+    /// One not joining now may join once more of its hosts are in.
     fn joining_parts(&mut self) -> Result<Vec<String>, G::Error> {
         let pending: Vec<String> = self
             .candidates
@@ -281,7 +250,6 @@ impl<G: Graph> Walk<'_, G> {
         Ok(())
     }
 
-    /// Leaves first and `start` last.
     fn post_order(&self, start: &str, placed: &mut HashSet<String>) -> Vec<String> {
         let mut out = Vec::new();
         let mut stack = vec![(start.to_string(), 0)];
@@ -319,8 +287,7 @@ impl<G: Graph> Walk<'_, G> {
                 frontier.extend(self.children.get(id).into_iter().flatten());
             }
         }
-        // Roots no other root reaches lead; any left, such as the roots of a
-        // cycle, each head their own group.
+        // Roots no other root reaches lead; the rest (a cycle's roots) each head their own group.
         let (free, reached_roots): (Vec<&String>, Vec<&String>) =
             roots.iter().partition(|id| !reached.contains(id.as_str()));
         let mut closure = Closure::default();
@@ -349,7 +316,6 @@ impl<G: Graph> Walk<'_, G> {
     }
 }
 
-/// The block edges standing at either end of `rows`, each once.
 pub fn blocking<G: Graph>(graph: &G, rows: &[String]) -> Result<Vec<Link>, G::Error> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();
@@ -364,7 +330,6 @@ pub fn blocking<G: Graph>(graph: &G, rows: &[String]) -> Result<Vec<Link>, G::Er
     Ok(found)
 }
 
-/// Every row the cascading edges out of `start` reach, `start` aside.
 pub fn cascade_reach<G: Graph>(graph: &G, start: &str) -> Result<Vec<String>, G::Error> {
     let mut seen = HashSet::from([start.to_string()]);
     let mut waiting = vec![start.to_string()];
@@ -382,8 +347,7 @@ pub fn cascade_reach<G: Graph>(graph: &G, start: &str) -> Result<Vec<String>, G:
     Ok(reached)
 }
 
-/// How many names deep a path lies inside a folder, or none where it does
-/// not lie inside one.
+/// None where the path does not lie inside a folder.
 pub fn depth_inside_folder(path: &str) -> Option<usize> {
     let bytes = path.as_bytes();
     let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
@@ -401,7 +365,6 @@ pub fn depth_inside_folder(path: &str) -> Option<usize> {
     Some(depth)
 }
 
-/// A refusal of a graph rule: what the answer says, and what it names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Refused {
     pub message: String,
@@ -463,7 +426,6 @@ mod tests {
 
     use super::*;
 
-    /// (edge type, source, target), named `e<n>` by position.
     #[derive(Default)]
     struct Held {
         edges: Vec<(&'static str, String, String)>,

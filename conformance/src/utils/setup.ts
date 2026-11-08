@@ -541,6 +541,8 @@ export async function removeTrackedRegistrations(
   }
   const management = getManagementClient();
   const listed = await management.listConnectors();
+  // A server without the door holds no registration to remove.
+  if (listed.status === 404) return { kind, failed: 0, total: 0 };
   if (!listed.ok) {
     console.warn(
       `${kind} cleanup could not list registrations (status ${String(listed.status)}).`,
@@ -572,7 +574,7 @@ export function getOwnerClient(): MarfaClient {
   if (!key) {
     throw new Error(
       "MARFA_OWNER_COOKIE is required for direct owner fixtures. " +
-        "`pnpm marfa:up` writes it to its env file.",
+        "`pnpm marfa:up` writes it to its env file when the target has an owner sign-in.",
     );
   }
   return new MarfaClient({

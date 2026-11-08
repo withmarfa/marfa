@@ -48,6 +48,8 @@ const SHARDS: Job[] = [
 ];
 /** Every conformance job. The status check joins the shards only when all three groups run. */
 const CONFORMANCE: Job[] = [...OFFLINE, ...SHARDS, "conformance-statuses"];
+/** The fixtures run against the TypeScript server's shards and the Rust contract jobs. */
+const CONTRACT: Job[] = [...CONFORMANCE, "rust-contract"];
 const SERVER: Job[] = [
   "ci-sqlite",
   "workspace",
@@ -58,12 +60,17 @@ const SERVER: Job[] = [
   "image",
   "openapi-freshness",
 ];
-/** Only the device fixtures drive the `marfa` binary, so only they read the core. */
+/**
+ * Only the device fixtures drive the `marfa` binary, so only they read the
+ * core, and the Rust contract jobs build the binary for the device and CLI
+ * fixtures.
+ */
 const RUST_LINUX: Job[] = [
   "core-checks-linux",
   ...OFFLINE,
   "conformance-device",
   "cli-scenarios",
+  "rust-contract",
 ];
 /** The two jobs that run on a Mac, which a pull request runs only for what a Mac alone can break. */
 const MACOS: Job[] = ["core-checks", "core"];
@@ -158,14 +165,27 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", ...OFFLINE],
     ],
     [
-      "the error table, which a compliance fixture reads at run time",
+      "the error table, which a compliance fixture reads at run time and the Rust server embeds",
       ["conformance/spec/errors.md"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-compliance",
+        "core-checks-linux",
+        "rust-contract",
+      ],
     ],
     [
       "the coverage table, which a compliance fixture reads at run time",
       ["conformance/spec/coverage.md"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-compliance",
+        "rust-contract",
+      ],
     ],
     ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
     [
@@ -315,12 +335,19 @@ describe("what a change runs", () => {
         "core-checks-linux",
         "core",
         "conformance-device",
+        "rust-contract",
       ],
     ],
     [
       "the Node module's manifest, which its build reads",
       ["core/bindings/node/package.json"],
-      ["ci-sqlite", "core", "conformance-device", "version-fields"],
+      [
+        "ci-sqlite",
+        "core",
+        "conformance-device",
+        "rust-contract",
+        "version-fields",
+      ],
     ],
     [
       "the Node module's JavaScript",
@@ -334,7 +361,7 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         "core-checks-linux",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "cli-scenarios",
         "openapi-freshness",
         "clients-freshness",
@@ -343,7 +370,7 @@ describe("what a change runs", () => {
     [
       "a CLI scenario",
       ["conformance/src/suites/cli/folder.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "cli-scenarios"],
+      ["ci-sqlite", "workspace", ...OFFLINE, "cli-scenarios", "rust-contract"],
     ],
     [
       "the CLI harness, which a device fixture imports",
@@ -354,6 +381,7 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "conformance-device",
         "cli-scenarios",
+        "rust-contract",
       ],
     ],
     [
@@ -365,6 +393,7 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "conformance-device",
         "cli-scenarios",
+        "rust-contract",
       ],
     ],
     [
@@ -379,6 +408,7 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "conformance-device",
         "cli-scenarios",
+        "rust-contract",
       ],
     ],
     [
@@ -403,7 +433,7 @@ describe("what a change runs", () => {
       [
         "ci-sqlite",
         "workspace",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
@@ -412,12 +442,24 @@ describe("what a change runs", () => {
     [
       "a device fixture",
       ["conformance/src/suites/device/folders.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-device"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-device",
+        "rust-contract",
+      ],
     ],
     [
       "the helpers the folder fixtures share",
       ["conformance/src/suites/device/folders.shared.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-device"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-device",
+        "rust-contract",
+      ],
     ],
     [
       "the item names and previews the server and the core share",
@@ -429,6 +471,7 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "conformance-compliance",
         "conformance-device",
+        "rust-contract",
       ],
     ],
     [
@@ -439,22 +482,46 @@ describe("what a change runs", () => {
     [
       "the name fold the server and the core share",
       ["conformance/fixtures/name-fold.json"],
-      ["ci-sqlite", "workspace", "core-checks-linux", "conformance-compliance"],
+      [
+        "ci-sqlite",
+        "workspace",
+        "core-checks-linux",
+        "conformance-compliance",
+        "rust-contract",
+      ],
     ],
     [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-compliance",
+        "rust-contract",
+      ],
     ],
     [
       "a correctness fixture",
       ["conformance/src/suites/correctness/items.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-correctness-sync"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-correctness-sync",
+        "rust-contract",
+      ],
     ],
     [
       "a sync fixture",
       ["conformance/src/suites/sync/streams.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-correctness-sync"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-correctness-sync",
+        "rust-contract",
+      ],
     ],
     [
       "a suite off the gate",
@@ -468,7 +535,14 @@ describe("what a change runs", () => {
     [
       "a suite folder no rule names",
       ["conformance/src/suites/new/items.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, ...SHARDS, "conformance-statuses"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        ...SHARDS,
+        "conformance-statuses",
+        "rust-contract",
+      ],
     ],
     [
       "fixtures of two groups, which together reach no more than their own",
@@ -482,6 +556,7 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "conformance-compliance",
         "conformance-device",
+        "rust-contract",
       ],
     ],
     [
@@ -491,7 +566,7 @@ describe("what a change runs", () => {
         "conformance/src/suites/device/folders.test.ts",
         "conformance/src/suites/sync/streams.test.ts",
       ],
-      ["ci-sqlite", "workspace", ...CONFORMANCE],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "what every fixture uses",
@@ -499,7 +574,7 @@ describe("what a change runs", () => {
       [
         "ci-sqlite",
         "workspace",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
@@ -514,7 +589,7 @@ describe("what a change runs", () => {
       [
         "ci-sqlite",
         "workspace",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
@@ -526,7 +601,7 @@ describe("what a change runs", () => {
       [
         "ci-sqlite",
         "workspace",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
@@ -602,7 +677,7 @@ describe("what a change runs", () => {
       [
         "ci-sqlite",
         "workspace",
-        ...CONFORMANCE,
+        ...CONTRACT,
         "mcp-conformance",
         "cli-scenarios",
         "restore-drill",
@@ -684,7 +759,28 @@ describe("what a change runs", () => {
         "mcp-conformance",
         "image",
         "core",
+        "rust-contract",
       ],
+    ],
+    [
+      "the Rust server alone",
+      ["core/marfa-server/src/lib.rs", "core/marfa-server/tests/config.rs"],
+      ["ci-sqlite", "core-checks-linux", "rust-contract"],
+    ],
+    [
+      "the Rust server's manifest",
+      ["core/marfa-server/Cargo.toml"],
+      ["ci-sqlite", "core-checks-linux", "rust-contract", "version-fields"],
+    ],
+    [
+      "an icon set the rules crate embeds",
+      ["packages/types/generated/icon-set-lucide.json"],
+      [...SERVER, "types-freshness", "clients-freshness", ...RUST],
+    ],
+    [
+      "the score script",
+      ["conformance/scripts/rust-score.ts"],
+      ["ci-sqlite", "workspace", "conformance-offline", "rust-contract"],
     ],
     [
       "an empty change, which cannot be told apart from an unread one",
@@ -693,6 +789,57 @@ describe("what a change runs", () => {
     ],
   ])("%s", (_, paths, expected) => {
     expect(runs(paths)).toEqual(JOBS.filter((job) => expected.includes(job)));
+  });
+
+  it("leaves the Rust contract jobs out of a change to a package but for the files the Rust server embeds", () => {
+    const embedded = tracked().filter((path) =>
+      /^packages\/types\/generated\/icon-set-[\w-]+\.json$/.test(path),
+    );
+    // The witness: there are icon sets, and a change to one reaches the jobs.
+    expect(embedded.length).toBeGreaterThan(0);
+    for (const path of embedded) {
+      expect(runs([path]), path).toContain("rust-contract");
+    }
+    const packages = tracked().filter(
+      (path) => path.startsWith("packages/") && !embedded.includes(path),
+    );
+    expect(packages.length).toBeGreaterThan(0);
+    for (const path of packages) {
+      expect(runs([path]), path).not.toContain("rust-contract");
+    }
+  });
+
+  it("reaches the Rust contract jobs from every file outside core/ that the Rust crates embed", () => {
+    // `include_str!` and `include_bytes!` read a file at build time, so a
+    // change to it changes the program the jobs judge.
+    const outside: string[] = [];
+    for (const path of tracked().filter(
+      (file) => file.startsWith("core/") && file.endsWith(".rs"),
+    )) {
+      // Test code is not in the program the jobs judge.
+      if (
+        /^core\/(marfa-cli|bindings)\//.test(path) ||
+        /(^|\/)(tests|benches)\//.test(path) ||
+        /(^|\/|_)tests\.rs$/.test(path)
+      ) {
+        continue;
+      }
+      const text = readFileSync(join(ROOT, path), "utf8");
+      for (const match of text.matchAll(
+        /include_(?:str|bytes)!\(\s*"([^"]+)"/g,
+      )) {
+        const target = relative(
+          ROOT,
+          resolve(ROOT, dirname(path), match[1] ?? ""),
+        );
+        if (!target.startsWith("core/")) outside.push(target);
+      }
+    }
+    // The witness: the scan finds the files, so an empty list is not blindness.
+    expect(outside).toContain("openapi.json");
+    for (const target of outside) {
+      expect(runs([target]), target).toContain("rust-contract");
+    }
   });
 
   it("names every tracked path in a rule, so only a new one runs everything", () => {
@@ -720,10 +867,24 @@ describe("what a change runs", () => {
     expect(markdown.length).toBeGreaterThan(0);
     for (const path of markdown) {
       if (path.startsWith("conformance/spec/")) {
+        const chapter = path.slice("conformance/spec/".length);
         expect(beyond(path), path).toEqual(
-          READ_AT_RUN_TIME.includes(path.slice("conformance/spec/".length))
-            ? ["workspace", "conformance-offline", "conformance-compliance"]
-            : ["workspace", "conformance-offline"],
+          chapter === "errors.md"
+            ? [
+                "workspace",
+                "conformance-offline",
+                "conformance-compliance",
+                "core-checks-linux",
+                "rust-contract",
+              ]
+            : READ_AT_RUN_TIME.includes(chapter)
+              ? [
+                  "workspace",
+                  "conformance-offline",
+                  "conformance-compliance",
+                  "rust-contract",
+                ]
+              : ["workspace", "conformance-offline"],
         );
       } else if (path === "core/marfa-cli/COMMANDS.md") {
         expect(beyond(path), path).toEqual(["core-checks-linux"]);
@@ -1195,6 +1356,10 @@ const NOT_CLASSIFIED = [
   "ci-sqlite-tests",
   "gate",
   "report-failure",
+  // The two jobs after the Rust server's build wait for it, and
+  // `ci/rust-contract.test.ts` pins them.
+  "rust-contract-shards",
+  "rust-contract-score",
   ...QUICK_JOBS,
   ...STOP_JOBS,
 ];
@@ -1227,7 +1392,7 @@ describe("each job reads its own answer", () => {
     for (const name of gated.filter((name) => name !== CONFORMANCE_SHARD_JOB)) {
       expect(jobs[name]?.needs, name).toEqual(
         name === "conformance-statuses"
-          ? ["changes", CONFORMANCE_SHARD_JOB]
+          ? ["changes", CONFORMANCE_SHARD_JOB, "rust-contract-shards"]
           : "changes",
       );
       expect(jobs[name]?.if, name).toBe(
