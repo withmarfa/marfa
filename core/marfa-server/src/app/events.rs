@@ -18,7 +18,7 @@ use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
 pub use frame::Filter;
-pub use stream::{Opening, PING, Viewer, Viewers, open};
+pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
 /// Refuses the first entry of a stream's `type` that is outside the grammar, names no type, or
 /// names one the caller may not read; each entry is judged as it is reached.

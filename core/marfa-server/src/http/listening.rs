@@ -19,7 +19,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream, unix};
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio::task::JoinSet;
 use tower::ServiceExt;
 
@@ -36,6 +36,17 @@ pub struct Peer(pub Option<IpAddr>);
 
 pub trait Source: Listener<Addr: Debug> {
     fn peer(address: &Self::Addr) -> Peer;
+}
+
+/// Closes the connection a request came in on. Ending a response body, with an error or not,
+/// cannot do it: hyper writes what it has queued first, and a peer that takes nothing never lets it finish.
+#[derive(Clone)]
+pub struct Hangup(Arc<Notify>);
+
+impl Hangup {
+    pub fn now(&self) {
+        self.0.notify_one();
+    }
 }
 
 /// A stop closes every connection with no request in flight, a partial head included, and
@@ -58,11 +69,13 @@ pub async fn serve<L: Source>(
         let peer = L::peer(&address);
         let router = router.clone();
         let asked = Arc::new(AtomicBool::new(false));
+        let hangup = Hangup(Arc::new(Notify::new()));
         let service = service_fn({
-            let asked = asked.clone();
+            let (asked, hangup) = (asked.clone(), hangup.clone());
             move |mut request: hyper::Request<Incoming>| {
                 asked.store(true, Ordering::Release);
                 request.extensions_mut().insert(ConnectInfo(peer));
+                request.extensions_mut().insert(hangup.clone());
                 router.clone().oneshot(request.map(Body::new))
             }
         });
@@ -84,6 +97,7 @@ pub async fn serve<L: Source>(
                         }
                         break;
                     }
+                    () = hangup.0.notified() => break,
                     _ = stopped.wait_for(|stopping| *stopping), if !told => {
                         // Hyper closes an idle connection at once, but keeps one
                         // whose first head is only partly read until the header
@@ -520,6 +534,169 @@ mod tests {
             .expect("the stop did not end once the request had")
             .unwrap()
             .unwrap();
+    }
+
+    struct Watched {
+        inner: TcpStream,
+        closed: mpsc::UnboundedSender<()>,
+    }
+
+    impl Drop for Watched {
+        fn drop(&mut self) {
+            let _ = self.closed.send(());
+        }
+    }
+
+    impl tokio::io::AsyncRead for Watched {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+        }
+    }
+
+    impl tokio::io::AsyncWrite for Watched {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<io::Result<usize>> {
+            std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
+    struct Watching {
+        tcp: Tcp,
+        closed: mpsc::UnboundedSender<()>,
+    }
+
+    impl Listener for Watching {
+        type Io = Watched;
+        type Addr = SocketAddr;
+
+        async fn accept(&mut self) -> (Watched, SocketAddr) {
+            let (inner, address) = self.tcp.accept().await;
+            (
+                Watched {
+                    inner,
+                    closed: self.closed.clone(),
+                },
+                address,
+            )
+        }
+
+        fn local_addr(&self) -> io::Result<SocketAddr> {
+            self.tcp.local_addr()
+        }
+    }
+
+    impl Source for Watching {
+        fn peer(address: &SocketAddr) -> Peer {
+            Tcp::peer(address)
+        }
+    }
+
+    struct Script(std::collections::VecDeque<std::result::Result<axum::body::Bytes, io::Error>>);
+
+    impl http_body::Body for Script {
+        type Data = axum::body::Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<std::result::Result<http_body::Frame<Self::Data>, io::Error>>>
+        {
+            std::task::Poll::Ready(
+                self.0
+                    .pop_front()
+                    .map(|next| next.map(http_body::Frame::data)),
+            )
+        }
+    }
+
+    /// More than the socket buffers and hyper's queue hold, so the connection is blocked writing it.
+    fn unread_body() -> Body {
+        let big = axum::body::Bytes::from(vec![b'x'; 8 << 20]);
+        Body::new(Script([Ok(big)].into()))
+    }
+
+    async fn hangs_up_later(Extension(hangup): Extension<Hangup>) -> axum::response::Response {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            hangup.now();
+        });
+        axum::response::Response::new(unread_body())
+    }
+
+    async fn serve_watched(
+        dir: &TempDir,
+        routes: Routes,
+        stop: oneshot::Receiver<()>,
+    ) -> (
+        u16,
+        tokio::task::JoinHandle<io::Result<()>>,
+        mpsc::UnboundedReceiver<()>,
+    ) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (closed, dropped) = mpsc::unbounded_channel();
+        let server = tokio::spawn(serve(
+            Watching {
+                tcp: Tcp::new(listener, "test"),
+                closed,
+            },
+            router_of(dir, "10.0.0.0/8", routes).await,
+            async move {
+                let _ = stop.await;
+            },
+            PUBLIC_HEADER_READ_TIMEOUT,
+        ));
+        (port, server, dropped)
+    }
+
+    async fn stalled_get(port: u16, path: &str) -> TcpStream {
+        let mut peer = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        peer.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        peer
+    }
+
+    #[tokio::test]
+    async fn a_handler_can_close_the_connection_of_a_peer_that_takes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let routes = Doors::new().route("/stream", get(hangs_up_later));
+        let (_stop, stopping) = oneshot::channel();
+        let (port, server, mut dropped) = serve_watched(&dir, routes, stopping).await;
+        let _peer = stalled_get(port, "/stream").await;
+
+        assert!(
+            timeout(Duration::from_millis(100), dropped.recv())
+                .await
+                .is_err(),
+            "the connection was closed before the handler asked"
+        );
+        timeout(Duration::from_secs(3), dropped.recv())
+            .await
+            .expect("the connection of a peer that reads nothing stayed open");
+        server.abort();
     }
 
     #[tokio::test]

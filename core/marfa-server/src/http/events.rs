@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use axum::Extension;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
@@ -15,6 +16,7 @@ use tokio::sync::mpsc;
 
 use super::answer::Answer;
 use super::items::invalid_field;
+use super::listening;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -25,7 +27,7 @@ use crate::settings::registry::SSE_MAX_VIEWERS;
 
 const DECLARED: [&str; 3] = ["type", "edges", "copy"];
 
-struct Feed(mpsc::Receiver<String>);
+struct Feed(mpsc::Receiver<Bytes>);
 
 impl http_body::Body for Feed {
     type Data = Bytes;
@@ -37,7 +39,7 @@ impl http_body::Body for Feed {
     ) -> Poll<Option<std::result::Result<Frame<Bytes>, Infallible>>> {
         self.0
             .poll_recv(cx)
-            .map(|text| text.map(|text| Ok(Frame::data(Bytes::from(text)))))
+            .map(|piece| piece.map(|piece| Ok(Frame::data(piece))))
     }
 }
 
@@ -106,6 +108,7 @@ fn at_capacity() -> Refusal {
 pub async fn open(
     State(app): State<Arc<App>>,
     caller: Caller,
+    hangup: Option<Extension<listening::Hangup>>,
     uri: Uri,
     headers: HeaderMap,
 ) -> Answer {
@@ -132,7 +135,13 @@ pub async fn open(
         .viewers
         .admit(app.settings.live().get(SSE_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
-    let feed = events::open(app, caller, Opening { filter, resume }, viewer);
+    let feed = events::open(
+        app,
+        caller,
+        Opening { filter, resume },
+        viewer,
+        hangup.map(|Extension(hangup)| -> events::Hangup { Box::new(move || hangup.now()) }),
+    );
     let mut response = Response::new(Body::new(Feed(feed)));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();

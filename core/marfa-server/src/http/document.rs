@@ -164,7 +164,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/endpoints",
     "GET /connectors/{id}/runs",
     "GET /connectors/{id}/state",
-    "GET /events",
     "GET /export",
     "GET /folders",
     "GET /folders/{id}/status",

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use axum::body::Bytes;
 use chrono::DateTime;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
@@ -24,6 +25,9 @@ use crate::app::refusal::{Code, Refusal, Result};
 pub const PING: Duration = Duration::from_secs(30);
 const PAGE_ROWS: usize = 200;
 const PAGE_BYTES: usize = 1 << 20;
+/// What the reader is handed at once. A reader's patience is measured per piece, so a slow reader
+/// that keeps taking pieces is never mistaken for one that has stopped, however large a page or a frame is.
+const PIECE_BYTES: usize = 64 * 1024;
 /// The closing frame of a stream whose reader has stopped reading is not waited for long.
 const CLOSING_SEND: Duration = Duration::from_secs(3);
 /// The credential is read again at least this soon before a key's `expires_at`.
@@ -57,18 +61,23 @@ impl Drop for Viewer {
     }
 }
 
+/// Closes the reader's connection.
+pub type Hangup = Box<dyn Fn() + Send + Sync>;
+
 pub struct Opening {
     pub filter: Filter,
     pub resume: Option<i64>,
 }
 
-/// The frames of a new stream, written as the reader takes them.
+/// The frames of a new stream, written as the reader takes them. A reader that stops taking them is
+/// let go, and `hangup` closes its connection.
 pub fn open(
     app: Arc<App>,
     caller: crate::app::access::Caller,
     opening: Opening,
     viewer: Viewer,
-) -> mpsc::Receiver<String> {
+    hangup: Option<Hangup>,
+) -> mpsc::Receiver<Bytes> {
     let (frames, feed) = mpsc::channel(1);
     let run = Run {
         stopping: app.stopping(),
@@ -78,8 +87,11 @@ pub fn open(
         filter: opening.filter,
         resume: opening.resume,
         frames,
+        hangup,
+        started: 0,
         position: 0,
         sent: None,
+        torn: false,
         last_output: Instant::now(),
         expiry: None,
         _viewer: viewer,
@@ -93,22 +105,35 @@ struct Run {
     caller: crate::app::access::Caller,
     filter: Filter,
     resume: Option<i64>,
-    frames: mpsc::Sender<String>,
+    frames: mpsc::Sender<Bytes>,
+    hangup: Option<Hangup>,
     stopping: watch::Receiver<bool>,
     commits: watch::Receiver<u64>,
+    /// The id the stream began after: the cursor the client sent, or the head when it sent none.
+    started: i64,
     /// The last id read, sent or not.
     position: i64,
-    /// The last id sent.
+    /// The last id whose whole frame was handed over.
     sent: Option<i64>,
+    /// Part of a frame was handed over and the rest was not, so nothing may follow it.
+    torn: bool,
     last_output: Instant,
     expiry: Option<Instant>,
     _viewer: Viewer,
 }
 
-/// Waits up to `patience` for the reader to take `text`. The channel holds one chunk, so a reader that
+/// Waits up to `patience` for the reader to take `piece`. The channel holds one piece, so a reader that
 /// stops reading holds back the next page's read, and is let go once it has taken nothing for `patience`.
-async fn hand_over(frames: &mpsc::Sender<String>, text: String, patience: Duration) -> bool {
-    matches!(timeout(patience, frames.send(text)).await, Ok(Ok(())))
+async fn hand_over(frames: &mpsc::Sender<Bytes>, piece: Bytes, patience: Duration) -> bool {
+    matches!(timeout(patience, frames.send(piece)).await, Ok(Ok(())))
+}
+
+/// How a handed-over piece ends.
+enum Tail {
+    /// At the end of a frame, which is the event `id` unless it is a marker or a ping.
+    Whole(Option<i64>),
+    /// Inside a frame.
+    Cut,
 }
 
 enum Ending {
@@ -119,8 +144,8 @@ enum Ending {
 
 #[derive(Default)]
 struct Page {
-    text: String,
-    last_sent: Option<i64>,
+    /// Each frame with the id of its event.
+    frames: Vec<(i64, String)>,
     position: i64,
     more: bool,
     oldest: Option<i64>,
@@ -156,6 +181,7 @@ fn read_page(
         filter,
     };
     let mut scanned = 0;
+    let mut bytes = 0;
     page::scan(read.tx, after, PAGE_ROWS, |entry| {
         scanned += 1;
         let Some(kind) = judge.wants(entry) else {
@@ -169,10 +195,10 @@ fn read_page(
         };
         match judge.render(entry, kind, &payload)? {
             Verdict::Send(text) => {
-                page.text.push_str(&text);
-                page.last_sent = Some(entry.id);
+                bytes += text.len();
+                page.frames.push((entry.id, text));
                 page.position = entry.id;
-                Ok(if page.text.len() >= PAGE_BYTES {
+                Ok(if bytes >= PAGE_BYTES {
                     Next::Stop
                 } else {
                     Next::Continue
@@ -197,8 +223,12 @@ fn read_page(
 
 impl Run {
     async fn drive(mut self) {
-        if let Err(Ending::Closing(text)) = self.run().await {
-            let _ = timeout(CLOSING_SEND, self.frames.send(text)).await;
+        if let Err(Ending::Closing(text)) = self.run().await
+            && timeout(CLOSING_SEND, self.frames.send(Bytes::from(text)))
+                .await
+                .is_err()
+        {
+            self.give_up();
         }
     }
 
@@ -272,9 +302,11 @@ impl Run {
         };
         self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
         let Some(cursor) = self.resume else {
+            self.started = bounds.head;
             self.position = bounds.head;
             return Ok(bounds.head);
         };
+        self.started = cursor;
         if cursor > bounds.head {
             return Err(ending(marker(
                 "cursor_ahead",
@@ -288,7 +320,7 @@ impl Run {
             .oldest
             .filter(|oldest| *oldest > cursor.saturating_add(1))
         {
-            return Err(self.too_old(oldest, cursor));
+            return Err(self.too_old(oldest));
         }
         self.position = cursor;
         Ok(bounds.head)
@@ -330,20 +362,16 @@ impl Run {
                 Instant::now() + wait.max(MIN_EXPIRY_WAIT)
             });
         if page.gap {
-            return Err(self.too_old(page.oldest.unwrap_or(after), after));
+            return Err(self.too_old(page.oldest.unwrap_or(after)));
         }
-        let text = std::mem::take(&mut page.text);
-        if !text.is_empty() {
-            self.send(text).await?;
-            self.sent = page.last_sent;
-        }
+        self.send_frames(std::mem::take(&mut page.frames)).await?;
         self.position = page.position;
         if let Some(id) = page.damaged {
             tracing::error!(
                 event_id = id,
                 "A logged event does not read, and ends the streams that reach it"
             );
-            return Err(self.too_old(id.saturating_add(1), id.saturating_sub(1)));
+            return Err(self.too_old(page.oldest.unwrap_or(id)));
         }
         Ok(page)
     }
@@ -356,11 +384,53 @@ impl Run {
     }
 
     async fn send(&mut self, text: String) -> std::result::Result<(), Ending> {
-        if hand_over(&self.frames, text, PING).await {
-            self.last_output = Instant::now();
-            return Ok(());
+        self.hand(text.into_bytes(), Tail::Whole(None)).await
+    }
+
+    async fn send_frames(&mut self, frames: Vec<(i64, String)>) -> std::result::Result<(), Ending> {
+        for (piece, tail) in pieces(frames) {
+            self.hand(piece, tail).await?;
         }
-        Err(Ending::Gone)
+        Ok(())
+    }
+
+    /// Hands one piece to the reader. A stop ends the wait, so a reader that takes nothing cannot hold
+    /// the stop back; a reader that takes nothing for a ping interval is let go.
+    async fn hand(&mut self, piece: Vec<u8>, tail: Tail) -> std::result::Result<(), Ending> {
+        let mut stopping = self.stopping.clone();
+        let handed = tokio::select! {
+            handed = hand_over(&self.frames, Bytes::from(piece), PING) => handed,
+            _ = stopping.wait_for(|stopping| *stopping) => {
+                return Err(if self.torn {
+                    self.give_up()
+                } else {
+                    self.incomplete("server_stopping")
+                });
+            }
+        };
+        if !handed {
+            return Err(self.give_up());
+        }
+        self.last_output = Instant::now();
+        match tail {
+            Tail::Whole(id) => {
+                self.torn = false;
+                if id.is_some() {
+                    self.sent = id;
+                }
+            }
+            Tail::Cut => self.torn = true,
+        }
+        Ok(())
+    }
+
+    /// Ends the stream without a closing frame and closes the reader's connection, which hyper
+    /// keeps open while the reader takes nothing.
+    fn give_up(&self) -> Ending {
+        if let Some(hangup) = &self.hangup {
+            hangup();
+        }
+        Ending::Gone
     }
 
     fn failure(&self, refusal: &Refusal) -> Ending {
@@ -379,15 +449,42 @@ impl Run {
         ))
     }
 
-    fn too_old(&self, oldest: i64, requested: i64) -> Ending {
+    /// `oldest` is the oldest id the log holds.
+    fn too_old(&self, oldest: i64) -> Ending {
         ending(marker(
             "catchup_too_old",
             vec![
                 ("min_retained_id", oldest.to_string().into()),
-                ("requested", requested.to_string().into()),
+                ("requested", self.started.to_string().into()),
             ],
         ))
     }
+}
+
+/// The frames of a page cut into pieces of at most `PIECE_BYTES`. A piece ends where a frame ends
+/// unless the frame is longer than a piece.
+fn pieces(frames: Vec<(i64, String)>) -> Vec<(Vec<u8>, Tail)> {
+    let mut out = Vec::new();
+    let mut piece: Vec<u8> = Vec::new();
+    let mut last = None;
+    for (id, text) in frames {
+        if !piece.is_empty() && piece.len() + text.len() > PIECE_BYTES {
+            out.push((std::mem::take(&mut piece), Tail::Whole(last.take())));
+        }
+        let mut rest = text.as_bytes();
+        while piece.len() + rest.len() > PIECE_BYTES {
+            let (head, tail) = rest.split_at(PIECE_BYTES - piece.len());
+            piece.extend_from_slice(head);
+            out.push((std::mem::take(&mut piece), Tail::Cut));
+            rest = tail;
+        }
+        piece.extend_from_slice(rest);
+        last = Some(id);
+    }
+    if !piece.is_empty() {
+        out.push((piece, Tail::Whole(last)));
+    }
+    out
 }
 
 fn frame(text: Result<String>) -> std::result::Result<String, Ending> {
@@ -431,17 +528,85 @@ mod tests {
     async fn a_reader_that_takes_nothing_holds_back_the_producer_and_is_let_go() {
         let (frames, mut feed) = mpsc::channel(1);
         let patience = Duration::from_millis(60);
-        assert!(hand_over(&frames, "one".into(), patience).await);
+        assert!(hand_over(&frames, Bytes::from_static(b"one"), patience).await);
         let started = std::time::Instant::now();
         assert!(
-            !hand_over(&frames, "two".into(), patience).await,
+            !hand_over(&frames, Bytes::from_static(b"two"), patience).await,
             "the second chunk waits for a reader that is not reading"
         );
         assert!(started.elapsed() >= patience);
-        assert_eq!(feed.recv().await.as_deref(), Some("one"));
+        assert_eq!(feed.recv().await.as_deref(), Some(&b"one"[..]));
         assert!(
             feed.try_recv().is_err(),
             "the chunk that timed out was never queued"
+        );
+    }
+
+    fn frames(sizes: &[usize]) -> Vec<(i64, String)> {
+        (1..)
+            .zip(sizes)
+            .map(|(id, size)| (id, char::from(b'a' + id as u8).to_string().repeat(*size)))
+            .collect()
+    }
+
+    #[test]
+    fn a_page_is_cut_into_pieces_that_end_where_frames_end() {
+        let page = frames(&[PIECE_BYTES / 2, PIECE_BYTES / 2, PIECE_BYTES / 4, 10]);
+        let whole: String = page.iter().map(|(_, text)| text.as_str()).collect();
+        let cut = pieces(page);
+        assert!(cut.iter().all(|(piece, _)| piece.len() <= PIECE_BYTES));
+        let joined: Vec<u8> = cut.iter().flat_map(|(piece, _)| piece.clone()).collect();
+        assert_eq!(joined, whole.as_bytes());
+        let ends: Vec<_> = cut
+            .iter()
+            .map(|(_, tail)| match tail {
+                Tail::Whole(id) => *id,
+                Tail::Cut => None,
+            })
+            .collect();
+        assert_eq!(ends, [Some(2), Some(4)]);
+    }
+
+    #[test]
+    fn a_frame_longer_than_a_piece_is_cut_and_only_its_last_piece_names_it() {
+        let cut = pieces(frames(&[10, 3 * PIECE_BYTES + 5, 10]));
+        assert!(cut.iter().all(|(piece, _)| piece.len() <= PIECE_BYTES));
+        let tails: Vec<_> = cut
+            .iter()
+            .map(|(_, tail)| match tail {
+                Tail::Whole(id) => format!("whole {id:?}"),
+                Tail::Cut => "cut".to_string(),
+            })
+            .collect();
+        assert_eq!(
+            tails,
+            ["whole Some(1)", "cut", "cut", "cut", "whole Some(3)"]
+        );
+        assert!(pieces(Vec::new()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_slow_reader_that_keeps_taking_pieces_is_not_let_go() {
+        let (frames_in, mut feed) = mpsc::channel(1);
+        let patience = Duration::from_millis(150);
+        let page = frames(&[PIECE_BYTES; 6]);
+        let producer = tokio::spawn(async move {
+            for (piece, _) in pieces(page) {
+                if !hand_over(&frames_in, Bytes::from(piece), patience).await {
+                    return false;
+                }
+            }
+            true
+        });
+        // Each piece takes most of the patience, so the page as a whole takes several times it.
+        let mut taken = 0;
+        while taken < 6 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            taken += usize::from(feed.recv().await.is_some());
+        }
+        assert!(
+            producer.await.unwrap(),
+            "a reader taking a piece in time was let go"
         );
     }
 
@@ -450,7 +615,7 @@ mod tests {
         let (frames, feed) = mpsc::channel(1);
         drop(feed);
         let started = std::time::Instant::now();
-        assert!(!hand_over(&frames, "one".into(), Duration::from_secs(30)).await);
+        assert!(!hand_over(&frames, Bytes::from_static(b"one"), Duration::from_secs(30)).await);
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
