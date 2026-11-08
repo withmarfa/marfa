@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const COMMITTED = new URL("../../../openapi.json", import.meta.url);
+const COMMITTED = new URL("../../openapi.json", import.meta.url);
 
 type Json = Record<string, unknown>;
 
@@ -81,7 +81,7 @@ function problems(doc: Json): string[] {
     }
     if (listed.length === 0) {
       found.push(
-        `${id} (${where}) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.`,
+        `${id} (${where}) is in no group's x-operation-order: add it to one.`,
       );
     } else if (listed.length > 1) {
       found.push(
@@ -135,9 +135,10 @@ describe("the reference lists every operation once, in its group", () => {
     expect(
       published(document).some(({ where }) => where.startsWith("webhook ")),
     ).toBe(true);
-    expect(problems(document), "These break the lists in PUBLIC_TAGS").toEqual(
-      [],
-    );
+    expect(
+      problems(document),
+      "These break the groups' x-operation-order lists",
+    ).toEqual([]);
   });
 
   it("names what breaks each rule", () => {
@@ -167,9 +168,9 @@ describe("the reference lists every operation once, in its group", () => {
     expect(problems(broken)).toEqual([
       "The group Bare has no x-operation-order.",
       "getThing (GET /things) is listed 3 times: Things, Things, Parts.",
-      "createThing (POST /things) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
-      "getPart (GET /parts/{id}) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
-      "receive (webhook POST event) is in no group's x-operation-order: add it to its group's operations in PUBLIC_TAGS.",
+      "createThing (POST /things) is in no group's x-operation-order: add it to one.",
+      "getPart (GET /parts/{id}) is in no group's x-operation-order: add it to one.",
+      "receive (webhook POST event) is in no group's x-operation-order: add it to one.",
       "Things lists ghost, which nothing publishes.",
     ]);
   });

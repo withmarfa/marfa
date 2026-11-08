@@ -58,7 +58,6 @@ const SERVER: Job[] = [
   "cli-scenarios",
   "restore-drill",
   "image",
-  "openapi-freshness",
 ];
 /**
  * Only the device fixtures drive the `marfa` binary, so only they read the
@@ -409,7 +408,6 @@ describe("what a change runs", () => {
         "core-checks-linux",
         ...CONTRACT,
         "cli-scenarios",
-        "openapi-freshness",
         "clients-freshness",
       ],
     ],
@@ -729,7 +727,6 @@ describe("what a change runs", () => {
         "restore-drill",
         "image",
         "types-freshness",
-        "openapi-freshness",
         "version-fields",
         "clients-freshness",
         "control-socket",
@@ -777,6 +774,11 @@ describe("what a change runs", () => {
     ],
     ["the classifier itself", ["scripts/ci-required.ts"], [...JOBS]],
     ["a test of CI", ["ci/ci-required.test.ts"], ["ci-sqlite", "workspace"]],
+    [
+      "a test of the API document",
+      ["ci/openapi/style.test.ts"],
+      ["ci-sqlite", "workspace"],
+    ],
     [
       "Markdown a test reads as a fixture",
       ["packages/server/src/enrichment/fixtures/note.md"],

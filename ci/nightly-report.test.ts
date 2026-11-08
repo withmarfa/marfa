@@ -67,6 +67,7 @@ describe("the job that reports a failed scheduled run", () => {
       "benchmarks.yml",
       "ci.yml",
       "core.yml",
+      "pdfium-upkeep.yml",
     ]);
     // The witness: CodeQL is scheduled too, and is left out on purpose.
     expect(
@@ -124,7 +125,7 @@ describe("the job that reports a failed scheduled run", () => {
     });
   });
 
-  it("is the only place any workflow can write an issue, and no workflow grants it for the whole run", () => {
+  it("is the only place any workflow can write an issue, but the PDFium move's own job, and no workflow grants it for the whole run", () => {
     const holders = workflows.flatMap(({ file, workflow }) => [
       ...(workflow.permissions?.issues === undefined
         ? []
@@ -133,8 +134,12 @@ describe("the job that reports a failed scheduled run", () => {
         .filter(([, job]) => job.permissions?.issues !== undefined)
         .map(([id]) => `${file}: ${id}`),
     ]);
+    // The weekly PDFium check opens the issue that links its branch.
     expect(holders.sort()).toEqual(
-      scheduled.map(({ file }) => `${file}: ${REPORT}`).sort(),
+      [
+        ...scheduled.map(({ file }) => `${file}: ${REPORT}`),
+        "pdfium-upkeep.yml: prepare",
+      ].sort(),
     );
   });
 });

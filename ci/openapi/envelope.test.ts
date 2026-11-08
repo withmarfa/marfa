@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildPublishedOpenAPISpec } from "./openapi-published.js";
+import { describe, expect, it } from "vitest";
+import { document as committed } from "./document.js";
 
 /**
  * Every list and search answers `{data, next_cursor}`, both required and
@@ -176,17 +176,11 @@ function pagesIn(document: Document): Map<string, Shape[]> {
   return out;
 }
 
-let schemas: Record<string, Schema>;
-let pages: Map<string, Shape[]>;
-
-beforeAll(async () => {
-  const document = (await buildPublishedOpenAPISpec()) as {
-    paths: Document["paths"];
-    components: { schemas: Record<string, Schema> };
-  };
-  schemas = document.components.schemas;
-  pages = pagesIn(document);
-}, 60_000);
+const document = committed as unknown as Document & {
+  components: { schemas: Record<string, Schema> };
+};
+const schemas = document.components.schemas;
+const pages = pagesIn(document);
 
 function siblingsOf(components: Iterable<string>): {
   required: string[];
