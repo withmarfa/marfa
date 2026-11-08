@@ -6523,14 +6523,14 @@ export interface components {
              * @constant
              */
             event_type: "stream_live";
-            /** @description A position you can resume from without receiving again what the catch-up covered. `null` only when Marfa couldn't read the log in time and had nothing to replay. */
+            /** @description A position you can resume from without receiving again what the catch-up covered. `null` only on a copy stream, when Marfa couldn't read the log in time and had nothing to replay. */
             cursor: string | null;
             /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
             instance_id?: string;
             /** @description Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data. */
             reach?: string;
         };
-        /** @description The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. `reader_behind` comes when 4 MiB of frames wait unread, or when you take none for 30 seconds during the catch-up. */
+        /** @description The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. Marfa closes a stream whose reader takes nothing for 30 seconds, with no frame. */
         StreamIncompleteFrame: {
             /**
              * @description The frame's name, which is also its `event:`.
@@ -6538,14 +6538,14 @@ export interface components {
              */
             event_type: "stream_incomplete";
             /**
-             * @description `replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: live events failed. `credential_ended`: your credential ended. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.
+             * @description `credential_ended`: your credential ended. `read_failed`: Marfa couldn't read the log or your credential. `server_stopping`: Marfa is stopping.
              * @enum {string}
              */
-            reason: "replay_failed" | "backlog_overflow" | "live_delivery_failed" | "credential_ended" | "reader_behind" | "server_stopping";
+            reason: "credential_ended" | "read_failed" | "server_stopping";
             /** @description The ID of the last event the stream sent, or `null` if it sent none. */
             cursor: string | null;
         };
-        /** @description The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. */
+        /** @description The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`, or the stream reaches an event Marfa can't read. Read state again from the API, then open a new stream. */
         CatchupTooOldFrame: {
             /**
              * @description The frame's name, which is also its `event:`.

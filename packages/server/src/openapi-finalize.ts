@@ -16,7 +16,6 @@ import { toOpenApiPath } from "./openapi-path.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 import { WEBHOOK_EVENTS } from "./routes/webhooks.js";
-import { STREAM_INCOMPLETE_REASONS } from "./routes/_stream-incomplete.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
@@ -1036,7 +1035,7 @@ function eventSchemas(): Record<string, unknown> {
         cursor: {
           type: ["string", "null"],
           description:
-            "A position you can resume from without receiving again what the catch-up covered. `null` only when Marfa couldn't read the log in time and had nothing to replay.",
+            "A position you can resume from without receiving again what the catch-up covered. `null` only on a copy stream, when Marfa couldn't read the log in time and had nothing to replay.",
         },
         instance_id: COPY_INSTANCE_ID,
         reach: COPY_REACH,
@@ -1046,14 +1045,14 @@ function eventSchemas(): Record<string, unknown> {
     StreamIncompleteFrame: {
       type: "object",
       description:
-        "The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. `reader_behind` comes when 4 MiB of frames wait unread, or when you take none for 30 seconds during the catch-up.",
+        "The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. Marfa closes a stream whose reader takes nothing for 30 seconds, with no frame.",
       properties: {
         event_type: marker("stream_incomplete"),
         reason: {
           type: "string",
-          enum: [...STREAM_INCOMPLETE_REASONS],
+          enum: ["credential_ended", "read_failed", "server_stopping"],
           description:
-            "`replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: live events failed. `credential_ended`: your credential ended. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.",
+            "`credential_ended`: your credential ended. `read_failed`: Marfa couldn't read the log or your credential. `server_stopping`: Marfa is stopping.",
         },
         cursor: {
           type: ["string", "null"],
@@ -1066,7 +1065,7 @@ function eventSchemas(): Record<string, unknown> {
     CatchupTooOldFrame: {
       type: "object",
       description:
-        "The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream.",
+        "The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`, or the stream reaches an event Marfa can't read. Read state again from the API, then open a new stream.",
       properties: {
         event_type: marker("catchup_too_old"),
         min_retained_id: {
