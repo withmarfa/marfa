@@ -84,7 +84,7 @@ fn containers(source: Source) -> Result<Media, Refusal> {
 
 fn refusal(error: Error) -> Refusal {
     match error {
-        Error::LimitError(why) => Refusal::OverLimit(why.to_owned()),
+        Error::LimitError(why) => Refusal::OverLimit(crate::Limit::Fixed, why.to_owned()),
         other => Refusal::Malformed(other.to_string()),
     }
 }

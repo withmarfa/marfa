@@ -113,6 +113,11 @@ fn snapshot_of(row: &Row<'_>) -> rusqlite::Result<Snapshot> {
     })
 }
 
+pub(super) fn by_seq(tx: &Transaction<'_>, seq: i64) -> Result<Option<Item>> {
+    let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE seq = ?1"))?;
+    Ok(statement.query_row([seq], item_of).optional()?)
+}
+
 pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE id = ?1"))?;
     Ok(statement.query_row([id], item_of).optional()?)

@@ -588,7 +588,6 @@ describe("key management", () => {
       ["GET", "/metrics"],
       ["GET", "/housekeeping"],
       ["POST", "/restore"],
-      ["DELETE", "/platform-types/not%20a%20type"],
       ["DELETE", "/blobs/not-a-hash/copies/not-a-store"],
       ["POST", "/webhooks"],
       ["PATCH", "/webhooks/not%20an%20id"],

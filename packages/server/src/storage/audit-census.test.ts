@@ -53,8 +53,7 @@ const WRITES: Record<string, string> = {
   MetadataStore:
     "set addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
-  TypeStore:
-    "create update delete seedPlatformTypes deleteRetiredPlatformType setIcon clearIcon",
+  TypeStore: "create update delete seedPlatformTypes setIcon clearIcon",
   EdgeTypeStore: "create replace delete",
   SourceStore: "set",
   SearchStore: "index setTags remove",

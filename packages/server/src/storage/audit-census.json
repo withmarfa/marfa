@@ -373,13 +373,6 @@
       "runAuditedTransaction": 3
     }
   },
-  "routes/platform-types.ts": {
-    "boundary": "Audited platform type removal, registry settlement inside transaction; platform-types.test.ts.",
-    "calls": {
-      "TypeStore.deleteRetiredPlatformType": 1,
-      "runAuditedTransaction": 1
-    }
-  },
   "routes/restore-archive-types.ts": {
     "boundary": "Audited registration units and staged type normalization nested in the restore's one audited transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
     "calls": {

@@ -35,6 +35,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 ipnet = "2"
 libc = "0.2"
 marfa-acl.workspace = true
+marfa-enrichment.workspace = true
 marfa-rules.workspace = true
 marfa-telemetry.workspace = true
 object_store = { version = "0.14", default-features = false, features = ["aws"] }
@@ -60,6 +61,7 @@ webauthn-rs = { version = "0.6.2", default-features = false, features = ["condit
 
 [dev-dependencies]
 flate2 = "1"
+libtest-mimic = "0.8"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 p256 = "0.14"
 proptest = "1"
@@ -67,3 +69,12 @@ rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tempfile = "3"
 tokio = { version = "1", features = ["io-util"] }
+
+[features]
+# Reads PDFs and the text in pictures, with the libraries a release build links in (see `core/marfa-enrichment/README.md`).
+native = ["marfa-enrichment/native"]
+
+# The reader starts the program it runs in, so this test serves the reader first.
+[[test]]
+name = "enrichment"
+harness = false

@@ -79,7 +79,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 | `Unsupported` | An unknown type, or a PDF without `native`. No child is started. |
 | `Encrypted` | A password-protected file. |
 | `Malformed` | A file that does not parse. |
-| `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes` that is held whole, or a child over its memory limit. Raising the limit may let it read. |
+| `OverLimit` | A limit on text, parts, or decoding, a file larger than `max_memory_bytes` that is held whole, or a child over its memory limit. It names the limit: `Inflated` and `Memory` are options, and raising that one may let the file read; `Fixed` is a bound of the readers, which no option raises. |
 | `TimedOut` | The child ended at the deadline. |
 | `Crashed` | The child ended by a signal, or gave an answer that cannot be believed. |
 | `OcrUnavailable` | A language or model that does not load. The setting is at fault, not the file. |
@@ -111,6 +111,8 @@ MARFA_NATIVE_ROOT=/path/to/cache native/release.sh x86_64-unknown-linux-musl --f
 ```
 
 `release.sh` fetches and verifies every source, builds the libraries and the programs, checks what it made, writes `out/<target>/NOTICES.txt` with the licences, and reads a picture with the finished program and nothing else installed. `--full` adds the whole matrix of `native/verify.sh`, and `--needs` prints what the runner must have. A second run builds only what changed.
+
+`--server` builds the libraries and then `marfa-server` with the `native` feature, as `out/<target>/marfa-server` (`native/server.sh`), and builds and checks nothing else. The Rust contract jobs run that server.
 
 | Target | Where it builds |
 | --- | --- |

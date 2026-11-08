@@ -1720,7 +1720,7 @@ When a list or a search answers, the server MUST carry the rows under `data` and
 
 **Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys`, the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
-**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names thirty-two doors, every one the document publishes as a page`.
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names thirty-one doors, every one the document publishes as a page`.
 
 ### `search-and-filters/page-whole-set`
 
@@ -2102,7 +2102,7 @@ When `GET /export?format=archive` selects an item that is not of a `core` or `sy
 
 **Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a platform type that this build no longer ships as an orphan`.
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
 ### `search-and-filters/archive-edges-unregistered`
 
@@ -2622,7 +2622,7 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 
 When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
 
-**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/retired`); a restore takes those as archived, as it takes an item of any type that is not one the build ships, whether or not the instance still carries the type's row (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule and a task's `recurrence` are still judged (`occurrences/schedule-unreadable`).
+**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule and a task's `recurrence` are still judged (`occurrences/schedule-unreadable`).
 
 **Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
@@ -2648,7 +2648,7 @@ When `POST /restore` writes an item that is not of a `core` or `system` type tha
 
 **Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item of a platform type that this build no longer ships as an orphan`.
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `search-and-filters/restore-item-type`
 

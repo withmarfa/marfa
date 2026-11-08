@@ -188,7 +188,16 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
  * the entry as stale, and a run that leaves a declaration undrawn and
  * unlisted fails.
  */
-export const UNREACHED: Readonly<Record<string, string>> = {};
+export const UNREACHED: Readonly<Record<string, string>> = {
+  "PATCH /owner 404":
+    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
+  "PATCH /profile 404":
+    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
+  "PUT /owner/picture 404":
+    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
+  "PUT /profile/picture 404":
+    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
+};
 
 /** A line of the server log that is neither a request record nor a log record. */
 export interface UnreadableLine {

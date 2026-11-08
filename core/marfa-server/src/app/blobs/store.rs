@@ -337,6 +337,13 @@ pub fn file_stream(file: std::fs::File, first: u64, length: u64) -> ByteStream {
     .boxed()
 }
 
+pub fn not_the_blob() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "the bytes do not hash to the blob's name",
+    )
+}
+
 /// Writes a stream to the disk store, and places it only once it hashes to `hash`.
 pub async fn place_on_disk(
     disk: Arc<Disk>,
@@ -359,10 +366,7 @@ pub async fn place_on_disk(
     tokio::task::spawn_blocking(move || {
         let sealed = staged.seal()?;
         if sealed != hash || staged.size() != size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the bytes do not hash to the blob's name",
-            ));
+            return Err(not_the_blob());
         }
         disk.publish(&mut staged, &hash)
     })

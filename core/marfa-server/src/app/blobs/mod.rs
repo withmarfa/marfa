@@ -12,6 +12,7 @@ mod s3;
 mod store;
 pub mod upkeep;
 
+use std::fs::File;
 use std::future::Future;
 use std::io;
 use std::path::Path;
@@ -74,6 +75,26 @@ impl Found {
             .iter()
             .find(|held| held.store_id == store.id())
             .map(|held| held.object.as_str())
+    }
+}
+
+/// A blob's bytes in a file open for one read. A copy fetched from another store is spooled in
+/// the disk store's `tmp`, and is removed with this.
+pub struct Opened {
+    file: File,
+    spool: Option<Staged>,
+}
+
+impl Opened {
+    pub fn file(&self) -> &File {
+        &self.file
+    }
+
+    /// Ends the read, removing a spooled copy. It blocks.
+    pub fn close(self) {
+        if let Some(spool) = self.spool {
+            spool.discard();
+        }
     }
 }
 
@@ -325,6 +346,72 @@ impl Blobs {
             Ok(answer) => answer.map_err(Failed::Io),
             Err(_) => Err(Failed::Late),
         }
+    }
+
+    /// Opens the disk store's copy as a file, which the store must begin to answer in time.
+    async fn open_file(&self, disk: &Arc<Disk>, hash: &Hash) -> std::result::Result<File, Failed> {
+        let opened = async {
+            self.faults.hold(HOLD_BLOB_READ, None).await;
+            if self.faults.fail(FAIL_BLOB_READ, None) {
+                return Err(io::Error::other("the store failed the read"));
+            }
+            match self.faults.lie(hash.as_str()) {
+                Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
+                Some(Lie::Unreadable) => return Err(store::unreadable()),
+                Some(Lie::Damaged) | None => {}
+            }
+            let (disk, hash) = (disk.clone(), hash.clone());
+            tokio::task::spawn_blocking(move || disk.open_blob(&hash))
+                .await
+                .map_err(io::Error::other)?
+        };
+        match tokio::time::timeout(self.check(), opened).await {
+            Ok(answer) => answer.map_err(Failed::Io),
+            Err(_) => Err(Failed::Late),
+        }
+    }
+
+    /// Copies a store's copy into a file of its own in the disk store's `tmp`, kept only if it
+    /// hashes to the blob's name, within the deadlines a copy between stores has.
+    async fn spool(
+        &self,
+        store: &Store,
+        blob: &Blob,
+        object: &str,
+    ) -> std::result::Result<Opened, Failed> {
+        let (hash, size) = (blob.hash.clone(), blob.size_bytes);
+        let bytes = self.open_bytes(store, &hash, object, 0, size).await?;
+        let mut bytes = store::idle_limited(bytes, self.check());
+        let disk = self.disk.clone();
+        let spooled = async move {
+            let mut staged = tokio::task::spawn_blocking(move || disk.stage())
+                .await
+                .map_err(io::Error::other)??;
+            while let Some(chunk) = bytes.next().await {
+                let chunk = chunk?;
+                if staged.size().saturating_add(chunk.len() as u64) > size {
+                    return Err(store::not_the_blob());
+                }
+                staged =
+                    tokio::task::spawn_blocking(move || staged.append(&chunk).map(|()| staged))
+                        .await
+                        .map_err(io::Error::other)??;
+            }
+            tokio::task::spawn_blocking(move || {
+                if staged.seal()? != hash || staged.size() != size {
+                    return Err(store::not_the_blob());
+                }
+                let file = staged.reopen()?;
+                Ok(Opened {
+                    file,
+                    spool: Some(staged),
+                })
+            })
+            .await
+            .map_err(io::Error::other)?
+        };
+        let limit = store::stall_limit(store::write_deadline(self.check(), size));
+        store::within(limit, spooled).await.map_err(Failed::Io)
     }
 
     /// Whether the store answers in time that it holds bytes under the blob's name, failing
@@ -918,6 +1005,60 @@ impl App {
                         store = store.kind(),
                         ?failure,
                         "A store did not answer for a blob"
+                    );
+                }
+            }
+        }
+        Err(unavailable())
+    }
+
+    /// A blob's bytes as a file for the server's own reading, from the first attached store
+    /// that holds a copy and answers: `None` when no attached store holds one.
+    pub async fn open_held(&self, hash: &Hash) -> Result<Option<(Opened, Blob)>> {
+        let looked = hash.clone();
+        let found = self
+            .db
+            .read(move |tx| {
+                if rows::find(tx, &looked)?.is_none() {
+                    return Ok(None);
+                }
+                App::found_in(tx, None, &looked).map(Some)
+            })
+            .await?;
+        let Some(found) = found.filter(|found| !found.held.is_empty()) else {
+            return Ok(None);
+        };
+        let hash = &found.blob.hash;
+        for store in self.blobs.attached() {
+            let Some(object) = found.object_in(&store) else {
+                continue;
+            };
+            let opened = match &store {
+                Store::Disk(disk) if self.faults.lie(hash.as_str()) != Some(Lie::Damaged) => self
+                    .blobs
+                    .open_file(disk, hash)
+                    .await
+                    .map(|file| Opened { file, spool: None }),
+                _ => {
+                    let reserve = self.settings.live().get(DISK_RESERVE_BYTES);
+                    let (faults, disk) = (self.faults.clone(), self.blobs.disk.clone());
+                    let size = found.blob.size_bytes;
+                    joined(
+                        tokio::task::spawn_blocking(move || {
+                            room(&faults, disk.root(), reserve, size)
+                        })
+                        .await,
+                    )??;
+                    self.blobs.spool(&store, &found.blob, object).await
+                }
+            };
+            match opened {
+                Ok(opened) => return Ok(Some((opened, found.blob))),
+                Err(failure) => {
+                    tracing::warn!(
+                        store = store.kind(),
+                        ?failure,
+                        "A store did not open a blob to read"
                     );
                 }
             }

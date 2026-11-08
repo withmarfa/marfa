@@ -286,6 +286,11 @@ impl Staged {
         Ok(())
     }
 
+    /// Opens the file for reading. It blocks.
+    pub fn reopen(&self) -> io::Result<File> {
+        File::open(&self.path)
+    }
+
     /// Syncs the file and names it by what it holds. It blocks.
     pub fn seal(&mut self) -> io::Result<Hash> {
         let Some(file) = self.file.take() else {

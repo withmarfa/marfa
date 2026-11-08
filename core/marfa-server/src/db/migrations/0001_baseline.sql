@@ -620,3 +620,72 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS enrichment_files (
+    item_seq INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    signature TEXT NOT NULL DEFAULT '',
+    -- The limit that stopped an over-limit file, and what it was then.
+    capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
+    capped_at INTEGER,
+    -- A skipped file offered once more because a field a read fills was cleared; the refusal stays.
+    refill INTEGER NOT NULL DEFAULT 0 CHECK (refill IN (0, 1)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (item_seq, hash),
+    CHECK (refill = 0 OR state = 'skipped'),
+    CHECK ((state = 'skipped') = (reason IS NOT NULL)),
+    CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
+    CHECK ((capped_by IS NULL) = (capped_at IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);
+
+-- Delay the wake to group a burst of writes into one run.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_referenced AFTER INSERT ON blob_references
+WHEN NEW.kind = 'item' AND NEW.lends = 1
+BEGIN
+    INSERT OR REPLACE INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+-- An existing reference alone does not queue changed file properties. A skipped file keeps its
+-- refusal and is read once more.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
+WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
+    NEW.type IS NOT OLD.type
+    OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
+    OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
+    OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
+    OR (NEW.properties ->> '$.duration' IS NULL AND OLD.properties ->> '$.duration' IS NOT NULL))
+BEGIN
+    INSERT INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.properties ->> '$.blob_ref', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT (item_seq, hash) DO UPDATE
+    SET state = CASE enrichment_files.state WHEN 'read' THEN 'waiting' ELSE enrichment_files.state END,
+        attempts = 0,
+        reason = CASE enrichment_files.state WHEN 'read' THEN NULL ELSE enrichment_files.reason END,
+        signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
+        refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
+        updated_at = excluded.updated_at
+    WHERE enrichment_files.state IN ('read', 'skipped');
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_unreferenced AFTER DELETE ON blob_references
+WHEN OLD.kind = 'item'
+BEGIN
+    DELETE FROM enrichment_files WHERE item_seq = OLD.seq AND hash = OLD.hash;
+END;
