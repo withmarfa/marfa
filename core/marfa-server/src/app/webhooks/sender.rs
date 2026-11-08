@@ -16,10 +16,13 @@ use crate::app::catalog;
 use crate::app::faults::HOLD_WEBHOOK_SCHEDULE;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
+use crate::log;
 use crate::settings::registry::ERROR_REPORTING_ENABLED;
 use crate::telemetry::{Fault, Finished};
 
 const AT_ONCE: usize = 4;
+const METHOD: &str = "WEBHOOKS";
+const PATH: &str = "schedule";
 const CUT_BEFORE_END: Duration = Duration::from_secs(1);
 /// How long a delivery whose attempt failed inside the server waits before it is tried again,
 /// so a fault that repeats does not turn the sender into a busy loop.
@@ -295,15 +298,17 @@ async fn sleep(rest: Option<Duration>) {
     }
 }
 
+/// A gap is reported as an unhandled fault is: its log line, the error webhook and error tracking.
 fn report(app: &App, gap: Gap) {
-    tracing::error!("{}", gap.describe());
+    let request_id = uuid::Uuid::now_v7().to_string();
+    log::unhandled(&request_id, METHOD, PATH, None, gap.describe());
     let timestamp = app.clock.stamp();
     app.telemetry.finish(
         None,
         &Finished {
-            request_id: &uuid::Uuid::now_v7().to_string(),
-            method: "WEBHOOKS",
-            path: "schedule",
+            request_id: &request_id,
+            method: METHOD,
+            path: PATH,
             route: None,
             transport: "internal",
             status: 500,

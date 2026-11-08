@@ -345,6 +345,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_receiver_that_answers_slowly_within_the_bound_is_taken() {
+        let (url, _served) = receiver(|mut stream| async move {
+            head(&mut stream).await;
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                .await
+                .unwrap();
+            String::new()
+        })
+        .await;
+        let started = Instant::now();
+        let outcome = send(&url, &loopback(), Duration::from_secs(5)).await;
+        assert!(matches!(outcome, Outcome::Answered { status: 204, .. }), "{outcome:?}");
+        assert!(started.elapsed() >= Duration::from_millis(400));
+    }
+
+    #[tokio::test]
     async fn a_port_nobody_listens_on_is_unreachable() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
