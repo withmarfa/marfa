@@ -17,6 +17,8 @@ const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
 const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
+/// The time one series may take to unfold in a read of occurrences.
+const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
 
@@ -73,6 +75,9 @@ points! {
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
     HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+    HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
+    HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
+    HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
     HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
@@ -109,6 +114,10 @@ impl Volume {
         }
     }
 }
+
+const HIDE_POSITION: &str = "hide:webhook-position";
+const HIDE_EVENTS: &str = "hide:event";
+const RESOLVE: &str = "resolve:";
 
 const FAIL_JOB: &Point = &Point {
     kind: Kind::Fail,
@@ -245,6 +254,15 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
+    arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
+        .ok_or_else(|| {
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
+        })
+}
+
 /// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
 pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
 const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
@@ -261,6 +279,32 @@ fn is_stored_id(text: &str) -> bool {
         .is_some_and(|byte| byte.is_ascii_alphanumeric())
         && text.len() <= 128
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
+fn hidden_range(text: &str) -> Option<(i64, i64)> {
+    let id = |part: &str| {
+        (!part.starts_with('0') && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<i64>().ok())
+            .flatten()
+            .filter(|id| *id >= 1)
+    };
+    let (first, last) = match text.split_once('-') {
+        Some((first, last)) => (id(first)?, id(last)?),
+        None => (id(text)?, id(text)?),
+    };
+    (first <= last).then_some((first, last))
+}
+
+fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+    match (rest, arg) {
+        ("webhook-position", None) => Ok((None, None)),
+        ("webhook-position", Some(_)) => Err(format!("{HIDE_POSITION} takes no argument")),
+        ("event", Some(text)) if hidden_range(text).is_some() => Ok((None, None)),
+        ("event", _) => Err(format!(
+            "{HIDE_EVENTS} takes an event id, or two joined by -, from 1"
+        )),
+        _ => Err(format!("no hide is named {rest}")),
+    }
 }
 
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
@@ -301,6 +345,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        UNFOLD_DEADLINE if rest.is_empty() => {
+            unfold_deadline_of(arg).map(|check| (None, Some(check)))
+        }
         "resolve" => {
             if rest.is_empty()
                 || !rest
@@ -341,9 +388,11 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 Err("an unreadable fault takes the ID of the stored value".to_string())
             }
         }
+        "hide" => judge_hide(rest, arg),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume>, resolve:<host>, limit:<lane> or unreadable:<stored>"
+             deadline:<job>, unfold-deadline, free:<volume>, resolve:<host>, limit:<lane>, \
+             unreadable:<stored>, hide:event or hide:webhook-position"
                 .to_string(),
         ),
     }
@@ -401,6 +450,13 @@ impl Faults {
     /// Re-arming starts a fault again; a hold's waiters stay held. A refused fault is never armed.
     pub fn set(&self, name: &str, arg: Option<&str>) -> Result<(), String> {
         let (aim, number) = judge(name, arg)?;
+        let lowered;
+        let name = if name.starts_with(RESOLVE) {
+            lowered = name.to_ascii_lowercase();
+            lowered.as_str()
+        } else {
+            name
+        };
         let mut armed = self.armed();
         let arg = arg.map(str::to_string);
         if let Some(fault) = armed.iter_mut().find(|fault| fault.name == name) {
@@ -540,7 +596,7 @@ impl Faults {
 
     /// Each lookup fires once; the last scripted answer repeats.
     pub fn resolve(&self, host: &str) -> Option<Resolved> {
-        let name = format!("resolve:{host}");
+        let name = format!("{RESOLVE}{}", host.to_ascii_lowercase());
         let mut armed = self.armed();
         let fault = armed.iter_mut().find(|fault| fault.name == name)?;
         let lookups = answers(fault.arg.as_deref()?).ok()?;
@@ -557,6 +613,13 @@ impl Faults {
             .find(|fault| fault.name == name)
             .and_then(|fault| fault.number)
             .map(Duration::from_millis)
+    }
+
+    pub fn unfold_deadline(&self) -> Option<u64> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == UNFOLD_DEADLINE)
+            .and_then(|fault| fault.number)
     }
 
     pub fn limit(&self, lane: &str) -> Option<i64> {
@@ -599,6 +662,19 @@ impl Faults {
         };
         fault.fired += 1;
         true
+    }
+
+    pub fn hides_position(&self) -> bool {
+        self.armed().iter().any(|fault| fault.name == HIDE_POSITION)
+    }
+
+    /// The ids `hide:event` makes the log read as absent.
+    pub fn hidden_events(&self) -> Option<(i64, i64)> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == HIDE_EVENTS)
+            .and_then(|fault| fault.arg.as_deref())
+            .and_then(hidden_range)
     }
 
     pub fn health_admitted(&self) -> Option<Released> {
@@ -745,6 +821,17 @@ mod tests {
     }
 
     #[test]
+    fn the_unfold_deadline_names_a_deadline_check() {
+        assert!(refused("unfold-deadline", None));
+        assert!(refused("unfold-deadline", Some("0")));
+        assert!(refused("unfold-deadline", Some("soon")));
+        let faults = Faults::default();
+        assert_eq!(faults.unfold_deadline(), None);
+        faults.set("unfold-deadline", Some("1")).unwrap();
+        assert_eq!(faults.unfold_deadline(), Some(1));
+    }
+
+    #[test]
     fn takes_the_session_points_with_a_count_alone() {
         for name in ["session-lookup", "session-delete", "session-use"] {
             assert!(!refused(&format!("fail:{name}"), None));
@@ -792,6 +879,48 @@ mod tests {
             assert!(!refused(name, arg), "{name}");
         }
         assert!(refused("hold:bulk-page", Some("two")));
+    }
+
+    #[test]
+    fn takes_hides_and_scripted_lookups_in_their_own_forms() {
+        assert!(!refused("hide:webhook-position", None));
+        assert!(refused("hide:webhook-position", Some("1")));
+        assert!(!refused("hide:event", Some("7")));
+        assert!(!refused("hide:event", Some("1-9")));
+        assert!(refused("hide:event", Some("9-1")));
+        assert!(refused("hide:event", Some("0")));
+        assert!(refused("hide:event", None));
+        assert!(refused("hide:elsewhere", None));
+        assert!(refused("resolve:", Some("127.0.0.1")));
+        assert!(refused("resolve:a.test", None));
+        assert!(refused("resolve:a.test", Some("not-an-address")));
+        assert!(!refused(
+            "resolve:a.test",
+            Some("93.184.216.34>127.0.0.1;::1")
+        ));
+    }
+
+    #[test]
+    fn a_scripted_lookup_answers_in_turn_and_repeats_the_last() {
+        let faults = Faults::default();
+        faults
+            .set(
+                "resolve:Rebind.test",
+                Some("93.184.216.34>127.0.0.1;::1,10.0.0.1"),
+            )
+            .unwrap();
+        let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+        let first = faults.resolve("rebind.test").unwrap();
+        assert_eq!(first.judged, vec![ip("93.184.216.34")]);
+        assert_eq!(first.reached, vec![ip("127.0.0.1")]);
+        let later = Resolved {
+            judged: vec![ip("::1"), ip("10.0.0.1")],
+            reached: vec![ip("::1"), ip("10.0.0.1")],
+        };
+        assert_eq!(faults.resolve("rebind.test").unwrap(), later);
+        assert_eq!(faults.resolve("rebind.test").unwrap(), later);
+        assert_eq!(faults.resolve("other.test"), None);
+        assert_eq!(faults.list()[0].fired, 3);
     }
 
     #[test]
