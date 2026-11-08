@@ -126,6 +126,22 @@ impl Instance {
         found["item"].clone()
     }
 
+    async fn change(&self, id: &str, properties: Value, clear: &[&str]) {
+        let version = self.item(id).await["version"].clone();
+        let request = Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/items/{id}"))
+            .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({ "version": version, "properties": properties, "clear_properties": clear })
+                    .to_string(),
+            ))
+            .unwrap();
+        let (status, changed) = send(&self.public, request).await;
+        assert_eq!(status, StatusCode::OK, "{changed}");
+    }
+
     async fn sweep(&self) -> Value {
         let ended = housekeeping::run_now(&self.app, SWEEP).await.unwrap();
         assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
@@ -217,6 +233,41 @@ async fn offers_a_skipped_file_again_when_its_limit_is_raised() {
     assert_eq!(
         one.item(&id).await["properties"]["extracted_text"],
         "more than ten bytes of text"
+    );
+}
+
+async fn reads_the_bytes_a_file_is_changed_to_though_the_item_named_them_before() {
+    let one = Instance::start(&[]).await;
+    let other = one.upload(b"the bytes a note names").await;
+    let id = one
+        .file(
+            b"the bytes a file starts with",
+            "text/plain",
+            json!({ "description": format!("see {other}") }),
+        )
+        .await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    one.change(&id, json!({ "blob_ref": other }), &["extracted_text"])
+        .await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the bytes a note names"
+    );
+}
+
+async fn reads_a_file_again_when_the_text_it_was_given_is_cleared() {
+    let one = Instance::start(&[]).await;
+    let id = one
+        .file(b"words to read twice", "text/plain", json!({}))
+        .await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    one.change(&id, json!({}), &["extracted_text"]).await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "words to read twice"
     );
 }
 
@@ -335,6 +386,14 @@ fn main() {
         trial(
             "offers_a_skipped_file_again_when_its_limit_is_raised",
             || Box::pin(offers_a_skipped_file_again_when_its_limit_is_raised()),
+        ),
+        trial(
+            "reads_the_bytes_a_file_is_changed_to_though_the_item_named_them_before",
+            || Box::pin(reads_the_bytes_a_file_is_changed_to_though_the_item_named_them_before()),
+        ),
+        trial(
+            "reads_a_file_again_when_the_text_it_was_given_is_cleared",
+            || Box::pin(reads_a_file_again_when_the_text_it_was_given_is_cleared()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())

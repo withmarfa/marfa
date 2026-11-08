@@ -633,11 +633,23 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
-CREATE TRIGGER IF NOT EXISTS enrichment_files_retyped AFTER UPDATE OF item_type ON blob_references
-WHEN NEW.kind = 'item' AND NEW.lends = 1 AND NEW.item_type IS NOT OLD.item_type
+-- A file is read again when what a read would give it changes: its bytes, its type, or a
+-- field the sweep fills being cleared.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
+WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
+    NEW.type IS NOT OLD.type
+    OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
+    OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
+    OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
+    OR (NEW.properties ->> '$.duration' IS NULL AND OLD.properties ->> '$.duration' IS NOT NULL))
 BEGIN
-    INSERT OR IGNORE INTO enrichment_files (item_seq, hash, updated_at)
-    VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    INSERT INTO enrichment_files (item_seq, hash, updated_at)
+    VALUES (NEW.seq, NEW.properties ->> '$.blob_ref', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT (item_seq, hash) DO UPDATE
+    SET state = 'waiting', attempts = 0, reason = NULL, signature = '',
+        updated_at = excluded.updated_at
+    WHERE enrichment_files.state = 'read';
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'
