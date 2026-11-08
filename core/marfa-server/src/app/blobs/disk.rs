@@ -93,8 +93,8 @@ impl Disk {
         })
     }
 
-    /// Syncs the staged file, moves it into place, and syncs the folders. A final file that
-    /// already stands is the same bytes, and the staged one is discarded.
+    /// Moves a sealed file into place and syncs the folders. A final file that already
+    /// stands is the same bytes, and the staged one is discarded.
     pub fn publish(&self, staged: &mut Staged, hash: &Hash) -> io::Result<()> {
         let target = self.path_of(hash);
         let Some(folder) = target.parent() else {
