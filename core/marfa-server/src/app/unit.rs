@@ -121,8 +121,7 @@ impl App {
             .await
     }
 
-    /// Records an attempt made with `caller`'s credential whatever its authority is now. It
-    /// reads nothing of the credential and writes nothing but the audit entry.
+    /// Records an attempt made with `caller`'s credential, whatever its authority is now. Writes only the audit entry.
     pub async fn audit_attempt(
         &self,
         caller: &Caller,

@@ -42,7 +42,7 @@ pub fn definition() -> Definition {
             "properties": {
                 "id": { "type": "string", "minLength": 1, "description": "The item's ID." },
                 "version": { "type": "integer", "minimum": 1,
-                    "description": "The version you last read. Moving to the trash keeps it." },
+                    "description": "The version you last read." },
                 "properties": { "type": "object",
                     "description": "Fields to set. Fields you leave out keep their values, unless properties_mode is `replace`." },
                 "properties_mode": { "type": "string", "enum": ["merge", "replace"],

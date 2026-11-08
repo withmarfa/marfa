@@ -292,8 +292,7 @@ async fn post(State(app): State<Arc<App>>, request: Request) -> Response {
     }
 }
 
-/// The answer to a body the transport cannot read at any MCP path: text that is not JSON,
-/// or JSON that is not a message.
+/// The answer to a body that is not a JSON-RPC message, at any MCP path.
 pub fn unreadable(is_text: bool) -> Response {
     let (code, message) = if is_text {
         (rpc::PARSE_ERROR, "Parse error")
