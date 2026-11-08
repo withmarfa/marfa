@@ -26,6 +26,7 @@ mod keys;
 pub mod listening;
 mod listing;
 mod lookup;
+mod mcp;
 mod oauth;
 pub mod observe;
 mod overview;
@@ -323,7 +324,10 @@ pub fn public(app: Arc<App>) -> Router {
 }
 
 fn public_doors(app: Arc<App>) -> Routes {
-    shared(app).merge(auth::doors()).merge(oauth::doors())
+    shared(app)
+        .merge(auth::doors())
+        .merge(oauth::doors())
+        .merge(mcp::doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {

@@ -350,6 +350,18 @@ CREATE TABLE IF NOT EXISTS rate_limit_windows (
 
 CREATE INDEX IF NOT EXISTS rate_limit_windows_expiry ON rate_limit_windows (expires_at);
 
+-- Spent signatures expire at `expires_at`, in milliseconds.
+CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
+    token TEXT PRIMARY KEY NOT NULL,
+    credential TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
+    ON mcp_spent_confirmations (expires_at);
+
 -- What the OAuth server keeps. A secret is held only as a digest, and every
 -- time is in milliseconds.
 

@@ -25,8 +25,8 @@ use super::refusal::{Code, Refusal, Result};
 
 pub(crate) use plan::require_version;
 pub use read::{
-    Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, detail, extension, extensions,
-    history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
+    Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
+    extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
 pub(crate) use read::{
     Reader, listed, listed_rows, position_at, position_cursor, readable_tags, reading,
@@ -319,29 +319,41 @@ fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a st
 }
 
 fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String> {
+    let shown = shown_of(tx, catalog, row, &|_, _| true)?;
+    Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
+}
+
+/// An item's name and preview; a part is named after its oldest host that `readable` admits.
+pub(crate) fn shown_of(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    row: &Item,
+    readable: &dyn Fn(&str, &str) -> bool,
+) -> Result<display::ItemDisplay> {
     let rules = &catalog.rules;
     let properties = parsed(&row.properties)?;
     let untitled = display::title_name(&properties, rules.title_field(&row.type_id)).is_none();
-    let shown = match untitled.then(|| edges::naming_host(tx, catalog, &row.id)) {
-        Some(found) => match found? {
-            Some(host) => {
-                let held = parsed(&host.properties).unwrap_or_default();
-                let host_name = rules
-                    .display(&host.type_id, &held)
-                    .name
-                    .unwrap_or_else(|| UNTITLED.to_string());
-                display::part_display(
-                    &properties,
-                    rules.body_field(&row.type_id),
-                    &host.label,
-                    &host_name,
-                )
-            }
-            None => rules.display(&row.type_id, &properties),
-        },
-        None => rules.display(&row.type_id, &properties),
+    let host = if untitled {
+        edges::naming_host(tx, catalog, &row.id, readable)?
+    } else {
+        None
     };
-    Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
+    Ok(match host {
+        Some(host) => {
+            let held = parsed(&host.properties).unwrap_or_default();
+            let host_name = rules
+                .display(&host.type_id, &held)
+                .name
+                .unwrap_or_else(|| UNTITLED.to_string());
+            display::part_display(
+                &properties,
+                rules.body_field(&row.type_id),
+                &host.label,
+                &host_name,
+            )
+        }
+        None => rules.display(&row.type_id, &properties),
+    })
 }
 
 fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Value> {
