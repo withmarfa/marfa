@@ -401,6 +401,12 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
                 current.display()
             )));
         }
+        if marfa_acl::grants_by_acl(&current)? {
+            return Err(CliError::Usage(format!(
+                "{} has an access control list that grants access, and the install folder lies below it: the server refuses to keep its private socket below such a folder. Choose another --dir",
+                current.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -616,6 +622,26 @@ mod tests {
         assert!(check_parents(&dir, me).is_err());
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
         check_parents(&dir, me).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_folder_above_the_install_folder_with_an_acl_that_grants_is_refused() {
+        let me = unsafe { libc::geteuid() };
+        let top = scratch("acl-parents");
+        let parent = top.join("parent");
+        let dir = parent.join("marfa");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        check_parents(&dir, me).unwrap();
+        let granted = std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow read"])
+            .arg(&parent)
+            .status()
+            .unwrap();
+        assert!(granted.success());
+        let error = check_parents(&dir, me).unwrap_err().to_string();
+        assert!(error.contains("access control list"), "{error}");
     }
 
     #[test]
