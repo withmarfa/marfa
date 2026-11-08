@@ -76,7 +76,7 @@ When a copy stream starts, the server MUST NOT carry `X-Marfa-Reach` on the resp
 
 When a copy stream starts, the server MUST send `stream_cursor` as its first event frame.
 
-**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`.
+**Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`, `compliance/event-retention.test.ts › ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old`.
 
 ### `reach/marker-no-id`
 
@@ -159,6 +159,14 @@ When a copy stream sends `cursor_ahead`, the server MUST close the stream and se
 If a copy stream resumes from a cursor past the head of the log, then the server MUST NOT send `stream_live`.
 
 **Tests:** `compliance/reach.test.ts › ends a copy stream resumed past the head with cursor_ahead and no live marker`.
+
+### `reach/resume-too-old`
+
+If a copy stream resumes from a cursor after which the log no longer holds the events, then the server MUST send `stream_cursor` before it sends `catchup_too_old`.
+
+**Reason:** a client reads the position and reach a copy stream was served under in `stream_cursor` before it learns that its cursor is gone, as it does for every other copy stream.
+
+**Tests:** `compliance/event-retention.test.ts › ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old`.
 
 ### `reach/opening-incomplete`
 
@@ -482,11 +490,11 @@ When a conditional read answers an edge, the server MUST NOT carry `listed` on i
 
 ### `reach/receipt-uncertified`
 
-When `POST /items`, `POST /edges` or `POST /views` creates a row, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
+When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates a row, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
 
 **Reason:** a receipt says what the write did, and not what a key's reach covers, so a device reads under its reach again before it adopts what the write left.
 
-**Tests:** `compliance/reach.test.ts › returns item, edge and view write receipts without a reach certificate`.
+**Tests:** `compliance/reach.test.ts › returns item, edge and view write receipts without a reach certificate`, `compliance/reach-folder-receipt.test.ts › returns a folder write receipt without a reach certificate`.
 
 ## A reach that changed
 
