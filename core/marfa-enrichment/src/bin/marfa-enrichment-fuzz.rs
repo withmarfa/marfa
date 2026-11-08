@@ -1,7 +1,8 @@
 //! Reads mutated copies of real files through the real reader, to find a file that
 //! crashes, hangs or exhausts memory in PDFium, Tesseract, `calamine` or anything
 //! else. The parent must survive every one, and each file that harms a reader is
-//! kept so the fault can be reproduced.
+//! kept so the fault can be reproduced. A file stopped at the memory limit is kept
+//! and listed but fails no run: the limit held.
 //!
 //! A mutation is chosen from the seed's name and these numbers alone, so a run with
 //! the same seed folder, `--seed` and `--runs` repeats exactly (a run bounded by
@@ -462,7 +463,11 @@ fn main() -> ExitCode {
     for finding in &tally.findings {
         println!("  {finding}");
     }
-    if tally.findings.is_empty() {
+    if tally
+        .findings
+        .iter()
+        .all(|finding| finding.starts_with("memory-"))
+    {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
