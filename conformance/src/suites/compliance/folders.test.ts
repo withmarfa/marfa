@@ -453,6 +453,12 @@ describe("the folder door", () => {
       "validation_error",
       "defaults.type",
     ],
+    [{ defaults: { tier: "feed" } }, "validation_error", "defaults.tier"],
+    [
+      { query: { tier: "feed" }, defaults: { tier: "library" } },
+      "validation_error",
+      "defaults.tier",
+    ],
     [{ include: ["{a,b"] }, "validation_error", "include"],
     [{ ignore: ["[z-a]"] }, "validation_error", "ignore"],
   ])(
@@ -563,6 +569,17 @@ describe("the folder door", () => {
       defaults: { type: "core.task" },
     });
     expect(both.status).toBe(200);
+  });
+
+  it("takes a default tier the query holds, and the feed beside a query of both tiers", async () => {
+    for (const settings of [
+      { defaults: { tier: "library" } },
+      { query: { tier: "feed" }, defaults: { tier: "feed" } },
+      { query: { tier: "all" }, defaults: { tier: "feed" } },
+    ]) {
+      const r = await client.createFolder({ title: "tiers", ...settings });
+      expect(r.status, JSON.stringify(settings)).toBe(201);
+    }
   });
 
   it("takes the star in a folder's query types and reads it back", async () => {

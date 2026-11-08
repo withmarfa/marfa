@@ -76,6 +76,19 @@ pub fn check_list(list: &str, lines: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The dot-led names an `include` line walks into: a `!` line names no
+/// directory to enter.
+pub fn dot_names(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('!').unwrap_or(line);
+    line.nfc()
+        .collect::<String>()
+        .split('/')
+        .filter(|name| name.starts_with('.') && *name != "." && *name != "..")
+        .map(str::to_string)
+        .collect()
+}
+
 /// The regex that matches a dot-led name an `include` line names, as the
 /// line's own form and as its folded form.
 pub fn name_regexes(name: &str) -> Result<(Regex, Regex), String> {

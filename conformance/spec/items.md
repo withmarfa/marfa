@@ -2336,6 +2336,14 @@ If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `d
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› refuses a change that leaves a default type outside the query, whichever setting it changes`.
 
+### `items/folder-setting-default-tier`
+
+If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `defaults.tier` that `query.tier` does not hold, then the server MUST answer `400 validation_error`, naming `defaults.tier` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a file made at that tier would fall outside the query of its own folder, and a device refuses to follow such a folder (`device/folder-write-defaults`). A query naming no tier holds `library`, and one naming `all` holds both.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes a default tier the query holds, and the feed beside a query of both tiers`.
+
 ### `items/folder-setting-pattern`
 
 If an `include` or `ignore` line is not a gitignore pattern a device reads, such as one that opens a `{` alternation it never closes or holds a character range written backwards, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.

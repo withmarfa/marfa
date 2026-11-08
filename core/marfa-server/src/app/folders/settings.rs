@@ -1,7 +1,5 @@
 //! The settings a folder's `system.folder` item holds, judged before anything is written.
 
-use marfa_rules::edges::depth_inside_folder;
-use marfa_rules::filter::{EdgeDirection, FilterExpression, FilterField};
 use marfa_rules::folder as rules;
 use marfa_rules::validation;
 use serde_json::{Map, Value, json};
@@ -32,8 +30,6 @@ const MAX_PATTERNS: usize = 1_000;
 const MAX_TEXT: usize = 1_024;
 const MAX_DEFAULT_EDGE_TYPES: usize = 100;
 const MAX_DEFAULT_EDGE_TARGETS: usize = 100;
-const MOST_FILES: f64 = 9_007_199_254_740_991.0;
-const FULL_PASS_SECONDS: std::ops::RangeInclusive<f64> = 60.0..=86_400.0;
 
 /// Undeclared keys, by path from the request body.
 pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
@@ -70,30 +66,6 @@ fn known_type(value: &Value, path: &str, catalog: &Catalog) -> Result<()> {
             json!([{ "path": path, "message": "Unknown type" }]),
         ),
     )
-}
-
-fn check_filter(query: &Value) -> Result<()> {
-    let Some(text) = query.get("filter").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let expression =
-        FilterExpression::decode(text).map_err(|error| at("query.filter", error.message))?;
-    let backref = expression.conditions.iter().any(|condition| {
-        matches!(
-            condition.field,
-            FilterField::Edge {
-                direction: EdgeDirection::Backref,
-                ..
-            }
-        )
-    });
-    if backref {
-        return Err(at(
-            "query.filter",
-            "A folder's query cannot hold a backref condition: a folder on disk cannot follow one.",
-        ));
-    }
-    Ok(())
 }
 
 fn check_edges(value: &Value, catalog: &Catalog) -> Result<()> {
@@ -149,26 +121,20 @@ fn check_defaults(value: &Value, catalog: &Catalog) -> Result<()> {
     {
         return Err(at("defaults.tier", "defaults.tier is library or feed."));
     }
-    if let Some(properties) = defaults.get("properties") {
-        let Some(properties) = properties.as_object() else {
-            return Err(at(
-                "defaults.properties",
-                "defaults.properties must be an object.",
-            ));
-        };
-        validation::property_names(properties)
-            .map_err(|error| at("defaults.properties", error.message))?;
+    if let Some(properties) = defaults.get("properties")
+        && !properties.is_object()
+    {
+        return Err(at(
+            "defaults.properties",
+            "defaults.properties must be an object.",
+        ));
     }
-    if let Some(tags) = defaults.get("tags") {
-        let tags: Option<Vec<String>> = tags.as_array().and_then(|tags| {
-            tags.iter()
-                .map(|tag| tag.as_str().map(str::to_string))
-                .collect()
-        });
-        let Some(tags) = tags else {
-            return Err(at("defaults.tags", "defaults.tags must be a list of tags."));
-        };
-        validation::tags(&tags).map_err(|error| at("defaults.tags", error.message))?;
+    if let Some(tags) = defaults.get("tags")
+        && !tags
+            .as_array()
+            .is_some_and(|tags| tags.iter().all(Value::is_string))
+    {
+        return Err(at("defaults.tags", "defaults.tags must be a list of tags."));
     }
     match defaults.get("edges") {
         Some(edges) => check_edges(edges, catalog),
@@ -210,11 +176,10 @@ fn check_placement(value: &Value, catalog: &Catalog) -> Result<()> {
     for (type_id, directory) in placement {
         let path = format!("first_placement.{type_id}");
         known_type(&Value::from(type_id.as_str()), &path, catalog)?;
-        let inside = directory.as_str().is_some_and(|directory| {
-            (1..=MAX_TEXT).contains(&directory.chars().count())
-                && depth_inside_folder(directory).is_some()
-        });
-        if !inside {
+        let named = directory
+            .as_str()
+            .is_some_and(|directory| (1..=MAX_TEXT).contains(&directory.chars().count()));
+        if !named {
             return Err(at(
                 &path,
                 "A directory is a path relative to the folder's root, with / between names and no .. name.",
@@ -231,25 +196,16 @@ fn check_threshold(settings: &Map<String, Value>, name: &str) -> Result<()> {
     let Some(threshold) = value.as_object() else {
         return Err(at(name, format!("{name} must be an object.")));
     };
-    if let Some(files) = threshold.get("files")
-        && !files
-            .as_f64()
-            .is_some_and(|files| (0.0..=MOST_FILES).contains(&files) && files.fract() == 0.0)
-    {
-        return Err(at(
-            &format!("{name}.files"),
+    for (key, message) in [
+        (
+            "files",
             format!("{name}.files is a whole number from 0 to 9007199254740991."),
-        ));
-    }
-    if let Some(fraction) = threshold.get("fraction")
-        && !fraction
-            .as_f64()
-            .is_some_and(|fraction| (0.0..=1.0).contains(&fraction))
-    {
-        return Err(at(
-            &format!("{name}.fraction"),
-            format!("{name}.fraction is from 0 to 1."),
-        ));
+        ),
+        ("fraction", format!("{name}.fraction is from 0 to 1.")),
+    ] {
+        if threshold.get(key).is_some_and(|number| !number.is_number()) {
+            return Err(at(&format!("{name}.{key}"), message));
+        }
     }
     Ok(())
 }
@@ -260,7 +216,6 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     }
     if let Some(query) = settings.get("query") {
         check_query(query, catalog, true)?;
-        check_filter(query)?;
     }
     if let Some(defaults) = settings.get("defaults") {
         check_defaults(defaults, catalog)?;
@@ -272,10 +227,9 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     }
     check_threshold(settings, "removal_threshold")?;
     check_threshold(settings, "addition_threshold")?;
-    if let Some(interval) = settings.get("full_pass_interval_seconds")
-        && !interval
-            .as_f64()
-            .is_some_and(|seconds| FULL_PASS_SECONDS.contains(&seconds) && seconds.fract() == 0.0)
+    if settings
+        .get("full_pass_interval_seconds")
+        .is_some_and(|interval| !interval.is_number())
     {
         return Err(at(
             "full_pass_interval_seconds",
@@ -287,7 +241,7 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     {
         return Err(at("outside_query", "outside_query is send or hold."));
     }
-    Ok(())
+    judged(settings, catalog, false)
 }
 
 fn strings(value: Option<&Value>) -> Vec<String> {
@@ -302,25 +256,80 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn threshold(settings: &Map<String, Value>, name: &str) -> rules::Threshold {
+    let number = |key: &str| {
+        settings
+            .get(name)
+            .and_then(|threshold| threshold.get(key))
+            .and_then(Value::as_f64)
+    };
+    rules::Threshold {
+        files: number("files"),
+        fraction: number("fraction"),
+    }
+}
+
 /// What a device needs to attach the folder, judged on the complete settings
 /// the write leaves: a partial update changes one setting beside the others.
 pub fn judge(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
-    let types = strings(settings.get("query").and_then(|query| query.get("types")));
-    let (include, ignore) = (
+    judged(settings, catalog, true)
+}
+
+/// `complete` is whether `settings` are all the folder's: a default is judged
+/// only against a query that is there to hold it.
+fn judged(settings: &Map<String, Value>, catalog: &Catalog, complete: bool) -> Result<()> {
+    let query = settings.get("query");
+    let defaults = settings.get("defaults");
+    let types = strings(query.and_then(|query| query.get("types")));
+    let state = query
+        .and_then(|query| query.get("state"))
+        .map(|state| strings(Some(state)));
+    let (tags, include, ignore) = (
+        strings(defaults.and_then(|defaults| defaults.get("tags"))),
         strings(settings.get("include")),
         strings(settings.get("ignore")),
     );
-    let default_type = settings
-        .get("defaults")
-        .and_then(|defaults| defaults.get("type"))
-        .and_then(Value::as_str);
+    let placements: Vec<(&str, &str)> = settings
+        .get("first_placement")
+        .and_then(Value::as_object)
+        .map(|placement| {
+            placement
+                .iter()
+                .filter_map(|(type_id, directory)| Some((type_id.as_str(), directory.as_str()?)))
+                .collect()
+        })
+        .unwrap_or_default();
     rules::check(
-        &catalog.rules,
+        Some(&catalog.rules),
         &rules::Settings {
             types: &types,
-            default_type,
+            tier: query
+                .and_then(|query| query.get("tier"))
+                .and_then(Value::as_str),
+            state: state.as_deref(),
+            filter: query
+                .and_then(|query| query.get("filter"))
+                .and_then(Value::as_str),
+            default_type: defaults
+                .and_then(|defaults| defaults.get("type"))
+                .and_then(Value::as_str)
+                .filter(|_| complete),
+            default_tier: defaults
+                .and_then(|defaults| defaults.get("tier"))
+                .and_then(Value::as_str)
+                .filter(|_| complete),
+            tags: &tags,
+            properties: defaults
+                .and_then(|defaults| defaults.get("properties"))
+                .and_then(Value::as_object),
             include: &include,
             ignore: &ignore,
+            first_placement: &placements,
+            removal: threshold(settings, "removal_threshold"),
+            addition: threshold(settings, "addition_threshold"),
+            full_pass_interval_seconds: settings
+                .get("full_pass_interval_seconds")
+                .and_then(Value::as_f64),
         },
     )
     .map_err(|violation| at(&violation.path, violation.message))

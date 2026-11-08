@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use marfa_rules::pattern::{self, Line};
+use marfa_rules::pattern::{self, Line, dot_names};
 use regex::{Regex, RegexSet};
 use unicode_normalization::UnicodeNormalization;
 
@@ -273,17 +273,6 @@ fn built(list: &str, lines: &[String]) -> Result<Patterns> {
         original: set(compiled.original)?,
         folded: set(compiled.folded)?,
     })
-}
-
-fn dot_names(line: &str) -> Vec<String> {
-    let line = line.trim();
-    let line = line.strip_prefix('!').unwrap_or(line);
-    line.nfc()
-        .collect::<String>()
-        .split('/')
-        .filter(|name| name.starts_with('.') && *name != "." && *name != "..")
-        .map(str::to_string)
-        .collect()
 }
 
 pub(super) fn is_package_at(path: &Path, directory: &crate::directory::Directory) -> bool {

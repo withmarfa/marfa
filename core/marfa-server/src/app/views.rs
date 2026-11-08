@@ -1,4 +1,4 @@
-use marfa_rules::query::EVERY_TYPE;
+use marfa_rules::query::{EVERY_TYPE, StateFault, check_states};
 use marfa_rules::{filter, validation};
 use serde_json::{Map, Value, json};
 
@@ -24,7 +24,6 @@ const OWN_FIELDS: [&str; 8] = [
 const DATE_FIELDS: [&str; 3] = ["created_at", "updated_at", "occurred_at"];
 const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const TIERS: [&str; 3] = ["library", "feed", "all"];
-const STATES: [&str; 2] = ["active", "archived"];
 const MAX_TITLE: usize = 500;
 const MAX_TYPES: usize = 100;
 const MAX_SORT_KEYS: usize = 10;
@@ -156,17 +155,20 @@ pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) ->
         return Err(at("query.tier", "query.tier is library, feed or all."));
     }
     if let Some(states) = query.get("state") {
-        let Some(states) = states.as_array().filter(|states| !states.is_empty()) else {
+        let Some(states) = states.as_array() else {
             return Err(at("query.state", "query.state is a list of states."));
         };
-        for (index, state) in states.iter().enumerate() {
-            if !state.as_str().is_some_and(|state| STATES.contains(&state)) {
-                return Err(at(
-                    &format!("query.state.{index}"),
-                    "A query lists the active and archived states.",
-                ));
-            }
-        }
+        let named: Vec<&str> = states
+            .iter()
+            .map(|state| state.as_str().unwrap_or_default())
+            .collect();
+        check_states(&named).map_err(|fault| match fault {
+            StateFault::Empty => at("query.state", "query.state is a list of states."),
+            StateFault::Unknown(index) => at(
+                &format!("query.state.{index}"),
+                "A query lists the active and archived states.",
+            ),
+        })?;
     }
     if let Some(text) = query.get("filter") {
         let Some(text) = text.as_str() else {
