@@ -132,6 +132,17 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// The live keys whose type map names `type_id` outright, as `(id, label)`. An app's keys are its grant's.
+pub fn naming_type(tx: &Transaction<'_>, type_id: &str, at: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare(&format!(
+        "SELECT k.id, k.label FROM api_keys k WHERE {LIVE} AND k.oauth_client_id IS NULL \
+         AND EXISTS (SELECT 1 FROM json_each(k.type_permissions) WHERE key = ?2) \
+         ORDER BY k.created_at, k.id"
+    ))?;
+    let rows = statement.query_map([at, type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// A key's label for as long as its row is kept, revoked or not.
 pub fn label(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(tx

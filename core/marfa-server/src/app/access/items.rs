@@ -162,6 +162,11 @@ impl Caller {
         self.holding().filters_sources()
     }
 
+    /// The source filter in one spelling for one effect, to tell whether it moved.
+    pub fn source_filter_form(&self) -> serde_json::Value {
+        self.holding().source_filter_form()
+    }
+
     pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
         self.holding()
             .listed_sources(rules, type_id)

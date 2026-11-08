@@ -429,6 +429,11 @@ pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
 }
 
+/// The folders and views a type move or a type delete reads for the settings that name a type.
+pub fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
+    rows::settings(tx)
+}
+
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     rows::count_of_type(tx, type_id)
 }

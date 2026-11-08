@@ -26,6 +26,8 @@ pub struct Unit<'t, 'c> {
     pub at_ms: i64,
     origin: Origin,
     read_only: Arc<ArcSwap<Registry>>,
+    /// A job's chunk records one entry for its rows, as an atomic page does.
+    summarised: bool,
 }
 
 impl<'c> Unit<'_, 'c> {
@@ -48,6 +50,17 @@ impl<'c> Unit<'_, 'c> {
             at_ms: self.at_ms,
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
+            summarised: self.summarised,
+        }
+    }
+
+    /// A job's write for the credential that queued it. A `summarised` one leaves its rows to the
+    /// entry `audit_summary` records.
+    pub fn for_holder(&self, caller: Caller, summarised: bool) -> Unit<'_, 'c> {
+        Unit {
+            caller,
+            summarised,
+            ..self.under(self.action)
         }
     }
 
@@ -82,6 +95,19 @@ impl<'c> Unit<'_, 'c> {
         resource_id: &str,
         details: Option<Value>,
     ) -> Result<()> {
+        if self.summarised {
+            return Ok(());
+        }
+        self.audit_summary(action, resource_type, resource_id, details)
+    }
+
+    pub fn audit_summary(
+        &self,
+        action: &str,
+        resource_type: &str,
+        resource_id: &str,
+        details: Option<Value>,
+    ) -> Result<()> {
         audit::record_from(
             self.tx,
             &self.at,
@@ -97,6 +123,9 @@ impl<'c> Unit<'_, 'c> {
     }
 
     pub fn audit_set(&self, resource_type: &str, details: Option<Value>) -> Result<()> {
+        if self.summarised {
+            return Ok(());
+        }
         audit::record_from(
             self.tx,
             &self.at,
@@ -144,6 +173,7 @@ impl App {
                     at_ms,
                     origin,
                     read_only,
+                    summarised: false,
                 })
             })
             .await

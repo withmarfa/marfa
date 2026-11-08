@@ -321,6 +321,23 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
     stored(tx, &item.id)
 }
 
+/// The folders and views that are not in the bin or revoked, folders first.
+pub(super) fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{ITEM} WHERE type IN ('system.folder', 'system.view') \
+         AND state IN ('active', 'archived') ORDER BY type, seq"
+    ))?;
+    let found = statement.query_map([], item_of)?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The marks naming a retyped item follow it to its new type.
+pub(super) fn retype_marks(tx: &Transaction<'_>, root: &str, type_id: &str) -> Result<()> {
+    tx.prepare_cached("UPDATE items SET trashed_with_type = ?2 WHERE trashed_with = ?1")?
+        .execute(params![root, type_id])?;
+    Ok(())
+}
+
 pub(super) fn marked_with(tx: &Transaction<'_>, root: &str) -> Result<Vec<Item>> {
     let mut statement = tx.prepare_cached(&format!(
         "{ITEM} WHERE trashed_with = ?1 AND state = 'trashed' ORDER BY seq"

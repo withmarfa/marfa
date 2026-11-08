@@ -18,6 +18,7 @@ use super::events::fanout;
 use super::housekeeping::{self, DAY_MS};
 use super::outbound::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use super::{App, keys, oauth};
 use crate::settings::registry::AUDIT_RETENTION_DAYS;
 use request::invalid;
@@ -50,6 +51,46 @@ fn selects(subscription: &Subscription, rules: &Rules, event_type: &str, type_id
 /// Log expiry cannot pass this position; `None` prevents expiry.
 pub fn scheduled_through(tx: &Transaction<'_>) -> Result<Option<i64>> {
     store::position(tx)
+}
+
+/// A subscription whose type filter is exactly a type, as a type move or delete names it.
+#[derive(Clone, Debug)]
+pub struct Naming {
+    pub id: String,
+    pub maker: Maker,
+}
+
+pub fn naming_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<Naming>> {
+    Ok(store::list(tx, None)?
+        .into_iter()
+        .filter(|subscription| subscription.type_filter.as_deref() == Some(type_id))
+        .map(|subscription| Naming {
+            id: subscription.id,
+            maker: subscription.maker,
+        })
+        .collect())
+}
+
+/// A type move's rewrite of a subscription's filter, once no item of the type it named remains.
+pub fn retarget(unit: &Unit<'_, '_>, rules: &Rules, id: &str, to: &str) -> Result<()> {
+    let tx = unit.tx();
+    let Some(mut next) = store::by_id(tx, id, None)? else {
+        return Ok(());
+    };
+    next.type_filter = Some(to.to_string());
+    next.updated_at = unit.at.clone();
+    store::update(tx, &next)?;
+    for delivery in store::pending_of(tx, id)? {
+        if !selects(&next, rules, &delivery.event_type, &delivery.type_id) {
+            store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
+        }
+    }
+    unit.audit_also(
+        "webhook.update",
+        "webhook",
+        id,
+        Some(json!({ "fields": ["type_filter"] })),
+    )
 }
 
 /// An app's subscriptions belong to its grant, and go with it.

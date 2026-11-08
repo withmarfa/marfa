@@ -252,6 +252,50 @@ CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     last_result TEXT
 ) STRICT, WITHOUT ROWID;
 
+-- A bulk action or type move. `processed` is the checkpoint: it commits with the chunk it counts.
+CREATE TABLE IF NOT EXISTS bulk_jobs (
+    id TEXT PRIMARY KEY NOT NULL,
+    action TEXT NOT NULL,
+    input TEXT NOT NULL CHECK (json_valid(input)),
+    key_id TEXT,
+    grant_id TEXT,
+    status TEXT NOT NULL
+        CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'canceled')),
+    matched INTEGER NOT NULL,
+    processed INTEGER NOT NULL DEFAULT 0,
+    succeeded INTEGER NOT NULL DEFAULT 0,
+    errored INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    result TEXT CHECK (result IS NULL OR json_valid(result)),
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS bulk_jobs_open ON bulk_jobs (status)
+    WHERE status IN ('queued', 'in_progress');
+CREATE INDEX IF NOT EXISTS bulk_jobs_finished ON bulk_jobs (finished_at)
+    WHERE finished_at IS NOT NULL;
+
+-- The items a job matched when it was queued, in the order it takes them.
+CREATE TABLE IF NOT EXISTS bulk_job_items (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    PRIMARY KEY (job_id, position)
+) STRICT, WITHOUT ROWID;
+
+-- What a job keeps of its rows: the first it changed and refused, rows an
+-- earlier row carried along, and the blobs a purge's rows referenced.
+CREATE TABLE IF NOT EXISTS bulk_job_notes (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('changed', 'error', 'carried', 'blob')),
+    name TEXT NOT NULL,
+    body TEXT CHECK (body IS NULL OR json_valid(body)),
+    UNIQUE (job_id, kind, name)
+) STRICT;
+
 -- The text a search reads, by `items.seq`. A row in the bin holds no row here.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     title, body, description, name, extra, tags,

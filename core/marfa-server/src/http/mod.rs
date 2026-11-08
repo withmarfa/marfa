@@ -23,6 +23,7 @@ mod events;
 mod health;
 mod housekeeping;
 mod items;
+mod jobs;
 mod keys;
 pub mod listening;
 mod listing;
@@ -99,6 +100,8 @@ fn webhook_doors(app: Arc<App>) -> Routes {
             "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
             post(webhooks::redeliver),
         )
+        .route("/items/bulk-actions/jobs/{id}", get(jobs::read))
+        .route("/items/bulk-actions/jobs/{id}/cancel", post(jobs::cancel))
         .admitting(app, Admission::Presented)
 }
 
@@ -106,6 +109,7 @@ fn schema_doors() -> Routes {
     Doors::new()
         .route("/types", get(types::list).post(types::register))
         .route("/types/normalize", post(types::normalize))
+        .route("/types/{id}/move", post(jobs::move_type))
         .route(
             "/types/{id}",
             get(types::read).put(types::replace).delete(types::delete),
@@ -143,6 +147,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))
         .route("/items/bulk", post(bulk::write))
+        .route("/items/bulk-actions", post(jobs::queue))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))
