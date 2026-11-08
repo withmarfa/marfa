@@ -9,9 +9,7 @@ use crate::app::access::{Axis, Level};
 use crate::app::auth;
 use crate::app::catalog::Snapshot;
 use crate::app::keys;
-use crate::app::refusal::{Refusal, Result};
-
-const GENERATION: &str = "read_only_generation";
+use crate::app::refusal::Result;
 
 struct Holding {
     until: Option<i64>,
@@ -62,17 +60,12 @@ impl Registry {
 }
 
 fn generation(tx: &Transaction<'_>) -> Result<i64> {
-    let held: Option<String> = tx
-        .query_row(
-            "SELECT value FROM instance WHERE key = ?1",
-            [GENERATION],
-            |row| row.get(0),
-        )
+    let held: Option<i64> = tx
+        .query_row("SELECT value FROM read_only_generation", [], |row| {
+            row.get(0)
+        })
         .optional()?;
-    held.map_or(Ok(0), |text| {
-        text.parse()
-            .map_err(|_| Refusal::internal("the read-only generation did not read"))
-    })
+    Ok(held.unwrap_or(0))
 }
 
 /// The registrations as they stand, answered for a moment `now`.

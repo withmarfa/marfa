@@ -166,6 +166,31 @@ describe("registration", () => {
     const cookie = process.env.MARFA_OWNER_COOKIE;
     expect(cookie, "the owner's cookie").toBeTruthy();
     const base = `/connectors/${mine.data.id}`;
+    const item = await client.createItem({
+      type: "core.note",
+      properties: { body: "kept" },
+    });
+    expect(item.status).toBe(201);
+    const itemId = item.data.item.id;
+    expect((await client.takeConnectorHold(mine.data.id, "p")).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await client.replaceConnectorState(mine.data.id, {
+          process: "p",
+          state: { cursor: "kept" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await client.writeConnectorAgreements(mine.data.id, {
+          process: "p",
+          set: [{ item_id: itemId, waiting: true, record: { etag: "kept" } }],
+        })
+      ).status,
+    ).toBe(200);
     const doors: [string, string, unknown?][] = [
       ["POST", "/connectors", { name: "x" }],
       ["GET", "/connectors"],
@@ -185,10 +210,10 @@ describe("registration", () => {
       ["POST", `${base}/hold`, { process: "p" }],
       ["DELETE", `${base}/hold?process=p`],
       ["GET", `${base}/state`],
-      ["PUT", `${base}/state`, { process: "p", state: {} }],
+      ["PUT", `${base}/state`, { process: "p", state: { cursor: "changed" } }],
       ["DELETE", `${base}/state`],
-      ["POST", `${base}/agreements`, { process: "p", set: [] }],
-      ["POST", `${base}/agreements/lookup`, { item_ids: [] }],
+      ["POST", `${base}/agreements`, { process: "p", clear: [itemId] }],
+      ["POST", `${base}/agreements/lookup`, { item_ids: [itemId] }],
       ["GET", `${base}/agreements`],
     ];
     for (const [method, path, body] of doors) {
@@ -206,6 +231,23 @@ describe("registration", () => {
         error: { code: "unauthorized" },
       });
     }
+    expect((await client.getConnectorState(mine.data.id)).data.state).toEqual({
+      cursor: "kept",
+    });
+    expect(
+      (
+        await client.lookupConnectorAgreements(mine.data.id, [itemId])
+      ).data.data.map((row) => row.record),
+    ).toEqual([{ etag: "kept" }]);
+    const registration = await client.getConnector(mine.data.id);
+    expect(registration.data.last_heartbeat_at).toBeNull();
+    expect(registration.data.last_run).toBeNull();
+    expect(
+      (await client.listConnectorRuns(mine.data.id)).data.data,
+    ).toHaveLength(0);
+    expect(
+      (await client.takeConnectorHold(mine.data.id, "p")).data.renewed,
+    ).toBe(true);
     // The witness: the private socket reaches the same doors as the owner.
     const listed = await controlRequest(socket(), "/connectors");
     expect(listed.status).toBe(200);
@@ -612,6 +654,14 @@ describe("heartbeats and runs", () => {
       "2026-10-05T18:00:01Z",
     );
     expect(witness.status).toBe(201);
+    // RFC 3339 section 5.6 lets `t` and `z` be lowercase; the answer is uppercase.
+    const lowercase = await report(
+      "2026-10-05t18:00:00z",
+      "2026-10-05t19:00:00+01:00",
+    );
+    expect(lowercase.status).toBe(201);
+    expect(lowercase.data.started_at).toBe("2026-10-05T18:00:00.000Z");
+    expect(lowercase.data.finished_at).toBe("2026-10-05T18:00:00.000Z");
     for (const [what, text] of [
       ["only a year", "2026"],
       ["a date", "2026-10-06"],
@@ -634,7 +684,7 @@ describe("heartbeats and runs", () => {
     }
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 

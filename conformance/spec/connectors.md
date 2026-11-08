@@ -490,7 +490,7 @@ When the server records a run, the server MUST answer its `started_at` and `fini
 
 ### `connectors/run-times-strict`
 
-If a run names a `started_at` or a `finished_at` that lacks a zone, a time of day, the seconds or a `T`, or that writes hour `24` or an offset without its colon, then the server MUST answer `400 validation_error`.
+If a run names a `started_at` or a `finished_at` that lacks a zone, a time of day, the seconds or a `T`, or that writes hour `24` or an offset without its colon, then the server MUST answer `400 validation_error`; a lowercase `t` or `z`, which RFC 3339 section 5.6 allows, is none of these faults, and the run's times are answered in uppercase.
 
 **Reason:** a client that sends `2026` or a time with no zone means something the server cannot know, and reading it as UTC records an instant nobody reported.
 

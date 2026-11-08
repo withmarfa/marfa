@@ -338,39 +338,64 @@ async fn a_state_write_under_a_hold_whose_stored_expiry_does_not_read_commits_no
 }
 
 #[tokio::test]
-async fn a_read_only_generation_that_does_not_read_is_an_error_and_an_absent_one_is_zero() {
+async fn a_read_only_generation_that_is_not_an_integer_cannot_be_stored_and_an_absent_one_is_zero()
+{
     let instance = Instance::start().await;
     let connector = instance.connector().await;
     let path = format!("/items/{}", connector.item);
-    let read = |instance: &Instance| {
-        let asked = request(Method::GET, &path, Some(&connector.token), None);
-        let router = instance.public.clone();
-        async move { send(&router, asked).await }
-    };
+    let asked = request(Method::GET, &path, Some(&connector.token), None);
     instance
         .db()
-        .execute(
-            "DELETE FROM instance WHERE key = 'read_only_generation'",
-            [],
-        )
+        .execute("DELETE FROM read_only_generation", [])
         .unwrap();
-    let absent = read(&instance).await;
+    let absent = send(&instance.public, asked).await;
     assert_eq!(absent.status, StatusCode::OK, "{}", absent.body);
-    instance
-        .db()
-        .execute(
-            "INSERT INTO instance (key, value) VALUES ('read_only_generation', 'x') \
-             ON CONFLICT (key) DO UPDATE SET value = 'x'",
-            [],
-        )
+
+    let db = instance.db();
+    db.execute(
+        "INSERT INTO read_only_generation (id, value) VALUES (1, 7)",
+        [],
+    )
+    .unwrap();
+    for bad in ["'x'", "'7.5'", "7.5", "NULL"] {
+        let sql = format!("UPDATE read_only_generation SET value = {bad}");
+        assert!(db.execute(&sql, []).is_err(), "{bad} was stored");
+    }
+    let kept: i64 = db
+        .query_row("SELECT value FROM read_only_generation", [], |row| {
+            row.get(0)
+        })
         .unwrap();
-    let unread = read(&instance).await;
+    assert_eq!(kept, 7);
+
+    let key = json!({ "label": "other", "source": "other", "permissions": [] });
+    let minted = instance.local(Method::POST, "/keys", Some(key)).await;
+    assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
+    let other = Connector {
+        id: String::new(),
+        token: minted.body["key"].as_str().unwrap().to_string(),
+        item: String::new(),
+    };
+    let registered = instance
+        .call_bare(
+            &other,
+            Method::POST,
+            "/connectors",
+            json!({ "name": "other" }),
+        )
+        .await;
     assert_eq!(
-        unread.status,
-        StatusCode::INTERNAL_SERVER_ERROR,
+        registered.status,
+        StatusCode::CREATED,
         "{}",
-        unread.body
+        registered.body
     );
+    let raised: i64 = db
+        .query_row("SELECT value FROM read_only_generation", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert!(raised > 7, "{raised}");
 }
 
 #[tokio::test]

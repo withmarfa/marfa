@@ -11,11 +11,12 @@ pub fn normalize(value: &str, field: &str) -> Result<String> {
     Ok(instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
-/// RFC 3339 as written: a date, an uppercase `T`, a time with seconds, and a zone.
+/// RFC 3339 as written: a date, `T`, a time with seconds, and a zone; `t` and `z` may be lowercase.
 pub fn rfc3339(value: &str, field: &str) -> Result<String> {
     let bytes = value.as_bytes();
-    let zoned = bytes.last() == Some(&b'Z') || bytes.len() > 6 && bytes[bytes.len() - 3] == b':';
-    let instant = (zoned && bytes.get(10) == Some(&b'T'))
+    let zoned = matches!(bytes.last(), Some(b'Z' | b'z'))
+        || bytes.len() > 6 && bytes[bytes.len() - 3] == b':';
+    let instant = (zoned && matches!(bytes.get(10), Some(b'T' | b't')))
         .then(|| chrono::DateTime::parse_from_rfc3339(value).ok())
         .flatten()
         .map(|instant| instant.naive_utc())
@@ -195,6 +196,10 @@ mod tests {
             ("2026-01-01T00:00:00.5Z", "2026-01-01T00:00:00.500Z"),
             ("2026-01-01T01:00:00+01:00", "2026-01-01T00:00:00.000Z"),
             ("2025-12-31T23:00:00-01:00", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01t00:00:00z", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01t00:00:00Z", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01T00:00:00.5z", "2026-01-01T00:00:00.500Z"),
+            ("2026-01-01t01:00:00+01:00", "2026-01-01T00:00:00.000Z"),
         ] {
             assert_eq!(rfc3339(input, "time").unwrap(), expected, "{input}");
         }
@@ -208,8 +213,9 @@ mod tests {
             "2026-01-01T24:00:00Z",
             "2026-01-01T00:00:00+0100",
             "2026-01-01T00:00:00+01",
-            "2026-01-01t00:00:00z",
             "2026-01-01 00:00:00Z",
+            "2026-01-01t00:00:00",
+            "2026-01-01t00:00z",
             "2026-01-01T00:00:00.Z",
             "2026-01-01T00:00:00Zjunk",
             "0000-01-01T00:00:00+00:01",

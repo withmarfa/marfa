@@ -661,40 +661,46 @@ CREATE INDEX IF NOT EXISTS connector_agreements_order
     ON connector_agreements (source, updated_at, item_id);
 CREATE INDEX IF NOT EXISTS connector_agreements_item ON connector_agreements (item_id);
 
+-- One row, and an integer by construction: a stored generation always reads.
+CREATE TABLE IF NOT EXISTS read_only_generation (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    value INTEGER NOT NULL
+) STRICT;
+
 -- Raised when a key or a registration changes in a way that decides which items read as read only.
 CREATE TRIGGER IF NOT EXISTS read_only_registered AFTER INSERT ON connectors
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_declared AFTER UPDATE OF read_only_types ON connectors
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_removed AFTER DELETE ON connectors
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_key_changed
 AFTER UPDATE OF source, type_permissions, expires_at, revoked_at ON api_keys
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_key_removed AFTER DELETE ON api_keys
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_claim_changed AFTER INSERT ON api_key_sources
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
 CREATE TRIGGER IF NOT EXISTS read_only_claim_removed AFTER DELETE ON api_key_sources
 BEGIN
-    INSERT INTO instance (key, value) VALUES ('read_only_generation', '1')
-    ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+    INSERT INTO read_only_generation (id, value) VALUES (1, 1)
+    ON CONFLICT (id) DO UPDATE SET value = value + 1;
 END;
