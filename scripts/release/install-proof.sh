@@ -30,6 +30,9 @@
 # The single-quoted programs handed to jq use jq's variables, not the shell's.
 # shellcheck disable=SC2016
 set -euo pipefail
+# A runner's umask can leave new folders group-writable, which the server refuses
+# above its private socket, as a person's own machine would not.
+umask 022
 if [ "$#" -lt 3 ]; then
   echo "usage: install-proof.sh <folder holding the release's files> <version> <mode>..." >&2
   exit 2
@@ -276,6 +279,8 @@ show_logs() {
         tail -n 40 "$HOME/Library/Logs/Marfa/"*"$name"* 2>&1 || true
       else
         journalctl --user -u "marfa-$name.service" -n 40 --no-pager 2>&1 || true
+        # A runner keeps user services' output in the system journal.
+        sudo journalctl "_SYSTEMD_USER_UNIT=marfa-$name.service" -n 40 --no-pager 2>&1 || true
       fi
       ;;
   esac
