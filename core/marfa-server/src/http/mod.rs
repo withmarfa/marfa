@@ -18,6 +18,7 @@ mod doors;
 mod edge_types;
 mod edges;
 mod events;
+mod folders;
 mod health;
 mod housekeeping;
 mod items;
@@ -181,6 +182,17 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, within_a_map))
 }
 
+fn folder_doors() -> Routes {
+    Doors::new()
+        .route("/folders", post(folders::create).get(folders::inventory))
+        .route("/folders/{id}", patch(folders::update))
+        .route("/folders/{id}/revoke", post(folders::revoke))
+        .route(
+            "/folders/{id}/status",
+            put(folders::report).get(folders::status),
+        )
+}
+
 fn blob_doors() -> Routes {
     Doors::new()
         .route("/blobs", post(blobs::upload))
@@ -234,6 +246,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
+        .merge(folder_doors())
         .merge(blob_doors())
         .merge(count_doors(app))
         .merge(owner_item_doors())

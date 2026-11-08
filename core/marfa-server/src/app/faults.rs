@@ -71,6 +71,7 @@ points! {
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
     HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+    HOLD_FOLDER_STATUS_READ = Hold "folder-status-read" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
@@ -83,6 +84,7 @@ points! {
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
     FAIL_BLOB_WRITE = Fail "blob-write" Nth;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+    FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
     REFUSE_WRITE_LOCK = Refuse "write-lock" None;

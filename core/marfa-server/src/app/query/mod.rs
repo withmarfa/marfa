@@ -13,7 +13,7 @@ mod views;
 
 pub(crate) use compile::judge_type;
 pub use compile::{Ask, Filter, States};
-pub use cursor::{SECRET_KEY, Secret};
+pub use cursor::{Position, SECRET_KEY, Secret};
 pub use listing::{By, Listing, list, stats};
 pub use order::Sort;
 pub use search::{Search, search};

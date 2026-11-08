@@ -170,8 +170,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/runs",
     "GET /connectors/{id}/state",
     "GET /export",
-    "GET /folders",
-    "GET /folders/{id}/status",
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
     "GET /occurrences",
@@ -179,7 +177,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /webhooks",
     "GET /webhooks/{id}",
     "GET /webhooks/{id}/deliveries",
-    "PATCH /folders/{id}",
     "PATCH /webhooks/{id}",
     "POST /connectors",
     "POST /connectors/{id}/agreements",
@@ -189,8 +186,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /connectors/{id}/heartbeat",
     "POST /connectors/{id}/hold",
     "POST /connectors/{id}/runs",
-    "POST /folders",
-    "POST /folders/{id}/revoke",
     "POST /items/bulk-actions",
     "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
@@ -198,7 +193,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /webhooks",
     "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
     "PUT /connectors/{id}/state",
-    "PUT /folders/{id}/status",
 ];
 
 const METHODS: [&str; 8] = [

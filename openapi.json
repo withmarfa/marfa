@@ -7943,11 +7943,10 @@
               "kind": {
                 "type": "string",
                 "enum": [
-                  "browser",
                   "app",
                   "key"
                 ],
-                "description": "browser: owner browser session; app: signed-in app grant; key: API key."
+                "description": "app: signed-in app grant; key: API key."
               },
               "id": {
                 "type": "string",
@@ -38482,12 +38481,8 @@
           "Folders"
         ],
         "summary": "List folders",
-        "description": "Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
-        "security": [
-          {
-            "ownerSession": []
-          }
-        ],
+        "description": "Returns active folder summaries, newest first, to the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
+        "security": [],
         "parameters": [
           {
             "schema": {
@@ -38572,7 +38567,7 @@
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "description": "`unauthorized`: the request has no credential, or carries only an owner's browser session.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38602,7 +38597,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: only the owner or a private local command can list folders.",
+            "description": "- `forbidden`: only the private local command can list folders.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39230,7 +39225,7 @@
           "Folders"
         ],
         "summary": "Update a folder",
-        "description": "Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay. Removes stored properties the folder type does not declare.",
+        "description": "Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay.",
         "security": [
           {
             "bearerAuth": []
