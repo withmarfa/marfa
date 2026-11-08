@@ -193,7 +193,6 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/device/edge-replay-live.test.ts",
   "src/suites/device/edge-replay.test.ts",
   "src/suites/device/entry-member-filter-live.test.ts",
-  "src/suites/device/file-cache.test.ts",
   "src/suites/device/file-size-live.test.ts",
   "src/suites/device/folder-health.test.ts",
   "src/suites/device/folder-patterns.test.ts",
