@@ -9,7 +9,7 @@ use super::hash::Hash;
 use super::references::Row;
 use crate::app::refusal::{Refusal, Result};
 
-/// A row that names a blob through a reference that lends, with the types the read rule asks.
+/// What the read rule asks of a row that lends a blob.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lender {
     Item {
@@ -84,43 +84,67 @@ pub fn held_in(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<bool
     )?)
 }
 
-pub fn lenders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Lender>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT 'item', i.type, '' FROM blob_references r JOIN items i ON i.seq = r.seq \
-           WHERE r.hash = ?1 AND r.kind = 'item' AND r.lends = 1 \
-         UNION ALL \
-         SELECT 'edge', e.edge_type, s.type FROM blob_references r \
-           JOIN edges e ON e.seq = r.seq JOIN items s ON s.id = e.source_id \
-           WHERE r.hash = ?1 AND r.kind = 'edge' AND r.lends = 1 \
-         UNION ALL \
-         SELECT 'extension', i.type, r.namespace FROM blob_references r \
-           JOIN items i ON i.seq = r.seq \
-           WHERE r.hash = ?1 AND r.kind = 'extension' AND r.lends = 1",
-    )?;
-    let rows = statement.query_map([hash.as_str()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    let mut lenders = Vec::new();
-    for row in rows {
-        let (kind, first, second) = row?;
-        lenders.push(match kind.as_str() {
-            "item" => Lender::Item { type_id: first },
-            "edge" => Lender::Edge {
-                edge_type: first,
-                source_type: second,
-            },
-            "extension" => Lender::Extension {
-                namespace: second,
-                item_type: first,
-            },
-            _ => return Err(unread("reference")),
-        });
+/// The distinct answers the read rule asks of the rows that lend a blob, read one seek at a
+/// time in index order, so a caller stops at the first it may read and never walks more than
+/// one row per distinct answer, however many rows lend.
+pub fn lenders<'a, 'c>(tx: &'a Transaction<'c>, hash: &'a Hash) -> Lenders<'a, 'c> {
+    Lenders {
+        tx,
+        hash,
+        after: Some(Default::default()),
     }
-    Ok(lenders)
+}
+
+const LENDER_AFTER: &str = "SELECT kind, item_type, edge_type, namespace FROM blob_references \
+     WHERE hash = ?1 AND lends = 1 AND (kind, item_type, edge_type, namespace) > (?2, ?3, ?4, ?5) \
+     ORDER BY kind, item_type, edge_type, namespace LIMIT 1";
+
+pub struct Lenders<'a, 'c> {
+    tx: &'a Transaction<'c>,
+    hash: &'a Hash,
+    /// The last answer read, or `None` once the walk has ended.
+    after: Option<[String; 4]>,
+}
+
+impl Lenders<'_, '_> {
+    fn step(&self, after: &[String; 4]) -> Result<Option<[String; 4]>> {
+        Ok(self
+            .tx
+            .prepare_cached(LENDER_AFTER)?
+            .query_row(
+                params![self.hash.as_str(), after[0], after[1], after[2], after[3]],
+                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]),
+            )
+            .optional()?)
+    }
+}
+
+impl Iterator for Lenders<'_, '_> {
+    type Item = Result<Lender>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let after = self.after.take()?;
+        let [kind, item_type, edge_type, namespace] = match self.step(&after) {
+            Ok(Some(found)) => {
+                self.after = Some(found.clone());
+                found
+            }
+            Ok(None) => return None,
+            Err(error) => return Some(Err(error)),
+        };
+        Some(match kind.as_str() {
+            "item" => Ok(Lender::Item { type_id: item_type }),
+            "edge" => Ok(Lender::Edge {
+                edge_type,
+                source_type: item_type,
+            }),
+            "extension" => Ok(Lender::Extension {
+                namespace,
+                item_type,
+            }),
+            _ => Err(unread("reference")),
+        })
+    }
 }
 
 fn keyed(row: Row<'_>) -> (&'static str, i64, &str, i64) {
@@ -145,14 +169,37 @@ pub fn references(tx: &Transaction<'_>, row: Row<'_>) -> Result<BTreeMap<String,
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// The item type and edge type the read rule asks of a written row.
+fn types(tx: &Transaction<'_>, row: Row<'_>) -> Result<(String, String)> {
+    let found = match row {
+        Row::Item(seq) | Row::Extension(seq, _) => tx
+            .prepare_cached("SELECT type, '' FROM items WHERE seq = ?1")?
+            .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?,
+        Row::Edge(seq) => tx
+            .prepare_cached(
+                "SELECT s.type, e.edge_type FROM edges e JOIN items s ON s.id = e.source_id \
+                 WHERE e.seq = ?1",
+            )?
+            .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?,
+        Row::Version(..) => Some((String::new(), String::new())),
+    };
+    found.ok_or_else(|| Refusal::internal("a reference names a row that is not written"))
+}
+
 /// A reference added takes its blob off the orphan report.
 pub fn reference(tx: &Transaction<'_>, row: Row<'_>, hash: &str, lends: bool) -> Result<()> {
     let (kind, seq, namespace, version) = keyed(row);
+    let (item_type, edge_type) = types(tx, row)?;
     tx.prepare_cached(
-        "INSERT INTO blob_references (hash, kind, seq, namespace, version, lends) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO blob_references \
+         (hash, kind, seq, namespace, version, lends, item_type, edge_type) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )?
-    .execute(params![hash, kind, seq, namespace, version, lends])?;
+    .execute(params![
+        hash, kind, seq, namespace, version, lends, item_type, edge_type
+    ])?;
     tx.prepare_cached("DELETE FROM blob_orphans WHERE hash = ?1")?
         .execute([hash])?;
     Ok(())
@@ -190,8 +237,9 @@ pub fn forget_item(tx: &Transaction<'_>, seq: i64) -> Result<()> {
 /// The version an item leaves behind names what the item named, and lends nothing.
 pub fn keep_version(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO blob_references (hash, kind, seq, namespace, version, lends) \
-         SELECT r.hash, 'version', r.seq, '', i.version, 0 \
+        "INSERT INTO blob_references \
+         (hash, kind, seq, namespace, version, lends, item_type, edge_type) \
+         SELECT r.hash, 'version', r.seq, '', i.version, 0, '', '' \
          FROM blob_references r JOIN items i ON i.seq = r.seq \
          WHERE r.kind = 'item' AND r.seq = ?1",
     )?
@@ -274,4 +322,72 @@ pub fn stores(tx: &Transaction<'_>) -> Result<Vec<StoreRecord>> {
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    fn lent(tx: &Transaction<'_>, hash: &Hash, seq: i64, kind: &str, types: [&str; 3]) {
+        tx.execute(
+            "INSERT INTO blob_references \
+             (hash, kind, seq, namespace, version, lends, item_type, edge_type) \
+             VALUES (?1, ?2, ?3, ?4, 0, 1, ?5, ?6)",
+            params![hash.as_str(), kind, seq, types[2], types[0], types[1]],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_lenders_walk_one_seek_per_distinct_answer_however_many_rows_lend() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let hash = Hash::parse(&format!("sha256:{}", "a".repeat(64))).unwrap();
+        let other = Hash::parse(&format!("sha256:{}", "b".repeat(64))).unwrap();
+        for seq in 0..2_000 {
+            lent(&tx, &hash, seq, "item", ["core.note", "", ""]);
+            lent(&tx, &hash, seq, "extension", ["core.note", "", "acme"]);
+            lent(&tx, &other, seq, "item", ["core.task", "", ""]);
+        }
+        lent(&tx, &hash, 1, "edge", ["core.note", "parent-of", ""]);
+        lent(&tx, &hash, 9_000, "item", ["core.task", "", ""]);
+        tx.execute(
+            "UPDATE blob_references SET lends = 0 WHERE hash = ?1 AND seq = 9000",
+            [hash.as_str()],
+        )
+        .unwrap();
+
+        let walked: Vec<Lender> = lenders(&tx, &hash).map(Result::unwrap).collect();
+        assert_eq!(
+            walked,
+            vec![
+                Lender::Edge {
+                    edge_type: "parent-of".into(),
+                    source_type: "core.note".into(),
+                },
+                Lender::Extension {
+                    namespace: "acme".into(),
+                    item_type: "core.note".into(),
+                },
+                Lender::Item {
+                    type_id: "core.note".into(),
+                },
+            ]
+        );
+
+        let plan: Vec<String> = tx
+            .prepare(&format!("EXPLAIN QUERY PLAN {LENDER_AFTER}"))
+            .unwrap()
+            .query_map(params![hash.as_str(), "", "", "", ""], |row| row.get(3))
+            .unwrap()
+            .map(|detail| detail.unwrap())
+            .collect();
+        let plan = plan.join("; ");
+        assert!(plan.contains("COVERING INDEX blob_lenders (hash=? AND (kind,item_type,edge_type,namespace)>(?,?,?,?))"), "{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    }
 }

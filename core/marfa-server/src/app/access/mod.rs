@@ -703,6 +703,10 @@ mod tests {
     fn a_blob_is_read_only_through_a_row_that_lends_it_and_that_the_caller_may_read() {
         use crate::app::blobs::Lender;
 
+        fn reads<const N: usize>(caller: &Caller, lenders: [Lender; N]) -> bool {
+            caller.may_read_blob(lenders.map(Ok)).unwrap()
+        }
+
         let note = || Lender::Item {
             type_id: "core.note".into(),
         };
@@ -724,26 +728,33 @@ mod tests {
         let every_edge = json!({ "*": "read" });
 
         let narrow = reader(notes.clone(), nothing.clone(), nothing.clone());
-        assert!(narrow.may_read_blob(&[note()]));
-        assert!(!narrow.may_read_blob(&[]));
-        assert!(!narrow.may_read_blob(&[Lender::Item {
-            type_id: "core.file".into()
-        }]));
-        assert!(!narrow.may_read_blob(&[link("core.note")]));
-        assert!(!narrow.may_read_blob(&[extension("core.note")]));
+        assert!(reads(&narrow, [note()]));
+        assert!(!reads(&narrow, []));
+        assert!(!reads(
+            &narrow,
+            [Lender::Item {
+                type_id: "core.file".into()
+            }]
+        ));
+        assert!(!reads(&narrow, [link("core.note")]));
+        assert!(!reads(&narrow, [extension("core.note")]));
 
         let edges = reader(notes.clone(), every_edge.clone(), nothing.clone());
-        assert!(edges.may_read_blob(&[link("core.note")]));
-        assert!(!edges.may_read_blob(&[link("core.file")]));
+        assert!(reads(&edges, [link("core.note")]));
+        assert!(!reads(&edges, [link("core.file")]));
 
         let extensions = reader(notes, nothing.clone(), json!({ "acme": "read" }));
-        assert!(extensions.may_read_blob(&[extension("core.note")]));
-        assert!(!extensions.may_read_blob(&[extension("core.file")]));
+        assert!(reads(&extensions, [extension("core.note")]));
+        assert!(!reads(&extensions, [extension("core.file")]));
 
         let manager = key("m", "mine", &[Permission::BlobsManage], &[]);
         for every in [Caller::Key(Box::new(manager)), Caller::local()] {
-            assert!(every.may_read_blob(&[]));
+            assert!(reads(&every, []));
         }
+
+        let unread = || Err(Refusal::internal("unread"));
+        assert!(narrow.may_read_blob([Ok(note()), unread()]).unwrap());
+        assert!(narrow.may_read_blob([unread(), Ok(note())]).is_err());
     }
 
     #[test]

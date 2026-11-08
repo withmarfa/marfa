@@ -68,7 +68,7 @@ pub fn decide(
             let proved = caller.proves_blob(
                 rows::find(tx, &hash)?.is_some(),
                 || rows::proved(tx, &digest, &caller.credential_handle()),
-                || rows::lenders(tx, &hash),
+                rows::lenders(tx, &hash),
             )?;
             if naming.bytes == Some(&hash) {
                 caller.require_file_bytes(proved)?;
