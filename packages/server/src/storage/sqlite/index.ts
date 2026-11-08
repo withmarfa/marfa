@@ -8,7 +8,6 @@ import { publishBootRegistry } from "./registry-context.js";
 import { assertTransactionUsable } from "./transaction-control.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
-import type { MigrationHooks } from "./migrations.js";
 import {
   assertInWriteTransaction,
   wrapDbWithRequestContext,
@@ -62,10 +61,7 @@ import {
   shippedPlatformTypes,
 } from "@withmarfa/shared";
 
-export async function createSqliteStorage(
-  sqlitePath: string,
-  migrationHooks: MigrationHooks = {},
-): Promise<
+export async function createSqliteStorage(sqlitePath: string): Promise<
   Storage & {
     __sqliteAll(query: string): Promise<unknown[]>;
     __sqliteRun(query: string, params: unknown[]): Promise<{ changes: number }>;
@@ -81,7 +77,7 @@ export async function createSqliteStorage(
     inspectQueryPlan,
     close,
     captureRead,
-  } = await createConnection(sqlitePath, migrationHooks);
+  } = await createConnection(sqlitePath);
 
   try {
     await initializeStructuralGeneration(raw);
