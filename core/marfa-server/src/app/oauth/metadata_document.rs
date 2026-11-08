@@ -128,8 +128,8 @@ pub trait Lookup: Send + Sync {
 
 /// The system's resolver has no time limit, so it runs on a thread of its own, which a hung
 /// lookup leaves behind until the system gives up.
-struct SystemLookup {
-    limit: Duration,
+pub(crate) struct SystemLookup {
+    pub(crate) limit: Duration,
 }
 
 impl Lookup for SystemLookup {
@@ -150,7 +150,7 @@ impl Lookup for SystemLookup {
 
 /// So nothing between the check and the connection can look the name up again.
 #[derive(Debug)]
-struct Pinned(Vec<SocketAddr>);
+pub(crate) struct Pinned(pub(crate) Vec<SocketAddr>);
 
 impl Resolver for Pinned {
     fn resolve(

@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 use super::access::{Caller, Level, Permission};
+use super::catalog::Snapshot;
+use super::connectors::{ReadOnly, read_only};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{edges, items};
@@ -251,9 +253,11 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
     let key = key.to_string();
     let caller = caller.clone();
     let clock = app.clock.clone();
+    let marked = app.read_only_handle();
     app.db
         .read(move |tx| {
-            let caller = caller.current(tx, &clock.stamp())?;
+            let at = clock.stamp();
+            let caller = caller.current(tx, &at)?;
             authorize(tx, &caller, needs)?;
             let Some(body) = record.body else {
                 return Err(Refusal::new(
@@ -270,7 +274,11 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
                 content_type: record
                     .content_type
                     .unwrap_or_else(|| CONTENT_TYPE.to_string()),
-                body: with_current_read_only(tx, status, body)?,
+                body: with_current_read_only(
+                    &read_only::current(&marked, tx, &at, Snapshot::Committed)?,
+                    status,
+                    body,
+                ),
             })
         })
         .await
@@ -365,19 +373,19 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
 }
 
 /// A kept answer's `read_only` is the one thing judged at replay.
-fn with_current_read_only(tx: &Transaction<'_>, status: u16, body: Vec<u8>) -> Result<Vec<u8>> {
+fn with_current_read_only(read_only: &ReadOnly, status: u16, body: Vec<u8>) -> Vec<u8> {
     if !(200..300).contains(&status) {
-        return Ok(body);
+        return body;
     }
     let Ok(Value::Object(answer)) = serde_json::from_slice::<Value>(&body) else {
-        return Ok(body);
+        return body;
     };
     let Some(item) = answer.get("item") else {
-        return Ok(body);
+        return body;
     };
     let text = |name: &str| item.get(name).and_then(Value::as_str).unwrap_or_default();
-    let now = items::read_only(tx, text("source"), text("type"))?;
-    Ok(read_only_set(body, now))
+    let now = read_only.of(text("source"), text("type"));
+    read_only_set(body, now)
 }
 
 /// Sets the first `read_only`, which is the item's: its own fields come before

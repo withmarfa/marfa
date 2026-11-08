@@ -11,6 +11,7 @@ use super::schedule::{self, Context, Gap, Pass};
 use super::{send, store};
 use crate::app::App;
 use crate::app::catalog;
+use crate::app::connectors::read_only;
 use crate::app::faults::HOLD_WEBHOOK_SCHEDULE;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
@@ -167,10 +168,17 @@ impl Sender {
                         catalog::current(&app.catalog_handle(), tx, catalog::Snapshot::Committed)?;
                     let pulse = app.db.pulse();
                     let at = app.clock.stamp();
+                    let read_only = read_only::current(
+                        &app.read_only_handle(),
+                        tx,
+                        &at,
+                        catalog::Snapshot::Pending,
+                    )?;
                     schedule::pass(
                         tx,
                         &Context {
                             catalog: &catalog,
+                            read_only: &read_only,
                             faults: &app.faults,
                             pulse: &pulse,
                             at: &at,

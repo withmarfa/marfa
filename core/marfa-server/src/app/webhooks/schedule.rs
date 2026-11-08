@@ -6,6 +6,7 @@ use super::selects;
 use super::store::{self, Queued, Subscription};
 use crate::app::access::{Caller, standing_maker};
 use crate::app::catalog::Catalog;
+use crate::app::connectors::ReadOnly;
 use crate::app::events::fanout::{self, Logged};
 use crate::app::events::{Filter, Judge, Judged};
 use crate::app::faults::{Faults, HOLD_WEBHOOK_SCHEDULE_QUEUED};
@@ -44,6 +45,7 @@ pub enum Pass {
 
 pub struct Context<'a> {
     pub catalog: &'a Catalog,
+    pub read_only: &'a ReadOnly,
     pub faults: &'a Faults,
     pub pulse: &'a Pulse,
     pub at: &'a str,
@@ -200,9 +202,9 @@ fn queue(
             continue;
         }
         let judge = Judge {
-            tx,
             caller: &each.caller,
             rules: &context.catalog.rules,
+            read_only: context.read_only,
             filter: &UNFILTERED,
         };
         let Some(kind) = judge.wants(&head) else {

@@ -1,11 +1,10 @@
 //! What a stream sends of a logged event, judged for the credential it holds.
 
 use marfa_rules::catalog::Catalog as Rules;
-use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
 use crate::app::access::Caller;
-use crate::app::items::read_only;
+use crate::app::connectors::ReadOnly;
 use crate::app::refusal::{Refusal, Result};
 
 /// What the request asked for, which the stream keeps for its life.
@@ -46,14 +45,14 @@ pub enum Judged {
     Unreadable,
 }
 
-pub struct Judge<'a, 'c> {
-    pub tx: &'a Transaction<'c>,
+pub struct Judge<'a> {
     pub caller: &'a Caller,
     pub rules: &'a Rules,
+    pub read_only: &'a ReadOnly,
     pub filter: &'a Filter,
 }
 
-impl Judge<'_, '_> {
+impl Judge<'_> {
     /// Decides from the columns alone, so a payload a stream does not send is not read.
     pub fn wants(&self, entry: &Head<'_>) -> Option<Kind> {
         let kind = if entry.event_type.starts_with("edge.") {
@@ -127,7 +126,7 @@ impl Judge<'_, '_> {
         }
         let with_type = item.remove("trashed_with_type");
         self.named_to_readers(item, "trashed_with", with_type);
-        let read_only = read_only(self.tx, entry.source, entry.type_id)?;
+        let read_only = self.read_only.of(entry.source, entry.type_id);
         *item = before_properties(std::mem::take(item), read_only);
         let with_type = body.remove("restored_with_type");
         self.named_to_readers(body, "restored_with", with_type);

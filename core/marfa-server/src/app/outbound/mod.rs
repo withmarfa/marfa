@@ -77,10 +77,12 @@ pub struct Outgoing<'a> {
 
 /// The resolver fault counts and scripts lookups here.
 pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Target>> {
-    if let Some(answer) = faults.scripted_answer(host) {
+    if let Some(scripted) = faults.resolve(host) {
         return Some(
-            answer
+            scripted
+                .judged
                 .into_iter()
+                .zip(scripted.reached)
                 .map(|(checked, connected)| Target { checked, connected })
                 .collect(),
         );

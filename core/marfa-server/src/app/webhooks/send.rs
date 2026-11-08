@@ -15,6 +15,7 @@ use super::{CANCEL_CREDENTIAL, CANCEL_TURNED_OFF, CANCEL_UNREADABLE, CANCEL_UNSE
 use crate::app::App;
 use crate::app::access::standing_maker;
 use crate::app::catalog::{self, Catalog};
+use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::events::{Head, Judge, Judged};
 use crate::app::faults::HOLD_WEBHOOK_RESPONSE;
 use crate::app::outbound::{self, Outcome, Outgoing, Reach};
@@ -47,7 +48,13 @@ enum Prepared {
     Send(Box<Ready>),
 }
 
-fn prepare(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, at: &str) -> Result<Prepared> {
+fn prepare(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    read_only: &ReadOnly,
+    seq: i64,
+    at: &str,
+) -> Result<Prepared> {
     let Some((delivery, payload)) = store::pending(tx, seq)? else {
         return Ok(Prepared::Gone);
     };
@@ -75,9 +82,9 @@ fn prepare(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, at: &str) -> Resul
         source: &delivery.source,
     };
     let judge = Judge {
-        tx,
         caller: &caller,
         rules: &catalog.rules,
+        read_only,
         filter: &UNFILTERED,
     };
     let Some(kind) = judge.wants(&head) else {
@@ -210,11 +217,13 @@ async fn write(
 pub async fn attempt(app: Arc<App>, seq: i64) -> Result<()> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
+    let marked = app.read_only_handle();
     let ready = app
         .db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
-            prepare(tx, &catalog, seq, &at)
+            let read_only = read_only::current(&marked, tx, &at, catalog::Snapshot::Committed)?;
+            prepare(tx, &catalog, &read_only, seq, &at)
         })
         .await?;
     let ready = match ready {

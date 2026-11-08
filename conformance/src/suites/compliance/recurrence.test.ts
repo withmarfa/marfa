@@ -30,9 +30,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-// Every fixture here sits in 2041 or later, past every other file's window,
-// and every assertion is scoped to the rows this file wrote: the series pass
-// reads every rule on the instance, so the window alone does not isolate it.
+// Assertions select their own rows because expansion reads every stored rule.
 
 async function event(properties: Record<string, unknown>): Promise<string> {
   const r = await client.createItem({
@@ -1064,6 +1062,11 @@ describe("what a write may store", () => {
       { end_timezone: "UTC+1" },
       "end_timezone",
     ],
+    [
+      "an end zone given as an offset",
+      { end_timezone: "+01:00" },
+      "end_timezone",
+    ],
   ])("refuses %s, naming the field", async (_label, bad, field) => {
     const r = await client.createItem({
       type: "core.event",
@@ -1606,10 +1609,7 @@ describe("a rule too costly to unfold", () => {
 });
 
 describe("a series that takes too long to unfold", () => {
-  // The bound is 1,000 ms, which a rule within the candidate bound does not
-  // reach on a machine that runs the server. The target is told to allow one
-  // millisecond instead, with a rule that walks some forty-six thousand
-  // candidates to reach its window, a month of minutes, which takes tens.
+  // Expiry at the first deadline check is independent of machine speed.
   it(
     "is left out of data and named when it passes the time bound, and answers whole under it",
     async () => {
@@ -1650,8 +1650,7 @@ describe("a series that takes too long to unfold", () => {
           };
         };
 
-        // The witness: under the time bound the series unfolds, and it is the
-        // same rule and window that the shortened bound leaves out.
+        // The same rule and window must answer before and after forced expiry.
         const whole = await read();
         expect(whole.data.filter((o) => o.series_id === id)).toHaveLength(1);
         expect(whole.series_errors ?? []).toEqual([]);

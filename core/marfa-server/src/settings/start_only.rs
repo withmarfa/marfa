@@ -58,6 +58,10 @@ pub const DECLARED: &[Declared] = &[
         "SQLITE_BUSY_BUDGET_MS",
         "How long a database request waits for the database, in milliseconds.",
     ),
+    plain(
+        "MARFA_CONNECTOR_HOLD_MS",
+        "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.",
+    ),
     plain("BLOB_PATH", "Where the server keeps files."),
     plain(
         "MARFA_CONTROL_SOCKET",

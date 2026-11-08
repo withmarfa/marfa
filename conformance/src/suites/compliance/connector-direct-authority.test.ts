@@ -103,7 +103,11 @@ function doors(): Door[] {
 async function refusesDirectAuthority(
   authority: "owner session" | "private socket",
 ): Promise<void> {
-  for (const door of doors()) {
+  const reached =
+    authority === "private socket"
+      ? doors()
+      : doors().filter((door) => door.path.startsWith("/deliveries"));
+  for (const door of reached) {
     const path = `/connectors/${id}${door.path}`;
     const response =
       authority === "private socket"

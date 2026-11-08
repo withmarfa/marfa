@@ -17,6 +17,8 @@ const MAX_DEADLINE_MS: u64 = 2_147_483_647;
 
 const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
+/// The time one series may take to unfold in a read of occurrences.
+const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
 
@@ -76,6 +78,7 @@ points! {
     HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
     HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
     HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
+    HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
@@ -115,9 +118,6 @@ impl Volume {
 const HIDE_POSITION: &str = "hide:webhook-position";
 const HIDE_EVENTS: &str = "hide:event";
 const RESOLVE: &str = "resolve:";
-
-/// One scripted answer: the address the check judges, and the one a socket connects to.
-pub type Scripted = Vec<(IpAddr, IpAddr)>;
 
 const FAIL_JOB: &Point = &Point {
     kind: Kind::Fail,
@@ -254,6 +254,15 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
         })
 }
 
+fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
+    arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
+        .ok_or_else(|| {
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
+        })
+}
+
 /// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
 pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
 const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
@@ -286,22 +295,6 @@ fn hidden_range(text: &str) -> Option<(i64, i64)> {
     (first <= last).then_some((first, last))
 }
 
-fn scripted(text: &str) -> Option<Vec<Scripted>> {
-    text.split(';')
-        .map(|answer| {
-            answer
-                .split(',')
-                .map(|address| match address.split_once('>') {
-                    Some((checked, connected)) => {
-                        Some((checked.parse().ok()?, connected.parse().ok()?))
-                    }
-                    None => address.parse().ok().map(|ip| (ip, ip)),
-                })
-                .collect()
-        })
-        .collect()
-}
-
 fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
     match (rest, arg) {
         ("webhook-position", None) => Ok((None, None)),
@@ -311,20 +304,6 @@ fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>
             "{HIDE_EVENTS} takes an event id, or two joined by -, from 1"
         )),
         _ => Err(format!("no hide is named {rest}")),
-    }
-}
-
-fn judge_resolve(host: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
-    if host.is_empty() {
-        return Err("a resolve fault names a host: resolve:<host>".to_string());
-    }
-    match arg.and_then(scripted) {
-        Some(_) => Ok((None, None)),
-        None => Err(
-            "a resolve fault takes one answer per lookup, separated by ;, each a list of \
-             addresses separated by , and each address written <address> or <checked>><connected>"
-                .to_string(),
-        ),
     }
 }
 
@@ -366,6 +345,20 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
+        UNFOLD_DEADLINE if rest.is_empty() => {
+            unfold_deadline_of(arg).map(|check| (None, Some(check)))
+        }
+        "resolve" => {
+            if rest.is_empty()
+                || !rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+            {
+                return Err("a resolve fault is named for a host name".to_string());
+            }
+            answers(arg.ok_or("a resolve fault takes the addresses the host resolves to")?)?;
+            Ok((None, None))
+        }
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
                 return Err(format!(
@@ -396,14 +389,49 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             }
         }
         "hide" => judge_hide(rest, arg),
-        "resolve" => judge_resolve(rest, arg),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, free:<volume>, limit:<lane>, unreadable:<stored>, hide:event, \
-             hide:webhook-position or resolve:<host>"
+             deadline:<job>, unfold-deadline, free:<volume>, resolve:<host>, limit:<lane>, \
+             unreadable:<stored>, hide:event or hide:webhook-position"
                 .to_string(),
         ),
     }
+}
+
+/// `judged>reached` lets a public-address check connect to a local fixture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub judged: Vec<IpAddr>,
+    pub reached: Vec<IpAddr>,
+}
+
+/// One answer for each lookup, separated by `;`, each a list of addresses separated by `,`.
+fn answers(arg: &str) -> Result<Vec<Resolved>, String> {
+    let refused = || {
+        format!(
+            "{arg} is not what a host resolves to: write the addresses of each lookup \
+             separated by ',', the lookups separated by ';', and an address as <judged>><reached> \
+             to judge one and reach another"
+        )
+    };
+    arg.split(';')
+        .map(|lookup| {
+            let mut resolved = Resolved {
+                judged: Vec::new(),
+                reached: Vec::new(),
+            };
+            for entry in lookup.split(',') {
+                let (judged, reached) = entry.split_once('>').unwrap_or((entry, entry));
+                resolved
+                    .judged
+                    .push(judged.trim().parse().map_err(|_| refused())?);
+                resolved
+                    .reached
+                    .push(reached.trim().parse().map_err(|_| refused())?);
+            }
+            Ok(resolved)
+        })
+        .collect()
 }
 
 struct Waiting(Arc<AtomicU64>);
@@ -566,6 +594,18 @@ impl Faults {
         true
     }
 
+    /// Each lookup fires once; the last scripted answer repeats.
+    pub fn resolve(&self, host: &str) -> Option<Resolved> {
+        let name = format!("{RESOLVE}{}", host.to_ascii_lowercase());
+        let mut armed = self.armed();
+        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
+        let lookups = answers(fault.arg.as_deref()?).ok()?;
+        let at = (fault.seen as usize).min(lookups.len().saturating_sub(1));
+        fault.seen = fault.seen.saturating_add(1);
+        fault.fired += 1;
+        lookups.into_iter().nth(at)
+    }
+
     pub fn deadline(&self, job: &str) -> Option<Duration> {
         let name = format!("deadline:{job}");
         self.armed()
@@ -573,6 +613,13 @@ impl Faults {
             .find(|fault| fault.name == name)
             .and_then(|fault| fault.number)
             .map(Duration::from_millis)
+    }
+
+    pub fn unfold_deadline(&self) -> Option<u64> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == UNFOLD_DEADLINE)
+            .and_then(|fault| fault.number)
     }
 
     pub fn limit(&self, lane: &str) -> Option<i64> {
@@ -628,17 +675,6 @@ impl Faults {
             .find(|fault| fault.name == HIDE_EVENTS)
             .and_then(|fault| fault.arg.as_deref())
             .and_then(hidden_range)
-    }
-
-    /// The answer the next lookup of `host` is given, if one is scripted. The last answer repeats.
-    pub fn scripted_answer(&self, host: &str) -> Option<Scripted> {
-        let name = format!("{RESOLVE}{}", host.to_ascii_lowercase());
-        let mut armed = self.armed();
-        let fault = armed.iter_mut().find(|fault| fault.name == name)?;
-        let mut answers = scripted(fault.arg.as_deref()?)?;
-        let index = (fault.fired as usize).min(answers.len() - 1);
-        fault.fired += 1;
-        Some(answers.swap_remove(index))
     }
 
     pub fn health_admitted(&self) -> Option<Released> {
@@ -785,6 +821,17 @@ mod tests {
     }
 
     #[test]
+    fn the_unfold_deadline_names_a_deadline_check() {
+        assert!(refused("unfold-deadline", None));
+        assert!(refused("unfold-deadline", Some("0")));
+        assert!(refused("unfold-deadline", Some("soon")));
+        let faults = Faults::default();
+        assert_eq!(faults.unfold_deadline(), None);
+        faults.set("unfold-deadline", Some("1")).unwrap();
+        assert_eq!(faults.unfold_deadline(), Some(1));
+    }
+
+    #[test]
     fn takes_the_session_points_with_a_count_alone() {
         for name in ["session-lookup", "session-delete", "session-use"] {
             assert!(!refused(&format!("fail:{name}"), None));
@@ -863,12 +910,16 @@ mod tests {
             )
             .unwrap();
         let ip = |text: &str| text.parse::<IpAddr>().unwrap();
-        let first = faults.scripted_answer("rebind.test").unwrap();
-        assert_eq!(first, vec![(ip("93.184.216.34"), ip("127.0.0.1"))]);
-        let later = vec![(ip("::1"), ip("::1")), (ip("10.0.0.1"), ip("10.0.0.1"))];
-        assert_eq!(faults.scripted_answer("rebind.test").unwrap(), later);
-        assert_eq!(faults.scripted_answer("rebind.test").unwrap(), later);
-        assert_eq!(faults.scripted_answer("other.test"), None);
+        let first = faults.resolve("rebind.test").unwrap();
+        assert_eq!(first.judged, vec![ip("93.184.216.34")]);
+        assert_eq!(first.reached, vec![ip("127.0.0.1")]);
+        let later = Resolved {
+            judged: vec![ip("::1"), ip("10.0.0.1")],
+            reached: vec![ip("::1"), ip("10.0.0.1")],
+        };
+        assert_eq!(faults.resolve("rebind.test").unwrap(), later);
+        assert_eq!(faults.resolve("rebind.test").unwrap(), later);
+        assert_eq!(faults.resolve("other.test"), None);
         assert_eq!(faults.list()[0].fired, 3);
     }
 

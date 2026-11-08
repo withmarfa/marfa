@@ -8,6 +8,7 @@ pub mod blobs;
 pub mod catalog;
 pub mod clock;
 pub mod config;
+pub mod connectors;
 pub mod consequences;
 pub mod edge_types;
 pub mod edges;
@@ -20,9 +21,12 @@ pub mod idempotency;
 pub mod instance;
 pub mod items;
 pub mod keys;
+pub mod mcp;
 pub mod oauth;
+pub mod occurrences;
 pub mod outbound;
 pub mod overview;
+pub mod provenance;
 pub mod query;
 pub mod refusal;
 mod reindex;
@@ -69,12 +73,14 @@ pub struct App {
     pub housekeeping: Housekeeping,
     pub webhooks: webhooks::Webhooks,
     pub blobs: Blobs,
+    pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
     pub viewers: events::Viewers,
     stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
+    read_only: Arc<ArcSwap<connectors::Registry>>,
     bound_port: OnceLock<u16>,
     pub(crate) documents: oauth::clients::Documents,
 }
@@ -100,6 +106,8 @@ impl App {
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
+        let mcp = mcp::Mcp::new(&start.auth_secret)
+            .map_err(|refused| Failure::start(refused.to_string()))?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
         blobs.register(&db, at.clone()).await?;
@@ -132,8 +140,10 @@ impl App {
             housekeeping: Housekeeping::default(),
             webhooks: webhooks::Webhooks::default(),
             blobs,
+            mcp,
             telemetry: Telemetry::default(),
             catalog,
+            read_only: Arc::new(ArcSwap::from_pointee(connectors::Registry::empty())),
             bound_port: OnceLock::new(),
             documents: oauth::clients::Documents::default(),
         });
@@ -155,6 +165,10 @@ impl App {
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
         self.catalog.clone()
+    }
+
+    pub(crate) fn read_only_handle(&self) -> Arc<ArcSwap<connectors::Registry>> {
+        self.read_only.clone()
     }
 
     pub fn addresses(&self) -> Addresses {
