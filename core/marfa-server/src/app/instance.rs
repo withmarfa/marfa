@@ -8,6 +8,7 @@ use crate::db::{Db, Write};
 const ID: &str = "id";
 const NAME: &str = "name";
 const CLAIMED_AT: &str = "claimed_at";
+const REACH_COUNTER: &str = "reach_counter";
 const OWNER_ID: &str = "owner_id";
 pub const DEFAULT_NAME: &str = "Marfa";
 
@@ -63,6 +64,26 @@ pub fn secret(tx: &Transaction<'_>) -> Result<Secret> {
     get(tx, SECRET_KEY)?
         .map(|text| Secret(text.into_bytes()))
         .ok_or_else(|| Refusal::internal("the cursor secret was not kept"))
+}
+
+/// How many writes have changed what a credential's reads can include without an event it reads.
+pub fn reach_counter(tx: &Transaction<'_>) -> Result<i64> {
+    match get(tx, REACH_COUNTER)? {
+        None => Ok(0),
+        Some(text) => text
+            .parse()
+            .map_err(|_| Refusal::internal("the reach counter does not read")),
+    }
+}
+
+/// Raised inside the write that changes the reach, so a refused write leaves it as it was.
+pub fn raise_reach(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute(
+        "INSERT INTO instance (key, value) VALUES (?1, '1') \
+         ON CONFLICT (key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+        [REACH_COUNTER],
+    )?;
+    Ok(())
 }
 
 pub async fn name(app: &App) -> Result<String> {

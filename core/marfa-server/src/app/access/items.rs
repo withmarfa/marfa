@@ -116,7 +116,7 @@ impl Caller {
     }
 
     /// The server's own work answers to no lever: a job that could not see a row could never clear it.
-    fn holding(&self) -> &Holding {
+    pub(super) fn holding(&self) -> &Holding {
         const NOTHING: &Holding = &Holding::NOTHING;
         match self {
             Caller::Local(standing) => standing.holding(),

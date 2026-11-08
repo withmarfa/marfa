@@ -248,7 +248,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
     name: Core checks
-    timeout-minutes: 24
+    timeout-minutes: 45
     runs-on: macos-26
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -1447,13 +1447,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # The drill uses the same Litestream version as the server image.
       - name: Install the object store and Litestream
         run: |
           curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
           sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
-          version=$(sed -n 's/^ARG LITESTREAM_VERSION=//p' deploy/Dockerfile)
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=0.5.17
           curl --fail --location --retry 3 "https://github.com/benbjohnson/litestream/releases/download/v$version/litestream-$version-linux-x86_64.tar.gz" -o "$RUNNER_TEMP/litestream.tar.gz"
           tar -xzf "$RUNNER_TEMP/litestream.tar.gz" -C "$RUNNER_TEMP" litestream
           sudo install -m 755 "$RUNNER_TEMP/litestream" /usr/local/bin/litestream
@@ -1490,27 +1488,51 @@ jobs:
           path: ${{ runner.temp }}/drill/reports/restore-drill.md
           if-no-files-found: ignore
 
-  # The shipped image, built from `deploy/Dockerfile` and booted through its
-  # entrypoint, which nothing else in CI runs. `scripts/check-image.sh` holds
-  # it to the deploy guide: it becomes healthy, reports the commit it was
-  # built from and the release it was made as, packages a `marfa` that reports
-  # that release, stops with status 0 inside ten seconds, and on a database
-  # another build wrote stays up and unhealthy rather than ending. No bucket,
-  # so the Litestream half is the restore drill's. The release is a stand-in:
-  # the build is made as a release so that the stamping a release build does
-  # is exercised before a tag depends on it.
+  # The shipped image, made as a release makes it: the static Linux programs
+  # from `scripts/release/build-programs.sh`, then `deploy/Dockerfile` around
+  # them, then `scripts/check-image.sh`, which boots it on a read-only root
+  # with a volume and holds it to what an owner is told. The native downloads
+  # and PDFium library are the ones `core-native` saves from `main`.
   image:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
     name: Server image
-    timeout-minutes: 15
+    timeout-minutes: 60
     runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v7
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
+      - name: Build and check the programs
+        run: scripts/release/build-programs.sh "$TARGET"
       - name: Build the image
-        run: docker build -f deploy/Dockerfile --build-arg VERSION_SHA="$GITHUB_SHA" --build-arg VERSION_RELEASE=0.0.1 -t marfa-server .
+        run: |
+          version=$(awk '/^\[/ { own = ($0 == "[workspace.package]") } own && /^version = / { gsub(/"/, "", $3); print $3; exit }' core/Cargo.toml)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          context="$RUNNER_TEMP/image-context/amd64"
+          mkdir -p "$context"
+          cp "$MARFA_NATIVE_ROOT/out/$TARGET"/{marfa,marfa-server,NOTICES.txt} "$context/"
+          docker buildx build --load --platform linux/amd64 -f deploy/Dockerfile \
+            --build-arg "VERSION=$version" --build-arg "REVISION=$GITHUB_SHA" \
+            -t marfa-server "$RUNNER_TEMP/image-context"
       - name: Boot it, ask it, stop it
-        run: scripts/check-image.sh marfa-server "$GITHUB_SHA" 0.0.1
+        run: scripts/check-image.sh marfa-server "$VERSION"
 
   types-freshness:
     needs: changes

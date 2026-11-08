@@ -16,10 +16,11 @@ use super::{
     with_blocks,
 };
 use crate::app::App;
+use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::edges::{self, Reach};
-use crate::app::faults::{Faults, HOLD_READ_HYDRATION};
+use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::refusal::{Refusal, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
@@ -34,9 +35,42 @@ pub(crate) struct Reader<'a, 'c> {
     pub caller: Caller,
     pub catalog: Arc<Catalog>,
     faults: &'a Faults,
+    /// The read answers a request that presented a reach, which it found current.
+    certified: bool,
 }
 
+/// Reads in one snapshot, holding the request's reach, if it presented one, to that snapshot.
 pub(crate) async fn reading<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
+{
+    let demand = Demand::pending();
+    let held = demand.is_some();
+    read_in(app, caller, demand, held, job).await
+}
+
+/// Reads in one snapshot, holding the reach a copy stream announced to that snapshot.
+pub(crate) async fn reading_under<T, F>(
+    app: &App,
+    caller: &Caller,
+    demand: Option<Demand>,
+    job: F,
+) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
+{
+    read_in(app, caller, demand, false, job).await
+}
+
+async fn read_in<T, F>(
+    app: &App,
+    caller: &Caller,
+    demand: Option<Demand>,
+    held: bool,
+    job: F,
+) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
@@ -48,18 +82,31 @@ where
     app.db
         .read(move |tx| {
             let caller = caller.current(tx, &clock.stamp())?;
+            if let Some(demand) = &demand {
+                demand.verify(tx, &caller)?;
+                if held {
+                    faults.hold_blocking(HOLD_READ_SNAPSHOT);
+                }
+            }
             let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
             job(&Reader {
                 tx,
                 caller,
                 catalog,
                 faults: &faults,
+                certified: demand.is_some(),
             })
         })
         .await
 }
 
 impl Reader<'_, '_> {
+    /// Whether the item belongs to the inventory the credential's source filter leaves it.
+    fn lists(&self, row: &Item) -> bool {
+        self.caller
+            .lists(&self.catalog.rules, &row.type_id, &row.source)
+    }
+
     fn row(&self, id: &str) -> Result<Item> {
         self.caller.require_reach()?;
         rows::by_id(self.tx, id)?
@@ -146,8 +193,13 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
             truncated = true;
             continue;
         }
+        let listed = if read.certified {
+            format!(",\"listed\":{}", read.lists(&row))
+        } else {
+            String::new()
+        };
         held.push(format!(
-            "{{\"item\":{},\"metadata\":{}}}",
+            "{{\"item\":{},\"metadata\":{}{listed}}}",
             row.answered(read.tx, &read.caller)?,
             metadata_for(read.tx, &row, &read.caller)?
         ));
@@ -197,8 +249,13 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
         } else {
             String::new()
         };
+        let listed = if read.certified {
+            format!(",\"listed\":{}", read.lists(&row))
+        } else {
+            String::new()
+        };
         Ok(format!(
-            "{{\"item\":{},\"metadata\":{}{versions}{backrefs}{neighbors}}}",
+            "{{\"item\":{},\"metadata\":{}{listed}{versions}{backrefs}{neighbors}}}",
             with_blocks(row.answered(read.tx, &read.caller)?, &outbound.text),
             metadata_for(read.tx, &row, &read.caller)?
         ))
@@ -283,6 +340,15 @@ pub async fn bulk_get(
         } else {
             String::new()
         };
+        let also = if read.certified {
+            let listed: Vec<String> = visible
+                .iter()
+                .map(|row| read.lists(row).to_string())
+                .collect();
+            format!("{also},\"listed\":[{}]", listed.join(","))
+        } else {
+            also
+        };
         Ok(format!("{{\"items\":[{}]{also}}}", items.join(",")))
     })
     .await
@@ -320,6 +386,9 @@ pub(crate) fn listed(read: &Reader<'_, '_>, seqs: &[i64], include: &Many) -> Res
     Ok(listed_rows(read, seqs, include)?
         .into_iter()
         .map(|(item, metadata)| match metadata {
+            Some(metadata) if read.certified => {
+                format!("{{\"item\":{item},\"metadata\":{metadata},\"listed\":true}}")
+            }
             Some(metadata) => format!("{{\"item\":{item},\"metadata\":{metadata}}}"),
             None => item,
         })

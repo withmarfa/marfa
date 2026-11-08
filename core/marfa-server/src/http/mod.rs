@@ -9,6 +9,7 @@ mod bulk;
 pub mod caller;
 mod caller_address;
 mod compression;
+mod conditional;
 mod config;
 mod control;
 #[cfg(test)]
@@ -40,7 +41,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{MatchedPath, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next, from_fn, from_fn_with_state};
 use axum::response::Response;
@@ -64,7 +65,7 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
         let mut empty = Response::new(Body::empty());
         *empty.status_mut() = StatusCode::NO_CONTENT;
         empty
-    } else if method == Method::GET && headers.contains_key("x-marfa-reach") {
+    } else if method == Method::GET && headers.contains_key(conditional::REACH_HEADER) {
         refusal_answer(&Refusal::validation(
             "No operation at this path takes X-Marfa-Reach.",
         ))
@@ -73,34 +74,6 @@ async fn unmatched(method: Method, headers: HeaderMap) -> Response {
     };
     response.extensions_mut().insert(Unmatched);
     response
-}
-
-const REACH_DOORS: [&str; 9] = [
-    "/items",
-    "/items/{id}",
-    "/items/{id}/edges",
-    "/edges",
-    "/edges/{id}",
-    "/types",
-    "/edge-types",
-    "/keys/current",
-    "/events",
-];
-
-async fn reach_where_taken(request: Request, next: Next) -> Response {
-    let takes_it = request
-        .extensions()
-        .get::<MatchedPath>()
-        .is_some_and(|route| REACH_DOORS.contains(&route.as_str()));
-    if request.method() == Method::GET
-        && request.headers().contains_key("x-marfa-reach")
-        && !takes_it
-    {
-        return refusal_answer(&Refusal::validation(
-            "No operation at this path takes X-Marfa-Reach.",
-        ));
-    }
-    next.run(request).await
 }
 
 fn key_doors(app: Arc<App>) -> Routes {
@@ -281,7 +254,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(app.clone(), body::checked))
-        .route_layer(from_fn(reach_where_taken))
+        .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))
