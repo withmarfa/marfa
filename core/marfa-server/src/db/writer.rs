@@ -87,6 +87,13 @@ fn commit_refused(error: rusqlite::Error) -> Refusal {
     }
 }
 
+/// The watch is raised whenever a commit was attempted: one that failed may have landed, and a
+/// stream has to read the log to know.
+fn settle(committed: rusqlite::Result<()>, commits: &watch::Sender<u64>) -> Result<()> {
+    commits.send_modify(|count| *count += 1);
+    committed.map_err(commit_refused)
+}
+
 fn finish<T>(
     tx: Transaction<'_>,
     value: T,
@@ -106,8 +113,7 @@ fn finish<T>(
             return Err(commit_refused(sqlite_failure(ffi::SQLITE_FULL)));
         }
     }
-    tx.commit().map_err(commit_refused)?;
-    commits.send_modify(|count| *count += 1);
+    settle(tx.commit(), commits)?;
     if action.is_some() && faults.fail(FAIL_COMMIT_ACK, action) {
         tracing::error!(sqlite_code = "SQLITE_IOERR", "Database operation failed");
     }

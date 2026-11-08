@@ -590,6 +590,27 @@ async fn a_commit_raises_the_watch_after_its_rows_can_be_read() {
 }
 
 #[tokio::test]
+async fn a_commit_that_errors_raises_the_watch_all_the_same() {
+    let place = folder();
+    let db = open(&place.file);
+    let mut commits = db.commits();
+    commits.borrow_and_update();
+
+    let answer = db
+        .write(WRITE, |tx| {
+            add(tx, 1)?;
+            tx.execute("INSERT INTO child (parent) VALUES (99)", [])?;
+            Ok(())
+        })
+        .await;
+    assert!(answer.is_err());
+    assert!(
+        commits.has_changed().unwrap(),
+        "a stream would not look for a write that landed despite the error"
+    );
+}
+
+#[tokio::test]
 async fn a_write_that_rolls_back_raises_nothing() {
     let place = folder();
     let db = open(&place.file);
