@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
+members = ["marfa-acl", "marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
 exclude = ["bindings/swift"]
 
 [workspace.package]
@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 marfa-core = { path = "marfa-core" }
+marfa-acl = { path = "marfa-acl" }
 marfa-rules = { path = "marfa-rules" }
 marfa-telemetry = { path = "marfa-telemetry" }
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }

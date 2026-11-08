@@ -244,8 +244,6 @@ case "$*" in
 esac
 "#;
 
-const FAKE_GETFACL: &str = "#!/bin/sh\nexit 0\n";
-
 fn script(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -282,7 +280,6 @@ impl Rig {
         let tools = root.join("bin");
         fs::create_dir_all(&tools).unwrap();
         script(&tools.join("marfa-server"), FAKE_SERVER);
-        script(&tools.join("getfacl"), FAKE_GETFACL);
         script(&root.join("control"), FAKE_CONTROL);
         let port = free_port();
         let stop = Arc::new(AtomicBool::new(false));
