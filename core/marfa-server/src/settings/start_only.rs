@@ -163,6 +163,25 @@ mod tests {
     }
 
     #[test]
+    fn the_contract_tables_each_name_declared() {
+        let spec = include_str!("../../../../conformance/spec/instance.md");
+        let section = spec
+            .split("\n## Start-only settings\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("instance.md holds the section");
+        let tabled: Vec<&str> = section
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split('`').next())
+            .collect();
+        let held: Vec<&str> = DECLARED.iter().map(|declared| declared.name).collect();
+        for name in &held {
+            assert!(tabled.contains(name), "{name} is not tabled");
+        }
+    }
+
+    #[test]
     fn test_hooks_are_listed_only_when_they_are_on() {
         let environment = Environment::from_pairs(&[("MARFA_PORT", "8600")]);
         let off = listed(&environment, false);

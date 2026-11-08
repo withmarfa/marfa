@@ -162,7 +162,7 @@ impl App {
         Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
-    /// `PORT=0` leaves the port to the operating system.
+    /// `MARFA_PORT=0` leaves the port to the operating system.
     pub fn record_bound_port(&self, port: u16) {
         let _ = self.bound_port.set(port);
     }

@@ -396,6 +396,56 @@ mod tests {
         each_kind_reads_its_rule();
     }
 
+    fn spec_table(heading: &str) -> Vec<Vec<String>> {
+        let spec = include_str!("../../../../conformance/spec/instance.md");
+        let section = spec
+            .split(&format!("\n## {heading}\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("instance.md holds the section");
+        section
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .map(|row| {
+                row.split('|')
+                    .skip(1)
+                    .map(|cell| cell.trim().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_contract_tables_each_setting_built_with_its_default_and_bounds() {
+        let rows = spec_table("Stored settings");
+        for entry in ENTRIES {
+            let row = rows
+                .iter()
+                .find(|row| row[0] == format!("`{}`", entry.key))
+                .unwrap_or_else(|| panic!("{} is not tabled", entry.key));
+            let default = if entry.default.is_empty() || entry.default == "[]" {
+                "None".to_string()
+            } else {
+                format!("`{}`", entry.default)
+            };
+            assert!(
+                row[1] == default || row[1].starts_with(&format!("{default} ")),
+                "{}: default {} against {}",
+                entry.key,
+                entry.default,
+                row[1]
+            );
+            if let Rule::Whole { min, max } = entry.rule {
+                assert!(
+                    row[2].ends_with(&format!("{min} to {max}")),
+                    "{}: {}",
+                    entry.key,
+                    row[2]
+                );
+            }
+        }
+    }
+
     #[test]
     fn each_key_is_snake_case_and_unique() {
         for (index, entry) in ENTRIES.iter().enumerate() {
