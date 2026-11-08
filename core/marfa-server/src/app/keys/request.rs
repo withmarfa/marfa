@@ -301,7 +301,8 @@ mod tests {
     fn an_end_needs_a_date_and_a_time() {
         for (value, ok) in [
             (json!("2030-01-02T03:04:05Z"), true),
-            (json!("2030-01-02T03:04"), true),
+            (json!("2030-01-02T03:04"), false),
+            (json!("2030-01-02T03:04:05"), false),
             (json!("2030-01-02"), false),
             (json!("2030"), false),
             (json!("soon"), false),
@@ -322,6 +323,8 @@ mod tests {
     #[test]
     fn a_held_source_is_trimmed_bounded_and_kept_from_what_is_reserved() {
         assert_eq!(held_source("  mine ", "source").unwrap(), "mine");
+        assert_eq!(held_source("\u{85}mine\u{3000}", "source").unwrap(), "mine");
+        assert!(held_source("\u{feff}", "source").is_ok());
         for text in [
             "   ",
             &"x".repeat(201),
@@ -331,8 +334,8 @@ mod tests {
         ] {
             assert!(held_source(text, "source").is_err(), "{text}");
         }
-        assert!(held_source(&"😀".repeat(101), "source").is_err());
-        assert!(held_source(&"😀".repeat(100), "source").is_ok());
+        assert!(held_source(&"😀".repeat(201), "source").is_err());
+        assert!(held_source(&"😀".repeat(200), "source").is_ok());
         assert!(held_source("oauthish:mine", "source").is_ok());
     }
 

@@ -254,7 +254,7 @@ mod tests {
             Some("GitHub")
         );
         assert_eq!(name(&Value::Null).unwrap(), None);
-        assert!(name(&json!(&"😀".repeat(100))).is_ok());
+        assert!(name(&json!(&"😀".repeat(200))).is_ok());
         for bad in [
             json!("   "),
             json!(5),
@@ -265,7 +265,7 @@ mod tests {
             json!("a\u{200f}b"),
             json!("a\u{061c}b"),
             json!("a\u{2068}b"),
-            json!("😀".repeat(101)),
+            json!("😀".repeat(201)),
         ] {
             assert!(name(&bad).is_err(), "{bad}");
         }

@@ -58,14 +58,9 @@ export interface DoorCreate {
   version?: number;
 }
 
-/**
- * A time as the server stores it (`items/occurred-at-utc` and
- * `items/occurred-at-zoneless`): a date, or a date and time with or without an
- * offset, read as UTC where it names none, at millisecond precision.
- */
+/** A time as the server stores it (`items/occurred-at-utc`): an RFC 3339 date-time, at millisecond precision. */
 export function storedTime(sent: string): string {
-  const zoned = /(Z|[+-]\d\d:?\d\d)$/.test(sent) || !sent.includes("T");
-  return new Date(zoned ? sent : `${sent}Z`).toISOString();
+  return new Date(sent).toISOString();
 }
 
 /** What a row's `created_at` is where a write names its own time. */

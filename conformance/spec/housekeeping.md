@@ -187,7 +187,7 @@ Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_M
 
 **Reason:** the limit counts Unicode characters, so a character outside the Basic Multilingual Plane counts once and is never cut in two.
 
-**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at a number of characters`.
+**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at a number of characters, counting an emoji once`.
 
 ### `housekeeping/enrichment-text-by-type`
 

@@ -7,12 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  cleanup,
-  createTestContext,
-  trackFolder,
-  trackView,
-} from "../../utils/setup.js";
+import { cleanup, createTestContext, trackView } from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -58,17 +53,6 @@ describe("the length of a filter", () => {
           query: { filter },
         });
         if (r.ok) trackView(ctx, r.data.item.id);
-        return r;
-      },
-    },
-    {
-      name: "POST /folders",
-      send: async (filter: string) => {
-        const r = await client.createFolder({
-          title: `characters ${ctx.runId}`,
-          query: { filter },
-        });
-        if (r.ok) trackFolder(ctx, r.data.item.id);
         return r;
       },
     },

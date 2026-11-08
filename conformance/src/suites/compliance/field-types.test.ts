@@ -453,6 +453,20 @@ describe("an array field", () => {
     expect(taken.data.item.properties.sites).toEqual([url]);
   });
 
+  it("trims Unicode White_Space from a url and refuses a byte order mark before one", async () => {
+    const url = "https://example.test/a";
+    for (const edge of ["\u0085", "\u3000", "\u00a0", "\u2028"]) {
+      const taken = await create({ sites: [`${edge}${url}${edge}`] });
+      expect(taken.status, JSON.stringify(edge)).toBe(201);
+      expect(taken.data.item.properties.sites).toEqual([url]);
+    }
+    // A byte order mark is not White_Space, so it stays and the value is no url.
+    const refused = await create({ sites: [`\ufeff${url}`] });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused)).toContain("sites.0");
+  });
+
   it("takes the values of the declared types, an empty array and a null", async () => {
     const good = await create({
       names: ["a", ""],
