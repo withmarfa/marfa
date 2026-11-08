@@ -40,10 +40,10 @@ git pdfium https://pdfium.googlesource.com/pdfium chromium/8138 5f092b52993bfd98
 #
 # musl.cc is not reachable from GitHub's hosted runners, so each line also names
 # mirrors that serve the same bytes: the Owncast project's public build bucket, which
-# its own CI downloads from, and for x86_64 the Internet Archive's copy of musl.cc
+# its own CI downloads from, and the Internet Archive's copy of musl.cc
 # (the raw capture, `id_`). A mirror is trusted for nothing: the hash decides.
 tool x86_64-linux-musl-cross https://musl.cc/x86_64-linux-musl-cross.tgz c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea https://owncast-infra.nyc3.cdn.digitaloceanspaces.com/build/x86_64-linux-musl-cross.tgz https://web.archive.org/web/20260925231843id_/https://musl.cc/x86_64-linux-musl-cross.tgz
-tool aarch64-linux-musl-cross https://musl.cc/aarch64-linux-musl-cross.tgz c909817856d6ceda86aa510894fa3527eac7989f0ef6e87b5721c58737a06c38 https://owncast-infra.nyc3.cdn.digitaloceanspaces.com/build/aarch64-linux-musl-cross.tgz
+tool aarch64-linux-musl-cross https://musl.cc/aarch64-linux-musl-cross.tgz c909817856d6ceda86aa510894fa3527eac7989f0ef6e87b5721c58737a06c38 https://owncast-infra.nyc3.cdn.digitaloceanspaces.com/build/aarch64-linux-musl-cross.tgz https://web.archive.org/web/20260815151442id_/https://musl.cc/aarch64-linux-musl-cross.tgz
 
 # The six models, from tesseract-ocr/tessdata_fast at one commit
 # (87416418657359cb625c412a48b6e1d6d41c29bd). The first four are the default

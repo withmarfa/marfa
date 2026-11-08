@@ -113,6 +113,9 @@ case "$TARGET" in
     inside "$here/program.sh" "$TARGET"
     stage "gather the licences (native/licenses.sh), in the image"
     inside "$here/licenses.sh" "$TARGET"
+    # The image runs as root, so what it wrote is root's. The checks that follow run as
+    # the host's user (a runner's `runner`) and make folders beside the programs.
+    inside chown -R "$(id -u):$(id -g)" /native-root
     ;;
 esac
 
