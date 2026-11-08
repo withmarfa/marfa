@@ -158,15 +158,15 @@ describe("a copy stream replaying when its reach changes", () => {
   });
 });
 
-describe("a copy stream holding a frame when its reach changes", () => {
-  it("ends with reach_changed and sends neither the held frame nor stream_live", async () => {
+describe("a copy stream with a frame written while it opened when its reach changes", () => {
+  it("ends with reach_changed and sends neither the frame written while it opened nor stream_live", async () => {
     const who = await reader("hold-race");
     await server.setFault("hold:stream-drain");
     const tap = await open(who.key);
     await server.waitForHold("hold:stream-drain");
     const held = await note("held-frame");
-    // The frame reaches the stream's hold before the reach changes, so the
-    // end is the drain's to decide and not the arrival of a frame's.
+    // The frame is in the log before the reach changes, so the end is the
+    // drain's to decide and not the arrival of a frame's.
     await new Promise((resolve) => setTimeout(resolve, 500));
     await who.narrow();
     await server.clearFault("hold:stream-drain");
@@ -175,7 +175,7 @@ describe("a copy stream holding a frame when its reach changes", () => {
     expect(tap.events.some(announces(held))).toBe(false);
   });
 
-  it("sends the held frame and goes live when the reach does not change", async () => {
+  it("sends the frame written while it opened and goes live when the reach does not change", async () => {
     const who = await reader("hold-no-race");
     await server.setFault("hold:stream-drain");
     const tap = await open(who.key);

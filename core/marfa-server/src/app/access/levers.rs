@@ -198,6 +198,23 @@ impl Holding {
         self.closed || self.filter.is_some()
     }
 
+    /// The source filter as it narrows what is listed, in one spelling for one effect.
+    pub fn source_filter_form(&self) -> Value {
+        if self.closed {
+            return json!("closed");
+        }
+        let Some(scope) = self.filter.as_ref().filter(|scope| !scope.types.is_empty()) else {
+            return Value::Null;
+        };
+        let sorted = |names: &[String]| {
+            let mut names = names.to_vec();
+            names.sort();
+            names.dedup();
+            names
+        };
+        json!({ "types": sorted(&scope.types), "sources": sorted(&scope.sources) })
+    }
+
     pub fn strict_on(&self, type_id: &str) -> bool {
         self.closed || self.strict.iter().any(|held| held == type_id)
     }

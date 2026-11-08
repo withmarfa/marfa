@@ -6,22 +6,22 @@ use serde_json::{Value, json};
 
 use super::{chain_refusal, check_id, presented, schema_refusal};
 use crate::app::App;
+use crate::app::access::Caller;
 use crate::app::catalog::{self, Catalog, Snapshot, provenance_json};
+use crate::app::items::reading;
 use crate::app::refusal::{Code, Refusal, Result};
 
-pub async fn list(app: &App) -> Result<Vec<Value>> {
-    let cache = app.catalog_handle();
-    app.db
-        .read(move |tx| {
-            let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            Ok(catalog
-                .types
-                .ids()
-                .into_iter()
-                .filter_map(|id| listed(&catalog, id))
-                .collect())
-        })
-        .await
+pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
+    reading(app, caller, |read| {
+        Ok(read
+            .catalog
+            .types
+            .ids()
+            .into_iter()
+            .filter_map(|id| listed(&read.catalog, id))
+            .collect())
+    })
+    .await
 }
 
 fn listed(catalog: &Catalog, id: &str) -> Option<Value> {
