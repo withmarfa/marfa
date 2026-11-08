@@ -55,13 +55,23 @@ impl Kind {
 pub struct Fault {
     pub kind: Kind,
     pub message: String,
+    /// The SQLite result code of a failed statement.
+    database_code: Option<&'static str>,
     stack: Option<Backtrace>,
 }
 
 impl Fault {
     /// A failed statement. Only the SQLite result code is kept of it.
-    pub fn database(code: &str) -> Fault {
-        Fault::new(Kind::Database, format!("{DATABASE_FAILED} ({code})"), None)
+    pub fn database(code: &'static str) -> Fault {
+        Fault {
+            database_code: Some(code),
+            ..Fault::new(Kind::Database, format!("{DATABASE_FAILED} ({code})"), None)
+        }
+    }
+
+    /// The SQLite result code, on a fault made from a failed statement.
+    pub fn database_code(&self) -> Option<&'static str> {
+        self.database_code
     }
 
     /// A fault nothing foresaw. `context` is fixed text written in the code.
@@ -89,6 +99,7 @@ impl Fault {
         Fault {
             kind,
             message,
+            database_code: None,
             stack,
         }
     }
@@ -348,6 +359,8 @@ mod tests {
             fault.message,
             "Database operation failed (SQLITE_CONSTRAINT)"
         );
+        assert_eq!(fault.database_code(), Some("SQLITE_CONSTRAINT"));
+        assert_eq!(Fault::internal("context").database_code(), None);
     }
 
     #[test]

@@ -82,7 +82,7 @@ impl Component {
 }
 
 fn because(refusal: &Refusal) -> String {
-    let why = refusal.cause.unwrap_or(refusal.code.wire());
+    let why = refusal.database_code().unwrap_or(refusal.code.wire());
     format!("the database refused: {why}")
 }
 

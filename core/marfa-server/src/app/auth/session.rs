@@ -221,7 +221,7 @@ fn leaves_use_unwritten(refusal: &Refusal) -> bool {
     matches!(
         refusal.code,
         Code::WriteContention | Code::InsufficientStorage
-    ) || refusal.cause == Some("SQLITE_READONLY")
+    ) || refusal.database_code() == Some("SQLITE_READONLY")
 }
 
 /// The live session a cookie's token names.
