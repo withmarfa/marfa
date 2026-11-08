@@ -63,7 +63,9 @@ async function stateOf(id: string): Promise<string | null> {
 /** Trashes a new note on its confirmation, then restores it. */
 async function trashedAndRestored(): Promise<{ id: string; confirm: string }> {
   const id = await note("confirmed once");
-  const preview = toolResult(await callTool(mcp, "marfa_delete", { ids: [id] }));
+  const preview = toolResult(
+    await callTool(mcp, "marfa_delete", { ids: [id] }),
+  );
   const confirm = String(preview.confirm);
   toolResult(await callTool(mcp, "marfa_delete", { ids: [id], confirm }));
   expect(await stateOf(id)).toBeNull();
@@ -80,7 +82,9 @@ describe("a delete confirmation", () => {
     expect(again.isError, JSON.stringify(again.body)).toBe(false);
     expect(await stateOf(id)).toBe("active");
     // The witness: a confirmation from a new preview moves it.
-    const preview = toolResult(await callTool(mcp, "marfa_delete", { ids: [id] }));
+    const preview = toolResult(
+      await callTool(mcp, "marfa_delete", { ids: [id] }),
+    );
     toolResult(
       await callTool(mcp, "marfa_delete", {
         ids: [id],
