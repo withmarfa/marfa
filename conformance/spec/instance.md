@@ -710,7 +710,7 @@ When a request that carries a credential the instance does not hold sends `GET /
 
 ## A database this build did not write
 
-A database records the schema version of the build that wrote it. The server starts on a database that holds its own schema, and it refuses to start, before changing the database file, on one a newer build wrote and on one whose schema is not the one it declares. It updates no database from another schema version, so an archive carries data across builds only where the restore accepts it (`search-and-filters/restore-version`).
+A database records the schema version of the build that wrote it. The server starts on a database that holds its own schema, and it refuses to start, before changing the database file, on one a newer build wrote and on one whose schema is not the one it declares.
 
 ### `instance/upgrade-refuses-newer`
 
@@ -722,9 +722,9 @@ If the server starts on a database that records a schema version later than its 
 
 ### `instance/upgrade-refuses-schema`
 
-If the server starts on a database in which a table, an index or a trigger the server declares differs from the server's definition of it, in which a table the server declares carries an index or a trigger the server does not declare, in which a table the server declares is missing while another of its own tables holds a row, or which records a schema version earlier than its own and not none, then the server MUST refuse to start.
+If the server starts on a database in which a table, an index or a trigger the server declares differs from the server's definition of it, in which a table the server declares carries an index or a trigger the server does not declare, or in which a table the server declares is missing while another of its own tables holds a row, then the server MUST refuse to start.
 
-**Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A file an earlier schema wrote is refused as one the server does not know, since no update reaches it. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
+**Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
 
 **Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`.
 
