@@ -81,7 +81,10 @@ export const JOBS = [
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
-  // The shipped image, built and booted through its entrypoint.
+  // The shipped image: the release's static Linux programs from
+  // `scripts/release/build-programs.sh`, the Dockerfile around them, and the
+  // image booted on a read-only root. It reads what that build reads, never
+  // the TypeScript server.
   "image",
   "types-freshness",
   "openapi-freshness",
@@ -158,7 +161,6 @@ const SERVER: readonly Job[] = [
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
-  "image",
   "openapi-freshness",
 ];
 
@@ -173,7 +175,7 @@ const PAGE_ASSETS_AND_TESTS: readonly Job[] = ["workspace"];
  * What a page's markup can change: the workspace, the compliance fixtures,
  * which read pages as a person does, and the offline lane, which boots a
  * server from the source. The device fixtures, the correctness and sync
- * fixtures, the restore drill and the image never read a page.
+ * fixtures and the restore drill never read a page.
  */
 const PAGE_MARKUP: readonly Job[] = [
   "workspace",
@@ -230,7 +232,6 @@ const WORKSPACE: readonly Job[] = [
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
-  "image",
   "types-freshness",
   "openapi-freshness",
   "version-fields",
@@ -338,15 +339,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Agent instructions, settings and Git hooks. No job runs or reads them.
   [/^\.(agents|claude|codex|githooks)\//, []],
 
-  // The drill installs the image's Litestream and runs its configuration,
-  // which the offline lane's own test reads too.
-  [/^deploy\/Dockerfile$/, ["restore-drill", "image"]],
-  [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE, "image"]],
-  // The image copies the entrypoint and the ignore file into its build;
-  // `ci/entrypoint.test.ts` and the drill's backup fixtures run the
-  // entrypoint.
-  [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill", "image"]],
-  [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
+  // The drill runs Litestream's configuration, which the offline lane's own
+  // test reads too, and `ci/entrypoint.test.ts` and the backup fixtures run
+  // the entrypoint. Neither is in the image.
+  [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE]],
+  [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill"]],
+  // The Dockerfile is the image; `ci/test-hooks-release.test.ts` reads it.
+  [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
   // The control socket's tests and the global setup and test settings they
@@ -415,13 +414,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // through it.
   [
     /^packages\/client\//,
-    [
-      "workspace",
-      "clients-freshness",
-      ...CONFORMANCE,
-      "mcp-conformance",
-      "image",
-    ],
+    ["workspace", "clients-freshness", ...CONFORMANCE, "mcp-conformance"],
   ],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
@@ -561,9 +554,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-rules\/src\/builtin_catalog\.json$/,
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
-  [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "workspace"]],
-  [/^core\/Cargo\.lock$/, [...RUST, ...ENRICHMENT]],
-  [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "workspace"]],
+  [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "image", "workspace"]],
+  [/^core\/Cargo\.lock$/, [...RUST, ...ENRICHMENT, "image"]],
+  [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "image", "workspace"]],
   [
     /^core\/\.config\//,
     [
@@ -620,8 +613,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
   // its native readers are read by the native job alone: nothing else compiles
-  // or runs them.
-  [/^core\/marfa-enrichment\/native\//, ["core-native"]],
+  // or runs them but the image, which builds the release programs with them.
+  [/^core\/marfa-enrichment\/native\//, ["core-native", "image"]],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
   // the isolation, the tests and the build script run on a Mac as well. A
@@ -639,6 +632,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [
     /^core\/marfa-server\/src\/control_socket\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],
+  ],
+  // The settings are what the Dockerfile's environment names.
+  [
+    /^core\/marfa-server\/src\/settings\//,
+    ["core-checks-linux", "rust-contract", "image"],
   ],
   // The rest of the server is built and tested on Linux, and its contract is
   // run by the Rust contract jobs; the binary and the Swift package do not
@@ -688,6 +686,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
 
   [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
+  // The release builds the programs with it, and the image job runs it.
+  [/^scripts\/release\/build-programs\.sh$/, ["workspace", "image"]],
   [/^ci\//, ["workspace"]],
   [
     /^scripts\/generate-core-(contract|catalog)\.ts$/,

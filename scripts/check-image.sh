@@ -1,60 +1,39 @@
 #!/usr/bin/env bash
-# Boots a built server image through its entrypoint and holds it to what the
-# deploy guide says it does. Usage: scripts/check-image.sh <image> <sha> [release].
+# Boots a built server image and holds it to what an owner is told it does.
+# Usage: scripts/check-image.sh <image> <version>
 #
-# The image is built from `deploy/Dockerfile` with `VERSION_SHA=<sha>` by the
-# caller, and with `VERSION_RELEASE=<release>` when it is a release. Three
-# runs, none with a bucket, so none needs an object store:
+# The image is built from `deploy/Dockerfile`. It is run on a fresh volume with a
+# read-only root file system, so every write the server makes must land in /data:
 #
-# 1. a fresh volume: the container becomes healthy, the root document reports
-#    the commit the image was built from and, for a release, the release,
-#    the packaged `marfa` reports that release, and `docker stop` ends it
-#    with status 0 inside the grace a runtime gives it;
-# 2. the same volume with only the private control listener, which recovers
-#    the owner with no public listener, after which the public server starts
-#    again on the new password;
-# 3. a volume holding a database another build wrote: the container stays up
-#    and unhealthy with the server's message in its log, rather than ending
-#    and being started again, and `docker stop` still ends it with status 0.
+# 1. it becomes healthy by its own health check and by `GET /health` from outside;
+# 2. `GET /` reports <version>, the labels and both programs report it, and
+#    the process is not root;
+# 3. what it generated for itself is on the volume, private to its user;
+# 4. `docker stop` ends it with status 0 inside the ten seconds a runtime allows;
+# 5. started again on the same volume it is the same instance.
 set -euo pipefail
-# Under pipefail, `producer | grep -q` fails when grep matches and exits before
-# the producer has written everything, so a match is read from a here-string.
 
-image=${1:?usage: check-image.sh <image> <sha> [release]}
-sha=${2:?usage: check-image.sh <image> <sha> [release]}
-release=${3:-}
-work=$(mktemp -d)
+image=${1:?usage: check-image.sh <image> <version>}
+version=${2:?usage: check-image.sh <image> <version>}
 containers=()
 volume=marfa-check-data-$(openssl rand -hex 8)
 
 cleanup() {
-  for name in "${containers[@]}"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
+  local name
+  for name in ${containers[@]+"${containers[@]}"}; do docker rm -f "$name" >/dev/null 2>&1 || true; done
   docker volume rm "$volume" >/dev/null 2>&1 || true
-  rm -rf "$work"
 }
 trap cleanup EXIT
 
 fail() {
   echo "::error::$1"
-  for name in "${containers[@]}"; do
+  local name
+  for name in ${containers[@]+"${containers[@]}"}; do
     echo "--- log of $name"
     docker logs "$name" 2>&1 | tail -40 || true
   done
   exit 1
 }
-
-# The image's own health command, run on a shorter schedule so the check does
-# not wait out the minutes a deployment's cadence allows for.
-health=(--health-interval 5s --health-timeout 3s --health-retries 2 --health-start-period 1s)
-
-# `openssl rand -hex 32` is what the deploy guide tells an owner to use.
-secrets=(
-  -e "API_KEY_SALT=$(openssl rand -hex 32)"
-  -e "MARFA_AUTH_SECRET=$(openssl rand -hex 32)"
-  -e "MARFA_AUTH_BASE_URL=http://localhost:8600"
-)
-
-port_of() { docker port "$1" 8600/tcp | sed -n '1s/.*://p'; }
 
 until_true() {
   local what=$1 seconds=$2
@@ -66,123 +45,78 @@ until_true() {
   done
 }
 
-stop_and_check() {
-  local name=$1 started ended code
-  started=$(date +%s%N)
-  docker stop --time 10 "$name" >/dev/null
-  ended=$(date +%s%N)
-  code=$(docker inspect --format '{{.State.ExitCode}}' "$name")
-  [ "$code" = 0 ] || fail "$name stopped with status $code, not 0"
-  local ms=$(((ended - started) / 1000000))
-  [ "$ms" -lt 8000 ] || fail "$name took ${ms}ms to stop, past the 8000ms the deploy guide promises"
-  echo "$name stopped with status 0 in ${ms}ms"
+# The image's own health check, on a shorter schedule than a deployment's.
+health=(--health-interval 3s --health-timeout 3s --health-retries 3 --health-start-period 1s)
+health_status() { docker inspect --format '{{.State.Health.Status}}' "$1"; }
+becomes_healthy() { [ "$(health_status "$1")" = healthy ]; }
+
+start() {
+  local name=$1
+  containers+=("$name")
+  docker run -d --name "$name" --read-only --mount "type=volume,source=$volume,target=/data" \
+    -p 127.0.0.1::8600 "${health[@]}" "$image" >/dev/null
 }
+
+port_of() { docker port "$1" 8600/tcp | sed -n '1s/.*://p'; }
+
+# Under pipefail, `producer | grep -q` fails when grep matches and exits before the
+# producer has written everything, so a match is read from a here-string.
+stop_and_check() {
+  local name=$1 code
+  local started=$SECONDS
+  docker stop --time 10 "$name" >/dev/null
+  code=$(docker inspect --format '{{.State.ExitCode}}' "$name")
+  [ "$code" = 0 ] || fail "$name stopped with status $code, not 0 (137 means it was killed after ten seconds)"
+  echo "$name stopped with status 0 in $((SECONDS - started))s"
+}
+
+echo "== what the image says it is"
+user=$(docker inspect --format '{{.Config.User}}' "$image")
+case "$user" in
+  "" | 0 | root | 0:* | root:*) fail "the image runs as '${user:-root}', not as a user that is not root" ;;
+esac
+[ "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$version" ] \
+  || fail "the image's version label is not $version"
+[ "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.title"}}' "$image")" != "" ] \
+  || fail "the image has no title label"
+reported=$(docker run --rm "$image" --version)
+[ "$reported" = "marfa-server $version" ] || fail "the entrypoint reports '$reported', not 'marfa-server $version'"
+reported=$(docker run --rm --entrypoint /usr/local/bin/marfa "$image" --version)
+[ "$reported" = "marfa $version" ] || fail "the packaged command line reports '$reported', not 'marfa $version'"
 
 echo "== a fresh volume"
 fresh=marfa-check-fresh-$$
-containers+=("$fresh")
 docker volume create "$volume" >/dev/null
-docker run -d --name "$fresh" --mount "type=volume,source=$volume,target=/data" -p 127.0.0.1::8600 "${health[@]}" "${secrets[@]}" "$image" >/dev/null
+start "$fresh"
+until_true "the image's own health check passing" 90 becomes_healthy "$fresh"
 port=$(port_of "$fresh")
-healthy() { curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1; }
-until_true "the container answering /health" 90 healthy
+[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/health")" = 200 ] \
+  || fail "GET /health from outside the container did not answer 200"
 body=$(curl -fsS "http://127.0.0.1:$port/")
-grep -q "\"version\":\"$sha\"" <<<"$body" || fail "the root document does not report $sha: $body"
-if [ -n "$release" ]; then
-  grep -q "\"release\":\"$release\"" <<<"$body" || fail "the root document does not report release $release: $body"
-  reported=$(docker exec "$fresh" marfa --version)
-  [ "$reported" = "marfa $release" ] || fail "the packaged binary reports '$reported', not 'marfa $release'"
-else
-  ! grep -q '"release"' <<<"$body" || fail "the root document names a release for a build that is not one: $body"
-fi
-until_true "the image's own health check passing" 60 \
-  bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $fresh)\" = healthy ]"
-echo "booted, reports $sha${release:+ as release $release}, healthy"
-# Exercise the actual packaged command and the production claim/recovery services.
-docker exec -i "$fresh" node --input-type=module <<'JS'
-import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-const cli = (args, body) => {
-  const result = spawnSync('marfa', ['--socket', '/data/control/marfa.sock', '--json', ...args], {encoding:'utf8', input: body && JSON.stringify(body)});
-  assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout);
-};
-assert.equal(cli(['setup','status']).claimed, false);
-assert.match(cli(['setup','code']).code, /^[A-Z2-7-]+$/);
-assert.match(cli(['setup','open','--no-browser']).url, /\/setup#handoff=.+/);
-const email='owner@example.com';
-const oldPassword='initial-container-password';
-const newPassword='replacement-container-password';
-cli(['setup','claim','--stdin'], {email,password:oldPassword});
-assert.equal(cli(['setup','status']).claimed,true);
-const key = cli(['keys','create','--label','container-check','--source','container-check','--permission','instance.read','--no-claims']);
-assert.ok(key.key);
-const signIn = password => fetch('http://localhost:8600/auth/sign-in/email',{method:'POST',headers:{'Content-Type':'application/json','Origin':'http://localhost:8600'},body:JSON.stringify({email,password})});
-assert.equal((await signIn(oldPassword)).status,200);
-cli(['owner','recover','--stdin'],{password:newPassword});
-assert.notEqual((await signIn(oldPassword)).status,200);
-assert.equal((await signIn(newPassword)).status,200);
-const ordinary=await fetch('http://localhost:8600/keys/current',{headers:{Authorization:`Bearer ${key.key}`}});
-assert.equal(ordinary.status,200);
-const forged=await fetch('http://localhost:8600/_control/owner/recover',{method:'POST',headers:{'Content-Type':'application/json','X-Marfa-Local-Authority':'true'},body:JSON.stringify({password:'forged-container-password'})});
-assert.notEqual(forged.status,200);
-// Respect Better Auth's three-attempt address window before the fourth sign-in.
-await new Promise(resolve=>setTimeout(resolve,11_000));
-assert.equal((await signIn(newPassword)).status,200);
-console.log('Packaged CLI claimed and recovered the owner; ordinary key still works; public authority forgery refused.');
-JS
+grep -q "\"version\":\"$version\"" <<<"$body" || fail "the root document does not report $version: $body"
+instance=$(sed -n 's/.*"instance_id":"\([^"]*\)".*/\1/p' <<<"$body")
+[ -n "$instance" ] || fail "the root document names no instance: $body"
+echo "booted, healthy, reports $version, instance $instance"
 
+uid=$(docker top "$fresh" -eo uid | sed -n '2p' | tr -d ' ')
+case "$uid" in
+  "" | 0) fail "the server runs with user id '${uid:-unknown}'" ;;
+esac
+echo "runs as user id $uid with a read-only root file system"
+
+# What it generated for itself is on the volume, readable by its user alone.
+secrets=$(docker cp "$fresh:/data/marfa.secrets" - | tar -tv 2>/dev/null) || fail "no /data/marfa.secrets on the volume"
+grep -q '^-rw-------' <<<"$secrets" || fail "the secrets file is not private to its user: $secrets"
+docker cp "$fresh:/data/marfa.db" - >/dev/null 2>&1 || fail "no /data/marfa.db on the volume"
 stop_and_check "$fresh"
 
-echo "== private recovery with no public listener"
-control=marfa-check-control-$$
-containers+=("$control")
-docker run -d --name "$control" --volumes-from "$fresh" "${secrets[@]}" -e MARFA_CONTROL_ONLY=true "$image" >/dev/null
-control_ready() { docker exec "$control" marfa --socket /data/control/marfa.sock --json setup status >/dev/null 2>&1; }
-until_true "the private control listener answering" 90 control_ready
-docker exec -i "$control" node --input-type=module <<'JS'
-import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-await assert.rejects(fetch('http://localhost:8600/health'));
-const result=spawnSync('marfa',['--socket','/data/control/marfa.sock','--json','owner','recover','--stdin'],{encoding:'utf8',input:JSON.stringify({password:'control-only-container-password'})});
-assert.equal(result.status,0,result.stderr);
-assert.equal(JSON.parse(result.stdout).recovered,true);
-console.log('Packaged recovery succeeded with no public HTTP listener.');
-JS
-stop_and_check "$control"
-docker start "$fresh" >/dev/null
-port=$(port_of "$fresh")
-until_true "public HTTP after private recovery" 90 healthy
-docker exec -i "$fresh" node --input-type=module <<'JS'
-import assert from 'node:assert/strict';
-const signIn=password=>fetch('http://localhost:8600/auth/sign-in/email',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://localhost:8600'},body:JSON.stringify({email:'owner@example.com',password})});
-assert.notEqual((await signIn('replacement-container-password')).status,200);
-assert.equal((await signIn('control-only-container-password')).status,200);
-console.log('Recovery committed durably and the public server accepts the new password after restart.');
-JS
-stop_and_check "$fresh"
+echo "== the same volume again"
+again=marfa-check-again-$$
+start "$again"
+until_true "the image's own health check passing" 90 becomes_healthy "$again"
+port=$(port_of "$again")
+body=$(curl -fsS "http://127.0.0.1:$port/")
+grep -q "\"instance_id\":\"$instance\"" <<<"$body" || fail "a restart on the volume is another instance: $body"
+stop_and_check "$again"
 
-echo "== a volume holding a database another build wrote"
-refused=marfa-check-refused-$$
-containers+=("$refused")
-mkdir -p "$work/data"
-# The retired registry table is one this build will not read, which refuses the
-# file without the check needing a second build.
-sqlite3 "$work/data/marfa.db" "CREATE TABLE custom_types (id TEXT);"
-chmod -R a+rwX "$work/data"
-docker run -d --name "$refused" -v "$work/data:/data" "${health[@]}" "${secrets[@]}" "$image" >/dev/null
-logged() { grep -q "stays up, unhealthy" <<<"$(docker logs "$refused" 2>&1)"; }
-until_true "the container saying why it will not start" 90 logged
-grep -q "export it with the build that wrote it" <<<"$(docker logs "$refused" 2>&1)" \
-  || fail "the log does not name the way forward"
-sleep 5
-[ "$(docker inspect --format '{{.State.Running}}' "$refused")" = true ] \
-  || fail "the container ended instead of staying up"
-[ "$(docker inspect --format '{{.RestartCount}}' "$refused")" = 0 ] \
-  || fail "the container was restarted"
-until_true "the image's own health check failing" 60 \
-  bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $refused)\" = unhealthy ]"
-echo "stayed up, unhealthy, with the message in its log"
-stop_and_check "$refused"
-
-echo "the image holds to what the deploy guide says"
+echo "the image holds to what it says it is"

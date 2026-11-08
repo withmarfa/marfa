@@ -34,11 +34,17 @@ function namingFiles(needle: string): string[] {
 }
 
 describe("the test hooks and what is released", () => {
-  it("sets nothing in the image or the release but NODE_ENV=production, which refuses the hooks", () => {
+  it("sets none of the hooks in the image, so the released server runs with them off", () => {
     const dockerfile = readFileSync(`${root}deploy/Dockerfile`, "utf8");
-    // The image is the released server, and its runtime stage is production.
-    const runtime = dockerfile.slice(dockerfile.lastIndexOf("AS runtime"));
-    expect(runtime).toMatch(/^ENV NODE_ENV=production$/m);
+    // The environment the image sets, which is what an owner's server starts with.
+    const set = [...dockerfile.matchAll(/^ENV\s+((?:.*\\\n)*.*)$/gm)]
+      .flatMap((match) => match[1]?.replace(/\\\n/g, " ").split(/\s+/) ?? [])
+      .map((pair) => pair.split("=")[0])
+      .filter((name) => name !== "");
+    // The witness: it reads the names the Dockerfile does set.
+    expect(set).toContain("SQLITE_PATH");
+    expect(set.filter((name) => name.startsWith("MARFA_TEST_"))).toEqual([]);
+    expect(dockerfile).not.toContain("MARFA_TEST_HOOKS");
 
     for (const name of [
       "MARFA_TEST_HOOKS",
