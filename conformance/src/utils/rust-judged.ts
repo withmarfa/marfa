@@ -7,9 +7,8 @@ import { resolve } from "node:path";
  *
  * A listed file runs in the Rust contract jobs, where one test that does not
  * pass fails the run, and in no TypeScript shard: a run without
- * `MARFA_SERVER_BIN` leaves it out (`withoutRustJudged`). A file leaves the
- * TypeScript server's judgment only by being listed here, and a file whose
- * statements change on purpose is listed here until the Rust server passes it.
+ * `MARFA_SERVER_BIN` leaves it out (`withoutRustJudged`). A file is listed
+ * once it passes whole on the Rust server, and stays passing.
  */
 export const RUST_JUDGED: readonly string[] = [];
 

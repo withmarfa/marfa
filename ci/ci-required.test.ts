@@ -773,15 +773,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks-linux", "rust-contract", "version-fields"],
     ],
     [
-      "an icon set the Rust server embeds",
+      "an icon set the rules crate embeds",
       ["packages/types/generated/icon-set-lucide.json"],
-      [
-        ...SERVER,
-        "types-freshness",
-        "clients-freshness",
-        "core-checks-linux",
-        "rust-contract",
-      ],
+      [...SERVER, "types-freshness", "clients-freshness", ...RUST],
     ],
     [
       "the score script",

@@ -334,26 +334,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
-  // The icon sets the Rust server and the rules crate embed, generated from
-  // the shipped types. They are the only files in `packages/` the Rust
-  // contract jobs read, as build input; no other path there reaches them.
-  [
-    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
-    [
-      ...SERVER,
-      "types-freshness",
-      "clients-freshness",
-      "core-checks-linux",
-      "rust-contract",
-    ],
-  ],
-
   // The control socket's tests and the global setup and test settings they
   // run under.
   [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
   [
     /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
     [...SERVER, "control-socket"],
+  ],
+  // The rules crate embeds the icon sets, so every build of the core, the
+  // command line, the server and the image reads them.
+  [
+    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
+    [...SERVER, "types-freshness", "clients-freshness", ...RUST],
   ],
   // The core's catalog is written from the shipped types, the registry that
   // lists them and the server's role resolution.
