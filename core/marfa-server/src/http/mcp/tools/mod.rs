@@ -172,6 +172,15 @@ async fn run(
     if works_on_items(name) {
         caller.require_reach()?;
     }
+    if matches!(name, keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME)
+        && let Some(seconds) = crate::http::keys::key_operation_wait(app, caller)
+    {
+        return Err(Stop::coded(
+            "rate_limited",
+            "Too many requests to the key operations; try again later.",
+        )
+        .with("retry_after_seconds", seconds));
+    }
     match name {
         overview::NAME => overview::run(app, caller, arguments).await,
         find::NAME => find::run(app, caller, arguments).await,

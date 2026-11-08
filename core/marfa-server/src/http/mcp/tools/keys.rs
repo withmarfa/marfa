@@ -87,38 +87,18 @@ pub fn manage_definition() -> Definition {
     }
 }
 
-/// A key as the tools show it: what it reaches, without its secret.
+/// A key as the tools show it: everything it reaches, without its secret. An empty
+/// list or map is left out, but for `permissions` and `type_permissions`.
 pub fn view(key: &Key, yours: Option<&str>) -> Value {
-    let full = key.to_json();
-    let mut out = Map::new();
-    for name in ["id", "label", "source"] {
-        if let Some(value) = full.get(name) {
-            out.insert(name.into(), value.clone());
-        }
-    }
-    for name in ["sources", "metadata_permissions"] {
-        let held = full.get(name);
-        let empty = held.is_none_or(|value| match value {
+    let mut out = key.to_json();
+    out.retain(|name, value| {
+        let empty = match value {
             Value::Array(list) => list.is_empty(),
             Value::Object(map) => map.is_empty(),
             _ => false,
-        });
-        if let (false, Some(value)) = (empty, held) {
-            out.insert(name.into(), value.clone());
-        }
-    }
-    for name in [
-        "permissions",
-        "type_permissions",
-        "oauth_client_id",
-        "created_at",
-        "expires_at",
-        "last_used_at",
-    ] {
-        if let Some(value) = full.get(name) {
-            out.insert(name.into(), value.clone());
-        }
-    }
+        };
+        !empty || name == "permissions" || name == "type_permissions"
+    });
     if yours == Some(key.id.as_str()) {
         out.insert("yours".into(), true.into());
     }

@@ -1754,6 +1754,60 @@ async fn the_audit_tool_reads_the_log_newest_first_and_narrows_it() {
 }
 
 #[tokio::test]
+async fn the_key_tools_share_the_key_operations_allowance_with_the_api() {
+    let instance = Instance::start(&[]).await;
+    let minter = instance
+        .key(json!({ "type_permissions": {}, "permissions": ["keys.mint"] }))
+        .await;
+    instance
+        .stored(json!({ "rate_limit_enabled": true, "rate_limit_keys_requests": 1 }))
+        .await;
+    let direct = instance.call(&minter, Method::GET, "/keys", None).await;
+    assert_eq!(direct.status, StatusCode::OK, "{}", direct.body);
+    let through_tool = instance
+        .tool_at(ADMIN, &minter, "marfa_keys", json!({}))
+        .await;
+    assert!(through_tool.failed, "{}", through_tool.value);
+    assert_eq!(through_tool.code(), "rate_limited");
+    assert!(through_tool.value["error"]["retry_after_seconds"].is_number());
+}
+
+#[tokio::test]
+async fn the_key_tools_show_every_grant_a_key_holds() {
+    let instance = Instance::start(&[]).await;
+    let minter = instance
+        .key(json!({
+            "type_permissions": { "*": "write" },
+            "edge_permissions": { "*": "write" },
+            "permissions": ["keys.mint"],
+        }))
+        .await;
+    let made = instance
+        .tool_at(
+            ADMIN,
+            &minter,
+            "marfa_manage_key",
+            json!({ "action": "make", "label": "edges", "source": "edges-source",
+                    "type_permissions": { "core.note": "read" },
+                    "edge_permissions": { "*": "write" } }),
+        )
+        .await;
+    assert_eq!(made.payload()["key"]["edge_permissions"]["*"], "write");
+    let made_id = made.payload()["key"]["id"].as_str().unwrap().to_string();
+    let listed = instance
+        .tool_at(ADMIN, &minter, "marfa_keys", json!({}))
+        .await;
+    let shown = listed.payload()["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|key| key["id"] == made_id.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(shown["edge_permissions"]["*"], "write", "{shown}");
+}
+
+#[tokio::test]
 async fn the_keys_tool_lists_only_the_keys_the_credential_reaches() {
     let instance = Instance::start(&[]).await;
     let (minter, minter_id) = instance
