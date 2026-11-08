@@ -313,7 +313,7 @@ When a client resumes after a restart from the last id it received before it, th
 
 The server MUST NOT send a stream an event at or below an id it has already sent it.
 
-**Reason:** an archive restore announces its events after it commits, by which time a stream opened since may have read them from the log, and a client that applied a later id has moved its cursor past them.
+**Reason:** a client keeps the last id it applied as its cursor, so an event sent again at or below it would be applied twice or out of order.
 
 **Tests:** `compliance/stream-prologue-holds.test.ts › sends an event written while the replay waited once, and none at or below an id it has sent`, `› does not send an event a stream opened between the commit and the next write again`.
 

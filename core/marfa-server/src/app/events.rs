@@ -39,8 +39,9 @@ pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Re
     .await
 }
 
-/// One entry. `payload` is the JSON a frame carries, as text, so the numbers
-/// in an item's properties stay as they were stored.
+/// One entry. `payload` is the JSON a frame is built from, without the
+/// `event_type` the entry names; a stream adds that and `read_only`, and
+/// leaves out what its subscriber may not read.
 pub struct Event<'a> {
     pub event_type: &'static str,
     pub item_id: &'a str,
