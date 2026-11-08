@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::ffi;
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use super::Write;
 use crate::app::faults::{FAIL_AUDIT, FAIL_COMMIT, FAIL_COMMIT_ACK, FAIL_COMMIT_FULL, Faults};
@@ -61,6 +61,7 @@ pub struct Writer {
     queue: mpsc::Sender<Message>,
     faults: Arc<Faults>,
     pulse: Pulse,
+    commits: watch::Sender<u64>,
 }
 
 fn contention() -> Refusal {
@@ -86,7 +87,13 @@ fn commit_refused(error: rusqlite::Error) -> Refusal {
     }
 }
 
-fn finish<T>(tx: Transaction<'_>, value: T, write: Write, faults: &Faults) -> Result<T> {
+fn finish<T>(
+    tx: Transaction<'_>,
+    value: T,
+    write: Write,
+    faults: &Faults,
+    commits: &watch::Sender<u64>,
+) -> Result<T> {
     let action = write.action;
     if action.is_some() {
         if faults.fail(FAIL_AUDIT, action) {
@@ -100,6 +107,7 @@ fn finish<T>(tx: Transaction<'_>, value: T, write: Write, faults: &Faults) -> Re
         }
     }
     tx.commit().map_err(commit_refused)?;
+    commits.send_modify(|count| *count += 1);
     if action.is_some() && faults.fail(FAIL_COMMIT_ACK, action) {
         tracing::error!(sqlite_code = "SQLITE_IOERR", "Database operation failed");
     }
@@ -111,12 +119,13 @@ fn run_transaction<T>(
     write: Write,
     deadline: Instant,
     faults: &Faults,
+    commits: &watch::Sender<u64>,
     job: impl FnOnce(&Transaction<'_>) -> Result<T>,
 ) -> Result<T> {
     conn.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     match catch_unwind(AssertUnwindSafe(|| job(&tx))) {
-        Ok(Ok(value)) => finish(tx, value, write, faults),
+        Ok(Ok(value)) => finish(tx, value, write, faults, commits),
         Ok(Err(refusal)) => Err(refusal),
         Err(_) => Err(Refusal::panicked("a write job panicked")),
     }
@@ -160,6 +169,7 @@ fn run_thread(mut conn: Connection, mut queue: mpsc::Receiver<Message>) {
 
 impl Writer {
     pub fn start(conn: Connection, faults: Arc<Faults>) -> std::io::Result<Writer> {
+        let (commits, _) = watch::channel(0);
         let (queue, receiver) = mpsc::channel(QUEUE_DEPTH);
         std::thread::Builder::new()
             .name("marfa-writer".into())
@@ -168,7 +178,14 @@ impl Writer {
             queue,
             faults,
             pulse: Pulse::new(),
+            commits,
         })
+    }
+
+    /// Raised after every commit, once its rows can be read; a reader that takes the value
+    /// before it reads sees every commit that follows.
+    pub fn commits(&self) -> watch::Receiver<u64> {
+        self.commits.subscribe()
     }
 
     pub fn pulse(&self) -> Pulse {
@@ -189,13 +206,14 @@ impl Writer {
         let ticket = Arc::new(AtomicU8::new(QUEUED));
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
+        let commits = self.commits.clone();
         let claim = ticket.clone();
         let run: Job = Box::new(move |conn| {
             if claim
                 .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
-                let _ = answer.send(run_transaction(conn, write, deadline, &faults, job));
+                let _ = answer.send(run_transaction(conn, write, deadline, &faults, &commits, job));
             }
         });
         let send = self.queue.send(Message::Run(run));
