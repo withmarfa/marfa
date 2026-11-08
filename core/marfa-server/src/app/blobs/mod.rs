@@ -313,6 +313,37 @@ impl Blobs {
         }
     }
 
+    /// Whether the store answers in time that it holds bytes under the blob's name, failing
+    /// as a read of them would but reading none.
+    async fn answers_for(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
+        let asked = async {
+            self.faults.hold(HOLD_BLOB_READ, None).await;
+            if self.faults.fail(FAIL_BLOB_READ, None) {
+                return Err(io::Error::other("the store failed the read"));
+            }
+            let size = match store {
+                Store::Disk(disk) => {
+                    match self.faults.lie(hash.as_str()) {
+                        Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
+                        Some(Lie::Unreadable) => return Err(store::unreadable()),
+                        Some(Lie::Damaged) | None => {}
+                    }
+                    let (disk, hash) = (disk.clone(), hash.clone());
+                    tokio::task::spawn_blocking(move || disk.size_of(&hash))
+                        .await
+                        .map_err(io::Error::other)??
+                }
+                Store::S3(s3) => s3.size_of(hash).await?,
+            };
+            size.map(|_| ())
+                .ok_or_else(|| io::ErrorKind::NotFound.into())
+        };
+        match tokio::time::timeout(self.check(), asked).await {
+            Ok(answer) => answer.map_err(Failed::Io),
+            Err(_) => Err(Failed::Late),
+        }
+    }
+
     /// Whether the store has bytes under the blob's name, and whether they hash to it, asked
     /// of the store itself.
     async fn holding(&self, store: &Store, hash: &Hash) -> (bool, bool) {
@@ -765,6 +796,30 @@ impl App {
                         store = store.kind(),
                         ?failure,
                         "A store did not open a blob"
+                    );
+                }
+            }
+        }
+        Err(unavailable())
+    }
+
+    /// Answers as `bytes_of` would, from the copy record and a store that says it holds a
+    /// copy, without reading the bytes.
+    pub async fn check_bytes(&self, found: &Found) -> Result<()> {
+        if !found.recorded {
+            return Err(not_found());
+        }
+        for store in self.blobs.attached() {
+            if !found.held.iter().any(|id| id == store.id()) {
+                continue;
+            }
+            match self.blobs.answers_for(&store, &found.blob.hash).await {
+                Ok(()) => return Ok(()),
+                Err(failure) => {
+                    tracing::warn!(
+                        store = store.kind(),
+                        ?failure,
+                        "A store did not answer for a blob"
                     );
                 }
             }

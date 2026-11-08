@@ -198,11 +198,16 @@ async fn serve(app: &App, found: Found, range: Option<&str>, head: bool) -> Answ
         Slice::Part { first, last } => (StatusCode::PARTIAL_CONTENT, first, last - first + 1),
         _ => (StatusCode::OK, 0, size),
     };
-    let bytes = app.bytes_of(&found, first, length).await?;
-    let body = if head || length == 0 {
+    let body = if head {
+        app.check_bytes(&found).await?;
         Body::empty()
     } else {
-        stream(bytes, length, app.blob_read_idle())
+        let bytes = app.bytes_of(&found, first, length).await?;
+        if length == 0 {
+            Body::empty()
+        } else {
+            stream(bytes, length, app.blob_read_idle())
+        }
     };
     let mut response = Response::new(body);
     *response.status_mut() = status;
