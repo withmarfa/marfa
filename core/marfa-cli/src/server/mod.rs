@@ -188,7 +188,9 @@ pub struct InstallArgs {
     /// The address devices sign in at, such as `https://marfa.example.com`.
     /// Needed for `cloudflare` and `proxy`; `tailscale` reads it from
     /// Tailscale. The server holds it, and a link to set up the server is at
-    /// it.
+    /// it. A run that gives neither this nor a different `--access` leaves
+    /// an address the server already holds, and says so; `--access local`
+    /// clears it.
     #[arg(long, value_name = "URL")]
     address: Option<String>,
     /// The port on this machine's loopback address. The default is 8600, or
@@ -334,18 +336,18 @@ impl Folder {
         self.dir.join(name)
     }
 
+    /// A settings file of the folder, read without following a link.
     fn read(&self, name: &str) -> Result<Option<EnvFile>, CliError> {
-        match std::fs::read_to_string(self.path(name)) {
-            Ok(text) => Ok(Some(EnvFile::parse(&text))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+        match files::read_regular(&self.path(name)) {
+            Ok(text) => Ok(text.map(|text| EnvFile::parse(&text))),
+            Err(CliError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
                 Err(CliError::Usage(format!(
-                    "this account cannot read {}: an install made by root belongs to the {} account, so run the command with sudo",
+                    "this account cannot read {}: an install made by root belongs to root and the {} account, so run the command with sudo",
                     self.path(name).display(),
                     account::NAME
                 )))
             }
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 

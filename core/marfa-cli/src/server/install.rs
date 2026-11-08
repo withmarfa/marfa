@@ -100,6 +100,12 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
         (Runtime::Native, None) => Some(Manager::here()?),
     };
+    let root_install = manager == Some(Manager::SystemdSystem);
+    files::admit_folder(
+        &folder.dir,
+        root_install,
+        account::lookup(account::NAME).map(|identity| identity.gid),
+    )?;
     let native_server = match runtime {
         Runtime::Docker => {
             steps.say("Checking Docker...");
@@ -121,6 +127,11 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let volume = format!("{name}-data");
     let settings_path = folder.path(files::SETTINGS);
     let have_secrets = folder.read(files::SETTINGS)?;
+    if runtime == Runtime::Native
+        && let Some(file) = &have_secrets
+    {
+        native::refuse_folder_settings(file, &settings_path)?;
+    }
     if external && have_secrets.is_none() {
         return Err(CliError::Usage(format!(
             "{} does not exist, and this install takes its settings from there: write it first",
@@ -372,6 +383,22 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         Runtime::Native => native::LOOPBACK_NETWORK.to_string(),
     };
 
+    // The folder, before the first file is kept in it. A root install leaves
+    // it to root, with the account able to write only `data/`.
+    let identity = if root_install {
+        if account::lookup(account::NAME).is_none() {
+            steps.say(&format!("Making the {} account...", account::NAME));
+        }
+        Some(account::ensure(&folder.dir, !out.json)?)
+    } else {
+        None
+    };
+    let kept = files::kept(identity);
+    match identity {
+        Some(identity) => files::prepare_root_folder(&folder.dir, identity)?,
+        None => std::fs::create_dir_all(&folder.dir)?,
+    }
+
     // The settings the server reads. The secrets are made once, and not at
     // all when something else owns the file.
     let mut settings = have_secrets
@@ -402,9 +429,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     if made_secrets {
         // Written before the secrets, and best effort: a marker that cannot
         // be kept costs only the warning on a later run, never the install.
-        let _ = std::fs::create_dir_all(&folder.dir)
-            .map_err(CliError::from)
-            .and_then(|()| files::write_if_changed(&marker, files::UNCONFIRMED_NOTE, false));
+        let _ = files::write_if_changed(&marker, files::UNCONFIRMED_NOTE, kept.marker);
     }
     if !external {
         for secret in names::SECRETS {
@@ -450,42 +475,22 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     }
     dotenv.set("MARFA_AUTOSTART", if autostart { "on" } else { "off" })?;
 
-    // The account a root install runs as owns the folder, and nobody else
-    // can read it.
-    let identity = if manager == Some(Manager::SystemdSystem) {
-        if account::lookup(account::NAME).is_none() {
-            steps.say(&format!("Making the {} account...", account::NAME));
-        }
-        Some(account::ensure(&folder.dir, !out.json)?)
-    } else {
-        None
-    };
-    std::fs::create_dir_all(&folder.dir)?;
-    if let Some(identity) = identity {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&folder.dir, std::fs::Permissions::from_mode(0o700))?;
-        account::own(&folder.dir, identity)?;
-    }
     let wrote_settings = if external {
+        // The server's account reads a settings file that something else
+        // writes, and nothing else changes in it.
+        if root_install {
+            files::settle_path(&settings_path, kept.settings)?;
+        }
         false
     } else {
-        let wrote = files::write_if_changed(&settings_path, &settings.render(), true)?;
-        files::keep_private(&settings_path)?;
-        wrote
+        files::write_if_changed(&settings_path, &settings.render(), kept.settings)?
     };
     let wrote_dotenv =
-        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
+        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), kept.dotenv)?;
     let wrote_compose = match runtime {
         Runtime::Docker => write_compose(&folder, &steps)?,
         Runtime::Native => false,
     };
-    if let Some(identity) = identity {
-        for file in [files::SETTINGS, files::DOTENV, files::UNCONFIRMED] {
-            if folder.path(file).exists() {
-                account::own(&folder.path(file), identity)?;
-            }
-        }
-    }
     let changed = wrote_settings || wrote_dotenv || wrote_compose;
 
     if access == Access::Tailscale {
@@ -545,7 +550,11 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                     // it, and a file left behind would load at the next login.
                     let _ = launchd::off(&name, &folder.dir, false);
                     dotenv.set("MARFA_AUTOSTART", "off")?;
-                    files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
+                    files::write_if_changed(
+                        &folder.path(files::DOTENV),
+                        &dotenv.render(),
+                        kept.dotenv,
+                    )?;
                 }
             } else if launchd::installed(&name, &folder.dir).is_some() {
                 launchd::off(&name, &folder.dir, !out.json)?;
@@ -571,7 +580,46 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             name: &name,
         },
     };
-    let claim = claim_state(&control, sign_in.as_deref())?;
+    // The server's address moves only when this run asked for another: a new
+    // install, an address given, or a change of how the server is reached.
+    let asked_to_move = existing.is_none()
+        || args.address.is_some()
+        || args
+            .access
+            .zip(existing.as_ref())
+            .is_some_and(|(access, (state, _))| access != state.access)
+        || (access == Access::Tailscale
+            && args
+                .https_port
+                .zip(existing.as_ref())
+                .is_some_and(|(port, (state, _))| state.https_port != Some(port)));
+    let want = match &sign_in {
+        Some(address) => address::Want::Set {
+            address,
+            asked: asked_to_move,
+        },
+        None => address::Want::Clear {
+            asked: asked_to_move || args.access == Some(Access::Local),
+        },
+    };
+    let (claim, settled) = claim_state(&control, want)?;
+    let shown_address = match &settled {
+        address::Settled::Left { held } => held.clone(),
+        _ => shown_address,
+    };
+    if let address::Settled::Left { held } = &settled
+        && !out.json
+    {
+        let reach = match runtime {
+            Runtime::Native => format!("marfa --socket {}", layout.socket().display()),
+            Runtime::Docker => {
+                format!("docker exec {name} marfa --socket /data/control/marfa.sock")
+            }
+        };
+        eprintln!(
+            "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run `{reach} config update --body '{{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}}'`."
+        );
+    }
     let notes = boot_notes(runtime, manager, autostart, &linger);
     let host = crate::auth::machine_name();
     let report = json!({
@@ -595,6 +643,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "claimed": claim.claimed,
         "setup_url": claim.url,
         "setup_expires_at": claim.expires_at,
+        "sign_in_address_left": match &settled {
+            address::Settled::Left { held } => Some(held.clone()),
+            _ => None,
+        },
     });
     out.report(&report, || {
         let mut text = String::new();
@@ -712,7 +764,7 @@ pub(super) fn write_compose(folder: &Folder, steps: &Steps) -> Result<bool, CliE
             backup.display()
         ));
     }
-    files::write_if_changed(&path, files::COMPOSE_FILE, false)
+    files::write_if_changed(&path, files::COMPOSE_FILE, files::Perms::READABLE)
 }
 
 pub(super) fn start(
@@ -811,39 +863,46 @@ pub(super) struct Claim {
     pub expires_at: Option<String>,
 }
 
-/// Sets the sign-in address on the server when it holds another, then reads
-/// whether the instance is claimed and, if not, makes the link that claims
-/// it. The address is first, because the link is at the address the server
-/// holds.
-fn claim_state(control: &Control, sign_in: Option<&str>) -> Result<Claim, CliError> {
-    if let Some(address) = sign_in {
-        address::ensure_with(
-            address,
-            || control.json(&["config", "get"]),
-            |body| {
-                control
-                    .json(&["config", "update", "--body", &body.to_string()])
-                    .map(drop)
-            },
-        )?;
-    }
+/// Brings the sign-in address the server holds to the one this install wants,
+/// then reads whether the instance is claimed and, if not, makes the link that
+/// claims it. The address is first, because the link is at the address the
+/// server holds.
+fn claim_state(
+    control: &Control,
+    want: address::Want,
+) -> Result<(Claim, address::Settled), CliError> {
+    let settled = address::settle_with(
+        want,
+        || control.json(&["config", "get"]),
+        |body| {
+            control
+                .json(&["config", "update", "--body", &body.to_string()])
+                .map(drop)
+        },
+    )?;
     let status = control.json(&["setup", "status"])?;
     if status["claimed"].as_bool().unwrap_or(false) {
-        return Ok(Claim {
-            claimed: true,
-            url: None,
-            expires_at: None,
-        });
+        return Ok((
+            Claim {
+                claimed: true,
+                url: None,
+                expires_at: None,
+            },
+            settled,
+        ));
     }
     let ticket = control.json(&["setup", "open", "--no-browser"])?;
     let url = ticket["url"]
         .as_str()
         .ok_or_else(|| CliError::Install("the server returned no setup link".into()))?;
-    Ok(Claim {
-        claimed: false,
-        url: Some(url.to_string()),
-        expires_at: ticket["expires_at"].as_str().map(str::to_string),
-    })
+    Ok((
+        Claim {
+            claimed: false,
+            url: Some(url.to_string()),
+            expires_at: ticket["expires_at"].as_str().map(str::to_string),
+        },
+        settled,
+    ))
 }
 
 /// What decides whether the server comes back after a restart of the machine.

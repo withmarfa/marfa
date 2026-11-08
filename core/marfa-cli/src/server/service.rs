@@ -307,6 +307,38 @@ pub fn tail_of_file(path: &Path, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
+/// The call to the server's socket. As the server's account, it carries
+/// nothing of the caller's: root's environment, with its variables and search
+/// path, is not the account's to read or to run from.
+fn socket_command(
+    program: &Path,
+    dir: &Path,
+    socket: &Path,
+    as_account: Option<Identity>,
+    args: &[&str],
+) -> std::process::Command {
+    let mut command = match as_account {
+        Some(identity) => {
+            let mut command = account::command_as(identity, program);
+            command
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", dir)
+                .current_dir(dir);
+            command
+        }
+        None => std::process::Command::new(program),
+    };
+    command
+        .arg("--socket")
+        .arg(socket)
+        .arg("--json")
+        .args(args)
+        .stdin(Stdio::null())
+        .env("MARFA_NO_KEYCHAIN", "1");
+    command
+}
+
 /// How this command reaches the server's private socket.
 pub enum Control<'a> {
     Container {
@@ -314,6 +346,8 @@ pub enum Control<'a> {
         name: &'a str,
     },
     Process {
+        /// The install folder, where the call runs.
+        dir: PathBuf,
         socket: PathBuf,
         as_account: Option<Identity>,
     },
@@ -328,6 +362,7 @@ impl<'a> Control<'a> {
             _ => None,
         };
         Ok(Control::Process {
+            dir: dir.to_path_buf(),
             socket: native::Layout::new(dir).socket(),
             as_account,
         })
@@ -337,21 +372,15 @@ impl<'a> Control<'a> {
     pub fn json(&self, args: &[&str]) -> Result<Value, CliError> {
         match self {
             Control::Container { docker, name } => docker.marfa_json(name, args),
-            Control::Process { socket, as_account } => {
+            Control::Process {
+                dir,
+                socket,
+                as_account,
+            } => {
                 let program = std::env::var_os(CONTROL_ENV)
                     .map(PathBuf::from)
                     .map_or_else(std::env::current_exe, Ok)?;
-                let mut command = match as_account {
-                    Some(identity) => account::command_as(*identity, &program),
-                    None => std::process::Command::new(&program),
-                };
-                command
-                    .arg("--socket")
-                    .arg(socket)
-                    .arg("--json")
-                    .args(args)
-                    .stdin(Stdio::null())
-                    .env("MARFA_NO_KEYCHAIN", "1");
+                let mut command = socket_command(&program, dir, socket, *as_account, args);
                 let output = command.output().map_err(|error| {
                     CliError::Install(format!("cannot run {}: {error}", program.display()))
                 })?;
@@ -376,5 +405,62 @@ impl<'a> Control<'a> {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_call_as_the_account_carries_nothing_of_the_callers() {
+        let dir = std::env::temp_dir().join(format!("marfa-socket-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("show");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\n/usr/bin/env\npwd\necho \"args: $*\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Becoming oneself needs no privilege, and the environment is cleared
+        // all the same.
+        // SAFETY: `getuid` and `getgid` cannot fail.
+        let me = Identity {
+            uid: unsafe { libc::getuid() },
+            gid: unsafe { libc::getgid() },
+        };
+        let socket = dir.join("marfa.sock");
+        let output = socket_command(&program, &dir, &socket, Some(me), &["setup", "status"])
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{said}");
+        assert!(
+            !said.contains("CARGO_MANIFEST_DIR"),
+            "the caller's environment was inherited: {said}"
+        );
+        for line in [
+            "PATH=/usr/bin:/bin".to_string(),
+            format!("HOME={}", dir.display()),
+            "MARFA_NO_KEYCHAIN=1".to_string(),
+        ] {
+            assert!(said.lines().any(|set| set == line), "{line}\n{said}");
+        }
+        let here = std::fs::canonicalize(&dir).unwrap();
+        assert!(
+            said.lines().any(|line| line == here.display().to_string()),
+            "{said}"
+        );
+        assert!(
+            said.contains(&format!(
+                "args: --socket {} --json setup status",
+                socket.display()
+            )),
+            "{said}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

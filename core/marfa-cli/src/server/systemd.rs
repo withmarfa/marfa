@@ -58,7 +58,8 @@ impl Unit {
                 let hardening = format!(
                     "User={account}\nGroup={account}\nNoNewPrivileges=yes\nProtectSystem=strict\nReadWritePaths={paths}\nPrivateTmp=yes\n{home}",
                     account = account::NAME,
-                    paths = quoted(text(&self.dir)?, false),
+                    // The folder is root's; only the data in it is the account's to write.
+                    paths = quoted(text(&self.dir.join("data"))?, false),
                     home = if self.protect_home {
                         "ProtectHome=yes\n"
                     } else {
@@ -212,7 +213,11 @@ pub fn on(unit: &Unit, at_boot: bool, trace: bool) -> Result<bool, CliError> {
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    let changed = crate::server::files::write_if_changed(&path, &unit.text()?, false)?;
+    let changed = crate::server::files::write_if_changed(
+        &path,
+        &unit.text()?,
+        crate::server::files::Perms::READABLE,
+    )?;
     let name = service(&unit.name);
     if changed {
         must(unit.scope, &["daemon-reload"], trace)?;
@@ -367,7 +372,7 @@ mod tests {
             "Restart=on-failure",
             "NoNewPrivileges=yes",
             "ProtectSystem=strict",
-            "ReadWritePaths=\"/var/lib/marfa-server\"",
+            "ReadWritePaths=\"/var/lib/marfa-server/data\"",
             "PrivateTmp=yes",
             "ProtectHome=yes",
             "WantedBy=multi-user.target",

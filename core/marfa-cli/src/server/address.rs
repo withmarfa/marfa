@@ -53,36 +53,88 @@ pub fn change_body(address: &str) -> Value {
     json!({ KEY: address, CONFIRMATION: true })
 }
 
+/// The body that removes the address, so that the server uses its own
+/// machine's.
+pub fn clear_body() -> Value {
+    json!({ KEY: Value::Null, CONFIRMATION: true })
+}
+
 /// The stored address in what `config get` answers.
 pub fn stored(config: &Value) -> Option<&str> {
     config.get(KEY).and_then(Value::as_str)
 }
 
-/// Sets the address through `read` and `write`, which reach the server's
-/// private socket, unless it holds the address already. Whether it was set.
-/// `address` is written as [`normalise`] writes it.
-pub fn ensure_with(
-    address: &str,
+/// What an install wants of the address the server holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Want<'a> {
+    /// This address. `asked` says that the person asked for it with this run,
+    /// which is what lets it replace a different one.
+    Set { address: &'a str, asked: bool },
+    /// None: the server is reached only from its own machine.
+    Clear { asked: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Settled {
+    Unchanged,
+    Set,
+    Cleared,
+    /// The server holds a different address and nothing asked to move it.
+    Left {
+        held: String,
+    },
+}
+
+/// Brings the address the server holds to what is wanted through `read` and
+/// `write`, which reach its private socket. An address the server holds is
+/// replaced only when the person asked, and one it does not hold is set.
+pub fn settle_with(
+    want: Want,
     read: impl FnOnce() -> Result<Value, CliError>,
     write: impl FnOnce(Value) -> Result<(), CliError>,
-) -> Result<bool, CliError> {
-    if stored(&read()?) == Some(address) {
-        return Ok(false);
+) -> Result<Settled, CliError> {
+    let config = read()?;
+    let held = stored(&config);
+    match (want, held) {
+        (Want::Set { address, .. }, Some(held)) if held == address => Ok(Settled::Unchanged),
+        (Want::Set { address, .. }, None) => {
+            write(change_body(address))?;
+            Ok(Settled::Set)
+        }
+        (
+            Want::Set {
+                address,
+                asked: true,
+            },
+            Some(_),
+        ) => {
+            write(change_body(address))?;
+            Ok(Settled::Set)
+        }
+        (Want::Clear { .. }, None) => Ok(Settled::Unchanged),
+        (Want::Clear { asked: true }, Some(_)) => {
+            write(clear_body())?;
+            Ok(Settled::Cleared)
+        }
+        (_, Some(held)) => Ok(Settled::Left {
+            held: held.to_string(),
+        }),
     }
-    write(change_body(address))?;
-    Ok(true)
 }
 
 /// Sets the sign-in address on the private socket unless it holds it already.
 /// The address it holds now, if it changed.
 pub fn ensure(remote: &Remote, raw: &str) -> Result<Option<String>, CliError> {
     let address = normalise(raw)?;
-    let changed = ensure_with(
-        &address,
+    let settled = settle_with(
+        Want::Set {
+            address: &address,
+            asked: true,
+        },
         || remote.json(&config::get_request()),
         |body| remote.json(&config::update_request(body)).map(drop),
     )?;
-    Ok(changed.then_some(address))
+    Ok((settled == Settled::Set).then_some(address))
 }
 
 #[cfg(test)]
@@ -124,32 +176,95 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_address_is_written_only_when_the_server_holds_another() {
-        let held = |value: Value| move || Ok(value);
+    fn settle(want: Want, held: Value) -> (Settled, Vec<Value>) {
         let mut written = Vec::new();
-        let set = ensure_with(
-            "https://a.example",
-            held(json!({"sign_in_address": "https://a.example"})),
+        let settled = settle_with(
+            want,
+            || Ok(held),
             |body| {
                 written.push(body);
                 Ok(())
             },
         )
         .unwrap();
-        assert!(!set && written.is_empty());
-        for current in [json!({}), json!({"sign_in_address": "https://b.example"})] {
-            let set = ensure_with("https://a.example", held(current), |body| {
-                written.push(body);
-                Ok(())
-            })
-            .unwrap();
-            assert!(set);
+        (settled, written)
+    }
+
+    #[test]
+    fn an_address_the_server_does_not_hold_is_set_whether_or_not_it_was_asked_for() {
+        for asked in [true, false] {
+            let (settled, written) = settle(
+                Want::Set {
+                    address: "https://a.example",
+                    asked,
+                },
+                json!({}),
+            );
+            assert_eq!(settled, Settled::Set);
+            assert_eq!(written, vec![change_body("https://a.example")]);
         }
-        assert_eq!(written, vec![change_body("https://a.example"); 2]);
-        let failed = ensure_with("https://a.example", held(json!({})), |_| {
-            Err(CliError::Install("refused".into()))
-        });
+    }
+
+    #[test]
+    fn an_address_the_server_holds_is_not_written_again() {
+        for asked in [true, false] {
+            let (settled, written) = settle(
+                Want::Set {
+                    address: "https://a.example",
+                    asked,
+                },
+                json!({"sign_in_address": "https://a.example"}),
+            );
+            assert_eq!(settled, Settled::Unchanged);
+            assert!(written.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_different_address_moves_only_when_it_was_asked_for() {
+        let held = json!({"sign_in_address": "https://b.example"});
+        let want = |asked| Want::Set {
+            address: "https://a.example",
+            asked,
+        };
+        let (settled, written) = settle(want(true), held.clone());
+        assert_eq!(settled, Settled::Set);
+        assert_eq!(written, vec![change_body("https://a.example")]);
+        let (settled, written) = settle(want(false), held);
+        assert_eq!(
+            settled,
+            Settled::Left {
+                held: "https://b.example".into()
+            }
+        );
+        assert!(written.is_empty());
+    }
+
+    #[test]
+    fn asking_for_no_address_removes_the_one_the_server_holds() {
+        let held = json!({"sign_in_address": "https://b.example"});
+        let (settled, written) = settle(Want::Clear { asked: true }, held.clone());
+        assert_eq!(settled, Settled::Cleared);
+        assert_eq!(written, vec![clear_body()]);
+        let (settled, written) = settle(Want::Clear { asked: false }, held);
+        assert!(matches!(settled, Settled::Left { .. }) && written.is_empty());
+        for asked in [true, false] {
+            let (settled, written) = settle(Want::Clear { asked }, json!({}));
+            assert_eq!(settled, Settled::Unchanged);
+            assert!(written.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_refused_write_is_an_error() {
+        let failed = settle_with(
+            Want::Set {
+                address: "https://a.example",
+                asked: true,
+            },
+            || Ok(json!({})),
+            |_| Err(CliError::Install("refused".into())),
+        );
         assert!(failed.is_err());
     }
 
@@ -158,6 +273,10 @@ mod tests {
         assert_eq!(
             change_body("https://a.example"),
             json!({"sign_in_address": "https://a.example", "confirm_sign_in_address_change": true})
+        );
+        assert_eq!(
+            clear_body(),
+            json!({"sign_in_address": null, "confirm_sign_in_address_change": true})
         );
         assert_eq!(
             stored(&json!({"sign_in_address": "https://a.example"})),

@@ -56,25 +56,42 @@ impl<'a> Layout<'a> {
     }
 }
 
-/// What the server is started with: this folder's paths and the port, unless
-/// the settings file sets them, then everything the settings file holds.
+/// What the server is started with: everything the settings file holds, and
+/// then this folder's paths and the port, which the settings file cannot set.
 pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, String)> {
     let layout = Layout::new(dir);
     let path = |path: PathBuf| path.to_string_lossy().into_owned();
-    let defaults = [
-        (names::PORT, port.to_string()),
-        (names::LISTEN_HOST, "127.0.0.1".to_string()),
-        (names::SQLITE_PATH, path(layout.database())),
-        (names::BLOB_PATH, path(layout.blobs())),
-        (names::CONTROL_SOCKET, path(layout.socket())),
-    ];
-    let mut environment = settings.entries();
-    for (name, value) in defaults {
-        if !environment.iter().any(|(set, _)| set == name) {
-            environment.push((name.to_string(), value));
-        }
-    }
+    let mut environment: Vec<(String, String)> = settings
+        .entries()
+        .into_iter()
+        .filter(|(name, _)| !names::FOLDER_DECIDED.contains(&name.as_str()))
+        .collect();
+    environment.extend([
+        (names::PORT.to_string(), port.to_string()),
+        (names::LISTEN_HOST.to_string(), "127.0.0.1".to_string()),
+        (names::SQLITE_PATH.to_string(), path(layout.database())),
+        (names::BLOB_PATH.to_string(), path(layout.blobs())),
+        (names::CONTROL_SOCKET.to_string(), path(layout.socket())),
+    ]);
     environment
+}
+
+/// A settings file that sets what the install folder decides is refused,
+/// naming each setting.
+pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), CliError> {
+    let set: Vec<&str> = names::FOLDER_DECIDED
+        .into_iter()
+        .filter(|name| settings.get(name).is_some())
+        .collect();
+    if set.is_empty() {
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "{} sets {}, which the install folder decides for a native server (the port is in .env, the data and the socket are under data/): remove {} from it",
+        file.display(),
+        set.join(", "),
+        if set.len() == 1 { "it" } else { "them" },
+    )))
 }
 
 /// The path a service names for `marfa`. A binary in a Homebrew Cellar moves
@@ -122,15 +139,13 @@ pub fn check_acl_tool() -> Result<(), CliError> {
     ))
 }
 
-/// `marfa-server` beside the real path of `marfa`, else the first on `path`.
-pub fn find_server(real_exe: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
-    let is_program = |candidate: &PathBuf| candidate.is_file();
-    let beside = real_exe.parent().map(|dir| dir.join("marfa-server"));
-    beside.filter(is_program).or_else(|| {
-        std::env::split_paths(path?)
-            .map(|dir| dir.join("marfa-server"))
-            .find(is_program)
-    })
+/// `marfa-server` beside the real path of `marfa`, and nowhere else: a server
+/// found on the path could be any program.
+pub fn find_server(real_exe: &Path) -> Option<PathBuf> {
+    real_exe
+        .parent()
+        .map(|dir| dir.join("marfa-server"))
+        .filter(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]
@@ -138,7 +153,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_paths_are_the_folders_and_the_environment_leaves_a_setting_alone() {
+    fn the_paths_are_the_folders_and_the_settings_file_cannot_move_them() {
         let dir = Path::new("/srv/marfa");
         let layout = Layout::new(dir);
         assert_eq!(layout.database(), Path::new("/srv/marfa/data/marfa.db"));
@@ -148,7 +163,9 @@ mod tests {
             Path::new("/srv/marfa/data/control/marfa.sock")
         );
 
-        let settings = EnvFile::parse("API_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\nPORT=9000\n");
+        let settings = EnvFile::parse(
+            "API_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\nPORT=9000\nMARFA_LISTEN_HOST=0.0.0.0\nSQLITE_PATH=/elsewhere/a.db\nBLOB_PATH=/elsewhere/b\nMARFA_CONTROL_SOCKET=/elsewhere/s\n",
+        );
         let built = environment(dir, 8601, &settings);
         let get = |name: &str| {
             built
@@ -156,7 +173,7 @@ mod tests {
                 .find(|(set, _)| set == name)
                 .map(|(_, value)| value.as_str())
         };
-        assert_eq!(get("PORT"), Some("9000"), "the settings file wins");
+        assert_eq!(get("PORT"), Some("8601"));
         assert_eq!(get("MARFA_LISTEN_HOST"), Some("127.0.0.1"));
         assert_eq!(get("SQLITE_PATH"), Some("/srv/marfa/data/marfa.db"));
         assert_eq!(get("BLOB_PATH"), Some("/srv/marfa/data/blobs"));
@@ -165,14 +182,26 @@ mod tests {
             Some("/srv/marfa/data/control/marfa.sock")
         );
         assert_eq!(get("API_KEY_SALT"), Some("aa"));
-        assert_eq!(built.iter().filter(|(n, _)| n == "PORT").count(), 1);
-        assert_eq!(
-            environment(dir, 8601, &EnvFile::default())
-                .iter()
-                .find(|(n, _)| n == "PORT")
-                .map(|(_, v)| v.as_str()),
-            Some("8601")
-        );
+        for name in names::FOLDER_DECIDED {
+            assert_eq!(built.iter().filter(|(n, _)| n == name).count(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_settings_file_that_sets_what_the_folder_decides_is_refused_by_name() {
+        let file = Path::new("/srv/marfa/marfa.env");
+        let clean = EnvFile::parse("API_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\n");
+        assert!(refuse_folder_settings(&clean, file).is_ok());
+        for name in names::FOLDER_DECIDED {
+            let error = refuse_folder_settings(&EnvFile::parse(&format!("{name}=x\n")), file)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name), "{error}");
+        }
+        let error = refuse_folder_settings(&EnvFile::parse("PORT=1\nBLOB_PATH=/x\n"), file)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("PORT, BLOB_PATH"), "{error}");
     }
 
     #[test]
@@ -226,25 +255,16 @@ mod tests {
     }
 
     #[test]
-    fn the_server_is_found_beside_marfa_first_and_then_on_the_path() {
+    fn the_server_is_found_beside_marfa_and_nowhere_else() {
         let dir = std::env::temp_dir().join(format!("marfa-find-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let (beside, elsewhere) = (dir.join("beside"), dir.join("elsewhere"));
         std::fs::create_dir_all(&beside).unwrap();
         std::fs::create_dir_all(&elsewhere).unwrap();
         let exe = beside.join("marfa");
-        let path = std::env::join_paths([&elsewhere]).unwrap();
-        assert_eq!(find_server(&exe, Some(&path)), None);
         std::fs::write(elsewhere.join("marfa-server"), "").unwrap();
-        assert_eq!(
-            find_server(&exe, Some(&path)),
-            Some(elsewhere.join("marfa-server"))
-        );
+        assert_eq!(find_server(&exe), None, "a server on the path is not used");
         std::fs::write(beside.join("marfa-server"), "").unwrap();
-        assert_eq!(
-            find_server(&exe, Some(&path)),
-            Some(beside.join("marfa-server"))
-        );
-        assert_eq!(find_server(&exe, None), Some(beside.join("marfa-server")));
+        assert_eq!(find_server(&exe), Some(beside.join("marfa-server")));
     }
 }

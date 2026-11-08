@@ -299,7 +299,11 @@ pub fn on(agent: &Agent, trace: bool) -> Result<bool, CliError> {
         at_login_file(&agent.name)?
     };
     let moved = other.exists();
-    let changed = crate::server::files::write_if_changed(&path, &plist, false)?;
+    let changed = crate::server::files::write_if_changed(
+        &path,
+        &plist,
+        crate::server::files::Perms::READABLE,
+    )?;
     let was_loaded = loaded(&agent.name);
     if was_loaded && !changed && !moved {
         return Ok(false);

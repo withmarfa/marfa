@@ -107,15 +107,6 @@ fn useradd() -> &'static str {
         .unwrap_or("useradd")
 }
 
-pub fn own(path: &Path, identity: Identity) -> Result<(), CliError> {
-    std::os::unix::fs::chown(path, Some(identity.uid), Some(identity.gid)).map_err(|error| {
-        CliError::Io(std::io::Error::new(
-            error.kind(),
-            format!("cannot give {NAME} {}: {error}", path.display()),
-        ))
-    })
-}
-
 /// A command that runs as the account. Changing the user from root drops
 /// root's other groups too.
 pub fn command_as(identity: Identity, program: impl AsRef<std::ffi::OsStr>) -> Command {

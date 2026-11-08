@@ -174,7 +174,7 @@ marfa setup open [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--no-browser` | Print the handoff link without opening a browser. |
-| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. The server holds it, and the link is at it, so it is set first unless the server holds it already. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. The server holds it, and the link is at it, so it is set first, unless the instance is claimed: an owner's instance keeps the address its owner signs in at. |
 
 ### marfa setup claim
 
@@ -189,7 +189,7 @@ marfa setup claim [OPTIONS]
 | `--email <EMAIL>` | The owner's email address. Required when using terminal prompts. |
 | `--name <NAME>` | The owner's display name. |
 | `--stdin` | Read JSON containing email, password, optional name, and code for a remote claim. |
-| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Private socket only. It is set on the server first, unless the server holds it already. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Private socket only. It is set on the server first, before the owner is made, so a claimed instance is never moved by it. |
 
 ## owner
 
@@ -4237,7 +4237,7 @@ marfa server install [OPTIONS]
 | `--docker` | Run the server in Docker, from the release's image, in place of as a service of this machine. Needs Docker with Compose. An install keeps its runtime: to change it, export the data and restore it into a new install. |
 | `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs. A native server runs the release installed beside this `marfa`. |
 | `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
-| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. |
+| `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. A run that gives neither this nor a different `--access` leaves an address the server already holds, and says so; `--access local` clears it. |
 | `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
 | `--https-port <PORT>` | The port Tailscale serves on, for `--access tailscale`. The default is 443. |
 | `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets and the proxy setting this install needs, and says what is missing. It reads a quoted value the way Docker Compose reads it. |

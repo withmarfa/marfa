@@ -98,7 +98,11 @@ fn upgrade_native(
     }
     if !unchanged {
         dotenv.set("MARFA_RELEASE", &target)?;
-        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
+        files::write_if_changed(
+            &folder.path(files::DOTENV),
+            &dotenv.render(),
+            files::kept_for(state.manager).dotenv,
+        )?;
     }
     let update = database_update(&service.log_tail(200));
     let copy_note = update.as_ref().map(|update| {
@@ -164,7 +168,11 @@ fn upgrade_docker(
             "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
         ));
         dotenv.set("MARFA_RELEASE", &target)?;
-        files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
+        files::write_if_changed(
+            &folder.path(files::DOTENV),
+            &dotenv.render(),
+            files::Perms::READABLE,
+        )?;
     }
     write_compose(folder, steps)?;
     super::install::start(&docker, &folder.dir, &state.name, &target, steps)?;
@@ -474,10 +482,43 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
 
 // ---- uninstall ----------------------------------------------------------
 
+/// Whether the data folder is the one this install made: the folder holds the
+/// `.env` of this command that names the install, and `data` is a folder of
+/// its own and not a link to somewhere else. Removing it takes nothing else.
+fn own_data(
+    folder: &Folder,
+    state: &State,
+    dotenv: &super::envfile::EnvFile,
+) -> Result<(), CliError> {
+    let data = native::Layout::new(&folder.dir).data();
+    files::admit_folder(
+        &folder.dir,
+        state.manager == Some(Manager::SystemdSystem),
+        super::account::lookup(super::account::NAME).map(|identity| identity.gid),
+    )?;
+    if dotenv.get("MARFA_NAME").as_deref() != Some(state.name.as_str())
+        || dotenv.get("MARFA_RUNTIME").as_deref() != Some(Runtime::Native.name())
+    {
+        return Err(CliError::Usage(format!(
+            "{} does not name this install, so its data is not deleted",
+            folder.path(files::DOTENV).display()
+        )));
+    }
+    match std::fs::symlink_metadata(&data) {
+        Ok(found) if found.is_dir() => Ok(()),
+        Ok(_) => Err(CliError::Usage(format!(
+            "{} is a link or a file, not the folder this install made: it is not deleted",
+            data.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args.dir)?;
-    let (state, _) = folder.require_state()?;
+    let (state, dotenv) = folder.require_state()?;
     let docker = Docker::new(!out.json);
     let service = match state.runtime {
         Runtime::Native => Some(service_of(&state, &folder, !out.json)?),
@@ -486,6 +527,10 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             None
         }
     };
+    // What is deleted is found to be this install's before anything is stopped.
+    if args.delete_data && state.runtime == Runtime::Native {
+        own_data(&folder, &state, &dotenv)?;
+    }
     let volume = format!("{}-data", state.name);
     let net = format!("{}-net", state.name);
     let place = match state.runtime {
@@ -560,6 +605,9 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                     launchd::remove_logs(&state.name);
                 }
                 let data = native::Layout::new(&folder.dir).data();
+                // Checked again, because the account the server ran as could
+                // write to it while the service was stopping.
+                own_data(&folder, &state, &dotenv)?;
                 match std::fs::remove_dir_all(&data) {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

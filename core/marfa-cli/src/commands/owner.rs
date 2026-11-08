@@ -63,8 +63,9 @@ pub enum SetupCommand {
         #[arg(long)]
         no_browser: bool,
         /// The address devices sign in at, such as `https://marfa.example.com`.
-        /// The server holds it, and the link is at it, so it is set first
-        /// unless the server holds it already.
+        /// The server holds it, and the link is at it, so it is set first,
+        /// unless the instance is claimed: an owner's instance keeps the
+        /// address its owner signs in at.
         #[arg(long, value_name = "URL")]
         address: Option<String>,
     },
@@ -84,8 +85,8 @@ pub struct ClaimArgs {
     #[arg(long, conflicts_with_all=["email","name"])]
     pub stdin: bool,
     /// The address devices sign in at, such as `https://marfa.example.com`.
-    /// Private socket only. It is set on the server first, unless the server
-    /// holds it already.
+    /// Private socket only. It is set on the server first, before the owner
+    /// is made, so a claimed instance is never moved by it.
     #[arg(long, value_name = "URL")]
     pub address: Option<String>,
 }
@@ -118,12 +119,17 @@ fn require_local(remote: &Remote) -> Result<(), CliError> {
     }
 }
 
-/// Sets the sign-in address before the link or the claim that depends on it.
-/// Giving the address is the confirmation of the move.
+/// Sets the sign-in address before the link or the claim that depends on it,
+/// on an instance that is not claimed. Giving the address is the confirmation
+/// of the move; an owner's instance keeps the address its owner signs in at.
 fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<(), CliError> {
     let Some(address) = address else {
         return Ok(());
     };
+    let status = remote.json(&Request::get(&["_control", "setup", "status"]))?;
+    if status.get("claimed").and_then(Value::as_bool) != Some(false) {
+        return Ok(());
+    }
     if let Some(set) = crate::server::address::ensure(remote, address)?
         && !out.json
     {
@@ -211,6 +217,9 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             address,
         } => {
             require_local(remote)?;
+            if let Some(address) = &address {
+                crate::server::address::normalise(address)?;
+            }
             set_address(remote, address.as_deref(), out)?;
             let result = remote.json(&Request::post(&["_control", "setup", "ticket"]))?;
             let link = result
@@ -231,10 +240,10 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             out.value(&result)
         }
         SetupCommand::Claim(args) => {
-            if args.address.is_some() {
+            if let Some(address) = &args.address {
                 require_local(remote)?;
+                crate::server::address::normalise(address)?;
             }
-            set_address(remote, args.address.as_deref(), out)?;
             if !remote.is_local() {
                 let url = url::Url::parse(remote.url())
                     .map_err(|_| CliError::Invalid("invalid setup URL".into()))?;
@@ -257,6 +266,9 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                     body["code"] = json!(rpassword::prompt_password("Setup code: ")?);
                 }
             }
+            // The address moves only once the claim has what it needs, so
+            // that input which cannot claim never moves it.
+            set_address(remote, args.address.as_deref(), out)?;
             let path = if remote.is_local() {
                 vec!["_control", "setup", "claim"]
             } else {

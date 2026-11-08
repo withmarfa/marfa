@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
+use std::os::unix::process::ExitStatusExt;
 
 use crate::error::CliError;
 use crate::server::logs::{self, RotatingLog};
@@ -52,6 +54,32 @@ fn forward_stops() {
     }
 }
 
+/// Asks the kernel to send the child SIGTERM when this process ends, however
+/// it ends, so that a killed `run` leaves no server behind. macOS has no such
+/// request; there the service manager's clean-up of the job's process group
+/// does it.
+#[cfg(target_os = "linux")]
+fn die_with_the_parent(command: &mut Command) {
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: the closure makes only async-signal-safe calls between `fork`
+    // and `exec`.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The parent may have ended before the request was made.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::other("the parent ended"));
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn die_with_the_parent(_command: &mut Command) {}
+
 /// The version `marfa-server --version` prints: its last word.
 fn version_of(server: &Path) -> Result<String, CliError> {
     let output = Command::new(server)
@@ -72,14 +100,14 @@ fn version_of(server: &Path) -> Result<String, CliError> {
         })
 }
 
-/// The server this `marfa` runs: beside it, or else on the path. Refused when
+/// The server this `marfa` runs: the one beside it. Refused when
 /// it is another release, because the two share a database and a socket and
 /// are released together.
 pub fn locate() -> Result<PathBuf, CliError> {
     let exe = std::fs::canonicalize(std::env::current_exe()?)?;
-    let server = native::find_server(&exe, std::env::var_os("PATH").as_deref()).ok_or_else(|| {
+    let server = native::find_server(&exe).ok_or_else(|| {
         CliError::Install(format!(
-            "{SERVER} was not found beside {} or on the path: it comes in the same package as marfa (Homebrew's marfa, or scripts/install.sh), so install that again",
+            "{SERVER} was not found beside {}: it comes in the same package as marfa (Homebrew's marfa, or scripts/install.sh), so install that again. A {SERVER} elsewhere on the path is never used",
             exe.display()
         ))
     })?;
@@ -160,9 +188,11 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
     if let Sink::File(_) = &sink {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
-    // Its own group, so a stop typed at a terminal reaches this process, which
-    // passes it on once.
-    command.process_group(0);
+    // The server stays in this process's group, so that a service manager's
+    // clean-up of the group reaches it however this process ended; a stop
+    // typed at a terminal reaches both, which a server takes twice without
+    // harm. On Linux the kernel also stops it when this process is gone.
+    die_with_the_parent(&mut command);
     forward_stops();
     let mut child = command.spawn().map_err(|error| {
         CliError::Install(format!("cannot start {}: {error}", server.display()))
@@ -195,9 +225,11 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
         }
         std::process::exit(0);
     }
-    std::process::exit(match status.code() {
-        Some(code) => code,
-        None => 128 + status.signal().unwrap_or(0),
+    std::process::exit(match (status.code(), status.signal()) {
+        (Some(code), _) => code,
+        // A stop that was passed on ended it as asked.
+        (None, Some(libc::SIGTERM | libc::SIGINT)) if stopped => 0,
+        (None, signal) => 128 + signal.unwrap_or(0),
     });
 }
 
