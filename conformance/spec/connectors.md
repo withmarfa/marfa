@@ -582,9 +582,9 @@ When the connector's own key sends `POST /connectors/{id}/hold` with a `process`
 
 ### `connectors/hold-window`
 
-When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `connector_hold_ms` names another.
+When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window, 180000 milliseconds unless `connector_hold_ms` names another. A write to `connector_hold_ms` applies to the next take or renewal without a restart.
 
-**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
+**Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`, `› stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule`.
 
 ### `connectors/hold-ttl`
 
