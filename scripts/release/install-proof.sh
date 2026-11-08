@@ -313,7 +313,7 @@ trap cleanup EXIT
 install_programs() {
   local dir=$root/bin
   step "Install the programs through scripts/install.sh"
-  if printf '%s\n' "${modes[@]}" | grep -qx native-root; then
+  if grep -qx native-root <<<"$(printf '%s\n' "${modes[@]}")"; then
     dir=/usr/local/bin
     sudo env MARFA_DOWNLOAD_BASE="file://$archives" MARFA_VERSION="$version" MARFA_INSTALL_DIR="$dir" \
       sh "$repo/scripts/install.sh"
