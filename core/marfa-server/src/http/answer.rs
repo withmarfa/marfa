@@ -169,4 +169,3 @@ pub fn asks_for_html(accept: Option<&str>) -> bool {
         _ => false,
     }
 }
-

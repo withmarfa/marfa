@@ -43,6 +43,10 @@ const jobsOf = (file: string): [string, Job][] =>
  */
 const KEPT_ON_SUCCESS = new Set([
   "ci.yml:conformance-shards:Keep the server log",
+  // The score job reads every shard's report, and each shard downloads the
+  // server the build job made, so both are inputs and not diagnostics.
+  "ci.yml:rust-contract:Keep the server",
+  "ci.yml:rust-contract-shards:Keep the report",
   "benchmarks.yml:benchmarks:Keep the load reports",
   // The next night reads it to show a change, so a passing night keeps it too.
   "benchmarks.yml:scale:Keep the scale figures",

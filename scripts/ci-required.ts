@@ -71,6 +71,11 @@ export const JOBS = [
   // declares. A declared status no request drew can be told only from the
   // whole selection, so this runs only when every group does.
   "conformance-statuses",
+  // The contract run against the Rust server (`core/marfa-server/`): the
+  // release build, the fixtures of every server project in shards, and the
+  // score. It reads what the Rust program is built from, the fixtures and the
+  // meter, and never the TypeScript server's code in `packages/`.
+  "rust-contract",
   // The MCP project's conformance tool, against `/mcp` on a server booted
   // from this checkout.
   "mcp-conformance",
@@ -179,13 +184,15 @@ const PAGE_MARKUP: readonly Job[] = [
 /**
  * Every job that builds the `marfa` binary and runs on Linux, and the core's
  * own checks there. Of the conformance jobs only the device fixtures drive
- * the binary.
+ * the binary. The Rust contract jobs build the binary for the device and CLI
+ * fixtures, and the server crate from the same workspace.
  */
 const RUST_LINUX: readonly Job[] = [
   "core-checks-linux",
   "conformance-offline",
   "conformance-device",
   "cli-scenarios",
+  "rust-contract",
 ];
 
 /**
@@ -194,6 +201,13 @@ const RUST_LINUX: readonly Job[] = [
  * runs the checks of `native/verify.sh` on it.
  */
 const ENRICHMENT: readonly Job[] = ["core-native", "core-fault-injection"];
+
+/**
+ * The jobs that run the fixtures: the TypeScript server's shards and the Rust
+ * contract jobs. A change to a fixture or to what every fixture shares
+ * reaches both.
+ */
+const CONTRACT: readonly Job[] = [...CONFORMANCE, "rust-contract"];
 
 /**
  * The jobs that run on macOS for a pull request: the core's checks and its
@@ -212,7 +226,7 @@ const RUST: readonly Job[] = [...RUST_LINUX, ...MACOS];
 const WORKSPACE: readonly Job[] = [
   "workspace",
   "control-socket",
-  ...CONFORMANCE,
+  ...CONTRACT,
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
@@ -248,10 +262,26 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `compliance/error-codes.test.ts` holds every refusal's code to the error
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
-  // `ci/ci-required.test.ts` fails when one starts to.
+  // `ci/ci-required.test.ts` fails when one starts to. The Rust server
+  // embeds `errors.md` to word its refusals, so that chapter also rebuilds it.
   [
-    /^conformance\/spec\/(errors|coverage)\.md$/,
-    ["workspace", "conformance-offline", "conformance-compliance"],
+    /^conformance\/spec\/errors\.md$/,
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-compliance",
+      "core-checks-linux",
+      "rust-contract",
+    ],
+  ],
+  [
+    /^conformance\/spec\/coverage\.md$/,
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-compliance",
+      "rust-contract",
+    ],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
   // The item names and previews both implementations are held to: the
@@ -265,6 +295,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "conformance-offline",
       "conformance-compliance",
       "conformance-device",
+      "rust-contract",
     ],
   ],
   // The filter expressions both implementations are held to: the core's
@@ -279,7 +310,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // read it.
   [
     /^conformance\/fixtures\/name-fold\.json$/,
-    ["workspace", "core-checks-linux", "conformance-compliance"],
+    [
+      "workspace",
+      "core-checks-linux",
+      "conformance-compliance",
+      "rust-contract",
+    ],
   ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
@@ -312,6 +348,20 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill", "image"]],
   [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
   [/^deploy\//, []],
+
+  // The icon sets the Rust server and the rules crate embed, generated from
+  // the shipped types. They are the only files in `packages/` the Rust
+  // contract jobs read, as build input; no other path there reaches them.
+  [
+    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
+    [
+      ...SERVER,
+      "types-freshness",
+      "clients-freshness",
+      "core-checks-linux",
+      "rust-contract",
+    ],
+  ],
 
   // The control socket's tests and the global setup and test settings they
   // run under.
@@ -387,28 +437,50 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/scripts\/mcp-conformance\.ts$/,
     ["workspace", "mcp-conformance"],
   ],
+  // The score of the Rust contract run, whose test the offline lane runs.
+  [
+    /^conformance\/scripts\/rust-score\.ts$/,
+    ["workspace", "conformance-offline", "rust-contract"],
+  ],
   // Spec citations name fixture files anywhere under `src/`, so every
   // change there reaches the offline lane. A device fixture imports the CLI
   // harness, and a fixture reaches only the group its folder runs in.
   [
     /^conformance\/src\/suites\/cli\/harness\.ts$/,
-    ["workspace", "conformance-offline", "conformance-device", "cli-scenarios"],
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-device",
+      "cli-scenarios",
+      "rust-contract",
+    ],
   ],
   [
     /^conformance\/src\/suites\/cli\//,
-    ["workspace", "conformance-offline", "cli-scenarios"],
+    ["workspace", "conformance-offline", "cli-scenarios", "rust-contract"],
   ],
   [
     /^conformance\/src\/suites\/device\/harness\.ts$/,
-    ["workspace", "conformance-offline", "conformance-device", "cli-scenarios"],
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-device",
+      "cli-scenarios",
+      "rust-contract",
+    ],
   ],
   [
     /^conformance\/src\/suites\/device\//,
-    ["workspace", "conformance-offline", "conformance-device"],
+    ["workspace", "conformance-offline", "conformance-device", "rust-contract"],
   ],
   [
     /^conformance\/src\/suites\/compliance\//,
-    ["workspace", "conformance-offline", "conformance-compliance"],
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-compliance",
+      "rust-contract",
+    ],
   ],
   // The image's replica fixtures run in the drill's job.
   [
@@ -417,19 +489,30 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [
     /^conformance\/src\/suites\/(correctness|sync)\//,
-    ["workspace", "conformance-offline", "conformance-correctness-sync"],
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-correctness-sync",
+      "rust-contract",
+    ],
   ],
   // Off the gate: `benchmarks.yml` runs them.
   [
     /^conformance\/src\/suites\/(load|performance|hydration)\//,
     ["workspace", "conformance-offline"],
   ],
-  [/^conformance\/src\/suites\//, ["workspace", ...CONFORMANCE]],
+  [/^conformance\/src\/suites\//, ["workspace", ...CONTRACT]],
   // The device suites' adapters and scripted server. A CLI scenario imports
   // one, and the offline lane tests the scripted server.
   [
     /^conformance\/src\/device\//,
-    ["workspace", "conformance-offline", "conformance-device", "cli-scenarios"],
+    [
+      "workspace",
+      "conformance-offline",
+      "conformance-device",
+      "cli-scenarios",
+      "rust-contract",
+    ],
   ],
   // The nightly scale benchmark's figures, comparison and driver. Only
   // `benchmarks.yml` runs the driver; the offline lane tests the figures.
@@ -447,7 +530,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/utils\//,
     [
       "workspace",
-      ...CONFORMANCE,
+      ...CONTRACT,
       "cli-scenarios",
       "restore-drill",
       "mcp-conformance",
@@ -457,18 +540,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/client\/owner-session\.ts$/,
     [
       "workspace",
-      ...CONFORMANCE,
+      ...CONTRACT,
       "cli-scenarios",
       "restore-drill",
       "mcp-conformance",
     ],
   ],
-  [/^conformance\/src\//, ["workspace", ...CONFORMANCE, "cli-scenarios"]],
+  [/^conformance\/src\//, ["workspace", ...CONTRACT, "cli-scenarios"]],
   [
     /^conformance\//,
     [
       "workspace",
-      ...CONFORMANCE,
+      ...CONTRACT,
       "cli-scenarios",
       "restore-drill",
       "mcp-conformance",
@@ -529,12 +612,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // the crate.
   [
     /^core\/bindings\/node\/(package\.json|pnpm-lock\.yaml)$/,
-    ["core", "conformance-device"],
+    ["core", "conformance-device", "rust-contract"],
   ],
   [/^core\/bindings\/node\/(index\.js|index\.d\.ts|tsconfig\.json)$/, ["core"]],
   [
     /^core\/bindings\/node\/(src\/|Cargo\.toml$|build\.rs$)/,
-    ["core-checks", "core-checks-linux", "core", "conformance-device"],
+    [
+      "core-checks",
+      "core-checks-linux",
+      "core",
+      "conformance-device",
+      "rust-contract",
+    ],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
@@ -553,6 +642,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The rest of its source, its fixtures and its README are pure Rust, read
   // the same on every system, and so Linux vouches for them.
   [/^core\/marfa-enrichment\//, [...RUST_LINUX, ...ENRICHMENT]],
+  // The Rust server is built and tested on Linux alone, and its contract is
+  // run by the Rust contract jobs. It has no macOS-only code, which
+  // `ci/ci-required.test.ts` searches `core/` for; the binary and the Swift
+  // package do not depend on it, so no Mac job reads it.
+  [/^core\/marfa-server\//, ["core-checks-linux", "rust-contract"]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac
   // runs them too.
@@ -589,7 +683,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [
       "workspace",
       "core-checks-linux",
-      ...CONFORMANCE,
+      ...CONTRACT,
       "cli-scenarios",
       "openapi-freshness",
       "clients-freshness",
@@ -617,7 +711,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "workspace",
       "version-fields",
       "control-socket",
-      ...CONFORMANCE,
+      ...CONTRACT,
       "cli-scenarios",
       "restore-drill",
       "mcp-conformance",
