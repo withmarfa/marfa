@@ -29,6 +29,7 @@ interface Job {
   needs?: string | string[];
   if?: string;
   "runs-on"?: string;
+  env?: Record<string, string>;
   strategy?: { "fail-fast"?: boolean; matrix?: { include?: Entry[] } };
   steps: Step[];
 }
@@ -58,13 +59,16 @@ function projectsOf(args: string): { projects: string[]; shard?: string } {
 }
 
 describe("the Rust server's release build", () => {
-  it("is the release build of marfa-server on a standard Linux runner, locked, and is uploaded for the shards", () => {
+  it("is the release build of marfa-server with the file readers linked in, on a standard Linux runner, and is uploaded for the shards", () => {
     expect(build?.["runs-on"]).toBe("ubuntu-latest");
+    expect(build?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
     expect(step(build, "Build the Rust server").run).toBe(
-      "cargo build --locked --release -p marfa-server",
+      'core/marfa-enrichment/native/release.sh "$TARGET" --server',
     );
     const upload = step(build, "Keep the server");
-    expect(upload.with?.path).toBe("core/target/release/marfa-server");
+    expect(upload.with?.path).toBe(
+      "${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server",
+    );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
   });
 });

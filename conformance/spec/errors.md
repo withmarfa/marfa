@@ -600,21 +600,21 @@ When the server answers `409 housekeeping_job_running`, the server MUST NOT star
 
 **Tests:** `compliance/housekeeping-job-running.test.ts › answers 409 housekeeping_job_running, and runs once the earlier run has ended`.
 
-## A type whose parent chain cannot be resolved
+## A type whose stored definition cannot be read
 
 ### `errors/type-chain`
 
-When a request resolves a type whose stored parent chain is circular or longer than 100 types, the server MUST answer `409 type_chain_unresolvable` with `details.type_id` naming that type.
+When a request reads a type whose stored definition does not read, the server MUST answer `409 type_chain_unresolvable` with `details.type_id` naming that type.
 
-**Reason:** the caller did nothing wrong, and every operation that writes a type refuses such a chain, so meeting one means the registry already held it.
+**Reason:** the caller did nothing wrong, and every operation that writes a type judges what it stores, so meeting such a definition means the registry already held it.
 
 **Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
 
 ### `errors/type-chain-correctable`
 
-While a type's stored parent chain is unresolvable, the server MUST accept `PUT /types/{id}` for the type with a corrected schema.
+While a type's stored definition does not read, the server MUST accept `PUT /types/{id}` for the type with a corrected schema.
 
-**Reason:** that operation reads the stored schema without walking the chain, so a `500` there would leave nothing to correct it with.
+**Reason:** that operation does not read the stored definition to resolve it, so a `500` there would leave nothing to correct it with.
 
 **Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
 
@@ -776,7 +776,7 @@ Every code the server answers over HTTP is a row of the table below, which is wr
 | `source_id_conflict`              | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                             |
 | `trash_plan_changed`              | 409                 | A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.                                                                         |
 | `type_already_exists`             | 409                 | A type is already registered under this identifier.                                                                                                                                            |
-| `type_chain_unresolvable`         | 409                 | The stored parent chain of a type is circular or too deep to resolve. `PUT /types/{id}` still accepts a corrected schema.                                                                      |
+| `type_chain_unresolvable`         | 409                 | The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.                                                                                             |
 | `type_has_subtypes`               | 409                 | Another type declares this type as its parent. Forcing the delete does not override this.                                                                                                      |
 | `type_in_use`                     | 409                 | Items of the type still exist, the bin included, or a folder, view or webhook setting names it, and the delete did not ask to force.                                                           |
 | `type_mismatch`                   | 409                 | The request declares a type other than the type of the item it resolved.                                                                                                                       |

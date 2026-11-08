@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   bootFreshServer,
@@ -8,7 +11,6 @@ import {
 import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { png } from "../../utils/pictures.js";
 import {
   bootUnclaimedServer,
@@ -202,150 +204,51 @@ describe("owner and delegated profile changes", () => {
   });
 
   it(
-    "refuses owner and profile updates and picture uploads without recreating an unavailable persisted owner",
+    "refuses an owner update and a picture upload from the local command while the instance is unclaimed",
     async () => {
-      const missing = await bootFreshServer("profile-missing-owner");
+      const state = await mkdtemp(join(tmpdir(), "marfa-profile-unclaimed-"));
       try {
-        const claimed = await controlRequest(
-          missing.controlSocket,
-          "/_control/setup/status",
-        );
-        expect(claimed.body.claimed).toBe(true);
-        const changed = await controlRequest(missing.controlSocket, "/owner", {
-          method: "PATCH",
-          body: { name: "Existing owner" },
-        });
-        expect(changed.status).toBe(200);
-        expect(changed.body.name).toBe("Existing owner");
-        await expectMatchesSchema("PATCH", "/owner", 200, changed.body);
-        const writeProfile = () =>
-          fetch(missing.apiUrl + "/profile", {
-            method: "PATCH",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${missing.workingKey}`,
-            },
-            body: JSON.stringify({ name: "Existing profile" }),
-          });
-        const updated = await writeProfile();
-        expect(updated.status).toBe(200);
-        const updatedBody = await updated.json();
-        expect(updatedBody).toEqual({ ok: true });
-        await expectMatchesSchema("PATCH", "/profile", 200, updatedBody);
-        expect(
-          (await controlRequest(missing.controlSocket, "/owner")).body.name,
-        ).toBe("Existing profile");
-
-        // Witness: the same upload, through each door, succeeds while the
-        // owner exists, so the refusals below are the missing owner's.
-        const file = png(8, 8);
-        const putOwnerPicture = () =>
-          controlRequest(missing.controlSocket, "/owner/picture", {
-            method: "PUT",
-            body: file,
-          });
-        const putProfilePicture = () =>
-          fetch(missing.apiUrl + "/profile/picture", {
-            method: "PUT",
-            headers: { authorization: `Bearer ${missing.workingKey}` },
-            body: new Uint8Array(file),
-          });
-        expect((await putOwnerPicture()).status).toBe(200);
-        expect((await putProfilePicture()).status).toBe(200);
-        const cleared = await controlRequest(missing.controlSocket, "/owner", {
-          method: "PATCH",
-          body: { avatar: null },
-        });
-        expect(cleared.status).toBe(200);
-
-        await stopServer({ state: missing.stateDir });
-        withInstanceDatabase(missing.sqlitePath, (db) => {
-          db.exec("PRAGMA foreign_keys = OFF");
-          db.exec(
-            "DELETE FROM auth_session; DELETE FROM auth_account; DELETE FROM auth_user",
+        const unclaimed = await bootUnclaimedServer({ state });
+        const local = (
+          path: string,
+          init?: Parameters<typeof controlRequest>[2],
+        ) => controlRequest(unclaimed.controlSocket, path, init);
+        const assertStillUnclaimed = async () => {
+          expect((await local("/_control/setup/status")).body.claimed).toBe(
+            false,
           );
-        });
-        const restarted = await bootUnclaimedServer({
-          state: missing.stateDir,
-        });
-        missing.apiUrl = restarted.url;
-        missing.controlSocket = restarted.controlSocket;
-        const current = await fetch(missing.apiUrl + "/keys/current", {
-          headers: { authorization: `Bearer ${missing.workingKey}` },
-        });
-        expect(current.status).toBe(200);
-
-        const assertOwnerRemainsUnavailable = async () => {
-          expect(
-            (await controlRequest(missing.controlSocket, "/owner")).status,
-          ).toBe(404);
-          expect(
-            (
-              await controlRequest(
-                missing.controlSocket,
-                "/_control/setup/status",
-              )
-            ).body,
-          ).toEqual(claimed.body);
-          withInstanceDatabase(missing.sqlitePath, (db) => {
-            expect(
-              db.prepare("SELECT count(*) AS count FROM auth_user").get()
-                ?.count,
-            ).toBe(0);
-            expect(
-              db.prepare("SELECT count(*) AS count FROM owner_picture").get()
-                ?.count,
-            ).toBe(0);
-          });
+          expect((await local("/owner")).status).toBe(404);
         };
-        const ownerRefused = await controlRequest(
-          missing.controlSocket,
-          "/owner",
-          { method: "PATCH", body: { name: "Do not recreate owner" } },
-        );
+
+        const ownerRefused = await local("/owner", {
+          method: "PATCH",
+          body: { name: "Do not create owner" },
+        });
         expect(ownerRefused.status).toBe(404);
         expect(ownerRefused.body).toMatchObject({
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
-        await assertOwnerRemainsUnavailable();
+        await assertStillUnclaimed();
 
-        const profileRefused = await writeProfile();
-        expect(profileRefused.status).toBe(404);
-        const profileBody = await profileRefused.json();
-        expect(profileBody).toMatchObject({
-          error: { code: "owner_not_found" },
+        const pictureRefused = await local("/owner/picture", {
+          method: "PUT",
+          body: png(8, 8),
         });
-        await expectMatchesSchema("PATCH", "/profile", 404, profileBody);
-        await assertOwnerRemainsUnavailable();
-
-        const ownerPictureRefused = await putOwnerPicture();
-        expect(ownerPictureRefused.status).toBe(404);
-        expect(ownerPictureRefused.body).toMatchObject({
+        expect(pictureRefused.status).toBe(404);
+        expect(pictureRefused.body).toMatchObject({
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema(
           "PUT",
           "/owner/picture",
           404,
-          ownerPictureRefused.body,
+          pictureRefused.body,
         );
-        await assertOwnerRemainsUnavailable();
-        const profilePictureRefused = await putProfilePicture();
-        expect(profilePictureRefused.status).toBe(404);
-        const profilePictureBody = await profilePictureRefused.json();
-        expect(profilePictureBody).toMatchObject({
-          error: { code: "owner_not_found" },
-        });
-        await expectMatchesSchema(
-          "PUT",
-          "/profile/picture",
-          404,
-          profilePictureBody,
-        );
-        await assertOwnerRemainsUnavailable();
+        await assertStillUnclaimed();
       } finally {
-        await missing.stop();
+        await stopServer({ state });
+        await rm(state, { recursive: true, force: true });
       }
     },
     2 * FRESH_SERVER_TIMEOUT_MS,

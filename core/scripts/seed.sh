@@ -13,7 +13,6 @@ key="${MARFA_TEST_KEY:-${MARFA_API_KEY:-}}"
 [[ -n "${url}" && -n "${key}" ]] || { echo "seed: set MARFA_TEST_URL and MARFA_TEST_KEY" >&2; exit 2; }
 
 MARFA_SEED_KEY="${key}" python3 - "${url}" "$@" <<'PY'
-import hashlib
 import json
 import os
 import sys
@@ -57,14 +56,28 @@ def note(title, body, tags=None):
     return create("core.note", {"title": title, "body": body}, tags)
 
 
+def upload(text):
+    request = urllib.request.Request(
+        f"{url}/blobs",
+        data=text.encode(),
+        method="POST",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "text/plain"},
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            return json.load(response)["hash"]
+    except urllib.error.HTTPError as error:
+        sys.stderr.write(f"seed: POST /blobs answered {error.code}: {error.read().decode()}\n")
+        sys.exit(1)
+
+
 def file_item(title, description):
-    digest = hashlib.sha256(description.encode()).hexdigest()
     return create(
         "core.file",
         {
             "title": title,
             "description": description,
-            "blob_ref": f"sha256:{digest}",
+            "blob_ref": upload(description),
             "mime_type": "text/plain",
         },
     )

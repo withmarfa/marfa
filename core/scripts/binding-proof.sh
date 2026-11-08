@@ -6,6 +6,7 @@ set -euo pipefail
 source "$(dirname "$0")/no-telemetry.sh"
 
 core="$(cd "$(dirname "$0")/.." && pwd)"
+marfa_bin="${CARGO_TARGET_DIR:-${core}/target}/debug/marfa"
 work="$(mktemp -d "${TMPDIR:-/tmp}/marfa-binding-proof.XXXXXX")"
 export MARFA_SERVER_KEEP="${work}/server"
 export MARFA_SERVER_ENV="${work}/server.env"
@@ -36,7 +37,7 @@ echo "== follow, while the binary makes a note on the server"
 node_proof follow &
 node_follow=$!
 sleep 3
-"${core}/target/debug/marfa" \
+"${marfa_bin}" \
   items create --type core.note --tier feed \
   --properties '{"title":"Made by the binary","body":"arrives through follow"}' >/dev/null
 wait "${node_follow}"
@@ -49,14 +50,14 @@ for _ in $(seq 1 150); do
   kill -0 "${node_watch}" 2>/dev/null || break
   sleep 0.2
 done
-"${core}/target/debug/marfa" \
+"${marfa_bin}" \
   items create --type core.note --tier feed \
   --properties '{"title":"Made by the binary, watched","body":"arrives through watch"}' >/dev/null
 wait "${node_watch}"
 cat "${work}/watch.out"
 
 echo "== thumbnail, read from the copy with no request"
-marfa() { "${core}/target/debug/marfa" "$@" >/dev/null; }
+marfa() { "${marfa_bin}" "$@" >/dev/null; }
 # The server does not recheck a value written before its property became a
 # thumbnail, so the copy holds one value that is not an image.
 marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'

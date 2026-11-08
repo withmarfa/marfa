@@ -5,7 +5,6 @@ import { afterEach, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { itemsArchive } from "../../utils/archive.js";
 import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { MINUTE_MS } from "../../utils/moved-clock.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
@@ -13,6 +12,16 @@ import { TEST_OWNER } from "../../utils/target.js";
 const OLDER_THAN_FRESH_MS = 20 * MINUTE_MS;
 
 let server: FreshServer | undefined;
+
+/** The browser sessions the owner's sign-ins list shows, read as `client`. */
+async function browserSessions(client: MarfaClient): Promise<number> {
+  const listed = await client.rawRequest<{ data: { kind: string }[] }>(
+    "/owner/sign-ins",
+  );
+  expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+  return listed.data.data.filter((row) => row.kind === "browser").length;
+}
+
 afterEach(async () => {
   await server?.stop();
 });
@@ -66,10 +75,7 @@ it("reauthenticates a revoked startup cookie before concurrent owner actions", a
     client.restoreArchive(itemsArchive([])),
   ]);
   expect(restored.map((result) => result.status)).toEqual([200, 200]);
-  const sessions = withInstanceDatabase(server.sqlitePath, (db) =>
-    db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-  );
-  expect(sessions?.count).toBe(1);
+  expect(await browserSessions(client)).toBe(1);
 });
 
 it.each([0, 86_400_000])(
@@ -92,10 +98,7 @@ it.each([0, 86_400_000])(
       );
       expect(result.status).toBe(200);
     }
-    const sessions = withInstanceDatabase(server.sqlitePath, (db) =>
-      db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-    );
-    expect(sessions?.count).toBe(2);
+    expect(await browserSessions(new MarfaClient(options))).toBe(2);
     expect(statSync(options.ownerSessionFile).mode & 0o777).toBe(0o600);
 
     await server.advanceClock(OLDER_THAN_FRESH_MS);
@@ -121,10 +124,7 @@ it.each([0, 86_400_000])(
         ),
       ),
     );
-    const afterProcesses = withInstanceDatabase(server.sqlitePath, (db) =>
-      db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-    );
-    expect(afterProcesses?.count).toBe(3);
+    expect(await browserSessions(new MarfaClient(options))).toBe(3);
   },
 );
 
@@ -142,8 +142,9 @@ it("reuses the authenticated session across fixture server restarts", async () =
       ((await session.json()) as { session?: unknown }).session,
     ).toBeTruthy();
   }
-  const sessions = withInstanceDatabase(server.sqlitePath, (db) =>
-    db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-  );
-  expect(sessions?.count).toBe(1);
+  expect(
+    await browserSessions(
+      new MarfaClient({ baseUrl: server.apiUrl, ownerCookie: originalCookie }),
+    ),
+  ).toBe(1);
 });

@@ -696,8 +696,7 @@ describe("GET /health placement", () => {
 });
 
 describe("GET /health unrecognized stored values", () => {
-  // Module state, exactly as `retiredPlatformTypes` is, so one case would
-  // otherwise decide the next one's answer.
+  // Module state, so one case would otherwise decide the next one's answer.
   afterEach(() => {
     setStoredValueScan({ scanned: false, values: [] });
   });
@@ -761,8 +760,8 @@ describe("GET /health unrecognized stored values", () => {
   });
 
   it("stays ok while the count is non-zero", async () => {
-    // The shape decision, not the field. This copies `platform_types` and
-    // deliberately not `dead_letters`: a check earns the right to degrade
+    // The shape decision, not the field. This is deliberately not
+    // `dead_letters`: a check earns the right to degrade
     // only if something is wrong now, and this one can sit non-zero
     // indefinitely because clearing it needs a migration or a hand
     // `UPDATE` on somebody's schedule rather than a button. A component

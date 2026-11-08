@@ -306,7 +306,7 @@ fn a_picture_answers_to_the_memory_limit() {
     let reading = read_here(&picture, PNG, &small_memory).unwrap();
     assert!(reading.dimensions.is_some());
     assert!(
-        matches!(reading.text_refused, Some(Refusal::OverLimit(_))),
+        matches!(reading.text_refused, Some(Refusal::OverLimit(..))),
         "{reading:?}"
     );
 }
@@ -339,7 +339,7 @@ fn a_header_claiming_a_billion_pixels_is_over_the_limit_without_being_decoded() 
     let bomb = header_of(100_000, 100_000);
     let reading = read_ocr(&bomb, PNG);
     assert!(
-        matches!(reading.text_refused, Some(Refusal::OverLimit(_))),
+        matches!(reading.text_refused, Some(Refusal::OverLimit(..))),
         "{reading:?}"
     );
     assert_eq!(reading.dimensions.map(|size| size.width), Some(100_000));

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use marfa_enrichment::{OcrOptions, Options, Reading, Refusal, serve_child_if_asked};
+use marfa_enrichment::{Limit, OcrOptions, Options, Reading, Refusal, serve_child_if_asked};
 
 mod common;
 
@@ -302,8 +302,8 @@ fn kind_of(result: &Result<marfa_enrichment::Reading, Refusal>) -> &'static str 
         Refusal::Unsupported => "unsupported",
         Refusal::Encrypted => "encrypted",
         Refusal::Malformed(_) => "malformed",
-        Refusal::OverLimit(why) if why.contains("memory") => "MEMORY",
-        Refusal::OverLimit(_) => "over-limit",
+        Refusal::OverLimit(Limit::Memory, _) => "MEMORY",
+        Refusal::OverLimit(..) => "over-limit",
         Refusal::OcrUnavailable(_) => "ocr-unavailable",
         Refusal::TimedOut => "HANG",
         Refusal::Crashed(_) => "CRASH",

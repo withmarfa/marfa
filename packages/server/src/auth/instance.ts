@@ -1,4 +1,5 @@
-import { withoutWriteWait } from "../storage/sqlite/connection.js";
+import { lockNotFree, withoutWriteWait } from "../storage/sqlite/connection.js";
+import { failAt, faultsArmed } from "../control/faults.js";
 import { DEVICE_CODE_LIFETIME } from "./device-code-lifetime.js";
 import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
@@ -1047,6 +1048,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const storage = requireStorage();
     let recorded: { wrote: boolean } | null;
     try {
+      if (faultsArmed() && failAt("session-use")) throw lockNotFree();
       recorded = await withoutWriteWait(() =>
         withCredentialRequest(
           { path: "/use-session", clientIp: null, recordsSessionUse: true },

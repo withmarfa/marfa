@@ -311,7 +311,7 @@ fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
         check(took < Duration::from_secs(5), || format!("took {took:?}"))?;
         // The same file as text has to be held whole, which the limit does not allow.
         let as_text = marfa_enrichment::read(&reader, TEXT, &limited);
-        check(matches!(as_text, Err(Refusal::OverLimit(_))), || {
+        check(matches!(as_text, Err(Refusal::OverLimit(..))), || {
             format!("as text: {as_text:?}")
         })?;
     }
@@ -377,7 +377,7 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
         ..no_time.clone()
     };
     let outcome = read(b"four", TEXT, &small);
-    check(matches!(outcome, Err(Refusal::OverLimit(_))), || {
+    check(matches!(outcome, Err(Refusal::OverLimit(..))), || {
         format!("a file over the memory limit gave {outcome:?}")
     })?;
     // A sound or a video is not held whole, so its size is no reason to refuse it
@@ -987,7 +987,7 @@ mod faults {
         let started = Instant::now();
         let outcome = read(&fault(name), TEXT, &options);
         println!("{name}: {outcome:?} after {:?}", started.elapsed());
-        check(matches!(outcome, Err(Refusal::OverLimit(_))), || {
+        check(matches!(outcome, Err(Refusal::OverLimit(..))), || {
             format!("{outcome:?}")
         })?;
         parent_is_whole()

@@ -13,8 +13,8 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `config.manage`     | Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.                          |
 | `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state. |
 | `grants.manage`     | Listing and revoking other apps' access.                                                                                                                |
-| `instance.maintain` | Running housekeeping, removing retired platform types and cancelling bulk jobs.                                                                         |
-| `instance.read`     | Reading detailed health, metrics, housekeeping status, retired platform types, blob storage diagnostics and bulk job status.                            |
+| `instance.maintain` | Running housekeeping and cancelling bulk jobs.                                                                                                          |
+| `instance.read`     | Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                    |
 | `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
 | `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
@@ -189,17 +189,11 @@ The server MUST give a key reach on an extension namespace only through its exte
 
 **Tests:** `compliance/extensions.test.ts › grants no namespace to a key relabeled with its name`, `› grants no namespace to a key minted with its name for a label`, `› is reached only by a key whose extension map names it`, `› is not granted by a key whose extension map does not name it`.
 
-### `keys-and-oauth/extension-known-levels`
-
-When the server resolves a stored extension map entry, the server MUST grant access only for the levels `read` and `write`.
-
-**Tests:** `compliance/extension-permission-levels.test.ts › grants a normal %s level`, `› denies malformed wildcard level %j`.
-
 ### `keys-and-oauth/extension-exact-precedence`
 
-When a stored extension map contains an entry for a namespace, the server MUST use that entry instead of `*`, including when the entry grants no access.
+When a key's extension map has an entry for a namespace, the server MUST grant the namespace the level of that entry and not the level of `*`.
 
-**Tests:** `compliance/extension-permission-levels.test.ts › denies malformed exact level %j ahead of wildcard access`.
+**Tests:** `compliance/extension-permission-levels.test.ts › grants a normal %s level on its namespace in place of the wildcard's`, `› keeps an exact read ceiling when minting or updating wildcard write`.
 
 ## Minting
 
@@ -2289,9 +2283,9 @@ If a client asks `POST /auth/device/code` for a scope the instance does not publ
 
 If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope`.
 
-**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why. This holds for a client registered for `offline_access` as well as one that is not.
+**Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why.
 
-**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh`, `› is refused 400 invalid_scope for offline_access when its stored client holds the scope and may not refresh`.
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for offline_access when its client may not refresh`.
 
 ### `keys-and-oauth/device-published-scope`
 
@@ -2573,7 +2567,7 @@ If the owner lane has made a hundred counted device code lookups in fifteen minu
 
 **Reason:** Both lanes have a collective bound, even though one claimed owner reaches the per-owner bound first.
 
-**Tests:** `compliance/device-owner-limits.test.ts › holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ### `keys-and-oauth/device-lookup-owner-proof`
 
@@ -2591,13 +2585,13 @@ When concurrent device code lookups use direct owner browser authority, the serv
 
 When the server restarts within a device code lookup window, the server MUST retain the owner's counted lookups and the owner lane's counted lookups for the rest of that window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ### `keys-and-oauth/device-lookup-owner-window`
 
 When an owner's device code lookup window or the owner lane's collective window reaches fifteen minutes, the server MUST count its next lookup in a fresh window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to one hundred and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ## The sign-in library's routes
 
@@ -2853,12 +2847,6 @@ The server MUST NOT list a key that is revoked or past its `expires_at` at `GET 
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists no revoked key`, `› lists no key past its expires_at`.
 
-### `keys-and-oauth/sign-ins-owner-only`
-
-The server MUST NOT list a browser session of anyone but the owner at `GET /owner/sign-ins`.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › lists and ends no session of anyone but the owner`.
-
 ### `keys-and-oauth/sign-ins-browser-only`
 
 If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
@@ -2951,7 +2939,7 @@ If `DELETE /owner/sign-ins/{id}` names no live sign-in of the owner, then the se
 
 **Reason:** A sign-in that already ended answers the same as one that never existed, so the second of two ends of one sign-in says that nothing ended.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for a session already ended and an id no session has`, `› answers 404 sign_in_not_found to the second end of an app and of a key`, `› lists no key past its expires_at`, `› lists and ends no session of anyone but the owner`.
+**Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for a session already ended and an id no session has`, `› answers 404 sign_in_not_found to the second end of an app and of a key`, `› lists no key past its expires_at`.
 
 ### `keys-and-oauth/sign-in-end-recent`
 

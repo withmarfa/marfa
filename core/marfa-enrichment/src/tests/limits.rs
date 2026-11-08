@@ -32,7 +32,7 @@ fn a_bomb_is_over_the_limit_until_the_limit_is_raised() {
     limits.max_inflated_bytes = 64 * MIB;
     assert!(matches!(
         refusal(&bomb, DOCX, &limits),
-        Refusal::OverLimit(_)
+        Refusal::OverLimit(..)
     ));
     let reading = read_here(&bomb, DOCX, &options()).unwrap();
     assert_eq!(reading.text.len(), 100_000);
@@ -53,7 +53,7 @@ fn a_zip_that_lies_about_its_size_is_not_believed() {
     let small = docx_with_body(&paragraph_of(10));
     assert!(matches!(
         refusal(&claiming(small, 1 << 30), DOCX, &limits),
-        Refusal::OverLimit(_)
+        Refusal::OverLimit(..)
     ));
 }
 
@@ -94,7 +94,7 @@ fn every_part_counts_toward_the_limit_together() {
     limits.max_inflated_bytes = 5000;
     assert!(matches!(
         refusal(&many, DOCX, &limits),
-        Refusal::OverLimit(_)
+        Refusal::OverLimit(..)
     ));
 }
 
@@ -104,7 +104,7 @@ fn too_many_parts_are_refused_not_read() {
     let parts: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b""[..])).collect();
     assert!(matches!(
         refusal(&zip(&parts), DOCX, &options()),
-        Refusal::OverLimit(_)
+        Refusal::OverLimit(..)
     ));
 }
 
@@ -113,7 +113,7 @@ fn xml_nested_past_the_limit_is_refused() {
     let deep = format!("{}x{}", "<w:sdt>".repeat(2000), "</w:sdt>".repeat(2000));
     assert!(matches!(
         refusal(&docx_with_body(deep.as_bytes()), DOCX, &options()),
-        Refusal::OverLimit(_)
+        Refusal::OverLimit(..)
     ));
 }
 

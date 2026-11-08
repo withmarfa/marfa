@@ -9,10 +9,6 @@ import { Cli, requireBinary } from "./harness.js";
  * and holds it against the document the server serves rather than the one
  * in the tree, so a door the server has grown is red here whichever half
  * moved first.
- *
- * One command is reached by nothing in this suite but its help: `types
- * delete-retired`, which needs a retired platform type that a fresh server
- * does not have and a client cannot make.
  */
 
 interface Row {

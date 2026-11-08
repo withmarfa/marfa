@@ -20,6 +20,7 @@ use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
 use crate::app::catalog::{self, Snapshot};
+use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::db::Write;
@@ -129,7 +130,10 @@ pub async fn admit_lookup(
     let now = app.clock.now_ms();
     match session {
         Some(session) => {
-            let lanes = device_owner_lanes(&session.user_id);
+            let lanes = device_owner_lanes(
+                &session.user_id,
+                app.faults.limit(DEVICE_OWNER_INSTANCE_LANE),
+            );
             app.db
                 .write(Write::own(), move |tx| admit(tx, now, &lanes))
                 .await
