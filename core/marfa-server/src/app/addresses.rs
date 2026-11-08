@@ -6,6 +6,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::settings::registry::{ADDRESSES, SIGN_IN_ADDRESS};
+use crate::settings::start::Fixed;
 use crate::settings::{Settings, Snapshot};
 
 const LOOPBACK_IP: &str = "127.0.0.1";
@@ -134,7 +135,10 @@ impl Addresses {
         snapshot: Arc<Snapshot>,
         bound_port: Option<u16>,
     ) -> Addresses {
-        let start = &settings.start;
+        Addresses::of(&settings.start, snapshot, bound_port)
+    }
+
+    pub fn of(start: &Fixed, snapshot: Arc<Snapshot>, bound_port: Option<u16>) -> Addresses {
         Addresses {
             live: snapshot,
             loopback_host: match start.listen_host.as_deref() {

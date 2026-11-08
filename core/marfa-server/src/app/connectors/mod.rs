@@ -18,6 +18,7 @@ use super::faults::HOLD_CONNECTOR_WRITE;
 use super::items;
 use super::query::{Position, bad_cursor};
 use super::refusal::{Code, Refusal, Result};
+use crate::settings::registry::CONNECTOR_HOLD_MS;
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
 use store::Registration;
@@ -378,7 +379,7 @@ pub async fn clear_state(app: &App, caller: &Caller, id: String) -> Result<()> {
 }
 
 pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) -> Result<Value> {
-    let window = app.settings.start.connector_hold;
+    let window = Duration::from_millis(app.settings.live().get(CONNECTOR_HOLD_MS));
     app.write(caller, "connector.hold", move |unit| {
         let tx = unit.tx();
         let registration = find(tx, &id)?;

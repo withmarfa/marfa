@@ -273,6 +273,7 @@ registry! {
     ENRICHMENT_MAX_INFLATED_BYTES: u64 = "enrichment_max_inflated_bytes", BYTES, "67108864", "The most a document may inflate to when the server extracts its text, all of its parts together, in bytes. A document that inflates past it is skipped.";
     ENRICHMENT_MAX_MEMORY_BYTES: u64 = "enrichment_max_memory_bytes", BYTES, "1073741824", "The most memory the process that reads one file may take, in bytes. A file that needs more is skipped.";
     ENRICHMENT_MAX_ATTEMPTS: u64 = "enrichment_max_attempts", Rule::Whole { min: 1, max: 100 }, "3", "How many times the server tries to read a file that fails, or that stops the server, before it stops.";
+    CONNECTOR_HOLD_MS: u64 = "connector_hold_ms", Rule::Whole { min: 1_000, max: rule::HOUR_MS }, "180000", "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.";
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
     HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", UP_TO_AN_HOUR, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
     AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";

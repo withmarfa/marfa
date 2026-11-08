@@ -58,10 +58,6 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_WRITE_WAIT_MS",
         "How long a write waits for the one writer before it fails, in milliseconds.",
     ),
-    plain(
-        "MARFA_CONNECTOR_HOLD_MS",
-        "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.",
-    ),
     plain("MARFA_BLOB_PATH", "Where the server keeps files."),
     plain(
         "MARFA_ENRICHMENT_TESSDATA_DIR",
