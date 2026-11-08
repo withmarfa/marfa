@@ -15,7 +15,7 @@ export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
 
 /** An interval no clock a fixture reaches gets past. */
-const NEVER_MS = "604800000";
+const NEVER_MS = "31536000000";
 
 /**
  * Every cleanup job's own interval set past reach. Moving the clock makes a

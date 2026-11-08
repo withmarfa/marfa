@@ -37,7 +37,7 @@ const DEFAULTS = {
   MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "2",
   MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
   // Past reach, so only the runs a case asks for happen.
-  MARFA_VERSION_THINNING_INTERVAL_MS: "604800000",
+  MARFA_VERSION_THINNING_INTERVAL_MS: "31536000000",
 };
 
 let sequence = 0;
@@ -246,7 +246,7 @@ describe("version thinning by the default for most versions", () => {
     async () => {
       const server = await bootFreshServer("housekeeping-thinning-max", {
         MARFA_VERSION_MAX_VERSIONS: "2",
-        MARFA_VERSION_THINNING_INTERVAL_MS: "604800000",
+        MARFA_VERSION_THINNING_INTERVAL_MS: "31536000000",
       });
       try {
         await quiet(server, ["version-thinning"]);
@@ -278,7 +278,7 @@ describe("version thinning while a type is replaced", () => {
     "thins each item by the policy as it stands when its snapshots are removed",
     async () => {
       const server = await bootFreshServer("housekeeping-thinning-race", {
-        MARFA_VERSION_THINNING_INTERVAL_MS: "604800000",
+        MARFA_VERSION_THINNING_INTERVAL_MS: "31536000000",
       });
       try {
         await quiet(server, ["version-thinning"]);

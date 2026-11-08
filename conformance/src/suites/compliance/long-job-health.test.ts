@@ -56,7 +56,7 @@ const TAG = "long-job-health";
  * retires at most 500.
  */
 const GRANTS = 60;
-const NEVER_MS = "604800000";
+const NEVER_MS = "31536000000";
 const NOTES = "core.note:read";
 
 const working = (): MarfaClient => writerOf(server);
