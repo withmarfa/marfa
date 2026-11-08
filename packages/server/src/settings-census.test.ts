@@ -86,6 +86,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
   MARFA_PROFILE:
     "the profile in profiles.toml that names the server and key, read by the CLI",
   MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the CLI",
+  MARFA_SERVER_BIN:
+    "the program the contract suite boots in place of this server, read by the conformance harness",
   MARFA_ALLOW_HTTP:
     "states that a credential may go over plain http, read by the CLI",
   MARFA_KEYCHAIN:

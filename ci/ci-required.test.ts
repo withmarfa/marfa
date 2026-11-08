@@ -1438,7 +1438,7 @@ describe("each job reads its own answer", () => {
     for (const name of gated.filter((name) => name !== CONFORMANCE_SHARD_JOB)) {
       expect(jobs[name]?.needs, name).toEqual(
         name === "conformance-statuses"
-          ? ["changes", CONFORMANCE_SHARD_JOB]
+          ? ["changes", CONFORMANCE_SHARD_JOB, "rust-contract-shards"]
           : "changes",
       );
       expect(jobs[name]?.if, name).toBe(
