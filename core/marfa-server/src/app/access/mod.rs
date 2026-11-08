@@ -1,6 +1,7 @@
 //! Every decision of reach is made here; nothing else reads a map or names a permission as text.
 //! A decision takes the state it decides on, so a write can make it inside its own transaction.
 
+mod blobs;
 mod edges;
 mod items;
 mod levers;
@@ -695,6 +696,53 @@ mod tests {
             (Some("2029"), Some("2030"), false),
         ] {
             assert_eq!(outlives(wanted, limit), longer, "{wanted:?} {limit:?}");
+        }
+    }
+
+    #[test]
+    fn a_blob_is_read_only_through_a_row_that_lends_it_and_that_the_caller_may_read() {
+        use crate::app::blobs::Lender;
+
+        let note = || Lender::Item {
+            type_id: "core.note".into(),
+        };
+        let link = |source_type: &str| Lender::Edge {
+            edge_type: "core.links".into(),
+            source_type: source_type.into(),
+        };
+        let extension = |item_type: &str| Lender::Extension {
+            namespace: "acme".into(),
+            item_type: item_type.into(),
+        };
+        let reader = |types: Value, edges: Value, extensions: Value| {
+            let key = with_map(key("r", "mine", &[], &[]), Axis::Type, types);
+            let key = with_map(key, Axis::Edge, edges);
+            Caller::Key(Box::new(with_map(key, Axis::Extension, extensions)))
+        };
+        let notes = json!({ "core.note": "read" });
+        let nothing = json!({});
+        let every_edge = json!({ "*": "read" });
+
+        let narrow = reader(notes.clone(), nothing.clone(), nothing.clone());
+        assert!(narrow.may_read_blob(&[note()]));
+        assert!(!narrow.may_read_blob(&[]));
+        assert!(!narrow.may_read_blob(&[Lender::Item {
+            type_id: "core.file".into()
+        }]));
+        assert!(!narrow.may_read_blob(&[link("core.note")]));
+        assert!(!narrow.may_read_blob(&[extension("core.note")]));
+
+        let edges = reader(notes.clone(), every_edge.clone(), nothing.clone());
+        assert!(edges.may_read_blob(&[link("core.note")]));
+        assert!(!edges.may_read_blob(&[link("core.file")]));
+
+        let extensions = reader(notes, nothing.clone(), json!({ "acme": "read" }));
+        assert!(extensions.may_read_blob(&[extension("core.note")]));
+        assert!(!extensions.may_read_blob(&[extension("core.file")]));
+
+        let manager = key("m", "mine", &[Permission::BlobsManage], &[]);
+        for every in [Caller::Key(Box::new(manager)), Caller::local()] {
+            assert!(every.may_read_blob(&[]));
         }
     }
 

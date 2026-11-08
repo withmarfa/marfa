@@ -65,6 +65,7 @@ points! {
     FAIL_COMMIT = Fail "commit" Write;
     FAIL_COMMIT_FULL = Fail "commit-full" Write;
     FAIL_COMMIT_ACK = Fail "commit-ack" Write;
+    FAIL_BLOB_WRITE = Fail "blob-write" Nth;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
