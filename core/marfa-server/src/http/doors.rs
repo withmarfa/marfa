@@ -109,6 +109,7 @@ pub struct Doors {
     router: Inner,
     paths: Vec<&'static str>,
     unjudged: HashSet<&'static str>,
+    refusals: Vec<(Method, &'static str)>,
     admissions: HashMap<&'static str, Admission>,
     served: Vec<Door>,
 }
@@ -136,6 +137,12 @@ impl Doors {
         self
     }
 
+    /// Leaves a method that only refuses itself out of instance-header checks.
+    pub fn refusing(mut self, method: Method, path: &'static str) -> Self {
+        self.refusals.push((method, path));
+        self
+    }
+
     /// Admission and instance checks share the group's credential rule.
     pub fn admitting(mut self, app: Arc<App>, rule: Admission) -> Self {
         self.admissions
@@ -146,7 +153,13 @@ impl Doors {
     pub(super) fn judged_writes(&self) -> HashMap<&'static str, (Vec<Method>, Admission)> {
         let mut judged: HashMap<&'static str, (Vec<Method>, Admission)> = HashMap::new();
         for door in &self.served {
-            if self.unjudged.contains(door.path) || !super::named_instance::is_write(&door.method) {
+            if self.unjudged.contains(door.path)
+                || !super::named_instance::is_write(&door.method)
+                || self
+                    .refusals
+                    .iter()
+                    .any(|(method, path)| *method == door.method && *path == door.path)
+            {
                 continue;
             }
             let rule = self
@@ -166,6 +179,7 @@ impl Doors {
     pub fn merge(mut self, other: Doors) -> Self {
         self.paths.extend(other.paths);
         self.unjudged.extend(other.unjudged);
+        self.refusals.extend(other.refusals);
         self.admissions.extend(other.admissions);
         self.served.extend(other.served);
         self.router = self.router.merge(other.router);

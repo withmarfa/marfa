@@ -283,6 +283,8 @@ mod tests {
             .into_iter()
             .chain(writes(&crate::http::auth::doors()))
             .chain(writes(&oauth::doors()))
+            // Served only to answer 405, so the method is refused before any header.
+            .chain(["DELETE /mcp".to_string()])
             .collect::<BTreeSet<_>>();
         assert!(groups.len() > 5, "the witness: {groups:?}");
         assert_eq!(exempt, groups);
