@@ -616,9 +616,15 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 format!("docker exec {name} marfa --socket /data/control/marfa.sock")
             }
         };
-        eprintln!(
-            "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run `{reach} config update --body '{{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}}'`."
-        );
+        if sign_in.is_none() {
+            eprintln!(
+                "The server signs in at {held}, and this run left it there. To clear it, run this again with --access local."
+            );
+        } else {
+            eprintln!(
+                "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run `{reach} config update --body '{{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}}'`."
+            );
+        }
     }
     let notes = boot_notes(runtime, manager, autostart, &linger);
     let host = crate::auth::machine_name();

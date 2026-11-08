@@ -350,10 +350,9 @@ pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError
         Ok(found) if found.is_dir() && found.uid() == account.uid => Ok(()),
         Ok(found) if found.file_type().is_symlink() => Err(refused_link(&data)),
         Ok(_) => Err(CliError::Usage(format!(
-            "{} must be a folder that the {} account owns (for restored data, `chown -R {0}:{0} {}`)",
+            "{0} must be a folder that the {1} account owns (for restored data, `chown -R {1}:{1} {0}`)",
             data.display(),
             account::NAME,
-            data.display()
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::DirBuilder::new().mode(0o700).create(&data)?;

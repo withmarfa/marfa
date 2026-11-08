@@ -266,8 +266,9 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                     body["code"] = json!(rpassword::prompt_password("Setup code: ")?);
                 }
             }
-            // The address moves only once the claim has what it needs, so
-            // that input which cannot claim never moves it.
+            // The address moves only once the claim's input is gathered, so
+            // input this command refuses never moves it. A claim the server
+            // then refuses leaves the address moved.
             set_address(remote, args.address.as_deref(), out)?;
             let path = if remote.is_local() {
                 vec!["_control", "setup", "claim"]
