@@ -827,13 +827,13 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     assert_eq!(rig.address().as_deref(), Some(local.as_str()));
     let moved = free_port();
     rig.also_listen(moved);
-    let on_moved = ["--port", &moved.to_string(), "--access", "local"].map(String::from);
-    let on_moved: Vec<&str> = on_moved.iter().map(String::as_str).collect();
-    let (code, _, stderr) = rig.install_as(&on_moved);
+    let moved_arg = moved.to_string();
+    let (code, _, stderr) = rig.install_as(&["--port", &moved_arg]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
+    // A run that changes nothing still puts it back, as after a failed update.
     fs::write(rig.state.join("address"), "https://moved.example.com\n").unwrap();
-    let (code, _, stderr) = rig.install_as(&on_moved);
+    let (code, _, stderr) = rig.install_as(&[]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
     let fresh = Rig::new("proxy-local");

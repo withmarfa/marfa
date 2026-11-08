@@ -586,7 +586,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         },
     };
     // The server's address moves only when this run asked for another: a new
-    // install, an address given, or a change of how the server is reached.
+    // install, an address given, or a change of how the server is reached. A
+    // local server in a container is reached only at its published port, so
+    // that address is always put back.
     let asked_to_move = existing.is_none()
         || args.address.is_some()
         || args
@@ -598,12 +600,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 .https_port
                 .zip(existing.as_ref())
                 .is_some_and(|(port, (state, _))| state.https_port != Some(port)))
-        || (access == Access::Local
-            && runtime == Runtime::Docker
-            && (args.access == Some(Access::Local)
-                || existing
-                    .as_ref()
-                    .is_some_and(|(state, _)| state.port != port)));
+        || (access == Access::Local && runtime == Runtime::Docker);
     let want = match &sign_in {
         Some(address) => address::Want::Set {
             address,
