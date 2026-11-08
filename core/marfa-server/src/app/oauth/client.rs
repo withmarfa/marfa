@@ -412,8 +412,7 @@ fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
     Ok(Some(uri.to_string()))
 }
 
-/// A token's audience comes from its own request, so `resources` is checked for form (RFC 8707
-/// section 2) and never kept.
+/// RFC 8707 resources are validated here; each token request sets its own audience.
 fn check_resources(object: &Map<String, Value>) -> Reading<()> {
     for resource in texts(object, "resources")?.unwrap_or_default() {
         let absolute = redirect::is_plain(resource)
@@ -429,8 +428,7 @@ fn check_resources(object: &Map<String, Value>) -> Reading<()> {
     Ok(())
 }
 
-/// Metadata not named here is ignored (RFC 7591 section 2), so it is neither stored nor
-/// answered.
+/// RFC 7591 section 2 requires ignoring unsupported metadata.
 pub(super) fn read(
     object: &Map<String, Value>,
     source: Source,
