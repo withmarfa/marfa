@@ -218,7 +218,7 @@ When the server writes a blob's bytes to an object store, the server MUST write 
 
 If an object store answers for a copy's object with an object whose `marfa-store` metadata does not hold that store's id, then the server MUST NOT count that answer as the store holding the copy.
 
-**Reason:** each object's name belongs to one write, so only the store that made that write holds an object at that name that names it. The same bytes put there by something else, or an answer from another bucket that this store never wrote that object to, are no evidence of the copy the store wrote.
+**Reason:** each object's name belongs to one write, so only the store that made that write holds an object at that name that names it. The same bytes put there by something else, or an answer from another bucket that this store never wrote that object to, are no evidence either way of the copy the store wrote.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › names the store in each object and takes no answer for an object that does not name it`.
 
@@ -456,7 +456,7 @@ The `blob-integrity` housekeeping job checks the copies the copy record names.
 
 ### `stores/integrity-result`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing, and `unreachable`, the attached stores it could not reach.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing, and `unreachable`, the attached stores it could not reach or took no answer from as the store's own.
 
 **Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`.
 
@@ -474,11 +474,27 @@ When a run of `blob-integrity` checks a disk copy whose bytes are as long as the
 
 ### `stores/integrity-asks-object-store`
 
-When a run of `blob-integrity` checks an object-store copy whose object is missing, is not as long as the blob or does not name the store in its `marfa-store` metadata, the server MUST strike the copy.
+When a run of `blob-integrity` checks an object-store copy whose object is missing or not as long as the blob, the server MUST strike the copy.
 
-**Reason:** the check asks the store for the object's size and metadata and fetches no bytes, so an object altered at the same length that still names the store is not found.
+**Reason:** the check asks the store for the object's size and fetches no bytes, so an object altered at the same length is not found.
 
-**Tests:** `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`, `› names the store in each object and takes no answer for an object that does not name it`.
+**Tests:** `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
+
+### `stores/integrity-unnamed-object-keeps`
+
+When a run of `blob-integrity` checks an object-store copy whose object is as long as the blob but does not hold the store's id in its `marfa-store` metadata, the server MUST leave the copy, its object and its `verified_at` as they were.
+
+**Reason:** such an answer shows neither that the copy's bytes are gone nor that the store holds them (`stores/object-answer-names-store`). A store or proxy that drops object metadata answers this way for every object, so striking on it would delete objects that may hold a blob's only bytes.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › names the store in each object and takes no answer for an object that does not name it`.
+
+### `stores/integrity-unnamed-object-unreachable`
+
+When a run of `blob-integrity` checks an object-store copy whose object is as long as the blob but does not hold the store's id in its `marfa-store` metadata, the server MUST count the store in the run's `unreachable`.
+
+**Reason:** the store answers, but not with an answer the run can take as the store's own, so the run asks it nothing more, as it does a store it cannot reach, and checks the copies in the other stores (`stores/integrity-unreachable-others`). The copy's blob still counts in the run's `bytes`.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › names the store in each object and takes no answer for an object that does not name it`.
 
 ### `stores/integrity-strikes`
 
