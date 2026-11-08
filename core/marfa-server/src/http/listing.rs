@@ -28,7 +28,7 @@ const STATES: [&str; 4] = ["active", "archived", "trashed", "revoked"];
 const TIERS: [&str; 3] = ["library", "feed", "all"];
 const NARROWING: [&str; 4] = ["type", "source", "tags", "filter"];
 
-const ITEMS_QUERY: [&str; 16] = [
+pub(super) const ITEMS_QUERY: [&str; 16] = [
     "type",
     "state",
     "source",
@@ -61,7 +61,7 @@ const STATS_QUERY: [&str; 13] = [
     "updated_after",
     "updated_before",
 ];
-const SEARCH_QUERY: [&str; 16] = [
+pub(super) const SEARCH_QUERY: [&str; 16] = [
     "q",
     "type",
     "state",
@@ -103,7 +103,11 @@ impl Params {
         query::only_where(uri, |key| {
             allowed.contains(&key) || (shorthand && is_shorthand(key))
         })?;
-        let pairs = query::pairs(uri)?;
+        Params::from_pairs(query::pairs(uri)?, allowed)
+    }
+
+    /// Parameters a caller other than a query string names; `allowed` is what the operation takes.
+    pub(super) fn from_pairs(pairs: Vec<(String, String)>, allowed: &[&str]) -> Result<Params> {
         let mut empty: Vec<&str> = NARROWING
             .into_iter()
             .filter(|name| allowed.contains(name))
@@ -352,13 +356,21 @@ fn refuse_order_beside_updated_after(sort: &Sort, sent_sort: Option<&str>) -> Re
 pub async fn items(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_reach()?;
     let params = Params::read(&uri, &ITEMS_QUERY, true)?;
-    let mut ask = ask_of(&params, active())?;
-    let include = many_of(&params)?;
+    Ok(text_answer(
+        StatusCode::OK,
+        items_from(&app, &caller, &params).await?,
+    ))
+}
+
+/// The page of items `params` asks for, as the listing door answers it.
+pub(super) async fn items_from(app: &App, caller: &Caller, params: &Params) -> Result<String> {
+    let mut ask = ask_of(params, active())?;
+    let include = many_of(params)?;
     ask.system = include.system;
     let sent_sort = params.one("sort")?;
     let sort = Sort {
         field: sent_sort.map(field_of).transpose()?,
-        direction: direction_of(&params)?,
+        direction: direction_of(params)?,
     };
     if ask.updated_after.is_some() {
         refuse_order_beside_updated_after(&sort, sent_sort)?;
@@ -366,14 +378,11 @@ pub async fn items(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
     let listing = Listing {
         ask,
         sort,
-        limit: capped_limit(&params, ITEMS_PAGE, MAX_ITEMS_PAGE)?,
+        limit: capped_limit(params, ITEMS_PAGE, MAX_ITEMS_PAGE)?,
         cursor: params.one("cursor")?.map(str::to_string),
         include,
     };
-    Ok(text_answer(
-        StatusCode::OK,
-        list(&app, &caller, listing).await?,
-    ))
+    list(app, caller, listing).await
 }
 
 fn by_of(params: &Params) -> Result<By> {
@@ -428,8 +437,16 @@ fn search_sort_of(params: &Params) -> Result<Sort> {
 pub async fn search(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_reach()?;
     let params = Params::read(&uri, &SEARCH_QUERY, false)?;
-    let q = query_of(&params)?;
-    let mut ask = ask_of(&params, active())?;
+    Ok(text_answer(
+        StatusCode::OK,
+        search_from(&app, &caller, &params).await?,
+    ))
+}
+
+/// The page of hits `params` asks for, as the search door answers it.
+pub(super) async fn search_from(app: &App, caller: &Caller, params: &Params) -> Result<String> {
+    let q = query_of(params)?;
+    let mut ask = ask_of(params, active())?;
     let mut include: Vec<String> = params
         .one("include")?
         .into_iter()
@@ -443,13 +460,10 @@ pub async fn search(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
     let found = Search {
         q,
         ask,
-        sort: search_sort_of(&params)?,
-        limit: whole_limit(&params, SEARCH_PAGE, MAX_SEARCH_PAGE)?,
+        sort: search_sort_of(params)?,
+        limit: whole_limit(params, SEARCH_PAGE, MAX_SEARCH_PAGE)?,
         cursor: params.one("cursor")?.map(str::to_string),
         include,
     };
-    Ok(text_answer(
-        StatusCode::OK,
-        run_search(&app, &caller, found).await?,
-    ))
+    run_search(app, caller, found).await
 }
