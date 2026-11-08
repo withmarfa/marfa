@@ -17,6 +17,7 @@ import {
   POINTS,
   setFault,
   storeCheckDeadlineFault,
+  unreadableFault,
 } from "./faults.js";
 
 const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
@@ -326,6 +327,31 @@ describe("a limit fault", () => {
     for (const arg of ["0", "-1", "1.5", "", "ten", "1000001"]) {
       expect(arm("limit:device-owner-instance", arg), arg).toMatch(
         /whole number/,
+      );
+    }
+    expect(activeFaults()).toEqual([]);
+  });
+});
+
+describe("an unreadable fault", () => {
+  it("reads the record it names as gone, for that ID alone, until it is set again or cleared", () => {
+    expect(unreadableFault("sign-in-record", "a1")).toBe(false);
+    expect(arm("unreadable:sign-in-record", "a1")).toBeUndefined();
+    expect(unreadableFault("sign-in-record", "a1")).toBe(true);
+    expect(unreadableFault("sign-in-record", "a2")).toBe(false);
+    expect(arm("unreadable:sign-in-record", "a2")).toBeUndefined();
+    expect(unreadableFault("sign-in-record", "a1")).toBe(false);
+    expect(unreadableFault("sign-in-record", "a2")).toBe(true);
+    clearFaults();
+    expect(unreadableFault("sign-in-record", "a2")).toBe(false);
+  });
+
+  it("refuses a record nothing reads, and an argument that is not an ID", () => {
+    expect(arm("unreadable:elsewhere", "a1")).toMatch(/not a record/);
+    expect(arm("unreadable:sign-in-record")).toMatch(/ID of the record/);
+    for (const arg of ["", " ", "a b", "/x", "-a", "a".repeat(129)]) {
+      expect(arm("unreadable:sign-in-record", arg), arg).toMatch(
+        /ID of the record/,
       );
     }
     expect(activeFaults()).toEqual([]);

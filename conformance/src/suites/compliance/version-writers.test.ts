@@ -3,7 +3,6 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   approvedApp,
   bootFreshServer,
@@ -785,18 +784,18 @@ describe("who wrote each version", () => {
     const app = await approveApp(browser, "app whose record goes");
     const record = listedApp(await signIns(browser), "app whose record goes");
     const id = await createNote(app.accessToken);
-    // The record goes while the app's token stands.
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare("UPDATE items SET state = 'trashed' WHERE id = ?").run(
-        record.id,
-      );
-    });
-    const changed = await call(app.accessToken, "PATCH", `/items/${id}`, {
-      version: 1,
-      properties: { body: "after the record went" },
-    });
-    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-    await changeNote(app.accessToken, id, 2, "third");
+    // The record reads as gone while the app's token stands.
+    await server.setFault(`unreadable:sign-in-record=${record.id}`);
+    try {
+      const changed = await call(app.accessToken, "PATCH", `/items/${id}`, {
+        version: 1,
+        properties: { body: "after the record went" },
+      });
+      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+      await changeNote(app.accessToken, id, 2, "third");
+    } finally {
+      await server.clearFault();
+    }
     expect(writers(await versionsOf(app.accessToken, id))).toEqual([
       { kind: "app", id: record.id, name: "app whose record goes" },
       { kind: "app", id: app.clientId, name: "app whose record goes" },

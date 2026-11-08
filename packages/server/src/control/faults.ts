@@ -29,6 +29,10 @@
  * - `limit:<lane>=<n>` lowers the attempts a counted lane allows per window
  *   to `<n>`, from now until the fault is cleared or set again. The count
  *   stays in the database, so it outlasts a restart that the fault does not.
+ * - `unreadable:<record>=<id>` makes the server read one stored record as
+ *   gone while everything that names it stands, from now until the fault is
+ *   cleared or set again. `sign-in-record` is the record that lists an app's
+ *   sign-in, by its item ID.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  * - `store-check-deadline=<ms>` shortens the time one question to a blob
  *   store may go unanswered.
@@ -228,6 +232,11 @@ const LIMIT_LANES = ["device-owner-instance"] as const;
 export type LimitLane = (typeof LIMIT_LANES)[number];
 const MAX_LIMIT = 1_000_000;
 
+/** The stored records an `unreadable` fault may name. */
+const UNREADABLE_RECORDS = ["sign-in-record"] as const;
+export type UnreadableRecord = (typeof UNREADABLE_RECORDS)[number];
+const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 /** An address a `resolve` fault may script. */
 function isAddress(text: string): boolean {
   return ipaddr.IPv4.isValidFourPartDecimal(text) || ipaddr.IPv6.isValid(text);
@@ -300,6 +309,13 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return `a limit fault takes a whole number of attempts from 1 to ${String(MAX_LIMIT)}`;
     return undefined;
   }
+  if (kind === "unreadable") {
+    if (!UNREADABLE_RECORDS.includes(rest as UnreadableRecord))
+      return `${rest} is not a record: ${UNREADABLE_RECORDS.join(" or ")}`;
+    return arg !== null && RECORD_ID.test(arg)
+      ? undefined
+      : "an unreadable fault takes the ID of the record";
+  }
   if (name === "unfold-deadline" || name === "store-check-deadline") {
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
@@ -317,7 +333,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
       : undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, limit:<lane>, unfold-deadline, store-check-deadline or resolve:<hostname>";
+  return "a fault is named hold:<point>, fail:<point>, release:<point>, deadline:<job>, free:<volume>, limit:<lane>, unreadable:<record>, unfold-deadline, store-check-deadline or resolve:<hostname>";
 }
 
 /**
@@ -558,6 +574,12 @@ export function limitFault(lane: LimitLane): number | undefined {
   if (faults.size === 0) return undefined;
   const arg = faults.get(`limit:${lane}`)?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** Whether `unreadable:<record>` makes the record with this ID read as gone. */
+export function unreadableFault(record: UnreadableRecord, id: string): boolean {
+  if (faults.size === 0) return false;
+  return faults.get(`unreadable:${record}`)?.arg === id;
 }
 
 /** The time `unfold-deadline` allows one series to unfold, if it is armed. */
