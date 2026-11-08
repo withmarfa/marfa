@@ -83,9 +83,9 @@ To move to a newer release:
 
 1. Note the running release from `version` in `GET /`, and take a volume backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes.
 2. In the Marfa server's settings, change the source image's tag to the new release, such as `ghcr.io/withmarfa/marfa-server:<release>`, then review and deploy the staged change.
-3. In the deployment's logs, find the line that says the server updated the database and names the copy, then read `GET /health`.
+3. Read `GET /health`. If the release changed the database schema, the deployment's logs name the update and its backup copy. A release with the same schema makes no copy.
 
-If the new build refuses the database, it stops with status 78 and changes nothing: set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it refuses. To go back after an update, restore the volume backup from step 1 as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
+If the new build refuses the database, the server exits with status 78 and changes nothing. Its supervisor keeps the container running but unhealthy: set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it refuses. To go back after an update, restore the volume backup from step 1 as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
 
 The copy the server made stays on the volume, as large as the database. Delete it once you won't go back; [Upgrade](README.md#upgrade) names it.
 

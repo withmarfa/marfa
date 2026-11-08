@@ -124,7 +124,7 @@ grep -q "\"instance_id\":\"$instance\"" <<<"$body" || fail "a restart on the vol
 stop_and_check "$again"
 
 echo "== a database a newer build wrote"
-# SQLite keeps the schema version at byte 60 of the file, big-endian.
+# SQLite keeps user_version at byte 60 of the file, big-endian.
 docker pull -q "$BUSYBOX" >/dev/null
 docker run --rm --user 65532:65532 --mount "type=volume,source=$volume,target=/data" "$BUSYBOX" \
   sh -c 'printf "\000\000\047\017" | dd of=/data/marfa.db bs=1 seek=60 count=4 conv=notrunc 2>/dev/null'

@@ -27,7 +27,7 @@ By default the command runs the server as a service of your machine, without Doc
 
 The command asks how you reach the server, writes the settings, starts the service, and prints a link that claims the server. [Claim the server](#claim-the-server) says what to do with the link. Running the command again changes only what isn't already as you asked, and never the secrets or the runtime.
 
-The install lives in one folder: `~/marfa-server`, or `/var/lib/marfa-server` for root on Linux. Choose another with `--dir`; the path of the folder plus `/data/control/marfa.sock` must be 100 characters or fewer.
+The install lives in one folder: `~/marfa-server`, or `/var/lib/marfa-server` for root on Linux. Choose another with `--dir`; the path of the folder plus `/data/control/marfa.sock` must be 100 bytes or fewer.
 
 | Path                      | What it holds                                                                                                                                                                                                                                               |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -119,7 +119,7 @@ A newer build updates the database in place at its first start. When the databas
 
 The server stops with status 78 when it refuses the database. It refuses one that a newer build wrote, one whose tables match no build's, and an update that lacks disk space or fails its checks. It changes nothing in a refused database.
 
-- **Native:** the service stays up and does nothing, so that it isn't started again into the same refusal. Read the reason with `marfa server status`. Install the release that wrote the database, then run `marfa server start`.
+- **Native:** the service stays up and does nothing, so that it isn't started again into the same refusal. Read the reason with `marfa server status`, then run `marfa server stop`. Install the release that wrote the database, then run `marfa server start`.
 - **Docker:** the container stays up and does nothing in the same way, so its restart policy does not start it again. Read the reason with `marfa server status` or `docker logs <name>`.
 
 To go back after a successful update, stop the server, delete `marfa.db-wal` and `marfa.db-shm`, replace `marfa.db` with the copy, and start the earlier release. Writes made since the update aren't in the copy. The copy is as large as the database. Delete it once you won't go back.
@@ -156,12 +156,12 @@ To run code that isn't a release, build the programs for a target. The target is
 MARFA_NATIVE_ROOT=<folder> scripts/release/build-programs.sh <target>
 ```
 
-`<folder>` holds downloads and work, and the first build of a target takes long. The result is in `<folder>/out/<target>/`: `marfa`, `marfa-server` and `NOTICES.txt`. A build from the repository reports version `0.0.0`.
+`<folder>` holds downloads and work. The result is in `<folder>/out/<target>/`: `marfa`, `marfa-server` and `NOTICES.txt`. A build from the repository reports version `0.0.0`.
 
 To build the image from those programs, put the output of the two Linux targets in a build context as `amd64/` (`x86_64-unknown-linux-musl`) and `arm64/` (`aarch64-unknown-linux-musl`), then run:
 
 ```bash
-docker buildx build -f deploy/Dockerfile --platform linux/amd64 \
+docker buildx build --load -f deploy/Dockerfile --platform linux/amd64 \
   --build-arg VERSION=0.0.0 -t marfa-server <context>
 scripts/check-image.sh marfa-server 0.0.0
 ```
