@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use chrono::SecondsFormat;
 use rusqlite::Transaction;
 use serde_json::Value;
@@ -5,6 +8,8 @@ use serde_json::Value;
 use super::App;
 use super::access::Caller;
 use super::audit::{self, Entry};
+use super::catalog::Snapshot;
+use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
 use super::provenance::{self, Origin};
 use super::refusal::Result;
@@ -19,11 +24,17 @@ pub struct Unit<'t, 'c> {
     /// The same instant as `at`, in milliseconds.
     pub at_ms: i64,
     origin: Origin,
+    read_only: Arc<ArcSwap<Registry>>,
 }
 
 impl<'c> Unit<'_, 'c> {
     pub fn tx(&self) -> &Transaction<'c> {
         self.tx
+    }
+
+    /// Which items connectors hold read only, as this write leaves them.
+    pub fn read_only(&self) -> Result<ReadOnly> {
+        read_only::current(&self.read_only, self.tx, &self.at, Snapshot::Pending)
     }
 
     pub fn under(&self, action: &'static str) -> Unit<'_, 'c> {
@@ -34,6 +45,7 @@ impl<'c> Unit<'_, 'c> {
             at: self.at.clone(),
             at_ms: self.at_ms,
             origin: self.origin.clone(),
+            read_only: self.read_only.clone(),
         }
     }
 
@@ -98,6 +110,7 @@ impl App {
         let caller = caller.clone();
         let clock = self.clock.clone();
         let origin = provenance::current();
+        let read_only = self.read_only_handle();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -116,6 +129,7 @@ impl App {
                     at,
                     at_ms,
                     origin,
+                    read_only,
                 })
             })
             .await
