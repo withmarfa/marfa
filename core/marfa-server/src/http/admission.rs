@@ -31,7 +31,9 @@ impl Admission {
     pub fn admits(self, caller: Option<&Caller>, headers: &HeaderMap, on_socket: bool) -> bool {
         match self {
             Admission::Any => true,
-            Admission::Mapped => !matches!(caller, Some(Caller::Local(_) | Caller::Owner(_))),
+            Admission::Mapped => {
+                bears_token(headers) && !matches!(caller, Some(Caller::Local(_) | Caller::Owner(_)))
+            }
             Admission::Counted => !matches!(caller, Some(Caller::Local(_))),
             Admission::Presented => on_socket || bears_token(headers),
         }
@@ -52,6 +54,7 @@ pub async fn admit(
     let (mut parts, body) = request.into_parts();
     let caller = match rule {
         Admission::Presented => None,
+        Admission::Mapped if !bears_token(&parts.headers) => None,
         _ => identify(&mut parts, &app).await.ok().flatten(),
     };
     if !rule.admits(

@@ -34,6 +34,8 @@ struct Instance {
 enum Presents {
     Key,
     Cookie,
+    /// A cookie with no `Origin` of its own; a test may add one.
+    BareCookie,
     Nothing,
 }
 
@@ -138,6 +140,9 @@ impl Instance {
                 request = request
                     .header(header::COOKIE, &self.cookie)
                     .header(header::ORIGIN, ORIGIN);
+            }
+            Presents::BareCookie => {
+                request = request.header(header::COOKIE, &self.cookie);
             }
             Presents::Nothing => {}
         }
@@ -505,4 +510,42 @@ async fn a_method_no_door_serves_is_not_found_whatever_instance_it_names() {
         "instance_changed",
         "the witness: a method the path serves",
     );
+}
+
+#[tokio::test]
+async fn a_cookie_with_a_missing_or_foreign_origin_is_no_credential_at_a_folder_write() {
+    let instance = Instance::start().await;
+    let folder = format!("/folders/{ITEM}");
+    for (method, path, body) in [
+        (
+            Method::POST,
+            "/folders".to_string(),
+            json!({ "title": "Inbox" }),
+        ),
+        (
+            Method::PATCH,
+            folder.clone(),
+            json!({ "title": "Inbox", "version": 1 }),
+        ),
+        (Method::POST, format!("{folder}/revoke"), json!({})),
+    ] {
+        for origin in [None, Some("https://elsewhere.example")] {
+            let headers: Vec<(&str, &str)> = origin.map(|o| ("origin", o)).into_iter().collect();
+            let reply = instance
+                .on_public(
+                    method.clone(),
+                    &path,
+                    Presents::BareCookie,
+                    &headers,
+                    Some(body.clone()),
+                )
+                .await;
+            assert_refused(
+                &reply,
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                &format!("cookie with origin {origin:?}, {method} {path}"),
+            );
+        }
+    }
 }
