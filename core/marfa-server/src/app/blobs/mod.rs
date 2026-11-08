@@ -12,6 +12,7 @@ mod s3;
 mod store;
 pub mod upkeep;
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::io;
 use std::path::Path;
@@ -21,6 +22,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use serde_json::json;
+use uuid::Uuid;
 
 use super::App;
 use super::access::{Caller, Permission};
@@ -41,7 +43,7 @@ pub use disk::MARKER;
 use disk::{Disk, Staged};
 pub use hash::Hash;
 pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
-use s3::S3;
+use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{CHECK_DEADLINE, Failed, Gate, Store};
 
@@ -81,37 +83,90 @@ fn started(error: impl std::fmt::Display) -> Failure {
     Failure::start(error.to_string())
 }
 
-/// The object store named by the configuration: the one its marker names, or, while it does
-/// not answer, the one the copy record names at its locator.
-async fn object_store(db: &Db, settings: &ObjectStoreSettings) -> std::result::Result<S3, Failure> {
-    let opened = match tokio::time::timeout(CHECK_DEADLINE, S3::open(settings)).await {
-        Ok(opened) => opened,
-        Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "no answer")),
+/// The refusal for a start over a blob folder that is missing or holds no marker while the
+/// copy record names copies there.
+fn folder_missing(root: &Path, why: &str) -> Failure {
+    Failure::start(format!(
+        "The blob folder {} is missing or holds no store marker, and the copy record names \
+         copies there{why}. Mount or restore it, then start again.",
+        root.display()
+    ))
+}
+
+/// The object store named by the configuration: the one its marker names, writing a marker
+/// for a store that has none, or, while it is not reached, the one the copy record names at
+/// its locator. With `unfilled` naming a blob folder that lost its copies, only a store the
+/// server has recorded may fill it, and nothing is written before that is known.
+async fn object_store(
+    db: &Db,
+    settings: &ObjectStoreSettings,
+    unfilled: Option<&Path>,
+) -> std::result::Result<S3, Failure> {
+    let refused =
+        |what: String| Failure::start(format!("The object store {} {what}", settings.locator()));
+    let bucket = S3::new(settings, String::new()).map_err(started)?;
+    let marker = match tokio::time::timeout(CHECK_DEADLINE, bucket.marker()).await {
+        Ok(marker) => marker,
+        Err(_) => Marker::Silent(io::Error::new(io::ErrorKind::TimedOut, "no answer in time")),
     };
-    let error = match opened {
-        Ok(s3) => return Ok(s3),
-        Err(error) => error,
-    };
-    let locator = settings.locator();
-    let recorded = db
-        .read(move |tx| rows::attached_object_store(tx, &locator))
-        .await
-        .map_err(started)?;
-    match recorded {
-        Some(id) => {
-            tracing::warn!(%error, "The object store did not answer at start; its copies wait");
-            S3::known(settings, id).map_err(started)
+    let unknown = ", and the object store is not one the server has kept copies in";
+    match marker {
+        Marker::Id(id) => {
+            if let Some(root) = unfilled {
+                let named = id.clone();
+                let recorded = db
+                    .read(move |tx| rows::recorded_object_store(tx, &named))
+                    .await
+                    .map_err(started)?;
+                if !recorded {
+                    return Err(folder_missing(root, unknown));
+                }
+            }
+            S3::new(settings, id).map_err(started)
         }
-        None => Err(Failure::start(format!(
-            "The object store {} did not answer: {error}",
-            settings.locator()
-        ))),
+        Marker::None => {
+            if let Some(root) = unfilled {
+                return Err(folder_missing(root, unknown));
+            }
+            let s3 = S3::new(settings, Uuid::now_v7().to_string()).map_err(started)?;
+            match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
+                Ok(Ok(())) => Ok(s3),
+                Ok(Err(error)) => Err(refused(format!(
+                    "holds no store marker and took none: {error}"
+                ))),
+                Err(_) => Err(refused(
+                    "holds no store marker and took none in time".to_string(),
+                )),
+            }
+        }
+        Marker::Silent(error) => {
+            if let Some(root) = unfilled {
+                return Err(folder_missing(
+                    root,
+                    ", and the object store did not answer",
+                ));
+            }
+            let locator = settings.locator();
+            let recorded = db
+                .read(move |tx| rows::attached_object_store(tx, &locator))
+                .await
+                .map_err(started)?;
+            match recorded {
+                Some(id) => {
+                    tracing::warn!(%error, "The object store did not answer at start; its copies wait");
+                    S3::new(settings, id).map_err(started)
+                }
+                None => Err(refused(format!("did not answer: {error}"))),
+            }
+        }
+        Marker::Refused(error) => Err(refused(format!("did not say which store it is: {error}"))),
     }
 }
 
 impl Blobs {
     /// Takes the disk store from its folder's marker and the object store from the
-    /// configuration, and detaches every store the configuration no longer names.
+    /// configuration, and detaches every store the configuration no longer names. The folder
+    /// is changed only once nothing refuses the start.
     pub async fn open(
         db: &Db,
         root: &Path,
@@ -125,30 +180,27 @@ impl Blobs {
         let found = tokio::task::spawn_blocking(move || Disk::probe(&folder))
             .await
             .map_err(started)??;
-        if found != disk::Found::Marked && object.is_none() {
+        let unfilled = if found == disk::Found::Marked {
+            false
+        } else {
             let locator = root.display().to_string();
-            let named = db
-                .read(move |tx| rows::copies_at_folder(tx, &locator))
+            db.read(move |tx| rows::copies_at_folder(tx, &locator))
                 .await
-                .map_err(started)?;
-            if named {
-                return Err(Failure::start(format!(
-                    "The blob folder {} is missing or holds no store marker, and the copy \
-                     record names copies there. Mount or restore it, then start again.",
-                    root.display()
-                )));
-            }
-        }
+                .map_err(started)?
+        };
+        let s3 = match object {
+            Some(settings) => Some(Arc::new(
+                object_store(db, settings, unfilled.then_some(root)).await?,
+            )),
+            None if unfilled => return Err(folder_missing(root, "")),
+            None => None,
+        };
         let folder = root.to_path_buf();
         let disk = Arc::new(
             tokio::task::spawn_blocking(move || Disk::open(&folder))
                 .await
                 .map_err(started)??,
         );
-        let s3 = match object {
-            Some(settings) => Some(Arc::new(object_store(db, settings).await?)),
-            None => None,
-        };
         let attached: Vec<(String, &'static str, String)> = std::iter::once((
             disk.id().to_string(),
             "disk",
@@ -295,6 +347,33 @@ impl Blobs {
                 (false, false)
             }
             Err(_) => (false, false),
+        }
+    }
+
+    /// Whether a store answers as itself, asked once a run of each store that is about to
+    /// have a copy struck. A disk store shows a lost folder on every read; an object store is
+    /// asked for its marker, since a bucket that was replaced or a proxy that answers `404`
+    /// shows every copy as missing.
+    async fn is_itself(&self, store: &Store, confirmed: &mut HashSet<String>) -> bool {
+        let Store::S3(s3) = store else {
+            return true;
+        };
+        if confirmed.contains(s3.id()) {
+            return true;
+        }
+        let answer = match tokio::time::timeout(self.check(), s3.is_itself()).await {
+            Ok(answer) => answer,
+            Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "no answer in time")),
+        };
+        match answer {
+            Ok(()) => {
+                confirmed.insert(s3.id().to_string());
+                true
+            }
+            Err(error) => {
+                tracing::warn!(%error, "The object store did not answer as itself; nothing is struck there");
+                false
+            }
         }
     }
 

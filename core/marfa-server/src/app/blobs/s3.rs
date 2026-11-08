@@ -8,6 +8,7 @@ use bytes::Bytes;
 use futures_util::stream::BoxStream;
 use futures_util::{StreamExt, TryStreamExt};
 use object_store::aws::{AmazonS3, AmazonS3Builder};
+use object_store::client::{HttpError, HttpErrorKind};
 use object_store::path::Path;
 use object_store::signer::Signer;
 use object_store::{
@@ -40,6 +41,29 @@ fn is_missing(error: &object_store::Error) -> bool {
     matches!(error, object_store::Error::NotFound { .. })
 }
 
+/// Whether the store was never reached or did not answer in time, as against answering.
+fn is_silent(error: &object_store::Error) -> bool {
+    let mut cause = std::error::Error::source(error);
+    while let Some(error) = cause {
+        if let Some(http) = error.downcast_ref::<HttpError>() {
+            return matches!(http.kind(), HttpErrorKind::Connect | HttpErrorKind::Timeout);
+        }
+        cause = error.source();
+    }
+    false
+}
+
+/// What a store answered when asked for its marker.
+#[derive(Debug)]
+pub enum Marker {
+    Id(String),
+    None,
+    /// No connection, or no answer in time.
+    Silent(io::Error),
+    /// An answer that names no store: a refusal, an error or a marker that does not read.
+    Refused(io::Error),
+}
+
 /// The bytes of one blob as an object store takes them back.
 pub fn attributes(mime_type: &str, hash: &Hash) -> Attributes {
     let mut attributes = Attributes::new();
@@ -52,7 +76,7 @@ pub fn attributes(mime_type: &str, hash: &Hash) -> Attributes {
 }
 
 impl S3 {
-    pub fn client(settings: &ObjectStoreSettings) -> io::Result<AmazonS3> {
+    fn client(settings: &ObjectStoreSettings) -> io::Result<AmazonS3> {
         let retry = RetryConfig {
             backoff: BackoffConfig::default(),
             max_retries: 2,
@@ -78,44 +102,61 @@ impl S3 {
         builder.build().map_err(failed)
     }
 
-    /// Reads the store's id from its marker object, writing one where there is none.
-    pub async fn open(settings: &ObjectStoreSettings) -> io::Result<S3> {
-        let client = S3::client(settings)?;
-        let marker = Path::from(format!("{}/{MARKER}", settings.prefix));
-        let id = match client.get(&marker).await {
-            Ok(found) => {
-                let text = found.bytes().await.map_err(failed)?;
-                let text = String::from_utf8_lossy(&text);
-                Uuid::parse_str(text.trim())
-                    .map_err(|_| io::Error::other("the store's marker does not hold a store id"))?
-                    .to_string()
-            }
-            Err(error) if is_missing(&error) => {
-                let id = Uuid::now_v7().to_string();
-                client
-                    .put(&marker, PutPayload::from(id.clone().into_bytes()))
-                    .await
-                    .map_err(failed)?;
-                id
-            }
-            Err(error) => return Err(failed(error)),
-        };
-        Ok(S3 {
-            id,
-            locator: settings.locator(),
-            prefix: settings.prefix.clone(),
-            client,
-        })
-    }
-
-    /// A store reached at start without its marker: the one the copy record names here.
-    pub fn known(settings: &ObjectStoreSettings, id: String) -> io::Result<S3> {
+    /// The configured store, before its marker says which store it is.
+    pub fn new(settings: &ObjectStoreSettings, id: String) -> io::Result<S3> {
         Ok(S3 {
             id,
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
             client: S3::client(settings)?,
         })
+    }
+
+    fn marker_path(&self) -> Path {
+        Path::from(format!("{}/{MARKER}", self.prefix))
+    }
+
+    /// The store id the marker object holds.
+    pub async fn marker(&self) -> Marker {
+        let found = match self.client.get(&self.marker_path()).await {
+            Ok(found) => found.bytes().await,
+            Err(error) => Err(error),
+        };
+        match found {
+            Ok(text) => match Uuid::parse_str(String::from_utf8_lossy(&text).trim()) {
+                Ok(id) => Marker::Id(id.to_string()),
+                Err(_) => Marker::Refused(io::Error::other(
+                    "the store's marker does not hold a store id",
+                )),
+            },
+            Err(error) if is_missing(&error) => Marker::None,
+            Err(error) if is_silent(&error) => Marker::Silent(failed(error)),
+            Err(error) => Marker::Refused(failed(error)),
+        }
+    }
+
+    /// Writes this store's id as the marker object.
+    pub async fn mark(&self) -> io::Result<()> {
+        self.client
+            .put(
+                &self.marker_path(),
+                PutPayload::from(self.id.clone().into_bytes()),
+            )
+            .await
+            .map(|_| ())
+            .map_err(failed)
+    }
+
+    /// Whether the store answers with its own marker. A bucket that was deleted or replaced,
+    /// an endpoint that moved and a proxy that answers `404` all fail this, and each would
+    /// otherwise show every copy as missing.
+    pub async fn is_itself(&self) -> io::Result<()> {
+        match self.marker().await {
+            Marker::Id(id) if id == self.id => Ok(()),
+            Marker::Id(_) => Err(io::Error::other("the store's marker names another store")),
+            Marker::None => Err(io::Error::other("the store holds no marker")),
+            Marker::Silent(error) | Marker::Refused(error) => Err(error),
+        }
     }
 
     pub fn id(&self) -> &str {

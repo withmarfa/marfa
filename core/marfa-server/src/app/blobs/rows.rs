@@ -310,6 +310,15 @@ pub fn attached_object_store(tx: &Transaction<'_>, locator: &str) -> Result<Opti
         .optional()?)
 }
 
+/// Whether the server has recorded an object store with this id, attached or not.
+pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM stores WHERE id = ?1 AND kind = 's3')",
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
 /// The attached stores the copy record says hold the blob.
 pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(
