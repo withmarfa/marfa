@@ -77,6 +77,37 @@ impl Judge {
     }
 }
 
+tokio::task_local! {
+    static DEMAND: Demand;
+}
+
+/// A reach a request presented and every read of the request must find current in its own snapshot.
+#[derive(Clone)]
+pub struct Demand {
+    judge: Judge,
+    asked: String,
+}
+
+impl Demand {
+    pub fn new(judge: Judge, asked: String) -> Demand {
+        Demand { judge, asked }
+    }
+
+    /// Runs `work` with this demand pending for every read it makes.
+    pub async fn within<F: std::future::Future>(self, work: F) -> F::Output {
+        DEMAND.scope(self, work).await
+    }
+
+    /// The demand of the request this task answers, if it presented a reach.
+    pub fn pending() -> Option<Demand> {
+        DEMAND.try_with(Clone::clone).ok()
+    }
+
+    pub fn verify(&self, tx: &Transaction<'_>, caller: &Caller) -> Result<()> {
+        self.judge.require(tx, caller, &self.asked)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -101,13 +132,19 @@ mod tests {
         let wide = form(Axis::Type, json!({ "*": "read" }));
         assert_eq!(
             wide,
-            form(Axis::Type, json!({ "*": "write", "core.note": "read", "core.*": "write" }))
+            form(
+                Axis::Type,
+                json!({ "*": "write", "core.note": "read", "core.*": "write" })
+            )
         );
         let hole = form(Axis::Type, json!({ "*": "read", "core.note": "none" }));
         assert_ne!(wide, hole);
         assert_eq!(
             hole,
-            form(Axis::Type, json!({ "*": "write", "core.note": "none", "core.bookmark": "read" }))
+            form(
+                Axis::Type,
+                json!({ "*": "write", "core.note": "none", "core.bookmark": "read" })
+            )
         );
         let none = form(Axis::Type, json!({ "core.note": "none" }));
         assert_eq!(none, form(Axis::Type, json!({})));
@@ -116,8 +153,14 @@ mod tests {
     #[test]
     fn a_name_a_wildcard_covers_is_the_same_whichever_way_it_is_spelled() {
         let under = form(Axis::Type, json!({ "about.*": "read" }));
-        assert_eq!(under, form(Axis::Type, json!({ "about.*": "write", "about.x": "read" })));
-        assert_ne!(under, form(Axis::Type, json!({ "about.*": "read", "about.x": "none" })));
+        assert_eq!(
+            under,
+            form(Axis::Type, json!({ "about.*": "write", "about.x": "read" }))
+        );
+        assert_ne!(
+            under,
+            form(Axis::Type, json!({ "about.*": "read", "about.x": "none" }))
+        );
     }
 
     #[test]
@@ -143,11 +186,16 @@ mod tests {
                 "enforcement",
             )
             .unwrap();
-            Standing::of(Some(&levers), None).holding().source_filter_form()
+            Standing::of(Some(&levers), None)
+                .holding()
+                .source_filter_form()
         };
         assert_eq!(filter(json!(["y", "x"])), filter(json!(["x", "y", "x"])));
         assert_ne!(filter(json!(["x"])), filter(json!(["y"])));
-        assert_ne!(filter(json!(["x"])), Standing::of(None, None).holding().source_filter_form());
+        assert_ne!(
+            filter(json!(["x"])),
+            Standing::of(None, None).holding().source_filter_form()
+        );
         assert_ne!(
             Standing::closed().holding().source_filter_form(),
             Standing::of(None, None).holding().source_filter_form()

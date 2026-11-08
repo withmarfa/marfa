@@ -15,11 +15,12 @@ use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 use super::frame::{Filter, Judge, Verdict, marker};
 use super::page::{self, Next};
 use crate::app::App;
+use crate::app::access::reach::{Demand, Judge as Reach};
 use crate::app::faults::{
     FAIL_STREAM_CREDENTIAL, FAIL_STREAM_REPLAY, FAIL_STREAM_REPLAY_ROW, FAIL_STREAM_REPLAY_UNTYPED,
-    Faults, HOLD_STREAM_HEAD, HOLD_STREAM_REPLAY,
+    Faults, HOLD_STREAM_DRAIN, HOLD_STREAM_HEAD, HOLD_STREAM_REPLAY,
 };
-use crate::app::items::{Reader, reading};
+use crate::app::items::{Reader, reading_under};
 use crate::app::refusal::{Code, Refusal, Result};
 
 /// A quiet stream is pinged this often, and a reader that takes nothing for this long is closed.
@@ -81,6 +82,23 @@ pub struct Hangup {
 pub struct Opening {
     pub filter: Filter,
     pub resume: Option<i64>,
+    /// Set on a copy stream: the reach it resumes under, none where it begins.
+    pub reach: Option<String>,
+}
+
+/// What a copy stream certifies: the instance and the reach its markers carry, judged afresh in
+/// the snapshot of every page.
+struct Copying {
+    judge: Reach,
+    reach: Option<String>,
+}
+
+impl Copying {
+    fn demand(&self) -> Option<Demand> {
+        self.reach
+            .clone()
+            .map(|reach| Demand::new(self.judge.clone(), reach))
+    }
 }
 
 /// `hangup` closes the connection when its reader stalls.
@@ -92,6 +110,10 @@ pub fn open(
     hangup: Option<Hangup>,
 ) -> mpsc::Receiver<Bytes> {
     let (frames, feed) = mpsc::channel(1);
+    let copy = opening.filter.copy.then(|| Copying {
+        judge: Reach::of(&app),
+        reach: opening.reach,
+    });
     let run = Run {
         stopping: app.stopping(),
         commits: app.db.commits(),
@@ -99,6 +121,7 @@ pub fn open(
         caller,
         filter: opening.filter,
         resume: opening.resume,
+        copy,
         frames,
         hangup,
         started: 0,
@@ -119,6 +142,7 @@ struct Run {
     caller: crate::app::access::Caller,
     filter: Filter,
     resume: Option<i64>,
+    copy: Option<Copying>,
     frames: mpsc::Sender<Bytes>,
     hangup: Option<Hangup>,
     stopping: watch::Receiver<bool>,
@@ -277,11 +301,7 @@ impl Run {
         self.check_stop()?;
         let head = self.opening().await?;
         self.check_stop()?;
-        self.send(frame(marker(
-            "stream_cursor",
-            vec![("cursor", head.to_string().into())],
-        ))?)
-        .await?;
+        self.announce("stream_cursor", head).await?;
         // Retention may have passed the cursor since the head was read.
         let mut resumed = self.resume.is_some();
         if resumed {
@@ -296,11 +316,13 @@ impl Run {
             }
             self.page(Some(faults)).await?;
         }
-        self.send(frame(marker(
-            "stream_live",
-            vec![("cursor", self.position.max(head).to_string().into())],
-        ))?)
-        .await?;
+        if self.copy.is_some() {
+            // Only a log read to its end under the reach lets the marker certify the copy.
+            self.app.faults.hold(HOLD_STREAM_DRAIN, None).await;
+            self.drain().await?;
+        }
+        self.announce("stream_live", self.position.max(head))
+            .await?;
         self.position = self.position.max(head);
         let mut stopping = self.stopping.clone();
         loop {
@@ -327,6 +349,52 @@ impl Run {
         }
     }
 
+    /// The marker that names where the stream stands, and for a copy stream the instance and reach it holds.
+    async fn announce(&mut self, name: &str, cursor: i64) -> std::result::Result<(), Ending> {
+        let mut fields: Vec<(&str, Value)> = vec![("cursor", cursor.to_string().into())];
+        if let Some(copy) = &self.copy {
+            let reach = copy.reach.clone().ok_or(Ending::Gone)?;
+            fields.push(("instance_id", copy.judge.instance_id().into()));
+            fields.push(("reach", reach.into()));
+        }
+        self.send(frame(marker(name, fields))?).await
+    }
+
+    /// Reads the head, in the snapshot that settles the reach of a copy stream.
+    async fn head(&mut self) -> std::result::Result<page::Bounds, Ending> {
+        let read = match &self.copy {
+            None => {
+                reading_under(&self.app, &self.caller, None, |read| {
+                    Ok((page::bounds(read.tx)?, None))
+                })
+                .await
+            }
+            Some(copy) => {
+                let (judge, asked) = (copy.judge.clone(), copy.reach.clone());
+                reading_under(&self.app, &self.caller, None, move |read| {
+                    let reach = match asked {
+                        Some(asked) => {
+                            judge.require(read.tx, &read.caller, &asked)?;
+                            asked
+                        }
+                        None => judge.reach(read.tx, &read.caller)?,
+                    };
+                    Ok((page::bounds(read.tx)?, Some(reach)))
+                })
+                .await
+            }
+        };
+        match read {
+            Ok((bounds, reach)) => {
+                if let (Some(copy), Some(reach)) = (self.copy.as_mut(), reach) {
+                    copy.reach = Some(reach);
+                }
+                Ok(bounds)
+            }
+            Err(refusal) => Err(self.failure(&refusal)),
+        }
+    }
+
     /// Reads the head, and settles a cursor the log cannot resume from.
     async fn opening(&mut self) -> std::result::Result<i64, Ending> {
         if self
@@ -336,10 +404,7 @@ impl Run {
         {
             return Err(self.incomplete("read_failed"));
         }
-        let bounds = match reading(&self.app, &self.caller, |read| page::bounds(read.tx)).await {
-            Ok(bounds) => bounds,
-            Err(refusal) => return Err(self.failure(&refusal)),
-        };
+        let bounds = self.head().await?;
         self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
         let Some(cursor) = self.resume else {
             self.started = bounds.head;
@@ -348,6 +413,9 @@ impl Run {
         };
         self.started = cursor;
         if cursor > bounds.head {
+            if self.copy.is_some() {
+                self.announce("stream_cursor", bounds.head).await?;
+            }
             return Err(ending(marker(
                 "cursor_ahead",
                 vec![
@@ -383,7 +451,8 @@ impl Run {
             return Err(self.incomplete("read_failed"));
         }
         let (filter, after) = (self.filter.clone(), self.position);
-        let read = reading(&self.app, &self.caller, move |read| {
+        let demand = self.copy.as_ref().and_then(Copying::demand);
+        let read = reading_under(&self.app, &self.caller, demand, move |read| {
             read_page(read, &filter, after, replay.as_deref())
         })
         .await;
@@ -523,6 +592,9 @@ impl Run {
     }
 
     fn failure(&self, refusal: &Refusal) -> Ending {
+        if refusal.code == Code::ReachChanged {
+            return ending(marker("reach_changed", Vec::new()));
+        }
         if refusal.code == Code::Unauthorized {
             return self.incomplete("credential_ended");
         }

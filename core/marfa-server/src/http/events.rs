@@ -15,17 +15,20 @@ use marfa_rules::query::type_entries;
 use tokio::sync::mpsc;
 
 use super::answer::Answer;
+use super::conditional;
 use super::items::invalid_field;
 use super::listening;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::access::reach::Judge;
 use crate::app::events::{self, Filter, Opening};
 use crate::app::faults::HOLD_STREAM_OPEN;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::settings::registry::SSE_MAX_VIEWERS;
 
-const DECLARED: [&str; 3] = ["type", "edges", "copy"];
+const DECLARED: [&str; 2] = ["type", "edges"];
+const COPY_DECLARED: [&str; 2] = ["edges", "copy"];
 
 struct Feed(mpsc::Receiver<Bytes>);
 
@@ -105,40 +108,100 @@ fn at_capacity() -> Refusal {
     .with_detail("reason", "viewer_cap")
 }
 
-pub async fn open(
-    State(app): State<Arc<App>>,
+/// The value a copy stream's query names for `name`, when it names it exactly once.
+fn once<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    let mut named = pairs.iter().filter(|(key, _)| key == name);
+    match (named.next(), named.next()) {
+        (Some((_, value)), None) => Some(value),
+        _ => None,
+    }
+}
+
+/// What a copy stream resumes from: a cursor and the reach it was read under, both or neither.
+fn copy_resume(uri: &Uri, headers: &HeaderMap) -> Result<Option<(i64, String)>> {
+    query::only(uri, &COPY_DECLARED)?;
+    let pairs = query::pairs(uri)?;
+    if once(&pairs, "edges") != Some("all") {
+        return Err(invalid_field("edges", "A copy stream takes edges=all."));
+    }
+    if once(&pairs, "copy") != Some("1") {
+        return Err(invalid_field("copy", "copy is 1."));
+    }
+    let cursor = match headers.contains_key("last-event-id") {
+        false => None,
+        true => Some(cursor_of(headers)?.ok_or_else(malformed)?),
+    };
+    let reach = match headers.contains_key(conditional::REACH_HEADER) {
+        false => None,
+        true => Some(
+            conditional::proof_of(headers)
+                .ok_or_else(|| {
+                    invalid_field(
+                        "X-Marfa-Reach",
+                        "X-Marfa-Reach takes one value of 64 lowercase hexadecimal characters.",
+                    )
+                })?
+                .to_string(),
+        ),
+    };
+    match (cursor, reach) {
+        (None, None) => Ok(None),
+        (Some(cursor), Some(reach)) => Ok(Some((cursor, reach))),
+        _ => Err(Refusal::validation(
+            "Last-Event-ID and X-Marfa-Reach resume a copy stream together.",
+        )),
+    }
+}
+
+/// `GET /events?edges=all&copy=1`. A request the grammar refuses is told 403 by a key that reads
+/// no type, a stale reach is told 409 before that, and the stream starts only after both.
+async fn copy(
+    app: Arc<App>,
     caller: Caller,
     hangup: Option<Extension<listening::Hangup>>,
     uri: Uri,
     headers: HeaderMap,
 ) -> Answer {
+    let resume = match copy_resume(&uri, &headers) {
+        Ok(resume) => resume,
+        Err(refusal) => {
+            caller.require_reach()?;
+            return Err(refusal.into());
+        }
+    };
+    if let Some((_, asked)) = &resume {
+        let judge = Judge::of(&app);
+        let (caller, asked) = (caller.clone(), asked.clone());
+        let clock = app.clock.clone();
+        app.db
+            .read(move |tx| {
+                let caller = caller.current(tx, &clock.stamp())?;
+                judge.require(tx, &caller, &asked)
+            })
+            .await?;
+    }
     caller.require_reach()?;
     app.faults.hold(HOLD_STREAM_OPEN, None).await;
-    if headers.contains_key("x-marfa-reach") {
-        return Err(Refusal::validation(
-            "X-Marfa-Reach belongs to the copy stream, GET /events?edges=all&copy=1.",
-        )
-        .into());
-    }
-    query::only(&uri, &DECLARED)?;
-    if query::pairs(&uri)?.iter().any(|(name, _)| name == "copy") {
-        return Err(invalid_field("copy", "This server does not serve the copy stream.").into());
-    }
-    let types = types_of(&uri)?;
-    events::judge_types(&app, &caller, types.clone()).await?;
-    let filter = Filter {
-        types,
-        edges: edges_of(&uri)?,
-    };
-    let resume = cursor_of(&headers)?;
     let viewer = app
         .viewers
         .admit(app.settings.live().get(SSE_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
+    let (resume, reach) = match resume {
+        Some((cursor, reach)) => (Some(cursor), Some(reach)),
+        None => (None, None),
+    };
     let feed = events::open(
         app,
         caller,
-        Opening { filter, resume },
+        Opening {
+            filter: Filter {
+                types: Vec::new(),
+                edges: true,
+                copy: true,
+            },
+            resume,
+            reach,
+        },
         viewer,
         hangup.map(|Extension(hangup)| events::Hangup {
             close: Box::new({
@@ -148,6 +211,10 @@ pub async fn open(
             closed: Box::pin(hangup.closed()),
         }),
     );
+    Ok(streaming(feed))
+}
+
+fn streaming(feed: mpsc::Receiver<Bytes>) -> Response {
     let mut response = Response::new(Body::new(Feed(feed)));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
@@ -159,5 +226,50 @@ pub async fn open(
     // A stream's end then closes its connection, which `Hangup::closed` sees.
     headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
-    Ok(response)
+    response
+}
+
+pub async fn open(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    hangup: Option<Extension<listening::Hangup>>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Answer {
+    if query::pairs(&uri).is_ok_and(|pairs| pairs.iter().any(|(name, _)| name == "copy")) {
+        return copy(app, caller, hangup, uri, headers).await;
+    }
+    caller.require_reach()?;
+    app.faults.hold(HOLD_STREAM_OPEN, None).await;
+    if headers.contains_key(conditional::REACH_HEADER) {
+        return Err(Refusal::validation(
+            "X-Marfa-Reach belongs to the copy stream, GET /events?edges=all&copy=1.",
+        )
+        .into());
+    }
+    query::only(&uri, &DECLARED)?;
+    let types = types_of(&uri)?;
+    events::judge_types(&app, &caller, types.clone()).await?;
+    let filter = Filter {
+        types,
+        edges: edges_of(&uri)?,
+        copy: false,
+    };
+    let resume = cursor_of(&headers)?;
+    let viewer = app
+        .viewers
+        .admit(app.settings.live().get(SSE_MAX_VIEWERS))
+        .ok_or_else(at_capacity)?;
+    let feed = events::open(
+        app,
+        caller,
+        Opening {
+            filter,
+            resume,
+            reach: None,
+        },
+        viewer,
+        hangup.map(|Extension(hangup)| -> events::Hangup { Box::new(move || hangup.now()) }),
+    );
+    Ok(streaming(feed))
 }

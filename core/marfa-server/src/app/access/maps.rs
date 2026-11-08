@@ -90,12 +90,10 @@ impl Map {
             .map(|(name, level)| (name, Level::stored(level) >= Level::Read))
             .collect();
         entries.sort_by(|(a, _), (b, _)| {
-            wild(b)
-                .cmp(&wild(a))
-                .then_with(|| match wild(a) {
-                    true => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
-                    false => a.cmp(b),
-                })
+            wild(b).cmp(&wild(a)).then_with(|| match wild(a) {
+                true => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
+                false => a.cmp(b),
+            })
         });
         let mut kept = Map::default();
         let mut read = Vec::new();
