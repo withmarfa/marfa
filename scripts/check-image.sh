@@ -98,11 +98,12 @@ instance=$(sed -n 's/.*"instance_id":"\([^"]*\)".*/\1/p' <<<"$body")
 [ -n "$instance" ] || fail "the root document names no instance: $body"
 echo "booted, healthy, reports $version, instance $instance"
 
-uid=$(docker top "$fresh" -eo uid | sed -n '2p' | tr -d ' ')
+# `docker top` needs the pid column; `user` is understood by every `ps` an engine uses, `uid` is not.
+uid=$(docker top "$fresh" -eo pid,user | awk 'NR == 2 { print $2 }')
 case "$uid" in
-  "" | 0) fail "the server runs with user id '${uid:-unknown}'" ;;
+  "" | 0 | root) fail "the server runs as '${uid:-unknown}'" ;;
 esac
-echo "runs as user id $uid with a read-only root file system"
+echo "runs as $uid with a read-only root file system"
 
 # What it generated for itself is on the volume, readable by its user alone.
 secrets=$(docker cp "$fresh:/data/marfa.secrets" - | tar -tv 2>/dev/null) || fail "no /data/marfa.secrets on the volume"
