@@ -87,7 +87,12 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
     })
     .await?;
     let (deliveries, deliveries_done) = drain(&run, BATCH, || {
-        expire(&app, AUDIT_RETENTION_DAYS, DAY_MS, webhooks::expire_deliveries)
+        expire(
+            &app,
+            AUDIT_RETENTION_DAYS,
+            DAY_MS,
+            webhooks::expire_deliveries,
+        )
     })
     .await?;
     Ok(Report {

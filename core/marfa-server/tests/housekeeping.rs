@@ -314,7 +314,11 @@ async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
     let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
     instance.note().await;
     instance.scheduled().await;
-    instance.app.faults.set("hold:webhook-schedule", None).unwrap();
+    instance
+        .app
+        .faults
+        .set("hold:webhook-schedule", None)
+        .unwrap();
     instance.note().await;
     instance.note().await;
     instance.when_held().await;
@@ -329,7 +333,10 @@ async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
     assert_eq!(instance.count("SELECT MIN(id) FROM event_log"), passed + 1);
 
     instance.app.faults.clear(Some("hold:webhook-schedule"));
-    assert_eq!(instance.run("event-log-cleanup").await["deleted"], held - passed - 1);
+    assert_eq!(
+        instance.run("event-log-cleanup").await["deleted"],
+        held - passed - 1
+    );
 }
 
 #[tokio::test]

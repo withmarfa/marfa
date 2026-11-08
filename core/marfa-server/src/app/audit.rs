@@ -86,7 +86,10 @@ pub fn record_from(
             entry.resource_type,
             entry.resource_id,
             client_ip,
-            entry.details.unwrap_or_else(|| Value::Object(Map::new())).to_string(),
+            entry
+                .details
+                .unwrap_or_else(|| Value::Object(Map::new()))
+                .to_string(),
         ],
     )?;
     Ok(())

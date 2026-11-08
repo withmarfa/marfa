@@ -10,12 +10,12 @@ use serde_json::Value;
 use sha2::Sha256;
 use url::Url;
 
+use super::schedule::UNFILTERED;
 use super::store::{self, Recorded, Status};
 use super::{CANCEL_CREDENTIAL, CANCEL_TURNED_OFF, CANCEL_UNREADABLE, CANCEL_UNSELECTED, selects};
 use crate::app::App;
 use crate::app::access::standing_maker;
 use crate::app::catalog::{self, Catalog};
-use super::schedule::UNFILTERED;
 use crate::app::events::{Head, Judge, Judged};
 use crate::app::faults::HOLD_WEBHOOK_RESPONSE;
 use crate::app::outbound::{self, Outcome, Outgoing, Reach};
@@ -58,7 +58,12 @@ fn prepare(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, at: &str) -> Resul
     if !subscription.active {
         return Ok(Prepared::Cancel(CANCEL_TURNED_OFF));
     }
-    if !selects(&subscription, &catalog.rules, &delivery.event_type, &delivery.type_id) {
+    if !selects(
+        &subscription,
+        &catalog.rules,
+        &delivery.event_type,
+        &delivery.type_id,
+    ) {
         return Ok(Prepared::Cancel(CANCEL_UNSELECTED));
     }
     let Some(caller) = standing_maker(tx, &subscription.maker, at)? else {
@@ -101,21 +106,27 @@ fn signature(secret: &str, t: i64, body: &[u8]) -> Result<String> {
     mac.update(t.to_string().as_bytes());
     mac.update(b".");
     mac.update(body);
-    Ok(format!("t={t},v1={}", hex::encode(mac.finalize().into_bytes())))
+    Ok(format!(
+        "t={t},v1={}",
+        hex::encode(mac.finalize().into_bytes())
+    ))
 }
 
 /// A hint is whole seconds or an HTTP date, read against the server's clock.
 fn hint_ms(value: &str, now_ms: i64) -> Option<i64> {
     let value = value.trim();
     if let Ok(seconds) = value.parse::<u64>() {
-        return Some(i64::try_from(seconds).unwrap_or(i64::MAX).saturating_mul(1_000));
+        return Some(
+            i64::try_from(seconds)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(1_000),
+        );
     }
     let date = httpdate::parse_http_date(value).ok()?;
     let now = UNIX_EPOCH + Duration::from_millis(u64::try_from(now_ms).unwrap_or(0));
-    Some(
-        date.duration_since(now)
-            .map_or(0, |ahead| i64::try_from(ahead.as_millis()).unwrap_or(i64::MAX)),
-    )
+    Some(date.duration_since(now).map_or(0, |ahead| {
+        i64::try_from(ahead.as_millis()).unwrap_or(i64::MAX)
+    }))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -174,7 +185,9 @@ pub fn settle(outcome: &Attempted, cycle_attempt: i64, now_ms: i64) -> Settled {
                 408 | 429 | 500.. | 100..=199 => retried(
                     code,
                     format!("HTTP {status}"),
-                    retry_after.as_deref().and_then(|hint| hint_ms(hint, now_ms)),
+                    retry_after
+                        .as_deref()
+                        .and_then(|hint| hint_ms(hint, now_ms)),
                 ),
                 _ => given_up(code, &format!("HTTP {status}")),
             }
@@ -187,7 +200,10 @@ pub enum Attempted {
     Sent(Outcome),
 }
 
-async fn write(app: &App, job: impl FnOnce(&Transaction<'_>) -> Result<()> + Send + 'static) -> Result<()> {
+async fn write(
+    app: &App,
+    job: impl FnOnce(&Transaction<'_>) -> Result<()> + Send + 'static,
+) -> Result<()> {
     app.db.write(Write::own(), job).await
 }
 
@@ -303,7 +319,10 @@ mod tests {
             assert_eq!(settled.error.as_deref(), Some(REDIRECTED));
         }
         for status in [408, 429, 500, 502] {
-            assert_eq!(settle(&answered(status, None), 0, 0).status, Status::Pending);
+            assert_eq!(
+                settle(&answered(status, None), 0, 0).status,
+                Status::Pending
+            );
         }
         let not_public = settle(&Attempted::NotPublic, 0, 0);
         assert_eq!(not_public.status, Status::DeadLetter);
@@ -319,16 +338,27 @@ mod tests {
         assert_eq!(settle(&answered(429, Some("soon")), 0, 0).due_at, 1_000);
         let now_ms = 1_700_000_000_000;
         let later = httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_millis(1_700_000_040_000));
-        assert_eq!(settle(&answered(503, Some(&later)), 0, now_ms).due_at, now_ms + 40_000);
-        let earlier = httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_millis(1_600_000_000_000));
-        assert_eq!(settle(&answered(503, Some(&earlier)), 0, now_ms).due_at, now_ms + 1_000);
+        assert_eq!(
+            settle(&answered(503, Some(&later)), 0, now_ms).due_at,
+            now_ms + 40_000
+        );
+        let earlier =
+            httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_millis(1_600_000_000_000));
+        assert_eq!(
+            settle(&answered(503, Some(&earlier)), 0, now_ms).due_at,
+            now_ms + 1_000
+        );
     }
 
     #[test]
     fn records_no_address_in_an_error() {
         for outcome in [Outcome::Unreachable, Outcome::TimedOut] {
             let settled = settle(&Attempted::Sent(outcome), 0, 0);
-            assert!(settled.error.is_some_and(|error| !error.contains("127.") && !error.contains(':')));
+            assert!(
+                settled
+                    .error
+                    .is_some_and(|error| !error.contains("127.") && !error.contains(':'))
+            );
         }
     }
 

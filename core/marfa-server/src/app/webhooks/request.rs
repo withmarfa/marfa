@@ -56,8 +56,16 @@ pub(super) fn invalid(path: &str, message: impl Into<String>) -> Refusal {
 }
 
 fn url_of(value: &Value) -> Result<Address> {
-    let refused = || invalid("url", "url is an http or https URL with no user name or password.");
-    let text = value.as_str().filter(|text| !text.is_empty()).ok_or_else(refused)?;
+    let refused = || {
+        invalid(
+            "url",
+            "url is an http or https URL with no user name or password.",
+        )
+    };
+    let text = value
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .ok_or_else(refused)?;
     let url = Url::parse(text).map_err(|_| refused())?;
     let plain = matches!(url.scheme(), "http" | "https")
         && url.username().is_empty()
@@ -80,12 +88,15 @@ fn events_of(value: &Value) -> Result<Vec<String>> {
     }
     let mut events: Vec<String> = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
-        let name = entry.as_str().filter(|name| EVENTS.contains(name)).ok_or_else(|| {
-            invalid(
-                &format!("events.{index}"),
-                format!("Each event is one of {}.", EVENTS.join(", ")),
-            )
-        })?;
+        let name = entry
+            .as_str()
+            .filter(|name| EVENTS.contains(name))
+            .ok_or_else(|| {
+                invalid(
+                    &format!("events.{index}"),
+                    format!("Each event is one of {}.", EVENTS.join(", ")),
+                )
+            })?;
         if !events.iter().any(|held| held == name) {
             events.push(name.to_string());
         }
@@ -118,7 +129,12 @@ fn secret_of(value: &Value) -> Result<String> {
         .as_str()
         .filter(|secret| secret.chars().count() >= SECRET_CHARS)
         .map(str::to_string)
-        .ok_or_else(|| invalid("secret", format!("secret is at least {SECRET_CHARS} characters.")))
+        .ok_or_else(|| {
+            invalid(
+                "secret",
+                format!("secret is at least {SECRET_CHARS} characters."),
+            )
+        })
 }
 
 impl Create {
@@ -128,7 +144,11 @@ impl Create {
         Ok(Create {
             url: url_of(url)?,
             events: events_of(events)?,
-            type_filter: body.get("type_filter").map(filter_of).transpose()?.flatten(),
+            type_filter: body
+                .get("type_filter")
+                .map(filter_of)
+                .transpose()?
+                .flatten(),
             secret: body.get("secret").map(secret_of).transpose()?,
         })
     }
@@ -220,7 +240,8 @@ mod tests {
             .unwrap_err();
             assert_eq!(path_of(&refused), "type_filter", "{filter}");
         }
-        let cleared = Update::from_body(json!({ "type_filter": "  " }).as_object().unwrap()).unwrap();
+        let cleared =
+            Update::from_body(json!({ "type_filter": "  " }).as_object().unwrap()).unwrap();
         assert_eq!(cleared.type_filter, Some(None));
     }
 

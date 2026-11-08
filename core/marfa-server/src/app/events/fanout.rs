@@ -32,11 +32,11 @@ impl Logged<'_, '_> {
 
 /// The newest id, or 0 for a log that holds nothing.
 pub fn newest(tx: &Transaction<'_>) -> Result<i64> {
-    Ok(tx.query_row(
-        "SELECT COALESCE(MAX(id), 0) FROM event_log",
-        [],
-        |row| row.get(0),
-    )?)
+    Ok(
+        tx.query_row("SELECT COALESCE(MAX(id), 0) FROM event_log", [], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 /// How many entries the log holds with an id in `after + 1 ..= through`.

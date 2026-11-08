@@ -29,8 +29,13 @@ fn subscription_of(row: &Row<'_>) -> rusqlite::Result<Subscription> {
     let maker = match (key_id, grant_id) {
         (Some(id), _) => Maker::Key(id),
         (None, Some(id)) => Maker::Grant(id),
-        (None, None) => return Err(rusqlite::Error::InvalidColumnType(6, "key_id".into(),
-            rusqlite::types::Type::Null)),
+        (None, None) => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                6,
+                "key_id".into(),
+                rusqlite::types::Type::Null,
+            ));
+        }
     };
     Ok(Subscription {
         id: row.get(0)?,
@@ -56,7 +61,8 @@ fn maker_columns(maker: &Maker) -> (Option<&str>, Option<&str>) {
 }
 
 fn events_text(events: &[String]) -> Result<String> {
-    serde_json::to_string(events).map_err(|_| Refusal::internal("a subscription's events did not print"))
+    serde_json::to_string(events)
+        .map_err(|_| Refusal::internal("a subscription's events did not print"))
 }
 
 pub fn insert(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
@@ -107,9 +113,17 @@ pub fn delete_for_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<usize> {
 }
 
 /// `reach` is the maker whose subscriptions the caller reaches, or `None` for every one.
-pub fn by_id(tx: &Transaction<'_>, id: &str, reach: Option<&Maker>) -> Result<Option<Subscription>> {
+pub fn by_id(
+    tx: &Transaction<'_>,
+    id: &str,
+    reach: Option<&Maker>,
+) -> Result<Option<Subscription>> {
     let found = tx
-        .query_row(&format!("{SUBSCRIPTION} WHERE id = ?1"), [id], subscription_of)
+        .query_row(
+            &format!("{SUBSCRIPTION} WHERE id = ?1"),
+            [id],
+            subscription_of,
+        )
         .optional()?;
     Ok(found.filter(|subscription| reach.is_none_or(|maker| *maker == subscription.maker)))
 }
@@ -128,7 +142,8 @@ pub fn list(tx: &Transaction<'_>, reach: Option<&Maker>) -> Result<Vec<Subscript
 }
 
 pub fn active(tx: &Transaction<'_>) -> Result<Vec<Subscription>> {
-    let mut statement = tx.prepare_cached(&format!("{SUBSCRIPTION} WHERE active = 1 ORDER BY id"))?;
+    let mut statement =
+        tx.prepare_cached(&format!("{SUBSCRIPTION} WHERE active = 1 ORDER BY id"))?;
     let rows = statement.query_map([], subscription_of)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -136,9 +151,11 @@ pub fn active(tx: &Transaction<'_>) -> Result<Vec<Subscription>> {
 /// The newest log id deliveries have been queued through; `None` while the row is missing.
 pub fn position(tx: &Transaction<'_>) -> Result<Option<i64>> {
     Ok(tx
-        .query_row("SELECT event_id FROM webhook_position WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT event_id FROM webhook_position WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
         .optional()?)
 }
 
@@ -305,7 +322,8 @@ pub fn page(
 
 /// Pending deliveries whose wait has ended, oldest wait first, leaving out those being attempted.
 pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Result<Vec<i64>> {
-    let busy = serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
+    let busy =
+        serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     let mut statement = tx.prepare_cached(
         "SELECT seq FROM webhook_deliveries WHERE status = 'pending' AND due_at <= ?1 \
          AND seq NOT IN (SELECT value FROM json_each(?2)) ORDER BY due_at, seq LIMIT ?3",
@@ -316,7 +334,8 @@ pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Res
 
 /// When the next pending delivery not being attempted is due.
 pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
-    let busy = serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
+    let busy =
+        serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     Ok(tx.query_row(
         "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' \
          AND seq NOT IN (SELECT value FROM json_each(?1))",

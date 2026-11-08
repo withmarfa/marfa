@@ -113,11 +113,10 @@ fn literal(ip: IpAddr) -> Target {
 }
 
 static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
-    let built = ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .and_then(|builder| builder.with_platform_verifier());
+    let built =
+        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .and_then(|builder| builder.with_platform_verifier());
     match built {
         Ok(builder) => {
             let mut config = builder.with_no_client_auth();
@@ -133,7 +132,12 @@ static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
 
 /// Posts once to one of `targets`, and takes the answer's status without following it anywhere.
 /// The whole attempt, connecting included, ends at `bound`.
-pub async fn post(url: &Url, targets: &[Target], outgoing: Outgoing<'_>, bound: Duration) -> Outcome {
+pub async fn post(
+    url: &Url,
+    targets: &[Target],
+    outgoing: Outgoing<'_>,
+    bound: Duration,
+) -> Outcome {
     tokio::time::timeout(bound, attempt(url, targets, outgoing))
         .await
         .unwrap_or(Outcome::TimedOut)
@@ -163,7 +167,10 @@ async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outco
     let (Some(config), Some(name)) = (TLS.as_ref(), server_name(url)) else {
         return Outcome::Unreachable;
     };
-    match TlsConnector::from(config.clone()).connect(name, stream).await {
+    match TlsConnector::from(config.clone())
+        .connect(name, stream)
+        .await
+    {
         Ok(secured) => exchange(secured, request).await,
         Err(_) => Outcome::Unreachable,
     }
@@ -177,7 +184,11 @@ fn server_name(url: &Url) -> Option<ServerName<'static>> {
     }
 }
 
-fn request(url: &Url, host: &str, outgoing: Outgoing<'_>) -> hyper::http::Result<Request<Full<Bytes>>> {
+fn request(
+    url: &Url,
+    host: &str,
+    outgoing: Outgoing<'_>,
+) -> hyper::http::Result<Request<Full<Bytes>>> {
     let authority = match url.port() {
         Some(port) => format!("{host}:{port}"),
         None => host.to_string(),
@@ -250,7 +261,10 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             answer(stream).await
         });
-        (Url::parse(&format!("http://127.0.0.1:{port}/hook?a=1")).unwrap(), served)
+        (
+            Url::parse(&format!("http://127.0.0.1:{port}/hook?a=1")).unwrap(),
+            served,
+        )
     }
 
     async fn head(stream: &mut TcpStream) -> String {
@@ -358,7 +372,10 @@ mod tests {
         .await;
         let started = Instant::now();
         let outcome = send(&url, &loopback(), Duration::from_secs(5)).await;
-        assert!(matches!(outcome, Outcome::Answered { status: 204, .. }), "{outcome:?}");
+        assert!(
+            matches!(outcome, Outcome::Answered { status: 204, .. }),
+            "{outcome:?}"
+        );
         assert!(started.elapsed() >= Duration::from_millis(400));
     }
 
@@ -395,7 +412,13 @@ mod tests {
         };
         let outcome = send(&url, &targets, Duration::from_secs(5)).await;
         assert!(matches!(outcome, Outcome::Answered { status: 204, .. }));
-        assert!(served.await.unwrap().to_ascii_lowercase().contains("host: rebind.test:"));
+        assert!(
+            served
+                .await
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("host: rebind.test:")
+        );
         assert_eq!(faults.list()[0].fired, 1);
         assert_eq!(reach(&faults, &url, false).await, Reach::NotPublic);
     }
@@ -408,7 +431,9 @@ mod tests {
             .unwrap();
         let url = Url::parse("https://mixed.test/").unwrap();
         assert_eq!(reach(&faults, &url, false).await, Reach::NotPublic);
-        assert!(matches!(reach(&faults, &url, true).await, Reach::Targets(found) if found.len() == 2));
+        assert!(
+            matches!(reach(&faults, &url, true).await, Reach::Targets(found) if found.len() == 2)
+        );
         let literal = Url::parse("http://[::ffff:127.0.0.1]:9/").unwrap();
         assert_eq!(reach(&faults, &literal, false).await, Reach::NotPublic);
     }

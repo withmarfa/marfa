@@ -847,14 +847,20 @@ mod tests {
         assert!(refused("resolve:", Some("127.0.0.1")));
         assert!(refused("resolve:a.test", None));
         assert!(refused("resolve:a.test", Some("not-an-address")));
-        assert!(!refused("resolve:a.test", Some("93.184.216.34>127.0.0.1;::1")));
+        assert!(!refused(
+            "resolve:a.test",
+            Some("93.184.216.34>127.0.0.1;::1")
+        ));
     }
 
     #[test]
     fn a_scripted_lookup_answers_in_turn_and_repeats_the_last() {
         let faults = Faults::default();
         faults
-            .set("resolve:Rebind.test", Some("93.184.216.34>127.0.0.1;::1,10.0.0.1"))
+            .set(
+                "resolve:Rebind.test",
+                Some("93.184.216.34>127.0.0.1;::1,10.0.0.1"),
+            )
             .unwrap();
         let ip = |text: &str| text.parse::<IpAddr>().unwrap();
         let first = faults.scripted_answer("rebind.test").unwrap();

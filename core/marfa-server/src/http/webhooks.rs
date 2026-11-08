@@ -35,7 +35,10 @@ pub async fn create(State(app): State<Arc<App>>, caller: Caller, body: JsonBody)
 pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.webhook_reach()?;
     query::only(&uri, &[])?;
-    Ok(json_answer(StatusCode::OK, &webhooks::list(&app, &caller).await?))
+    Ok(json_answer(
+        StatusCode::OK,
+        &webhooks::list(&app, &caller).await?,
+    ))
 }
 
 pub async fn get(
@@ -46,7 +49,10 @@ pub async fn get(
 ) -> Answer {
     caller.webhook_reach()?;
     query::only(&uri, &[])?;
-    Ok(json_answer(StatusCode::OK, &webhooks::get(&app, &caller, id).await?))
+    Ok(json_answer(
+        StatusCode::OK,
+        &webhooks::get(&app, &caller, id).await?,
+    ))
 }
 
 pub async fn update(

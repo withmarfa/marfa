@@ -28,9 +28,13 @@ pub enum Gap {
 impl Gap {
     pub fn describe(self) -> &'static str {
         match self {
-            Gap::Missing => "The webhook sender's place in the event log is missing, and the log holds events",
+            Gap::Missing => {
+                "The webhook sender's place in the event log is missing, and the log holds events"
+            }
             Gap::Ahead => "The webhook sender's place in the event log is ahead of the log",
-            Gap::Crossed => "The event log lacks an event between the webhook sender's place and the log's newest event",
+            Gap::Crossed => {
+                "The event log lacks an event between the webhook sender's place and the log's newest event"
+            }
         }
     }
 }
@@ -126,8 +130,8 @@ pub fn pass(tx: &Transaction<'_>, context: &Context<'_>) -> Result<Pass> {
     }
     let entitled = entitled(tx, context.at)?;
     if entitled.is_empty() {
-        let held = fanout::held_between(tx, position, newest)?
-            - hidden_between(faults, position, newest);
+        let held =
+            fanout::held_between(tx, position, newest)? - hidden_between(faults, position, newest);
         if held == newest - position {
             store::set_position(tx, newest)?;
             return Ok(Pass::Caught);
@@ -197,7 +201,12 @@ fn queue(
     for each in entitled {
         let subscription = &each.subscription;
         if logged.id <= subscription.starts_after
-            || !selects(subscription, &context.catalog.rules, &logged.event_type, &logged.type_id)
+            || !selects(
+                subscription,
+                &context.catalog.rules,
+                &logged.event_type,
+                &logged.type_id,
+            )
         {
             continue;
         }
@@ -218,7 +227,10 @@ fn queue(
             Judged::Shown(_) => {}
             Judged::Withheld => continue,
             Judged::Unreadable => {
-                tracing::error!(event_id = logged.id, "A logged event does not read, and is sent to no webhook");
+                tracing::error!(
+                    event_id = logged.id,
+                    "A logged event does not read, and is sent to no webhook"
+                );
                 continue;
             }
         }

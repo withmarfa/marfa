@@ -143,7 +143,12 @@ impl Sender {
     async fn schedule(&mut self) {
         while !self.stopping() {
             let faults = self.app.faults.clone();
-            match self.app.db.read(move |tx| schedule::behind(tx, &faults)).await {
+            match self
+                .app
+                .db
+                .read(move |tx| schedule::behind(tx, &faults))
+                .await
+            {
                 Ok(true) => {}
                 Ok(false) => {
                     self.reported = None;
@@ -161,7 +166,8 @@ impl Sender {
                 .app
                 .db
                 .write(Write::own(), move |tx| {
-                    let catalog = catalog::current(&app.catalog_handle(), tx, catalog::Snapshot::Committed)?;
+                    let catalog =
+                        catalog::current(&app.catalog_handle(), tx, catalog::Snapshot::Committed)?;
                     let pulse = app.db.pulse();
                     let at = app.clock.stamp();
                     schedule::pass(
@@ -205,7 +211,12 @@ impl Sender {
         let now = Instant::now();
         self.held_back.retain(|_, until| *until > now);
         let free = AT_ONCE.saturating_sub(self.busy.len());
-        let mut excluded: Vec<i64> = self.busy.values().chain(self.held_back.keys()).copied().collect();
+        let mut excluded: Vec<i64> = self
+            .busy
+            .values()
+            .chain(self.held_back.keys())
+            .copied()
+            .collect();
         let now_ms = self.app.clock.now_ms();
         let read = self
             .app

@@ -29,10 +29,10 @@ pub use sender::{Webhooks, start};
 
 const CANCEL_URL: &str = "The subscription was pointed at another URL.";
 const CANCEL_TURNED_OFF: &str = "The subscription was turned off.";
-const CANCEL_UNSELECTED: &str = "The subscription's events or type filter no longer select this event.";
+const CANCEL_UNSELECTED: &str =
+    "The subscription's events or type filter no longer select this event.";
 const CANCEL_UNREAD: &str = "The credential the subscription belongs to may not read this event.";
-const CANCEL_CREDENTIAL: &str =
-    "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.";
+const CANCEL_CREDENTIAL: &str = "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.";
 const CANCEL_UNREADABLE: &str = "The event could not be read, so it was not sent.";
 
 const SECRET_BYTES: usize = 32;
@@ -66,7 +66,10 @@ pub fn expire_deliveries(tx: &Transaction<'_>, before: &str, limit: i64) -> Resu
 }
 
 fn not_found() -> Refusal {
-    Refusal::new(Code::WebhookNotFound, "No webhook you can reach has this ID.")
+    Refusal::new(
+        Code::WebhookNotFound,
+        "No webhook you can reach has this ID.",
+    )
 }
 
 /// A name that resolves only to private addresses is refused when it is registered, unless the
@@ -246,7 +249,12 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
             } else if next.events != existing.events || next.type_filter != existing.type_filter {
                 let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
                 for delivery in store::pending_of(tx, &id)? {
-                    if !selects(&next, &catalog.rules, &delivery.event_type, &delivery.type_id) {
+                    if !selects(
+                        &next,
+                        &catalog.rules,
+                        &delivery.event_type,
+                        &delivery.type_id,
+                    ) {
                         store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
                     }
                 }
@@ -313,7 +321,10 @@ pub async fn deliveries(
         })
         .await?;
     let next_cursor = match rows.last() {
-        Some(last) if more => Some(app.cursor_secret.issue(&scope, &json!({ "before": last.seq }))?),
+        Some(last) if more => Some(
+            app.cursor_secret
+                .issue(&scope, &json!({ "before": last.seq }))?,
+        ),
         _ => None,
     };
     let data: Vec<Value> = rows.iter().map(delivery_answer).collect();
