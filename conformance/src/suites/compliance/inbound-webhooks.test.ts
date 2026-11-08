@@ -803,7 +803,7 @@ describe("the receiving door on an instance that names its limits", () => {
           hostname: url.hostname,
           port: url.port,
           path: url.pathname,
-          headers: ["Host", url.host, "Content-Length", "10"],
+          headers: ["Host", url.host, "Content-Length", "6"],
         },
         (res) => {
           const chunks: Buffer[] = [];
@@ -819,7 +819,7 @@ describe("the receiving door on an instance that names its limits", () => {
         },
       );
       req.on("error", reject);
-      // Three of the ten bytes it declared, and then nothing.
+      // Three of the six bytes it declared, and then nothing.
       req.write("abc");
     });
     expect(answer.status).toBe(408);

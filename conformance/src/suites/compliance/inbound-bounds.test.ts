@@ -176,16 +176,30 @@ describe("the bytes in flight, across bodies", () => {
    *  against a limit by a margin and not to the byte. */
   const MARGIN = 150;
 
+  /** Time for a body that has begun to be counted before a probe can take
+   *  the room it asked for. */
+  const SETTLE_MS = 300;
+
   /** Waits until the request a source holds open is counted, which a receipt
-   *  from the same source that would pass its half is the one answer to. */
-  async function untilHeld(path: string, declared: number): Promise<void> {
+   *  from the same source that would pass its half is the one answer to.
+   *  Answers `ended` if the body was answered first: a probe that got there
+   *  before it took its room. */
+  async function untilHeld(
+    path: string,
+    declared: number,
+    ended: () => boolean = () => false,
+  ): Promise<"held" | "ended"> {
     const probe = PER_SOURCE - declared + MARGIN;
-    await waitFor(
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+    return waitFor<"held" | "ended">(
       "the bytes of the request in progress to be counted",
-      async () =>
-        (await send(server.apiUrl, path, "p".repeat(probe))).status === 503
-          ? true
-          : undefined,
+      async () => {
+        if (ended()) return "ended";
+        return (await send(server.apiUrl, path, "p".repeat(probe))).status ===
+          503
+          ? "held"
+          : undefined;
+      },
       10_000,
       25,
     );
@@ -204,22 +218,30 @@ describe("the bytes in flight, across bodies", () => {
   async function hold(label: string, declared: number): Promise<Held> {
     const owner = await register(server, label);
     const made = await endpoint(owner);
-    const body = openBody(
-      server.apiUrl,
-      made.path,
-      declared,
-      "x".repeat(declared - 100),
-    );
-    await untilHeld(made.path, declared);
-    return {
-      owner,
-      made,
-      body,
-      end() {
-        body.finish("y".repeat(100));
-        return body.answer;
-      },
-    };
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const body = openBody(
+        server.apiUrl,
+        made.path,
+        declared,
+        "x".repeat(declared - 100),
+      );
+      let answered = false;
+      void body.answer.then(() => {
+        answered = true;
+      });
+      if ((await untilHeld(made.path, declared, () => answered)) === "held") {
+        return {
+          owner,
+          made,
+          body,
+          end() {
+            body.finish("y".repeat(100));
+            return body.answer;
+          },
+        };
+      }
+    }
+    throw new Error(`${label}: the body was refused every time it began`);
   }
 
   async function sizes(owner: Registration): Promise<number[]> {

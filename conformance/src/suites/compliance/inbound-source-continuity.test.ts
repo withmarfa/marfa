@@ -333,6 +333,8 @@ describe("source-owned inbound continuity", () => {
     // probe is refused once the body is counted. A probe sent earlier is taken.
     let taken = 1;
     let probeStatus = 0;
+    // The body is given time to be counted before a probe takes room.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     for (let attempt = 0; attempt < 40; attempt++) {
       probeStatus = (await send(server.apiUrl, endpoint.path, "x".repeat(300)))
         .status;
