@@ -104,6 +104,9 @@ export interface FreshServer {
    * cleared, `fail:<point>[=<arg>]` fails the target at a point once,
    * `deadline:<job>=<ms>` shortens a job's run deadline,
    * `free:<volume>=<bytes>` sets the reported free space,
+   * `lose:blob=<hashes>` and `damage:blob=<hashes>` make the disk store read
+   * those blobs as absent or with a changed first byte,
+   * `damage:webhook-position=<state>` damages the outbound webhook position,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
@@ -122,6 +125,12 @@ export interface FreshServer {
    * `faults()` reports. Rejects after `timeoutMs` (60 seconds by default).
    */
   waitForHold(name: string, count?: number, timeoutMs?: number): Promise<void>;
+  /**
+   * Copies the server's data directory as it stands at one instant, through
+   * `image`, into a new directory it answers with: what a volume snapshot
+   * takes while the instance is writing. The caller removes the directory.
+   */
+  image(): Promise<string>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
@@ -525,6 +534,15 @@ export async function bootFreshServer(
       }
       server.clockOffsetMs += ms;
       return moved.output;
+    },
+    async image() {
+      const to = mkdtempSync(join(tmpdir(), "marfa-image-"));
+      const taken = await adapter("image", "--to", to);
+      if (taken.status !== 0) {
+        rmSync(to, { recursive: true, force: true });
+        throw new Error(`the target took no image:\n${taken.output}`);
+      }
+      return to;
     },
     async setFault(spec) {
       const set = await adapter("fault", "set", spec);
