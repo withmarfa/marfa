@@ -1041,8 +1041,8 @@ jobs:
   # (`conformance/src/utils/rust-judged.ts`) are the part that must pass whole;
   # the score job fails if one does not, and `Full CI` waits for it. The
   # backup fixtures are not run: they boot the server through the container's
-  # entrypoint, which starts the Node server. There is no object store beside
-  # the server here, so the blob chapters' object-store half is not asserted.
+  # entrypoint, which starts the Node server. An object store sits beside the
+  # server, as in `Conformance shard`, so the stores chapter is asserted.
   rust-contract:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
@@ -1308,6 +1308,14 @@ jobs:
       - if: ${{ matrix.module }}
         run: echo "MARFA_DEVICE_MODULE=$(ls "$PWD"/core/bindings/node/*.node)" >> "$GITHUB_ENV"
 
+      # `garage:up` writes S3 settings to GITHUB_ENV for the server.
+      - name: Put an object store beside the server
+        working-directory: conformance
+        run: |
+          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
+          pnpm garage:up --state "$RUNNER_TEMP/garage"
+
       - name: Boot the Rust server
         working-directory: conformance
         # A shard's fixtures can keep it busy on servers of their own for
@@ -1366,6 +1374,11 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+      - name: Stop the object store
+        if: always()
+        working-directory: conformance
+        run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
   # The score of the Rust server against the contract: tests passing out of
   # all, by file, in the job summary (`conformance/README.md` says how it is
