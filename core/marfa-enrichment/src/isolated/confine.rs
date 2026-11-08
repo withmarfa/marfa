@@ -1,0 +1,322 @@
+//! What a child does to itself. Each limit is only ever lowered, and hard and soft
+//! together, so code a file has taken over cannot raise it again.
+
+use std::path::Path;
+use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+use super::EXIT_BY_SIGNAL;
+#[cfg(target_os = "linux")]
+use super::calls;
+use crate::Sandbox;
+
+/// The descriptors a child may hold: three standard ones, the sandbox's while it is
+/// set up, and one model file at a time.
+const MOST_DESCRIPTORS: u64 = 16;
+
+/// Address space a child may hold past `max_memory_bytes`, on top of the program's
+/// own mapped size. The footprint the parent watches is the limit a reading meets;
+/// this is the kernel's backstop behind it, so it must never bind first on a page
+/// that fits the limit.
+#[cfg(target_os = "linux")]
+const ADDRESS_SPACE_HEADROOM: u64 = 256 * 1024 * 1024;
+
+/// Sets a limit to at most `soft` and `hard`. A limit that the process already holds
+/// lower stays, because raising a hard limit needs a privilege a child should not
+/// have. A test runner's own caps meet this.
+fn lower(resource: LimitKind, soft: u64, hard: u64) {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid buffer, and `resource` is a limit this system has.
+    if unsafe { libc::getrlimit(resource, &raw mut limit) } != 0 {
+        return;
+    }
+    limit.rlim_max = limit.rlim_max.min(hard as libc::rlim_t);
+    limit.rlim_cur = limit.rlim_max.min(soft as libc::rlim_t);
+    // SAFETY: as above.
+    unsafe { libc::setrlimit(resource, &raw const limit) };
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(super) type LimitKind = libc::__rlimit_resource_t;
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub(super) type LimitKind = libc::c_int;
+
+/// Everything that needs no number from the parent: no core file, no file written, no
+/// descriptor of the parent's kept.
+pub(super) fn let_go_of_what_was_inherited() {
+    no_crash_reports();
+    close_descriptors_above_stderr();
+    lower(libc::RLIMIT_CORE, 0, 0);
+    lower(libc::RLIMIT_FSIZE, 0, 0);
+    lower(libc::RLIMIT_NOFILE, MOST_DESCRIPTORS, MOST_DESCRIPTORS);
+    #[cfg(target_os = "linux")]
+    // SAFETY: this prctl takes plain integers and changes only this process.
+    unsafe {
+        libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    };
+}
+
+/// Processor time and, where the kernel enforces it, address space.
+pub(super) fn take_limits(time_limit: Duration, max_memory: u64) {
+    // SIGXCPU at the soft limit, which the parent reads as out of time. The hard limit
+    // a second later is for code that catches it. Rounded up, because the limit is in
+    // whole seconds and a reader that only ever uses the processor must meet the
+    // parent's deadline first.
+    let seconds = time_limit.as_secs() + 2;
+    lower(libc::RLIMIT_CPU, seconds, seconds + 1);
+    #[cfg(target_os = "linux")]
+    {
+        let space = max_memory
+            .saturating_add(ADDRESS_SPACE_HEADROOM)
+            .saturating_add(program_size());
+        lower(libc::RLIMIT_AS, space, space);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = max_memory;
+}
+
+/// The program's size counts against its address space, and carries the OCR models.
+#[cfg(target_os = "linux")]
+fn program_size() -> u64 {
+    std::fs::metadata("/proc/self/exe").map_or(256 * 1024 * 1024, |file| file.len())
+}
+
+#[cfg(target_os = "linux")]
+fn close_descriptors_above_stderr() {
+    // SAFETY: closes descriptors only, and nothing in this process holds one yet.
+    let closed = unsafe { libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32) };
+    if closed != 0 {
+        close_listed_descriptors("/proc/self/fd");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn close_descriptors_above_stderr() {
+    close_listed_descriptors("/dev/fd");
+}
+
+/// A listing costs one call per open descriptor where a count through the limit could
+/// cost a million. Without one, the loop is all that is left, kept to a sane length.
+fn close_listed_descriptors(folder: &str) {
+    let close = |fd: libc::c_int| {
+        // SAFETY: nothing in this process holds a descriptor above 2 at this point.
+        unsafe { libc::close(fd) };
+    };
+    let listed: Option<Vec<libc::c_int>> = std::fs::read_dir(folder).ok().map(|entries| {
+        entries
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+            .collect()
+    });
+    match listed {
+        Some(open) => open.into_iter().filter(|fd| *fd > 2).for_each(close),
+        None => (3..65536).for_each(close),
+    }
+}
+
+/// Ends the process with the signal in its exit code.
+#[cfg(target_os = "macos")]
+extern "C" fn end_without_a_report(signal: libc::c_int) {
+    // SAFETY: _exit is safe to call in a signal handler, and ends the process.
+    unsafe { libc::_exit(EXIT_BY_SIGNAL + signal) }
+}
+
+/// A crash here is a bad file doing what was expected, so on macOS it does not go to
+/// the crash reporter, which would leave a report on the owner's disk for each one. The
+/// signals the reporter watches end the process themselves, on a stack of their own: a
+/// stack overflow leaves none to run on.
+#[cfg(target_os = "macos")]
+fn no_crash_reports() {
+    const SIGNAL_STACK_BYTES: usize = 64 * 1024;
+
+    let stack = Box::leak(vec![0u8; SIGNAL_STACK_BYTES].into_boxed_slice());
+    let stack = libc::stack_t {
+        ss_sp: stack.as_mut_ptr().cast(),
+        ss_size: stack.len(),
+        ss_flags: 0,
+    };
+    // SAFETY: the stack is leaked, so it lasts as long as the process.
+    unsafe { libc::sigaltstack(&raw const stack, std::ptr::null_mut()) };
+
+    let handler = end_without_a_report as extern "C" fn(libc::c_int);
+    // SAFETY: all zeroes is a valid sigaction, with an empty mask.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = handler as libc::sighandler_t;
+    action.sa_flags = libc::SA_ONSTACK;
+    for signal in [
+        libc::SIGABRT,
+        libc::SIGBUS,
+        libc::SIGFPE,
+        libc::SIGILL,
+        libc::SIGSEGV,
+        libc::SIGSYS,
+        libc::SIGTRAP,
+    ] {
+        // SAFETY: the handler calls only _exit.
+        unsafe { libc::sigaction(signal, &raw const action, std::ptr::null_mut()) };
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn no_crash_reports() {}
+
+/// Stops this user starting any more processes or threads, which a file that takes
+/// over a reader might want to outlive it. This is what stands on Linux where the call
+/// filter cannot, and it limits nothing for root. macOS's sandbox stops `fork` by itself.
+pub(super) fn start_no_more_processes() {
+    #[cfg(target_os = "linux")]
+    lower(libc::RLIMIT_NPROC, 0, 0);
+}
+
+/// The calls a child will be held to, made and tried before its second thread exists.
+#[cfg(target_os = "linux")]
+pub(super) struct CallFilter {
+    program: Option<seccompiler::BpfProgram>,
+    opens_files: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl CallFilter {
+    pub(super) fn ready(opens_files: bool) -> Self {
+        Self {
+            program: calls::filter(opens_files).filter(calls::holds_here),
+            opens_files,
+        }
+    }
+
+    /// Holds every thread to the filter, and says what held in all. `files` is what
+    /// Landlock did. With the filter on, Landlock has one task left, which is to keep
+    /// a reading that may open files to its data folder, and any Landlock does that.
+    /// The calls a newer Landlock adds rules for are not allowed at all.
+    pub(super) fn apply(self, files: Sandbox) -> Sandbox {
+        let filtered = self
+            .program
+            .is_some_and(|program| calls::apply(&program).is_ok());
+        match (filtered, files) {
+            (true, Sandbox::Full | Sandbox::Partial) => Sandbox::Full,
+            (true, Sandbox::Off) if !self.opens_files => Sandbox::Full,
+            (true, Sandbox::Off) => Sandbox::Partial,
+            (false, Sandbox::Full | Sandbox::Partial) => Sandbox::Partial,
+            (false, Sandbox::Off) => Sandbox::Off,
+        }
+    }
+}
+
+/// macOS's sandbox holds everything a call filter would.
+#[cfg(not(target_os = "linux"))]
+pub(super) struct CallFilter;
+
+#[cfg(not(target_os = "linux"))]
+impl CallFilter {
+    pub(super) fn ready(_opens_files: bool) -> Self {
+        Self
+    }
+
+    pub(super) fn apply(self, files: Sandbox) -> Sandbox {
+        files
+    }
+}
+
+/// Allows only reading `data_dir`. Linux has this through Landlock.
+#[cfg(target_os = "linux")]
+pub(super) fn deny_files_and_network(data_dir: Option<&Path>) -> Sandbox {
+    use landlock::{
+        ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr,
+        RulesetCreatedAttr, RulesetStatus, Scope,
+    };
+
+    // ABI 6 holds everything asked for here. A kernel that has less enforces what it
+    // can, and the status says so.
+    let abi = ABI::V6;
+    let confine = || -> Result<RulesetStatus, landlock::RulesetError> {
+        let mut ruleset = Ruleset::default()
+            .handle_access(AccessFs::from_all(abi))?
+            .handle_access(AccessNet::from_all(abi))?
+            .scope(Scope::from_all(abi))?
+            .create()?;
+        if let Some(dir) = data_dir
+            && let Ok(dir) = PathFd::new(dir)
+        {
+            ruleset = ruleset.add_rule(PathBeneath::new(dir, AccessFs::from_read(abi)))?;
+        }
+        Ok(ruleset.restrict_self()?.ruleset)
+    };
+    match confine() {
+        Ok(RulesetStatus::FullyEnforced) => Sandbox::Full,
+        Ok(RulesetStatus::PartiallyEnforced) => Sandbox::Partial,
+        Ok(RulesetStatus::NotEnforced) | Err(_) => Sandbox::Off,
+    }
+}
+
+/// Allows only reading `data_dir`. `sandbox_init` is marked deprecated and has stayed
+/// the only public way into the system's sandbox.
+#[cfg(target_os = "macos")]
+pub(super) fn deny_files_and_network(data_dir: Option<&Path>) -> Sandbox {
+    use std::ffi::{CString, c_char};
+
+    unsafe extern "C" {
+        fn sandbox_init(profile: *const c_char, flags: u64, error: *mut *mut c_char) -> i32;
+        fn sandbox_free_error(error: *mut c_char);
+    }
+    let Ok(profile) = CString::new(profile(data_dir)) else {
+        return Sandbox::Off;
+    };
+    let mut error = std::ptr::null_mut();
+    // SAFETY: `profile` is a NUL-terminated string for the length of the call, and
+    // `error` is set only to a string freed below.
+    let status = unsafe { sandbox_init(profile.as_ptr(), 0, &raw mut error) };
+    if !error.is_null() {
+        // SAFETY: `error` came from sandbox_init.
+        unsafe { sandbox_free_error(error) };
+    }
+    if status == 0 {
+        Sandbox::Full
+    } else {
+        Sandbox::Off
+    }
+}
+
+/// A profile in the sandbox's Scheme dialect. No process, no network, no file but the
+/// data folder, whose path is a string literal here, so its quotes and backslashes are
+/// what could break out of it.
+#[cfg(any(target_os = "macos", test))]
+fn profile(data_dir: Option<&Path>) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut profile = b"(version 1)(deny default (with no-report))".to_vec();
+    if let Some(dir) = data_dir {
+        profile.extend_from_slice(b"(allow file-read* (subpath \"");
+        for &byte in dir.as_os_str().as_bytes() {
+            if matches!(byte, b'"' | b'\\') {
+                profile.push(b'\\');
+            }
+            profile.push(byte);
+        }
+        profile.extend_from_slice(b"\"))");
+    }
+    profile
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn a_data_folder_cannot_break_out_of_the_profile() {
+        let profile = super::profile(Some(Path::new(r#"/a"b\c"#)));
+        assert!(
+            String::from_utf8(profile)
+                .unwrap()
+                .ends_with(r#"(subpath "/a\"b\\c"))"#)
+        );
+    }
+
+    #[test]
+    fn with_no_data_folder_nothing_is_allowed() {
+        let profile = String::from_utf8(super::profile(None)).unwrap();
+        assert!(!profile.contains("allow"));
+    }
+}

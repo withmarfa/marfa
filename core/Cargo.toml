@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "bindings/node"]
+members = ["marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
 exclude = ["bindings/swift"]
 
 [workspace.package]

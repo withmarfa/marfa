@@ -1,0 +1,52 @@
+--- a/build.sh
++++ b/build.sh
+@@ -134,5 +134,5 @@
+ [ $START_STEP -le 6 ] && . steps/06-build.sh
+ [ $START_STEP -le 7 ] && . steps/07-stage.sh
+ [ $START_STEP -le 8 ] && . steps/08-licenses.sh
+-[ $START_STEP -le 9 ] && . steps/09-test.sh
+-[ $START_STEP -le 10 ] && . steps/10-pack.sh
++# Marfa links the library into its own program and tests that; it runs neither
++# PDFium's example (step 9) nor packs (step 10).
+--- a/steps/02-checkout.sh
++++ b/steps/02-checkout.sh
+@@ -21,4 +21,14 @@
+   find pdfium -name .git -prune -execdir sh -xc 'git reset --hard && git clean -df' \;
+ fi
+ 
+-gclient sync -r "origin/${PDFium_BRANCH:-main}" --no-history --shallow
++gclient sync -r "${PDFium_COMMIT:?}" --no-history --shallow
++
++# Stop before the build if the checkout is not what the pin says: PDFium at the
++# manifest's commit, and each git dependency at the commit its DEPS names. The first
++# line of each list is PDFium, which DEPS does not name.
++test "$(git -C pdfium rev-parse HEAD)" == "$PDFium_COMMIT"
++gclient revinfo --ignore-dep-type cipd --ignore-dep-type gcs >revinfo-pinned
++gclient revinfo --actual --ignore-dep-type cipd --ignore-dep-type gcs >revinfo-actual
++test -n "$(sed 1d revinfo-pinned)"
++diff <(sed 1d revinfo-pinned) <(sed 1d revinfo-actual)
++echo "pdfium-gate: PDFium is at $PDFium_COMMIT and $(sed 1d revinfo-actual | wc -l | tr -d ' ') git dependencies are at the commits DEPS names"
+--- a/steps/04-install-extras.sh
++++ b/steps/04-install-extras.sh
+@@ -11,9 +11,9 @@
+ 
+ case "$TARGET_OS" in
+   linux)
+-    build/install-build-deps.sh --no-prompt
++    # Marfa builds in an image that holds what PDFium's installer would fetch with
++    # apt, and the musl build uses no Debian sysroot.
+     gclient runhooks
+-    build/linux/sysroot_scripts/install-sysroot.py "--arch=$TARGET_CPU"
+ 
+     if [ "$TARGET_ENVIRONMENT" == "musl" ]; then
+       case "$TARGET_CPU" in
+--- a/steps/08-licenses.sh
++++ b/steps/08-licenses.sh
+@@ -98,6 +98,4 @@
+   cp "$SOURCE_DIR/v8/LICENSE.strongtalk" "$OUTPUT_DIR/strongtalk.txt"
+ fi
+ 
+-if [ "$TARGET_ENVIRONMENT" == "musl" ]; then
+-  curl -s -m 60 --retry 10 -o "$OUTPUT_DIR/musl.txt" https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT
+-fi
++# musl's notice comes from native/licenses.sh, from a source the manifest pins.
