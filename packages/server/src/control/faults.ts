@@ -41,7 +41,7 @@
  *   store deletes that blob (or, for a lost blob, places it again) or the
  *   fault is cleared or set again. `<hashes>` is a list of `sha256:` names
  *   separated by `,`.
- * - `damage:webhook-position=<state>` makes the next webhook-schedule run find
+ * - `damage:webhook-position=<state>` makes each webhook-schedule run find
  *   its log position `ahead` of the event log, `behind` its retention, at a
  *   `hole` (the event after it missing) or `missing` altogether.
  * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery, or an

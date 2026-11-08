@@ -106,6 +106,7 @@ export interface FreshServer {
    * `free:<volume>=<bytes>` sets the reported free space,
    * `lose:blob=<hashes>` and `damage:blob=<hashes>` make the disk store read
    * those blobs as absent or with a changed first byte,
+   * `damage:blob-unreadable=<hashes>` makes a read of them fail,
    * `damage:webhook-position=<state>` damages the outbound webhook position,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
