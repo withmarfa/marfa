@@ -1562,17 +1562,11 @@ describe("each job reads its own answer", () => {
     );
   });
 
-  it("core.yml runs on a push to main for the core and the server it boots, never for Markdown", () => {
+  it("core.yml runs on a push to main for the core and the Rust server it boots, never for Markdown", () => {
     expect(workflow("core.yml").on.push?.paths).toEqual([
       "core/**",
       "openapi.json",
-      "packages/server/**",
-      "packages/shared/**",
-      "packages/types/**",
       "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
-      "tsconfig.base.json",
       ".github/workflows/core.yml",
       ".github/workflows/core-live.yml",
       "!**/*.md",

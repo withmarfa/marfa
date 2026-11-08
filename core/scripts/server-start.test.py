@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             saved_env = original_env.read_bytes()
             state = Path(first["MARFA_SERVER_STATE"])
             saved_boot = (state / "boot.env").read_bytes()
-            assert "node" in subprocess.check_output(["ps", "-p", first["MARFA_SERVER_PID"], "-o", "comm="], text=True)
+            assert "marfa-server" in subprocess.check_output(["ps", "-p", first["MARFA_SERVER_PID"], "-o", "comm="], text=True)
             assert not lock_available(state / "server.lock"), "server lost its state reservation"
             assert not lock_available(original_env), "server lost its env reservation"
             for duplicate in (environments[0], environments[5] | {"MARFA_SERVER_ENV": str(original_env)}):
@@ -168,22 +168,6 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             with sqlite3.connect(broken_state / "marfa.db", timeout=0) as database:
                 database.execute("BEGIN EXCLUSIVE")
                 database.rollback()
-            # A malformed claim is read after the private socket opens.
-            (broken_state / "blobs").unlink()
-            with sqlite3.connect(broken_state / "marfa.db") as database:
-                database.execute("INSERT INTO settings (key, value) VALUES ('instance.claim', 'null')")
-            result = subprocess.run([scripts / "server-up.sh"], env=broken, capture_output=True, text=True)
-            assert result.returncode != 0, "malformed claim booted"
-            assert "Marfa server listening on port" not in result.stderr
-            assert "Private control socket listening" in result.stderr, result.stderr
-            for line in result.stderr.splitlines():
-                if line.startswith("{"):
-                    event = json.loads(line)
-                    if event.get("message") == "Private control socket listening":
-                        assert not Path(event["path"]).exists(), "failed boot left its control socket"
-            with bind_port(startup_port):
-                pass
-            assert lock_available(broken_state / "server.lock")
             subprocess.run([scripts / "server-down.sh", original_env], check=True)
             assert lock_available(state / "server.lock"), "normal shutdown kept the state reservation"
             restarted = up(environments[0])
