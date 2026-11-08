@@ -3,6 +3,7 @@
 pub mod answer;
 mod audit;
 mod auth;
+mod blobs;
 pub mod body;
 mod bulk;
 pub mod caller;
@@ -199,6 +200,19 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, within_a_map))
 }
 
+fn blob_doors() -> Routes {
+    Router::new()
+        .route("/blobs", post(blobs::upload))
+        .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
+        .route("/blobs/{hash}/url", get(blobs::url))
+        .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route(
+            "/blobs/{hash}/fetch",
+            get(blobs::fetch).head(blobs::fetch_head),
+        )
+}
+
 fn owner_item_doors() -> Routes {
     Router::new()
         .route("/items/summaries", get(trash::summaries))
@@ -232,6 +246,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
         .merge(item_doors(app.clone()))
+        .merge(blob_doors())
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
