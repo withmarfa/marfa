@@ -1,14 +1,16 @@
 #!/bin/sh
-# Install the `marfa` command line from a GitHub release.
+# Install the `marfa` command line and the `marfa-server` program from a
+# GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 #
 # It picks the archive for this machine, checks it against the release's
-# checksum file, and puts `marfa` in one folder. Running it again installs
-# the latest release over the last, or leaves the install as it is.
+# checksum file, and puts both programs in one folder. Running it again
+# installs the latest release over the last, or leaves the install as it is.
+# Marfa runs on Macs with Apple silicon and on Linux, x86_64 and arm64.
 #
-#   MARFA_VERSION      a release such as 0.0.23; the latest when not set
-#   MARFA_INSTALL_DIR  where marfa goes; ~/.local/bin when not set
+#   MARFA_VERSION      a release such as 0.0.70; the latest when not set
+#   MARFA_INSTALL_DIR  where the programs go; ~/.local/bin when not set
 #
 # MARFA_DOWNLOAD_BASE replaces the release address, for the script's own tests.
 set -eu
@@ -27,7 +29,7 @@ command -v tar >/dev/null 2>&1 || fail "tar is not installed."
 case "$(uname -s)" in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
-  *) fail "$(uname -s) is not supported. Marfa's command line runs on macOS and Linux." ;;
+  *) fail "$(uname -s) is not supported. Marfa runs on macOS and Linux." ;;
 esac
 arch=$(uname -m)
 case "$os:$arch" in
@@ -37,7 +39,7 @@ case "$os:$arch" in
     if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then
       arch=arm64
     else
-      arch=x86_64
+      fail "this is an Intel Mac, and Marfa has no build for it. It runs on Macs with Apple silicon and on Linux."
     fi
     ;;
   linux:x86_64 | linux:amd64) arch=x86_64 ;;
@@ -54,7 +56,7 @@ if [ -z "$version" ]; then
   version="${tag##*/v}"
 fi
 case "$version" in
-  *[!0-9.]* | '' | .* | *. | *..*) fail "'$version' is not a release such as 0.0.23." ;;
+  *[!0-9.]* | '' | .* | *. | *..*) fail "'$version' is not a release such as 0.0.70." ;;
 esac
 
 base="${MARFA_DOWNLOAD_BASE:-https://github.com/$repo/releases/download/v$version}"
@@ -88,18 +90,24 @@ fi
 
 mkdir "$work/unpack"
 tar -xzf "$work/$archive" -C "$work/unpack"
-[ -f "$work/unpack/marfa" ] || fail "$archive holds no marfa. Nothing was installed."
-chmod +x "$work/unpack/marfa"
-reported=$("$work/unpack/marfa" --version) ||
-  fail "the downloaded marfa does not run on this machine. Nothing was installed."
-[ "$reported" = "marfa $version" ] ||
-  fail "the downloaded marfa reports '$reported', not 'marfa $version'. Nothing was installed."
+for program in marfa marfa-server; do
+  [ -f "$work/unpack/$program" ] || fail "$archive holds no $program. Nothing was installed."
+  chmod +x "$work/unpack/$program"
+  reported=$("$work/unpack/$program" --version) ||
+    fail "the downloaded $program does not run on this machine. Nothing was installed."
+  [ "$reported" = "$program $version" ] ||
+    fail "the downloaded $program reports '$reported', not '$program $version'. Nothing was installed."
+done
 
 mkdir -p "$dir" || fail "could not make $dir. Choose another with MARFA_INSTALL_DIR."
-# A copy beside the target and a rename, so a stop part-way leaves the old one.
-cp "$work/unpack/marfa" "$dir/.marfa.$$" || fail "could not write to $dir. Choose another with MARFA_INSTALL_DIR."
-mv "$dir/.marfa.$$" "$dir/marfa"
-say "Installed marfa $version to $dir/marfa."
+# A copy beside each target and a rename, so a stop part-way leaves the old ones.
+for program in marfa marfa-server; do
+  cp "$work/unpack/$program" "$dir/.$program.$$" || fail "could not write to $dir. Choose another with MARFA_INSTALL_DIR."
+done
+for program in marfa marfa-server; do
+  mv "$dir/.$program.$$" "$dir/$program"
+done
+say "Installed marfa $version and marfa-server $version to $dir."
 
 case ":$PATH:" in
   *":$dir:"*) ;;
@@ -110,5 +118,5 @@ case ":$PATH:" in
     ;;
 esac
 say ""
-say "Set up a server on this machine, with Docker installed:"
+say "Set up a server on this machine:"
 say "  marfa server install"

@@ -20,6 +20,21 @@ use crate::settings::registry::{
 
 const LIMIT_HEADER: &str = "x-ratelimit-limit";
 
+/// Takes one key operation from the caller's allowance, shared by every door that
+/// reaches the key operations, and answers the seconds to wait when none is left.
+pub fn key_operation_wait(app: &App, caller: &Caller) -> Option<u64> {
+    let live = app.settings.live();
+    if !live.get(RATE_LIMIT_ENABLED) {
+        return None;
+    }
+    app.key_limit.take(
+        &caller.credential_handle(),
+        app.clock.now_ms(),
+        live.get(RATE_LIMIT_KEYS_REQUESTS),
+        live.get(RATE_LIMIT_WINDOW_MS),
+    )
+}
+
 pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let live = app.settings.live();
     if !live.get(RATE_LIMIT_ENABLED) {
@@ -31,14 +46,7 @@ pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) 
         .await
         .ok()
         .flatten()
-        .and_then(|caller| {
-            app.key_limit.take(
-                &caller.credential_handle(),
-                app.clock.now_ms(),
-                cap,
-                live.get(RATE_LIMIT_WINDOW_MS),
-            )
-        });
+        .and_then(|caller| key_operation_wait(&app, &caller));
     let mut response = match wait {
         Some(seconds) => {
             let mut refused = refusal_answer(&Refusal::new(

@@ -12,6 +12,7 @@ mod overview;
 mod profile;
 pub mod reach;
 mod schema;
+mod tools;
 mod webhooks;
 
 use rusqlite::Transaction;

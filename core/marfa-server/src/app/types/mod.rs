@@ -7,7 +7,7 @@ mod write;
 pub(crate) use moving::finish_move;
 pub use moving::{Move, move_type};
 pub use read::{get, list, normalize};
-pub use write::{clear_icon, delete, register, replace, set_icon};
+pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 use write::not_found;
 
 use marfa_rules::grammar;
