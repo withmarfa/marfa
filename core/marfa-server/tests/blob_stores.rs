@@ -469,6 +469,18 @@ async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_it
 }
 
 #[tokio::test]
+async fn at_a_grace_of_zero_the_run_after_a_report_purges_within_the_same_millisecond() {
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let hash = instance.stored(b"reported and purged at one instant").await;
+
+    let first = instance.run("blob-orphans").await;
+    assert_eq!(first["purged"], 0, "{first}");
+    let second = instance.run("blob-orphans").await;
+    assert_eq!(second["purged"], 1, "{second}");
+    assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_it() {
     let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
     let hash = instance.stored(b"purged in two runs").await;

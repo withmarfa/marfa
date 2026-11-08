@@ -608,15 +608,15 @@ When a run of `blob-orphans` finds a blob that something references, the server 
 
 ### `stores/orphan-purges-after-grace`
 
-When a run of `blob-orphans` finds a blob reported by an earlier run longer ago than `MARFA_BLOB_CLEANUP_GRACE_MS` and still unreferenced, the server MUST purge it.
+When a run of `blob-orphans` finds a blob reported by an earlier run at least `MARFA_BLOB_CLEANUP_GRACE_MS` ago and still unreferenced, the server MUST purge it.
 
-**Reason:** a report made by the run itself, or exactly that old, waits for the next run.
+**Reason:** a report made by the run itself waits for the next run. At a grace of zero, the next run purges even when it starts in the same millisecond as the report.
 
 **Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
 
 ### `stores/orphan-keeps-within-grace`
 
-While a blob's report is not older than `MARFA_BLOB_CLEANUP_GRACE_MS`, the server MUST NOT purge it.
+While a blob's report is younger than `MARFA_BLOB_CLEANUP_GRACE_MS`, the server MUST NOT purge it.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 

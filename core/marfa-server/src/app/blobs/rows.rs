@@ -544,10 +544,10 @@ pub fn report_size(tx: &Transaction<'_>) -> Result<u64> {
     size_of(count)
 }
 
-/// Blobs reported before `cutoff` that the index says nothing references.
+/// Blobs reported at or before `cutoff` that the index says nothing references.
 pub fn purge_candidates(tx: &Transaction<'_>, cutoff: &str) -> Result<Vec<Hash>> {
     let mut statement = tx.prepare_cached(
-        "SELECT o.hash FROM blob_orphans o WHERE o.reported_at < ?1 \
+        "SELECT o.hash FROM blob_orphans o WHERE o.reported_at <= ?1 \
          AND NOT EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = o.hash) \
          ORDER BY o.reported_at, o.hash",
     )?;

@@ -420,7 +420,8 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 /// Finishes the deletions a purge left, reports every blob nothing references, and purges
-/// each one reported before the grace that nothing names at the moment it is purged.
+/// each one an earlier run reported at least the grace ago that nothing names at the moment
+/// it is purged.
 pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
@@ -432,8 +433,10 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let candidates = app
         .db
         .write(Write::own(), move |tx| {
+            // Chosen before this run reports, so only an earlier run's report is purged.
+            let candidates = rows::purge_candidates(tx, &chosen)?;
             rows::report_orphans(tx, &at)?;
-            rows::purge_candidates(tx, &chosen)
+            Ok(candidates)
         })
         .await?;
     let mut purged = 0u64;
