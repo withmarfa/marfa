@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  collectionNotes,
   contractFiles,
+  countCollected,
+  filesNamedIn,
   fixturePath,
   renderScore,
   scoreRun,
@@ -106,6 +109,58 @@ describe("the score of a run", () => {
     );
   });
 
+  it("counts every collected test of a file that did not load as not passing", () => {
+    const collected = new Map([
+      [A, 5],
+      [B, 2],
+    ]);
+    const score = scoreRun(
+      [
+        {
+          testResults: [
+            result(A, "failed", []),
+            result(B, "passed", ["passed", "passed"]),
+          ],
+        },
+      ],
+      [A, B, C],
+      [A, B, C],
+      new Map([...collected, [C, 3]]),
+    );
+    expect(score.passed).toBe(2);
+    expect(score.total).toBe(10);
+    expect(score.files.map((f) => [f.file, f.passed, f.total])).toEqual([
+      [A, 0, 5],
+      [B, 2, 2],
+      [C, 0, 3],
+    ]);
+    expect(score.failures).toEqual([
+      `${A}: the file failed around its tests`,
+      `${C}: no report names it`,
+    ]);
+    expect(renderScore(score)).toContain(`| ${C} | not reported, 3 tests |`);
+  });
+
+  it("takes the reported count when it is the larger, and the collected count when a report lists fewer", () => {
+    const score = scoreRun(
+      [{ testResults: [result(A, "passed", ["passed", "passed", "skipped"])] }],
+      [A, B],
+      [],
+      new Map([
+        [A, 2],
+        [B, 0],
+      ]),
+    );
+    expect(score.files.map((f) => f.total)).toEqual([3, 0]);
+    const fewer = scoreRun(
+      [{ testResults: [result(A, "passed", ["passed"])] }],
+      [A],
+      [A],
+      new Map([[A, 4]]),
+    );
+    expect(fewer.failures).toEqual([`${A}: 1 of 4 tests passed`]);
+  });
+
   it("ignores a report of a file outside the five server projects", () => {
     const score = scoreRun(
       [
@@ -140,6 +195,35 @@ describe("the score of a run", () => {
     expect(fixturePath(`/home/runner/work/marfa/marfa/conformance/${A}`)).toBe(
       A,
     );
+  });
+});
+
+describe("the count of collected tests", () => {
+  it("counts the tests listed for each file by its path from conformance", () => {
+    const counts = countCollected([
+      { file: `/checkout/conformance/${A}` },
+      { file: `/checkout/conformance/${A}` },
+      { file: `/checkout/conformance/${C}` },
+    ]);
+    expect([...counts]).toEqual([
+      [A, 2],
+      [C, 1],
+    ]);
+  });
+
+  it("finds the contract files an error names, once each", () => {
+    expect(
+      filesNamedIn(`Error in ${A}\n at /x/conformance/${A}:2:1\n and ${C}`),
+    ).toEqual([A, C]);
+    expect(filesNamedIn("nothing here")).toEqual([]);
+  });
+
+  it("says by name which files were read, not run, and the count used", () => {
+    const some = collectionNotes(new Map([[A, 4]]), [A, B]).join("\n");
+    expect(some).toContain(`${A}: 4 tests counted`);
+    expect(some).toContain(`${B}: 0 tests counted`);
+    expect(collectionNotes(new Map(), [])[1]).toContain("named no file");
+    expect(collectionNotes(new Map([[A, 1]]), [])).toHaveLength(1);
   });
 });
 

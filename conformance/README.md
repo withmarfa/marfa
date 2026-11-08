@@ -703,6 +703,16 @@ summary of `Rust contract score`.
   five projects the server's half has: `correctness`, `compliance`, `sync`,
   `device` and `cli`. A file on disk that no report names counts with nothing
   passing and shows as "not reported".
+- Before it reads the reports, the command lists every test of those five
+  projects with `vitest list --json --staticParse=false`, which runs each file
+  to collect its tests and needs no server. A file's total is the larger of
+  that count and the tests its report lists, so a file that fails to load
+  still counts all its tests as not passing. When a file fails to load,
+  Vitest prints no list; the command then counts only the files Vitest names,
+  by reading them without running them, and the summary names each with the
+  count it used.
+- The shards run with `--retry=0`, so a test that passes only on a retry fails
+  its run and does not count as passing.
 - The command exits with an error when a file listed in `RUST_JUDGED` does not
   pass whole or no report names it, when two reports name one file, and when
   there is no report at all. A file that is not listed never fails it.
