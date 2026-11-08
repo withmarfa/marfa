@@ -6060,7 +6060,7 @@ export interface components {
                 };
             };
         };
-        /** @description An OAuth client: its app metadata and the grants it uses. */
+        /** @description An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer. */
         OAuthClientRegistration: {
             /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
@@ -6097,7 +6097,7 @@ export interface components {
              * @enum {string}
              */
             application_type?: "web" | "native";
-            /** @description Resource identifiers to register the client for. Leave it out for the instance's default resources. */
+            /** @description Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`. */
             resources?: string[];
         };
         /** @description An error response. */
@@ -26962,8 +26962,6 @@ export interface operations {
                          * @enum {string}
                          */
                         application_type?: "web" | "native";
-                        /** @description Final resource identifiers linked to the registered client */
-                        resources?: string[];
                         /** @description Unique identifier for the client. */
                         client_id: string;
                         /** @description The ID of the user who registered the client. Absent for anonymous registration. */
