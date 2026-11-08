@@ -905,9 +905,23 @@ async fn a_drop_is_not_confirmed_by_another_bucket_holding_the_same_object() {
     assert_eq!(refused.code(), "copies_below_minimum");
     assert!(instance.file(&hash).is_file());
     assert_eq!(instance.copies(&hash).await.len(), 2);
+    let checked = instance.run("blob-integrity").await;
+    assert_eq!(checked["verified"], 1, "{checked}");
+    assert_eq!(checked["unreachable"], 1, "{checked}");
+    let stamped = |copies: &[Value]| {
+        copies
+            .iter()
+            .filter(|copy| !copy["verified_at"].is_null())
+            .count()
+    };
+    assert_eq!(stamped(&instance.copies(&hash).await), 1);
 
-    // The witness: the store answering as itself confirms the same drop.
+    // The witnesses: the store answering as itself is stamped, and confirms the same drop.
     s3.swap_buckets();
+    let checked = instance.run("blob-integrity").await;
+    assert_eq!(checked["verified"], 2, "{checked}");
+    assert_eq!(checked["unreachable"], 0, "{checked}");
+    assert_eq!(stamped(&instance.copies(&hash).await), 2);
     let dropped = instance.call(Method::DELETE, &door, None).await;
     assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
     assert!(!instance.file(&hash).exists());

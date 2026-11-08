@@ -210,7 +210,7 @@ When the server writes a blob's bytes to an object store, the server MUST write 
 
 While an attached object store does not answer with the `.marfa-store` marker of the store the server attached, the server MUST NOT change the copy record on that store's answers.
 
-**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone. The server asks for the marker after the store's answer and before it changes the copy record, and counts a store that answers with another marker as one it cannot reach.
+**Reason:** an endpoint or proxy that comes to reach another bucket takes writes the store never sees and answers for objects the store never held. A copy recorded there, a copy struck because that bucket lacks it, or a drop confirmed by it would leave the copy record naming bytes that are gone, and a copy stamped on its answer would claim a check that never reached the store. The server asks for the marker after the store's answer and before it changes the copy record, and counts a store that answers with another marker as one it cannot reach.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 

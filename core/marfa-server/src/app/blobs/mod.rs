@@ -406,9 +406,9 @@ impl Blobs {
         }
     }
 
-    /// Whether the store answers now with its own marker. Asked after an object store's answer
-    /// and before a strike, a recorded copy or a drop relies on it, so an endpoint that
-    /// stopped being the store since an earlier answer changes nothing.
+    /// Whether the store answers now with its own marker. Asked after an object store's answers
+    /// and before the copy record changes on them, so an endpoint that stopped being the store
+    /// since an earlier answer changes nothing.
     async fn is_itself(&self, store: &Store) -> bool {
         let Store::S3(s3) = store else {
             return true;

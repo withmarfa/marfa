@@ -620,6 +620,12 @@ describe("an object store that answers with another store's marker", () => {
       const refused = await operator.deleteBlobCopy(first, disk.id);
       expect(refused.status, JSON.stringify(refused.error)).toBe(409);
       expect(refused.error?.error.code).toBe("copies_below_minimum");
+      const stamped = await runJob(operator, "blob-integrity");
+      expect(stamped.result).toMatchObject({ verified: 2, unreachable: 1 });
+      const copy = (await operator.listBlobCopies(first)).data.data.find(
+        (row) => row.store_id === s3.id,
+      );
+      expect(copy?.verified_at).toBeNull();
 
       await s3.objects.send(
         new DeleteObjectCommand({ Bucket: bucket, Key: object }),

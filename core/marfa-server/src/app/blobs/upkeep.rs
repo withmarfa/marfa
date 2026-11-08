@@ -2,7 +2,7 @@
 //! lacks, `blob-integrity` checks the copies and finishes queued deletions, and
 //! `blob-orphans` reports and purges what nothing references.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -347,6 +347,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
         .await?;
     let (mut verified, mut struck, mut bytes, mut checked) = (0u64, 0u64, 0u64, 0u64);
     let mut seen = HashSet::new();
+    let mut vouched: BTreeMap<String, Vec<(Hash, String)>> = BTreeMap::new();
     'run: loop {
         let left_out: Vec<String> = unreachable.iter().cloned().collect();
         let limit = batch.saturating_add(seen.len() as u64);
@@ -385,6 +386,12 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                 Checked::Silent => {
                     unreachable.insert(copy.store_id.clone());
                     break;
+                }
+                Checked::Intact if matches!(store, Store::S3(_)) => {
+                    vouched
+                        .entry(copy.store_id.clone())
+                        .or_default()
+                        .push((copy.hash.clone(), app.clock.stamp()));
                 }
                 Checked::Intact => {
                     let (hash, id) = (copy.hash.clone(), copy.store_id.clone());
@@ -429,6 +436,26 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
         if unreachable.len() == before || !any {
             break;
         }
+    }
+    // An object store's answers are stamped only once it answers as itself after them.
+    for (id, copies) in vouched {
+        let itself = match app.blobs.store(&id) {
+            Some(store) => !unreachable.contains(&id) && app.blobs.is_itself(&store).await,
+            None => false,
+        };
+        if !itself {
+            unreachable.insert(id);
+            continue;
+        }
+        verified += copies.len() as u64;
+        app.db
+            .write(Write::own(), move |tx| {
+                for (hash, at) in &copies {
+                    rows::verified(tx, hash, &id, at)?;
+                }
+                Ok(())
+            })
+            .await?;
     }
     Ok(Report::done(json!({
         "verified": verified,
