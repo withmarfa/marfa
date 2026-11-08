@@ -362,7 +362,7 @@ When the server compares an `occurred_at` in a write at a stale version with the
 
 ### `items/occurred-at-form`
 
-If a write names an `occurred_at` that is not an RFC 3339 date-time, being one with no zone, no seconds, a date alone, an hour of 24, a second of 60 or an offset written without its colon, then the server MUST refuse it `validation_error` with `details.field` `occurred_at`.
+If a write names an `occurred_at` that is not an RFC 3339 date-time, being one with no zone, no seconds, a date alone, an hour of 24, a second of 60 or an offset written without its colon, then the server MUST refuse it `validation_error` with `details.field` `occurred_at`; a lowercase `t` or `z`, which RFC 3339 section 5.6 allows, is none of these faults, and the stored time is answered in uppercase.
 
 **Reason:** a client states the instant it means, so the server guesses no zone, and every client reads one spelling the same way. A fraction of a second of any length is taken, and cut to milliseconds. The zone is `Z`, or `+` or `-` with hours and minutes as `hh:mm`.
 

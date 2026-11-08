@@ -220,7 +220,7 @@ fn expiry(value: &Value) -> Result<Option<String>> {
     let Some(text) = value.as_str().filter(|text| has_a_time(text)) else {
         return Err(bad_expiry(value.clone()));
     };
-    marfa_rules::time::normalize(text, "expires_at")
+    marfa_rules::time::rfc3339(text, "expires_at")
         .map(Some)
         .map_err(|_| bad_expiry(text))
 }

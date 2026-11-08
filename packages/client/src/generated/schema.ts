@@ -2640,7 +2640,7 @@ export interface components {
                 name: string;
             } | null;
         };
-        /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
+        /** @description The source's current problems, by opaque key. Each message is at most 500 characters. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
         ConnectorProblems: {
             [key: string]: string;
         };

@@ -291,7 +291,7 @@ pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
     let Some(text) = text_of(body, "occurred_at")? else {
         return Ok(None);
     };
-    time::normalize(&text, "occurred_at")
+    time::rfc3339(&text, "occurred_at")
         .map(Some)
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
