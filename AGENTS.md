@@ -30,7 +30,7 @@ The TypeScript server in `packages/server/` is frozen. It takes only fixes for a
 
 ## Evidence
 
-- The server's behavior is the specification, written down and held in `conformance/`. The docs site is not a source of truth.
+- The committed `openapi.json` and the contract in `conformance/` are what both servers are held to; where a server and either disagree, whichever is wrong is fixed. The docs site is not a source of truth.
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced.
 - A count, a list or a claim that nothing calls something is checked by running the query, never by trusting a comment.
 

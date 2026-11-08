@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tempfile::TempDir;
 
+use super::doors::Doors;
 use super::root::DOCUMENT;
 use super::{control_doors, public_doors};
 use crate::app::App;
@@ -201,7 +202,11 @@ const NOT_YET_SERVED: &[&str] = &[
     "PUT /profile/picture",
 ];
 
-const METHODS: [&str; 5] = ["get", "put", "post", "patch", "delete"];
+const METHODS: [&str; 8] = [
+    "get", "put", "post", "delete", "options", "head", "patch", "trace",
+];
+
+const CONTROL_PREFIX: &str = "/_control/";
 
 fn published() -> BTreeSet<String> {
     let document: Value = serde_json::from_str(DOCUMENT).unwrap();
@@ -216,7 +221,25 @@ fn published() -> BTreeSet<String> {
     found
 }
 
-async fn served() -> BTreeSet<String> {
+/// What each listener answers.
+struct Served {
+    public: BTreeSet<String>,
+    control: BTreeSet<String>,
+}
+
+fn routes(doors: Doors) -> BTreeSet<String> {
+    doors
+        .served()
+        .into_iter()
+        .map(|door| format!("{} {}", door.method, door.path))
+        .collect()
+}
+
+fn path(route: &str) -> &str {
+    route.split_once(' ').unwrap().1
+}
+
+async fn served() -> Served {
     let dir = TempDir::new().unwrap();
     let database = dir.path().join("marfa.db");
     let blobs = dir.path().join("blobs");
@@ -229,12 +252,10 @@ async fn served() -> BTreeSet<String> {
     ]))
     .unwrap();
     let app: Arc<App> = App::start(settings).await.unwrap();
-    public_doors(app.clone())
-        .served()
-        .into_iter()
-        .chain(control_doors(&app).served())
-        .map(|door| format!("{} {}", door.method, door.path))
-        .collect()
+    Served {
+        public: routes(public_doors(app.clone())),
+        control: routes(control_doors(&app)),
+    }
 }
 
 fn listed(routes: &[&str]) -> BTreeSet<String> {
@@ -248,20 +269,47 @@ fn unpublished() -> BTreeSet<String> {
         .collect()
 }
 
-fn unserved(served: &BTreeSet<String>, published: &BTreeSet<String>) -> Vec<String> {
-    let waiting = listed(NOT_YET_SERVED);
-    published
+fn controlled(route: &str) -> bool {
+    path(route).starts_with(CONTROL_PREFIX)
+}
+
+/// Public routes that are neither published nor listed.
+fn unlisted(served: &Served, published: &BTreeSet<String>) -> Vec<String> {
+    let known = unpublished();
+    served
+        .public
         .iter()
-        .filter(|route| !served.contains(*route) && !waiting.contains(*route))
+        .filter(|route| !published.contains(*route) && !known.contains(*route))
         .cloned()
         .collect()
 }
 
-fn unlisted(served: &BTreeSet<String>, published: &BTreeSet<String>) -> Vec<String> {
+/// Control routes the unpublished list does not name.
+fn unlisted_control(served: &Served) -> Vec<String> {
     let known = unpublished();
     served
+        .control
         .iter()
-        .filter(|route| !published.contains(*route) && !known.contains(*route))
+        .filter(|route| controlled(route) && !known.contains(*route))
+        .cloned()
+        .collect()
+}
+
+/// Control routes outside `/_control/` that the public listener does not serve.
+fn strays(served: &Served) -> Vec<String> {
+    served
+        .control
+        .iter()
+        .filter(|route| !controlled(route) && !served.public.contains(*route))
+        .cloned()
+        .collect()
+}
+
+fn unserved(served: &Served, published: &BTreeSet<String>) -> Vec<String> {
+    let waiting = listed(NOT_YET_SERVED);
+    published
+        .iter()
+        .filter(|route| !served.public.contains(*route) && !waiting.contains(*route))
         .cloned()
         .collect()
 }
@@ -269,11 +317,26 @@ fn unlisted(served: &BTreeSet<String>, published: &BTreeSet<String>) -> Vec<Stri
 #[tokio::test]
 async fn every_served_route_is_published_or_listed_as_unpublished() {
     let (served, published) = (served().await, published());
-    assert!(served.contains("GET /items/{id}") && published.contains("GET /items/{id}"));
+    assert!(served.public.contains("GET /items/{id}") && published.contains("GET /items/{id}"));
+    let exposed: Vec<_> = served.public.iter().filter(|r| controlled(r)).collect();
+    assert!(
+        exposed.is_empty(),
+        "served on the public listener: {exposed:?}"
+    );
     assert_eq!(
         unlisted(&served, &published),
         Vec::<String>::new(),
         "publish each in openapi.json, or list it in UNPUBLISHED with why"
+    );
+    assert_eq!(
+        unlisted_control(&served),
+        Vec::<String>::new(),
+        "list each in UNPUBLISHED"
+    );
+    assert_eq!(
+        strays(&served),
+        Vec::<String>::new(),
+        "the control listener serves only /_control/ routes and the public ones"
     );
 }
 
@@ -283,7 +346,7 @@ async fn every_published_operation_is_served_or_listed_as_not_yet_served() {
     assert_eq!(
         unserved(&served, &published),
         Vec::<String>::new(),
-        "serve each, or list it in NOT_YET_SERVED"
+        "serve each on the public listener, or list it in NOT_YET_SERVED"
     );
 }
 
@@ -292,7 +355,7 @@ async fn the_lists_hold_only_what_they_say() {
     let (served, published) = (served().await, published());
     let still_waiting: Vec<_> = NOT_YET_SERVED
         .iter()
-        .filter(|route| !published.contains(**route) || served.contains(**route))
+        .filter(|route| !published.contains(**route) || served.public.contains(**route))
         .collect();
     assert!(
         still_waiting.is_empty(),
@@ -300,7 +363,16 @@ async fn the_lists_hold_only_what_they_say() {
     );
     let stale: Vec<_> = UNPUBLISHED
         .iter()
-        .filter(|(route, _)| !served.contains(*route) || published.contains(*route))
+        .filter(|(route, _)| {
+            if controlled(route) {
+                !served.control.contains(*route)
+            } else {
+                !served.public.contains(*route) || published.contains(*route)
+            }
+        })
         .collect();
-    assert!(stale.is_empty(), "not served, or published: {stale:?}");
+    assert!(
+        stale.is_empty(),
+        "not served on its listener, or published: {stale:?}"
+    );
 }

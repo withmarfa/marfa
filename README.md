@@ -75,7 +75,7 @@ The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it insta
 
 ## What is authoritative
 
-The server's behavior is the specification, and `conformance/` is where that behavior is written down and held. Where a document and the server disagree, the server is right and the document is a defect.
+The committed `openapi.json` and the contract in `conformance/` are what both servers are held to. Where a server and either of them disagree, whichever is wrong is fixed.
 
 - The contract: [`conformance/spec/`](./conformance/spec), with [`coverage.md`](./conformance/spec/coverage.md) naming the fixture behind every published operation.
 - The vocabulary: [`GLOSSARY.md`](./GLOSSARY.md).
