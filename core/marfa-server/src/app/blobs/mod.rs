@@ -1,9 +1,11 @@
 //! Blobs: bytes kept under the hash of what they hold, and who may read them.
 
+mod digests;
 mod disk;
 mod hash;
 pub mod link;
 pub mod range;
+pub mod references;
 mod rows;
 
 use std::fs::File;

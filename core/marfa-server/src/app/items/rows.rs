@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_i
 use serde::Serialize;
 
 use super::{Item, Keys, Mark, Snapshot, Writer};
+use crate::app::blobs::references;
 use crate::app::refusal::Result;
 
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
@@ -244,6 +245,7 @@ pub(super) fn advance(
     snapshot_id: &str,
     next: &Landed<'_>,
 ) -> Result<Item> {
+    references::keep_version(tx, item.seq)?;
     tx.prepare_cached(
         "INSERT INTO item_versions (item_seq, version, id, properties, type, tier, occurred_at, \
          source_id, writer_kind, writer_id, writer_name, created_at) \
@@ -340,6 +342,7 @@ pub(super) fn purge(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<()> {
             params![item.type_id, item.source, source_id, at],
         )?;
     }
+    references::forget_item(tx, item.seq)?;
     tx.execute("DELETE FROM item_tags WHERE item_seq = ?1", [item.seq])?;
     tx.execute(
         "DELETE FROM item_extensions WHERE item_seq = ?1",
@@ -608,6 +611,7 @@ pub(super) fn put_extension(
 }
 
 pub(super) fn remove_extension(tx: &Transaction<'_>, seq: i64, namespace: &str) -> Result<()> {
+    references::forget(tx, references::Row::Extension(seq, namespace))?;
     tx.execute(
         "DELETE FROM item_extensions WHERE item_seq = ?1 AND namespace = ?2",
         params![seq, namespace],
