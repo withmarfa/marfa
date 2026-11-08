@@ -10,6 +10,7 @@ use super::App;
 use super::access::{Caller, Door, Level, Permission, SchemaKind};
 use super::catalog::{self, Catalog, Snapshot};
 use super::edges;
+use super::instance;
 use super::refusal::{Code, Refusal, Result};
 use super::types::{issues_json, missing_field};
 use super::unit::Unit;
@@ -211,6 +212,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ],
             )?;
             catalog::raise(unit.tx())?;
+            instance::raise_reach(unit.tx())?;
             unit.audit("edge_type", &id, None)?;
             Ok((true, built))
         })
@@ -273,6 +275,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         unit.tx()
             .execute("DELETE FROM edge_types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
         unit.audit("edge_type", &id, None)?;
         Ok(())
     })
