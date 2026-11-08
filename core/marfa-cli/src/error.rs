@@ -49,7 +49,7 @@ pub enum CliError {
     },
     #[error("{0}")]
     Usage(String),
-    /// Docker, Tailscale or the server in its container did not do what
+    /// The service manager, Docker, Tailscale or the server did not do what
     /// `marfa server` needs; the message says what to start or install.
     #[error("{0}")]
     Install(String),

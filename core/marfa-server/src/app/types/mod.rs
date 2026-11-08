@@ -76,6 +76,14 @@ pub fn check_id(id: &str, field: &str) -> Result<()> {
         .with_detail("errors", json!([{ "path": field, "message": message }])))
 }
 
+fn unreadable_refusal(type_id: &str) -> Refusal {
+    Refusal::new(
+        Code::TypeChainUnresolvable,
+        format!("The stored definition of type \"{type_id}\" does not read."),
+    )
+    .with_detail("type_id", type_id)
+}
+
 fn chain_refusal(fault: &ChainFault) -> Refusal {
     Refusal::new(
         Code::TypeChainUnresolvable,

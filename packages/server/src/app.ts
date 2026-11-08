@@ -925,7 +925,7 @@ export function createApp(
   if (options.localAuthority && config.testHooks)
     app.route(
       "/_control/test",
-      testRoutes(() => housekeeping.names()),
+      testRoutes(() => housekeeping.names(), blobs),
     );
   app.route(
     "/export",

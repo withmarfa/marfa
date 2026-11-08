@@ -30,6 +30,7 @@ const ROUTES: [string, string, unknown?][] = [
   ["GET", "/_control/test/faults"],
   ["PUT", "/_control/test/faults", { name: "hold:version-thinning:item" }],
   ["DELETE", "/_control/test/faults"],
+  ["GET", "/_control/test/blob-stores"],
 ];
 
 async function overHttp(
@@ -280,28 +281,6 @@ describe("the test hooks", () => {
         expect(listened(refused)).toBe(false);
         expect(settingLines(refused)).toEqual([
           'MARFA_TEST_CONTRACT_VERSION needs MARFA_TEST_HOOKS to be true (got "1")',
-        ]);
-      } finally {
-        await refused.stop();
-      }
-    },
-    FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it.each([
-    ["MARFA_TEST_MIGRATION_FAULT", "lose-row"],
-    ["MARFA_TEST_FREE_DISK_BYTES", "1"],
-  ])(
-    "refuses %s without MARFA_TEST_HOOKS, naming the setting",
-    async (name, value) => {
-      const refused = await bootRefused("test-hooks-migration", {
-        extraEnv: { MARFA_TEST_HOOKS: "false", [name]: value },
-      });
-      try {
-        expect(refused).toMatchObject({ code: 1, signal: null });
-        expect(listened(refused)).toBe(false);
-        expect(settingLines(refused)).toEqual([
-          `${name} needs MARFA_TEST_HOOKS to be true (got "${value}")`,
         ]);
       } finally {
         await refused.stop();

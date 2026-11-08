@@ -1,5 +1,3 @@
-import { renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedAppToken,
@@ -8,27 +6,24 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { HeldLock } from "../../utils/held-lock.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What `GET /health` says when a component is not well, and to whom
  * (the instance chapter's `instance/health-*` rules).
  *
  * **Every fault is made on a server of the fixture's own.** The run's server
- * is healthy and shared, and no door makes a component `down`. What does is
- * the stored state under a running server: a table renamed in the live
- * database file, the blob folder swapped for a file, or the write lock held
- * from a second connection. Each is undone before the next case, and the
- * server is the same one throughout.
+ * is healthy and shared, and no operation makes a component `down`. What
+ * does is a `refuse:` fault, which makes the server refuse reads, writes or
+ * its blob store, or hold a write as a lock held elsewhere would. Each is
+ * cleared before the next case, and the server is the same one throughout.
  *
  * The write probe is committed at most once every ten seconds and its
  * outcome, a refusal included, answers the calls in between. So a fault that
  * touches only the write is seen by polling until the window ends, which is
  * a wait on a condition and not on a clock.
  *
- * The server's busy budget is zero, so a write that meets a held lock is
- * refused at once instead of waiting out a budget of its own.
+ * The server's busy budget is zero, so a write held by `refuse:write-lock`
+ * is refused at once instead of waiting out a budget of its own.
  */
 let server: FreshServer | undefined;
 
@@ -93,27 +88,11 @@ async function until(
 const isOk = (answer: Answer): boolean =>
   answer.httpStatus === 200 && answer.body.status === "ok";
 
-function renameTable(from: string, to: string): void {
-  withInstanceDatabase(server!.sqlitePath, (db) => {
-    db.exec(`ALTER TABLE ${from} RENAME TO ${to}`);
-  });
-}
-
 /** The statuses of every component other than `except`. */
 function othersOf(answer: Pick<Answer, "body">, except: string): string[] {
   return COMPONENTS.filter((name) => name !== except).map(
     (name) => answer.body.components[name]?.status ?? "missing",
   );
-}
-
-/** The stored write probe: the instant it last committed. */
-function storedProbe(): string {
-  return withInstanceDatabase(server!.sqlitePath, (db) => {
-    const row = db
-      .prepare("SELECT value FROM settings WHERE key = 'health_probe'")
-      .get() as { value: string } | undefined;
-    return row?.value ?? "";
-  });
 }
 
 describe("GET /health when a component is down", () => {
@@ -122,12 +101,12 @@ describe("GET /health when a component is down", () => {
     const before = await until(isOk);
     expect(Object.keys(before.body.components).sort()).toEqual(COMPONENTS);
 
-    renameTable("api_keys", "api_keys_away");
+    await server!.setFault("refuse:read");
     let down: Answer;
     try {
       down = await until((answer) => answer.httpStatus === 503);
     } finally {
-      renameTable("api_keys_away", "api_keys");
+      await server!.clearFault("refuse:read");
     }
     expect(down.body.status).toBe("down");
     expect(down.body.components.database?.status).toBe("down");
@@ -142,12 +121,12 @@ describe("GET /health when a component is down", () => {
     // the one that cannot be read, and only a committed write shows it.
     expect((await until(isOk)).httpStatus).toBe(200);
 
-    renameTable("settings", "settings_away");
+    await server!.setFault("refuse:write");
     let down: Answer;
     try {
       down = await until((answer) => answer.httpStatus === 503);
     } finally {
-      renameTable("settings_away", "settings");
+      await server!.clearFault("refuse:write");
     }
     expect(down.body.status).toBe("down");
     expect(down.body.components.database_write?.status).toBe("down");
@@ -160,18 +139,12 @@ describe("GET /health when a component is down", () => {
   it("answers 503 with blob storage down when the disk store refuses, and 200 once it answers", async () => {
     expect((await until(isOk)).httpStatus).toBe(200);
 
-    // A file where the folder was: a path under it is not a missing file but
-    // one the store cannot look for, which is a refusal and not an absence.
-    const blobs = join(dirname(server!.sqlitePath), "blobs");
-    const away = `${blobs}-away`;
-    renameSync(blobs, away);
-    writeFileSync(blobs, "not a folder");
+    await server!.setFault("refuse:blob-store");
     let down: Answer;
     try {
       down = await until((answer) => answer.httpStatus === 503);
     } finally {
-      rmSync(blobs, { force: true });
-      renameSync(away, blobs);
+      await server!.clearFault("refuse:blob-store");
     }
     expect(down.body.status).toBe("down");
     expect(down.body.components.blob_storage?.status).toBe("down");
@@ -186,12 +159,12 @@ describe("GET /health while another connection holds the write lock", () => {
   it("answers 200 and degraded while the write is refused, and ok once the lock is released", async () => {
     expect((await until(isOk)).httpStatus).toBe(200);
 
-    const lock = await HeldLock.take(server!.sqlitePath);
+    await server!.setFault("refuse:write-lock");
     let degraded: Answer;
     try {
       degraded = await until((answer) => answer.body.status === "degraded");
     } finally {
-      await lock.release();
+      await server!.clearFault("refuse:write-lock");
     }
     // `degraded` still serves, so it is not a failure to a gate that reads the
     // status code.
@@ -206,18 +179,15 @@ describe("GET /health while another connection holds the write lock", () => {
 
 describe("the write probe", () => {
   it("answers the calls within ten seconds of its last write with that write's outcome, and writes again after", async () => {
-    const ok = await until(isOk);
-    expect(ok.httpStatus).toBe(200);
-    const committed = storedProbe();
-    expect(Number.isNaN(Date.parse(committed))).toBe(false);
+    expect((await until(isOk)).httpStatus).toBe(200);
 
     // The first `degraded` after an `ok` is a write the probe attempted and
     // was refused, since a cached `ok` cannot turn into one.
-    const lock = await HeldLock.take(server!.sqlitePath);
+    await server!.setFault("refuse:write-lock");
     try {
       await until((answer) => answer.body.status === "degraded");
     } finally {
-      await lock.release();
+      await server!.clearFault("refuse:write-lock");
     }
 
     // The lock is gone, so a write now would land. The calls that follow
@@ -229,32 +199,40 @@ describe("the write probe", () => {
         `call ${call}`,
       ).toBe("degraded");
     }
-    expect(storedProbe()).toBe(committed);
 
     // The window ends and the probe writes again.
     const after = await until(isOk);
     expect(after.body.components.database_write?.status).toBe("ok");
-    expect(Date.parse(storedProbe())).toBeGreaterThan(Date.parse(committed));
   }, 120_000);
 
   it("commits its write once in ten seconds however many callers ask", async () => {
     await until(isOk);
-    // Callers over a span much shorter than the window. A probe that wrote on
-    // every call would leave a different instant after each of them, and one
-    // that writes once per window can leave a new one at most once.
-    const instants = new Set<string>([storedProbe()]);
+    // The probe's next write fails, once. A probe that wrote on every call
+    // would answer `ok` from the second call on; one that writes once per
+    // window answers every call in it with that one failure.
+    await server!.setFault("fail:health-write");
+    const first = await until((answer) => answer.httpStatus === 503);
+    expect(first.body.components.database_write?.status).toBe("down");
+
     const started = Date.now();
     for (let call = 0; call < 40; call++) {
-      expect((await health()).httpStatus).toBe(200);
-      instants.add(storedProbe());
+      const answer = await health();
+      expect(answer.httpStatus, `call ${call}`).toBe(503);
+      expect(
+        answer.body.components.database_write?.status,
+        `call ${call}`,
+      ).toBe("down");
     }
     expect(Date.now() - started, "the callers outran the window").toBeLessThan(
       WINDOW_MS,
     );
-    expect(instants.size).toBeLessThanOrEqual(2);
-    for (const instant of instants) {
-      expect(Number.isNaN(Date.parse(instant)), instant).toBe(false);
-    }
+    const armed = (await server!.faults()).find(
+      (fault) => fault.name === "fail:health-write",
+    );
+    expect(armed?.fired).toBe(1);
+
+    const after = await until(isOk);
+    expect(after.body.components.database_write?.status).toBe("ok");
   }, 120_000);
 });
 
@@ -275,7 +253,7 @@ describe("the error text of GET /health", () => {
     });
     expect(accepted.status).toBe(200);
 
-    renameTable("settings", "settings_away");
+    await server!.setFault("refuse:write");
     try {
       // The management key is told what the database said, which is the witness
       // that there is text to leave out.
@@ -299,7 +277,7 @@ describe("the error text of GET /health", () => {
         }
       }
     } finally {
-      renameTable("settings_away", "settings");
+      await server!.clearFault("refuse:write");
     }
   }, 120_000);
 
@@ -312,9 +290,9 @@ describe("the error text of GET /health", () => {
     ];
     expect((await until(isOk)).httpStatus).toBe(200);
 
-    renameTable("settings", "settings_away");
+    await server!.setFault("refuse:write");
     try {
-      // The write refusal, with the key table readable: the management key is
+      // The write refusal, with the keys readable: the management key is
       // told, so there is text to leave out below.
       const told = await until(
         (answer) => answer.httpStatus === 503,
@@ -324,9 +302,9 @@ describe("the error text of GET /health", () => {
         expect.any(String),
       );
 
-      // The key table goes too. The write's refusal is the same one and the
-      // text is still there to give.
-      renameTable("api_keys", "api_keys_away");
+      // Reads go too. The write's refusal is the same one and the text is
+      // still there to give.
+      await server!.setFault("refuse:read");
       try {
         for (const [who, credential] of callers) {
           const answer = await health(credential);
@@ -342,17 +320,17 @@ describe("the error text of GET /health", () => {
           }
         }
       } finally {
-        renameTable("api_keys_away", "api_keys");
+        await server!.clearFault("refuse:read");
       }
 
-      // With the key table back the management key is told again, so what was
+      // With reads back the management key is told again, so what was
       // withheld was withheld for the lookup and not for the key.
       const toldAgain = await health(server!.managementKey);
       expect(toldAgain.body.components.database_write?.error).toEqual(
         expect.any(String),
       );
     } finally {
-      renameTable("settings_away", "settings");
+      await server!.clearFault("refuse:write");
     }
   }, 120_000);
 });
@@ -389,7 +367,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
     expect(before.body.components.database_write?.status).toBe("ok");
     expect(before.elapsedMs).toBeLessThan(PROBE_BUDGET_MS);
 
-    const lock = await HeldLock.take(patient.sqlitePath);
+    await patient.setFault("refuse:write-lock");
     let silent: Awaited<ReturnType<typeof ask>>;
     try {
       // The write that answered above is reused for ten seconds, so the
@@ -404,7 +382,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
         silent = await ask();
       }
     } finally {
-      await lock.release();
+      await patient.clearFault("refuse:write-lock");
     }
 
     expect(silent.httpStatus).toBe(200);
@@ -451,33 +429,49 @@ describe("GET /health when the free space cannot be read", () => {
     };
   }
 
-  it("answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns", async () => {
-    // The witness: the same folder, present, is measured and is `ok`.
+  it("answers the disk component degraded, never down, and blob storage down, when the free space cannot be read and the store refuses, and ok once both are cleared", async () => {
+    // The witness: both volumes are measured and are `ok`.
     const before = await ask();
     expect(before.httpStatus).toBe(200);
     expect(before.body.status).toBe("ok");
     expect(before.body.components.disk?.status).toBe("ok");
     expect(before.body.components.blob_storage?.status).toBe("ok");
 
-    // A folder that is gone cannot be measured, and cannot be asked for a
-    // blob either. The database's volume cannot be made unreadable the same
-    // way without taking the database with it.
-    const blobs = join(dirname(own.sqlitePath), "blobs");
-    const away = `${blobs}-away`;
-    renameSync(blobs, away);
+    // Either volume alone, unreadable, leaves the instance serving.
+    for (const volume of ["blobs", "database"]) {
+      await own.setFault(`free:${volume}=unknown`);
+      let alone: Answer;
+      try {
+        alone = await ask();
+      } finally {
+        await own.clearFault(`free:${volume}`);
+      }
+      expect(alone.body.components.disk?.status, volume).toBe("degraded");
+      expect(alone.body.components.disk?.error, volume).toMatch(
+        /^free space unknown/,
+      );
+      expect(othersOf(alone, "disk"), volume).toEqual(["ok", "ok", "ok"]);
+      expect(alone.body.status, volume).toBe("degraded");
+      expect(alone.httpStatus, volume).toBe(200);
+    }
+
+    // With a store that refuses as well, the status is 503 for that
+    // component: free space unknown is not down, so the disk stays
+    // `degraded`.
+    await own.setFault("free:blobs=unknown");
+    await own.setFault("refuse:blob-store");
     let unknown: Answer;
     try {
       unknown = await ask();
     } finally {
-      renameSync(away, blobs);
+      await own.clearFault();
     }
-    // Free space unknown is not down, so the disk component alone stays
-    // `degraded`. The status is 503 for the other component: a blob folder
-    // that is gone is blob storage that is down.
     expect(unknown.body.components.disk?.status).toBe("degraded");
     expect(unknown.body.components.disk?.error).toMatch(/^free space unknown/);
     expect(unknown.body.components.blob_storage?.status).toBe("down");
-    expect(unknown.body.components.blob_storage?.error).not.toContain(blobs);
+    expect(unknown.body.components.blob_storage?.error).not.toContain(
+      own.stateDir,
+    );
     expect(othersOf(unknown, "disk")).toEqual(["down", "ok", "ok"]);
     expect(unknown.body.status).toBe("down");
     expect(unknown.httpStatus).toBe(503);

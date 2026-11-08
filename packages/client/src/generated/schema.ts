@@ -15722,7 +15722,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description `type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it. */
+            /** @description `type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16492,7 +16492,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it. */
+            /** @description `type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

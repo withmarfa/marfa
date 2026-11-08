@@ -1,14 +1,20 @@
 import { drainKeyUsage } from "../key-usage.js";
-import { validateRequestAuthority } from "../../auth/request-authority.js";
+import {
+  inRequest,
+  validateRequestAuthority,
+} from "../../auth/request-authority.js";
+import { holdArmed, holdAt } from "../../control/faults.js";
 import { readSnapshotRunner } from "./read-snapshot.js";
 import { inStorageSpan } from "../../otel/storage-span.js";
 import { initializeStructuralGeneration } from "./structural-generation.js";
 import { ensureInstanceId } from "../instance-id.js";
 import { publishBootRegistry } from "./registry-context.js";
-import { assertTransactionUsable } from "./transaction-control.js";
+import {
+  assertTransactionUsable,
+  transactionControl,
+} from "./transaction-control.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
-import type { MigrationHooks } from "./migrations.js";
 import {
   assertInWriteTransaction,
   wrapDbWithRequestContext,
@@ -58,10 +64,7 @@ import {
   shippedPlatformTypes,
 } from "@withmarfa/shared";
 
-export async function createSqliteStorage(
-  sqlitePath: string,
-  migrationHooks: MigrationHooks = {},
-): Promise<
+export async function createSqliteStorage(sqlitePath: string): Promise<
   Storage & {
     __sqliteAll(query: string): Promise<unknown[]>;
     __sqliteRun(query: string, params: unknown[]): Promise<{ changes: number }>;
@@ -77,7 +80,7 @@ export async function createSqliteStorage(
     inspectQueryPlan,
     close,
     captureRead,
-  } = await createConnection(sqlitePath, migrationHooks);
+  } = await createConnection(sqlitePath);
 
   try {
     await initializeStructuralGeneration(raw);
@@ -254,6 +257,12 @@ export async function createSqliteStorage(
       fn: () => T | Promise<T>,
       options?: { retainCommitHooksOnUncertain?: boolean },
     ): Promise<T> {
+      if (
+        holdArmed("admission") &&
+        inRequest() &&
+        transactionControl.getStore() === undefined
+      )
+        await holdAt("admission");
       return await inStorageSpan(
         "storage",
         "runInTransaction",

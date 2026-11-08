@@ -1,10 +1,8 @@
-import { dirname } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
-  serverOutput,
 } from "../../utils/fresh-server.js";
 import {
   COLLECTOR_BUDGET_MS,
@@ -14,7 +12,6 @@ import {
   until,
   type FaultSinks,
 } from "../../utils/fault-sinks.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What the server reports of an unhandled fault that failed a database
@@ -24,19 +21,20 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * failed` and the SQLite result code, and none of the statement, the driver's
  * own message or the values the write was given.
  *
- * **A fault the fixture makes, on a server of its own.** A table the write
- * reaches is renamed in the stored file, as `internal-error.test.ts` does,
- * and the error webhook names a receiver the fixture runs.
+ * **A fault the fixture makes, on a server of its own.** The target fails the
+ * statement that stores a write's audit entry, as `internal-error.test.ts`
+ * does, and the error webhook names a receiver the fixture runs. The failure
+ * carries the statement and the values it was bound to, as a real one does,
+ * so a report that held them back is the report's doing.
  *
  * **Where the telemetry goes.** The server exports its log record, its
  * spans and its exceptions over HTTP, so the receiver the fixture runs is
  * also the collector for all three: the OTLP endpoint takes the log records
  * and spans, and the PostHog host takes the exception sent to error tracking.
  *
- * **Faults the target makes.** A fault met after a response began, or by
- * work no request waits on, has no arrangement in the stored file that does
- * not depend on timing, so those are set through the target's `fail` faults
- * and held in `fault-reports-detached.test.ts`.
+ * **Faults met out of a request's reach.** A fault met after a response
+ * began, or by work no request waits on, is held in
+ * `fault-reports-detached.test.ts`.
  */
 let server: FreshServer | undefined;
 let sinks: FaultSinks | undefined;
@@ -51,22 +49,19 @@ afterAll(async () => {
   await sinks?.close();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** A stream re-reads its credential every 30 seconds. */
-const HEARTBEAT_BUDGET_MS = 45_000;
-
-/** What the renamed table makes the statement and the driver say. */
-const STATEMENT = "INSERT INTO event_log";
-const DRIVER_MESSAGE = "no such table";
-const CODE = "SQLITE_ERROR";
+/** What the failed statement and the driver would have put in a report. */
+const STATEMENT = "Failed query";
+const DRIVER_MESSAGE = "disk I/O error";
+const CODE = "SQLITE_IOERR";
 
 /** Holds a report to the rule: the fixed failure and its code, and nothing of the statement. */
 function expectFixedFailure(reported: string): void {
-  expectFixed(reported, CODE, ["event_log", "VALUES (?", DRIVER_MESSAGE]);
+  expectFixed(reported, CODE, [STATEMENT, "params", DRIVER_MESSAGE, keyId]);
 }
 
-/** Everything the server logged, which its state directory holds. */
-function serverLog(): string {
-  return serverOutput(dirname(server!.sqlitePath));
+/** Everything the server logged so far. */
+function serverLog(): Promise<string> {
+  return server!.output();
 }
 
 function postNote(marker: string, requestId: string): Promise<Response> {
@@ -91,6 +86,8 @@ interface Fault {
 }
 
 let fault: Promise<Fault> | undefined;
+/** The key that wrote the fixture's notes, which the failed statement is bound to. */
+let keyId = "";
 
 /**
  * One fault for the file: the webhook sends a given error once a minute, so
@@ -99,30 +96,24 @@ let fault: Promise<Fault> | undefined;
 function faulted(): Promise<Fault> {
   fault ??= (async () => {
     const marker = `marker-${Date.now().toString(36)}`;
-    // The witness: with the table there the write lands, and the log row it
-    // stores carries the properties and the tag, which are the values the
-    // failing statement is bound to.
+    // The witness: with no fault the write lands, and the entry it stores
+    // names the key that wrote it, a value the failing statement is bound to.
     const landed = await postNote(marker, "fault-reports-landed");
     expect(landed.status).toBe(201);
-    const stored = withInstanceDatabase(server!.sqlitePath, (db) =>
-      db
-        .prepare("SELECT payload FROM event_log ORDER BY id DESC LIMIT 1")
-        .get(),
-    ) as { payload: string };
-    expect(stored.payload).toContain(marker);
+    const { item } = (await landed.json()) as { item: { id: string } };
+    const recorded = await fetch(
+      `${server!.apiUrl}/audit?action=item.create&resource_id=${item.id}`,
+      { headers: { Authorization: `Bearer ${server!.workingKey}` } },
+    );
+    const entries = ((await recorded.json()) as { data: { key_id: string }[] })
+      .data;
+    expect(entries).toHaveLength(1);
+    keyId = entries[0]!.key_id;
 
     const requestId = "fault-reports-faulted";
-    withInstanceDatabase(server!.sqlitePath, (db) => {
-      db.exec("ALTER TABLE event_log RENAME TO event_log_gone");
-    });
-    try {
-      const refused = await postNote(marker, requestId);
-      expect(refused.status).toBe(500);
-    } finally {
-      withInstanceDatabase(server!.sqlitePath, (db) => {
-        db.exec("ALTER TABLE event_log_gone RENAME TO event_log");
-      });
-    }
+    await server!.setFault("fail:audit=item.create");
+    const refused = await postNote(marker, requestId);
+    expect(refused.status).toBe(500);
     return { marker, requestId };
   })();
   return fault;
@@ -131,8 +122,8 @@ function faulted(): Promise<Fault> {
 describe("an unhandled fault in which a statement failed", () => {
   it("is logged as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
     const { marker, requestId } = await faulted();
-    const line = await until("the fault's log line", () =>
-      serverLog()
+    const line = await until("the fault's log line", async () =>
+      (await serverLog())
         .split("\n")
         .filter((text) => text.startsWith("{"))
         .map((text) => JSON.parse(text) as Record<string, unknown>)
@@ -150,9 +141,10 @@ describe("an unhandled fault in which a statement failed", () => {
     // Nowhere in the fault's line, whichever field carries it.
     expectFixedFailure(JSON.stringify(line));
     // Nowhere in the log.
-    expect(serverLog()).not.toContain(marker);
-    expect(serverLog()).not.toContain(STATEMENT);
-    expect(serverLog()).not.toContain(DRIVER_MESSAGE);
+    const log = await serverLog();
+    expect(log).not.toContain(marker);
+    expect(log).not.toContain(STATEMENT);
+    expect(log).not.toContain(DRIVER_MESSAGE);
   });
 
   it("is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
@@ -274,16 +266,13 @@ describe("an unhandled fault in which a statement failed", () => {
   );
 });
 
-describe("a warning about an event stream that cannot be read", () => {
-  function sql(text: string): void {
-    withInstanceDatabase(server!.sqlitePath, (db) => {
-      db.exec(text);
-    });
-  }
+/** A stream re-reads its credential every 30 seconds. */
+const HEARTBEAT_BUDGET_MS = 45_000;
 
+describe("a warning about an event stream that cannot be read", () => {
   /** The `[events]` warnings in the server's log. */
-  function eventWarnings(): string[] {
-    return serverLog()
+  async function eventWarnings(): Promise<string[]> {
+    return (await serverLog())
       .split("\n")
       .filter((text) => text.startsWith("[events] closing the stream"));
   }
@@ -324,53 +313,28 @@ describe("a warning about an event stream that cannot be read", () => {
       await reader.cancel();
 
       // The head of the log cannot be read.
-      const known = new Set(eventWarnings());
-      sql("ALTER TABLE event_log RENAME TO event_log_gone");
-      let headStream: string;
-      try {
-        headStream = await readToEnd((await openStream()).body!.getReader());
-      } finally {
-        sql("ALTER TABLE event_log_gone RENAME TO event_log");
-      }
+      const known = new Set(await eventWarnings());
+      await server!.setFault("fail:stream-head");
+      const headStream = await readToEnd(
+        (await openStream()).body!.getReader(),
+      );
       expect(headStream).not.toContain("stream_cursor");
-      const head = await until("the head's warning", () =>
-        eventWarnings().find((text) => !known.has(text)),
+      const head = await until("the head's warning", async () =>
+        (await eventWarnings()).find((text) => !known.has(text)),
       );
       expect(head).toContain("the event-log head could not be read");
       expectFixedFailure(head);
 
-      // A catch-up fails after the head was read. The log's sequence is moved
-      // up so that the cursor is a number nothing else in the statement is,
-      // and a view in place of the table answers the head and not the rows.
-      sql("UPDATE sqlite_sequence SET seq = 7391850 WHERE name = 'event_log'");
-      const created = await fetch(`${server!.apiUrl}/items`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${server!.workingKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          type: "core.note",
-          properties: { body: "after the cursor" },
-        }),
-      });
-      expect(created.status).toBe(201);
-      sql(
-        "ALTER TABLE event_log RENAME TO event_log_gone; CREATE VIEW event_log AS SELECT id, created_at FROM event_log_gone",
+      // A catch-up fails after the head was read.
+      await server!.setFault("fail:stream-replay");
+      const catchUp = await readToEnd(
+        (await openStream({ "Last-Event-ID": "0" })).body!.getReader(),
       );
-      let catchUp: string;
-      try {
-        catchUp = await readToEnd(
-          (await openStream({ "Last-Event-ID": "7391850" })).body!.getReader(),
-        );
-      } finally {
-        sql(
-          "DROP VIEW event_log; ALTER TABLE event_log_gone RENAME TO event_log",
-        );
-      }
       expect(catchUp).toContain('"reason":"replay_failed"');
-      const replay = await until("the catch-up's warning", () =>
-        eventWarnings().find((text) => text.includes("the catch-up could not")),
+      const replay = await until("the catch-up's warning", async () =>
+        (await eventWarnings()).find((text) =>
+          text.includes("the catch-up could not"),
+        ),
       );
       expectFixedFailure(replay);
       expect(replay).not.toContain("params");
@@ -379,23 +343,18 @@ describe("a warning about an event stream that cannot be read", () => {
       const current = await fetch(`${server!.apiUrl}/keys/current`, {
         headers: { Authorization: `Bearer ${server!.workingKey}` },
       });
-      const { id: keyId } = (await current.json()) as { id: string };
+      const { id: currentKey } = (await current.json()) as { id: string };
       const live = await openStream();
       expect(live.status).toBe(200);
       const liveReader = live.body!.getReader();
       await liveReader.read();
-      sql("ALTER TABLE api_keys RENAME TO api_keys_gone");
-      let ended: string;
-      try {
-        ended = await readToEnd(liveReader);
-      } finally {
-        sql("ALTER TABLE api_keys_gone RENAME TO api_keys");
-      }
+      await server!.setFault("fail:stream-credential");
+      const ended = await readToEnd(liveReader);
       expect(ended).toContain('"reason":"live_delivery_failed"');
       const credential = await until(
         "the credential's warning",
-        () =>
-          eventWarnings().find((text) =>
+        async () =>
+          (await eventWarnings()).find((text) =>
             text.includes("the credential could not be read again"),
           ),
         HEARTBEAT_BUDGET_MS,
@@ -403,7 +362,7 @@ describe("a warning about an event stream that cannot be read", () => {
       expectFixedFailure(credential);
       expect(credential).not.toContain("api_keys");
       expect(credential).not.toContain("params");
-      expect(credential).not.toContain(keyId);
+      expect(credential).not.toContain(currentKey);
       expect(credential).not.toContain(server!.workingKey);
     },
     HEARTBEAT_BUDGET_MS + 30_000,

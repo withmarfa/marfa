@@ -302,7 +302,7 @@ If a write cannot get the store's write lock within the instance's busy budget, 
 
 **Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
 
-**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held from outside for longer than the budget`.
+**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held for longer than the budget`.
 
 ### `errors/contention-declared`
 
@@ -776,7 +776,7 @@ Every code the server answers over HTTP is a row of the table below, which is wr
 | `source_id_conflict`              | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                             |
 | `trash_plan_changed`              | 409                 | A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.                                                                         |
 | `type_already_exists`             | 409                 | A type is already registered under this identifier.                                                                                                                                            |
-| `type_chain_unresolvable`         | 409                 | The stored parent chain of a type is circular or too deep to resolve. `PUT /types/{id}` still accepts a corrected schema.                                                                      |
+| `type_chain_unresolvable`         | 409                 | The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.                                                                                             |
 | `type_has_subtypes`               | 409                 | Another type declares this type as its parent. Forcing the delete does not override this.                                                                                                      |
 | `type_in_use`                     | 409                 | Items of the type still exist, the bin included, or a folder, view or webhook setting names it, and the delete did not ask to force.                                                           |
 | `type_mismatch`                   | 409                 | The request declares a type other than the type of the item it resolved.                                                                                                                       |

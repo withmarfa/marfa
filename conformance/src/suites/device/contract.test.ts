@@ -1223,15 +1223,19 @@ const NOT_DRIVEN: Record<string, string> = {
   "docs topics":
     "reads the docs site, which is not a server; held by its own case",
   "server install":
-    "runs Docker on this machine and sends no request to a server; held by core/marfa-cli/tests/server.rs",
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
   "server upgrade":
-    "runs Docker on this machine and sends no request to a server; held by core/marfa-cli/tests/server.rs",
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
   "server status":
-    "runs Docker on this machine and sends no request to a server; held by core/marfa-cli/tests/server.rs",
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
   "server start":
-    "runs Docker on this machine and sends no request to a server; held by core/marfa-cli/tests/server.rs",
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
+  "server stop":
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
+  "server run":
+    "starts marfa-server with an install's settings and supervises it; held by core/marfa-cli/tests/server.rs",
   "server uninstall":
-    "runs Docker on this machine and sends no request to a server; held by core/marfa-cli/tests/server.rs",
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
 };
 
 /**

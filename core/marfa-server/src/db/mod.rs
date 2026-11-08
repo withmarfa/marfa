@@ -18,9 +18,19 @@ use rusqlite::Transaction;
 pub use open::Options;
 pub use writer::Pulse;
 
-use crate::app::faults::{FAIL_LOCK, Faults, HOLD_WRITE};
+use crate::app::faults::{
+    FAIL_LOCK, Faults, HOLD_WRITE, REFUSE_READ, REFUSE_WRITE, REFUSE_WRITE_LOCK,
+};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
+
+/// The refusal a database that cannot be read or written gives.
+pub fn io_refusal() -> Refusal {
+    Refusal::from(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
+        None,
+    ))
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Write {
@@ -85,6 +95,9 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
+        if self.faults.refusing(REFUSE_READ) {
+            return Err(io_refusal());
+        }
         self.readers
             .read(job)
             .await
@@ -100,6 +113,15 @@ impl Db {
         if write.action.is_some() {
             self.faults.hold(HOLD_WRITE, write.action).await;
         }
+        if self.faults.refusing(REFUSE_WRITE) {
+            return Err(io_refusal());
+        }
+        if !self.wait_out_lock().await {
+            return Err(self.with_budget(Refusal::new(
+                Code::WriteContention,
+                "The database is busy; try again.",
+            )));
+        }
         if write.for_caller && self.faults.fail(FAIL_LOCK, None) {
             return Err(self.with_budget(Refusal::new(
                 Code::WriteContention,
@@ -110,6 +132,23 @@ impl Db {
             .submit(write, self.budget, job)
             .await
             .map_err(|refusal| self.with_budget(refusal))
+    }
+
+    /// Waits as for a lock another connection holds, until it is let go or the busy budget is spent.
+    async fn wait_out_lock(&self) -> bool {
+        if !self.faults.refusing(REFUSE_WRITE_LOCK) {
+            return true;
+        }
+        let deadline = tokio::time::Instant::now() + self.budget;
+        loop {
+            if !self.faults.is_refusing(REFUSE_WRITE_LOCK) {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     /// Beaten by a job that writes longer than the busy budget, so writes queued behind it wait.

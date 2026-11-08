@@ -218,12 +218,6 @@ When the instance restarts or is restored from a physical database backup, the s
 
 **Tests:** `compliance/folder-status.test.ts › retains reports through restart and restoring a physical database backup`.
 
-### `folder-status/schema-refusal`
-
-When an instance database has a schema without the folder-status table required by this build, the server MUST refuse to open it without changing the stored database.
-
-**Tests:** `compliance/folder-status.test.ts › refuses an old schema without adding a health table or altering its database`.
-
 ## Operational persistence
 
 ### `folder-status/portable-archive`

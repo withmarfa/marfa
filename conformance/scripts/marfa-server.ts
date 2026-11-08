@@ -15,15 +15,16 @@ import { tmpdir } from "node:os";
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
- *   tsx scripts/marfa-server.ts refused [--state <dir>] [--kill-when <text>] [--env K=V ...]
+ *   tsx scripts/marfa-server.ts refused [--state <dir>] [--env K=V ...]
  *   tsx scripts/marfa-server.ts restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...]
  *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>|pause|resume
  *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
+ *   tsx scripts/marfa-server.ts log [--state <dir>]
  *
  * `refused` boots the same server on a state directory and waits for it to end
- * instead of for `/health`: for a boot that is meant to be refused. With
- * `--kill-when`, it kills the server's process group with `SIGKILL` as soon
- * as the server's log holds the text, for a boot stopped partway.
+ * instead of for `/health`: for a boot that is meant to be refused.
+ *
+ * `log` prints what the server wrote to its log, then to stderr.
  *
  * `restart` stops the server with the signal (`TERM` by default), prints how
  * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
@@ -77,6 +78,7 @@ import { tmpdir } from "node:os";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -108,7 +110,6 @@ import {
   signalGroup,
   STOP_SIGNALS,
   stopWithSignal,
-  waitUntilGone,
   type StopSignal,
 } from "../src/utils/server-process.js";
 
@@ -131,14 +132,23 @@ const RUN_SERVER = resolve(
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
-  command: "up" | "down" | "status" | "refused" | "restart" | "clock" | "fault";
+  command:
+    | "up"
+    | "down"
+    | "status"
+    | "refused"
+    | "restart"
+    | "clock"
+    | "fault"
+    | "image"
+    | "log";
   state: string;
+  /** For `image`: the directory the copy is made into. */
+  to?: string;
   port?: number;
   nodeEnv?: string;
   env: Record<string, string>;
   signal: StopSignal;
-  /** For `refused`: the log text at which the server is killed. */
-  killWhen?: string;
   /** What follows the options: the subcommand of `clock` and `fault`. */
   words: string[];
 }
@@ -172,13 +182,15 @@ const COMMANDS = [
   "restart",
   "clock",
   "fault",
+  "image",
+  "log",
 ] as const;
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list | image [--state <dir>] --to <dir> | log [--state <dir>]",
     );
   }
   const args: Args = {
@@ -197,9 +209,8 @@ function parseArgs(argv: string[]): Args {
       if (!Number.isInteger(args.port) || args.port < 0 || args.port > 65_535) {
         throw new Error("--port needs an integer from 0 to 65535");
       }
-    } else if (arg === "--kill-when" && args.command === "refused") {
-      args.killWhen = rest[++i] ?? "";
-      if (args.killWhen === "") throw new Error("--kill-when needs a text");
+    } else if (arg === "--to" && args.command === "image") {
+      args.to = resolve(rest[++i] ?? "");
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
     } else if (arg === "--env") {
@@ -495,14 +506,21 @@ async function startServer(args: BootOptions): Promise<Started> {
 
   const port =
     args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
-  const controlDir = realpathSync(
-    mkdtempSync(resolve(tmpdir(), "marfa-control-")),
-  );
-  chmodSync(controlDir, 0o700);
-  const controlSocket = resolve(controlDir, "control.sock");
-  writeFileSync(resolve(args.state, "control-directory"), controlDir, {
-    mode: 0o600,
-  });
+  // A caller that names the socket owns its folder and what stands there.
+  const named = args.env?.MARFA_CONTROL_SOCKET;
+  let controlSocket: string;
+  if (named === undefined) {
+    const controlDir = realpathSync(
+      mkdtempSync(resolve(tmpdir(), "marfa-control-")),
+    );
+    chmodSync(controlDir, 0o700);
+    controlSocket = resolve(controlDir, "control.sock");
+    writeFileSync(resolve(args.state, "control-directory"), controlDir, {
+      mode: 0o600,
+    });
+  } else {
+    controlSocket = resolve(named);
+  }
   const retainedEnv = existsSync(p.env)
     ? parseEnvFile(readFileSync(p.env, "utf8"))
     : {};
@@ -831,33 +849,11 @@ export async function bootServer(args: BootOptions): Promise<void> {
  * stopped and reported, since a refusal that never came is a failure of the
  * fixture's premise.
  */
-export async function bootRefused(
-  args: BootOptions,
-  killWhen?: string,
-): Promise<void> {
+export async function bootRefused(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const { child, ended, logStart } = await startServer(args);
+  const { child, ended } = await startServer(args);
   const deadline = Date.now() + REFUSAL_BUDGET_MS;
   while (!ended() && Date.now() < deadline) {
-    if (
-      killWhen !== undefined &&
-      readFileSync(p.log).subarray(logStart).toString("utf8").includes(killWhen)
-    ) {
-      signalGroup(groupOf(args.state), "SIGKILL");
-      if (
-        !(await waitUntilGone(
-          groupOf(args.state),
-          Date.now() + SHUTDOWN_BUDGET_MS,
-        ))
-      ) {
-        throw new Error(`the server under ${args.state} survived SIGKILL`);
-      }
-      cleanupControlDirectory(args.state);
-      console.log(
-        `[marfa-server] killed the server once its log said ${JSON.stringify(killWhen)}; log at ${p.log}`,
-      );
-      return;
-    }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
   if (!ended()) {
@@ -1003,6 +999,37 @@ async function refuseToClearUnderALiveServer(state: string): Promise<void> {
     throw new Error(
       `${url} still answers /health and ${p.pid} does not name it, so the state under ${state} is not cleared. Stop that server first.`,
     );
+  }
+}
+
+/**
+ * Copies the instance's data directory as it stands at one instant, as a
+ * volume snapshot would, into the empty directory `to`. The server's whole
+ * process group is stopped while the copy is taken and then resumed, so no
+ * write lands between one file and the next. What the running process owns
+ * rather than holds is left out.
+ */
+export function takeImage(state: string, to: string): void {
+  const group = groupOf(state);
+  signalGroup(group, "SIGSTOP");
+  try {
+    cpSync(state, to, {
+      recursive: true,
+      filter: (source) =>
+        !/server\.(pid|log|exit)$/.test(source) &&
+        !/\/control-directory$/.test(source) &&
+        !/\/owner-session\.json(?:\.lock|\.[^/]+\.tmp)?$/.test(source),
+    });
+  } finally {
+    signalGroup(group, "SIGCONT");
+  }
+}
+
+/** What the server wrote to stdout, then to stderr. */
+function printLog(state: string): void {
+  const p = paths(state);
+  for (const file of [p.log, p.stderr]) {
+    if (existsSync(file)) process.stdout.write(readFileSync(file, "utf8"));
   }
 }
 
@@ -1157,8 +1184,13 @@ if (
   };
   try {
     if (args.command === "up") await bootServer(boot);
-    else if (args.command === "refused") await bootRefused(boot, args.killWhen);
+    else if (args.command === "refused") await bootRefused(boot);
     else if (args.command === "restart") await restartServer(boot, args.signal);
+    else if (args.command === "image") {
+      if (args.to === undefined) throw new Error("image needs --to <dir>");
+      takeImage(args.state, args.to);
+      console.log(`[marfa-server] image of ${args.state} in ${args.to}`);
+    } else if (args.command === "log") printLog(args.state);
     else if (args.command === "clock" || args.command === "fault") {
       await runHooks(args);
     } else if (args.command === "down") {

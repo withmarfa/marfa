@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   activeFaults,
   atPoint,
+  blobLie,
   clearFaults,
   deadlineFault,
   failAt,
@@ -10,14 +11,19 @@ import {
   faultProblem,
   faultsArmed,
   freeFault,
+  healBlob,
   healthAdmitted,
   limitFault,
   holdArmed,
   holdAt,
   POINTS,
+  refuseArmed,
+  refusing,
   setFault,
   storeCheckDeadlineFault,
+  hiddenEventsFault,
   unreadableFault,
+  webhookPositionHidden,
 } from "./faults.js";
 
 const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
@@ -35,13 +41,15 @@ function arm(name: string, arg: string | null = null): string | undefined {
 
 describe("the declared points", () => {
   it("arm every point the table declares, with a job where a point names one", () => {
-    for (const kind of ["hold", "fail"] as const) {
+    for (const kind of ["hold", "fail", "refuse"] as const) {
       for (const point of POINTS[kind]) {
         const name = `${kind}:${point.name.replace("<job>", JOBS[0]!)}`;
         expect(arm(name), name).toBeUndefined();
       }
     }
-    expect(activeFaults().length).toBe(POINTS.hold.length + POINTS.fail.length);
+    expect(activeFaults().length).toBe(
+      POINTS.hold.length + POINTS.fail.length + POINTS.refuse.length,
+    );
   });
 
   it("refuse a name no point answers to, in every kind", () => {
@@ -302,6 +310,12 @@ describe("a free fault", () => {
     expect(freeFault("blobs")).toBeUndefined();
   });
 
+  it("reads unknown as free space that cannot be read", () => {
+    expect(arm("free:blobs", "unknown")).toBeUndefined();
+    expect(freeFault("blobs")).toBeNull();
+    expect(freeFault("database")).toBeUndefined();
+  });
+
   it("refuses a volume nothing reads, and an argument that is not a whole number of bytes", () => {
     expect(arm("free:elsewhere", "1")).toMatch(/not a volume/);
     expect(arm("free:blobs")).toMatch(/whole number/);
@@ -367,6 +381,27 @@ describe("an unreadable fault", () => {
   });
 });
 
+describe("a refuse fault", () => {
+  it("refuses every time until cleared, counts each refusal and acts on its own point alone", () => {
+    expect(refusing("read")).toBe(false);
+    expect(arm("refuse:read")).toBeUndefined();
+    expect(refuseArmed("read")).toBe(true);
+    expect(refuseArmed("write")).toBe(false);
+    expect(refusing("read")).toBe(true);
+    expect(refusing("read")).toBe(true);
+    expect(refusing("write")).toBe(false);
+    expect(activeFaults()[0]?.fired).toBe(2);
+    clearFaults();
+    expect(refusing("read")).toBe(false);
+  });
+
+  it("refuses a point nothing declares and an argument", () => {
+    expect(arm("refuse:nowhere")).toMatch(/no refuse point/);
+    expect(arm("refuse:read", "1")).toMatch(/takes no argument/);
+    expect(activeFaults()).toEqual([]);
+  });
+});
+
 describe("a hold on a stream point", () => {
   it("is armed for its own point and for no other, and is not armed by another kind of fault", () => {
     expect(holdArmed("stream-drain")).toBe(false);
@@ -417,7 +452,9 @@ describe("a fail fault on an event point", () => {
       "stream-replay",
       "stream-credential",
       "stream-replay-row",
+      "stream-replay-untyped",
       "edge-source-type",
+      "event-stamp",
     ]) {
       expect(arm(`fail:${point}`, "2"), point).toBeUndefined();
       expect([failAt(point), failAt(point), failAt(point)]).toEqual([
@@ -552,5 +589,71 @@ describe("a counted hold between bulk chunks", () => {
     expect(activeFaults()[0]?.waiting).toBe(2);
     clearFaults();
     await Promise.all([first, second]);
+  });
+});
+
+describe("a blob fault", () => {
+  const A = `sha256:${"a".repeat(64)}`;
+  const B = `sha256:${"b".repeat(64)}`;
+
+  it("takes a list of blob names and refuses anything else", () => {
+    expect(arm("lose:blob", A)).toBeUndefined();
+    expect(arm("damage:blob", B)).toBeUndefined();
+    for (const arg of [null, "", "sha256:short", `${A},`, `${A},${A}x`]) {
+      expect(arm("lose:blob", arg), String(arg)).not.toBeUndefined();
+    }
+    expect(arm("damage:nothing", A)).not.toBeUndefined();
+    expect(blobLie(A)).toBe("lose");
+    expect(blobLie(B)).toBe("damage");
+    expect(blobLie(`sha256:${"c".repeat(64)}`)).toBeUndefined();
+  });
+
+  it("lets a lost blob be placed again and a damaged blob only be deleted", () => {
+    arm("lose:blob", A);
+    arm("damage:blob", B);
+    healBlob(B, true);
+    expect(blobLie(B)).toBe("damage");
+    healBlob(A, true);
+    expect(blobLie(A)).toBeUndefined();
+    healBlob(B, false);
+    expect(blobLie(B)).toBeUndefined();
+  });
+});
+
+describe("a hide:event fault", () => {
+  it("takes an event id or a range of two and reads it until cleared", () => {
+    expect(arm("hide:event", "7")).toBeUndefined();
+    expect(hiddenEventsFault()).toEqual({ first: 7n, last: 7n });
+    expect(arm("hide:event", "3-9")).toBeUndefined();
+    expect(hiddenEventsFault()).toEqual({ first: 3n, last: 9n });
+    for (const bad of ["0", "9-3", "a", "1-", "-4", "1.5", ""])
+      expect(arm("hide:event", bad), bad).not.toBeUndefined();
+    expect(arm("hide:event")).not.toBeUndefined();
+    clearFaults();
+    expect(hiddenEventsFault()).toBeUndefined();
+  });
+});
+
+describe("a hide:webhook-position fault", () => {
+  it("takes no argument and reads until cleared", () => {
+    expect(webhookPositionHidden()).toBe(false);
+    expect(arm("hide:webhook-position")).toBeUndefined();
+    expect(webhookPositionHidden()).toBe(true);
+    expect(arm("hide:webhook-position", "ahead")).not.toBeUndefined();
+    expect(arm("hide:other")).not.toBeUndefined();
+    clearFaults();
+    expect(webhookPositionHidden()).toBe(false);
+  });
+});
+
+describe("a hold on admission", () => {
+  it("holds a request before it reaches the writer, once, and lets later ones pass", async () => {
+    expect(arm("hold:admission", "1")).toBeUndefined();
+    expect(holdArmed("admission")).toBe(true);
+    const held = holdAt("admission");
+    await Promise.resolve();
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    clearFaults();
+    await held;
   });
 });

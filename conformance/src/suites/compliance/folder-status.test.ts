@@ -1,22 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   bootFreshServer,
-  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   DAY_MS,
   HOUR_MS,
   MINUTE_MS,
   movedClock,
 } from "../../utils/moved-clock.js";
-import { HeldLock } from "../../utils/held-lock.js";
 import {
   connect,
   issuerOrigin,
@@ -26,6 +21,8 @@ import {
 } from "../../utils/signed-in.js";
 import { validatorFor, type OpenApiDocument } from "../../utils/openapi.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { parseEnvFile } from "../../utils/target.js";
+import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
 let document: OpenApiDocument;
 async function expectMatchesSchema(
   method: string,
@@ -77,9 +74,7 @@ interface Ack {
   received_at: string;
 }
 beforeAll(async () => {
-  server = await bootFreshServer("folder-status", {
-    SQLITE_BUSY_BUDGET_MS: "3000",
-  });
+  server = await bootFreshServer("folder-status");
   clock = movedClock(server);
   origin = await issuerOrigin(server);
   document = (await (
@@ -230,7 +225,7 @@ describe("folder sync reports", () => {
     expect(active).not.toContain(secondId);
   });
   it("lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token", async () => {
-    const wait = () => new Promise((resolve) => setTimeout(resolve, 15));
+    const wait = () => clock.advance(1_000);
     const made: { id: string; title: string }[] = [];
     for (const [sent, shown] of [
       ["  padded \t  and   spaced  ", "padded and spaced"],
@@ -523,7 +518,7 @@ describe("folder sync reports", () => {
     const id = await folder();
     const copies = async () =>
       (await get(id)).sign_ins[0]!.copies.map((c) => c.folder_store_id);
-    const wait = () => new Promise((resolve) => setTimeout(resolve, 15));
+    const wait = () => clock.advance(1_000);
     await put(id, { ...report, folder_store_id: "copy-a" });
     await wait();
     await put(id, { ...report, folder_store_id: "copy-b" });
@@ -783,7 +778,7 @@ describe("folder sync reports", () => {
   it("leaves newer reports and their receipt unchanged on equal and delayed retries", async () => {
     const id = await folder();
     const first = await put(id, { ...report, sequence: 9 });
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await clock.advance(1_100);
     for (const sequence of [9, 2])
       expect(
         await put(id, { ...report, sequence, pending_uploads: 999 }),
@@ -907,22 +902,20 @@ describe("folder sync reports", () => {
     for (const method of ["GET", "PUT"]) {
       const reader = await key();
       await put(id, report, reader.key);
-      const lock = await HeldLock.take(server.sqlitePath);
-      try {
-        const pending = call(
-          method,
-          `/folders/${id}/status`,
-          method === "PUT" ? { ...report, sequence: 2 } : undefined,
-          reader.key,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        await lock.commit([
-          `UPDATE api_keys SET type_permissions='{"core.note":"read"}' WHERE id='${reader.id}'`,
-        ]);
-        expect((await pending).status).toBe(404);
-      } finally {
-        await lock.release();
-      }
+      await server.setFault("hold:admission=1");
+      const pending = call(
+        method,
+        `/folders/${id}/status`,
+        method === "PUT" ? { ...report, sequence: 2 } : undefined,
+        reader.key,
+      );
+      await server.waitForHold("hold:admission");
+      const narrowed = await call("PATCH", `/keys/${reader.id}`, {
+        type_permissions: { "core.note": "read" },
+      });
+      expect(narrowed.status).toBe(200);
+      await server.clearFault("hold:admission");
+      expect((await pending).status).toBe(404);
     }
     expect(
       (await get(id)).sign_ins.every((g) => g.copies[0]!.sequence === 1),
@@ -931,11 +924,7 @@ describe("folder sync reports", () => {
   it("rolls back a failed report replacement and preserves its previous receipt", async () => {
     const id = await folder();
     const first = await put(id);
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.exec(
-        "CREATE TRIGGER fail_folder_status BEFORE UPDATE ON folder_status BEGIN SELECT RAISE(ABORT, 'fixture rollback'); END",
-      );
-    });
+    await server.setFault("fail:folder-status-report");
     try {
       expect(
         (
@@ -946,10 +935,13 @@ describe("folder sync reports", () => {
           })
         ).status,
       ).toBe(500);
+      expect(
+        (await server.faults()).find(
+          (fault) => fault.name === "fail:folder-status-report",
+        )?.fired,
+      ).toBe(1);
     } finally {
-      withInstanceDatabase(server.sqlitePath, (db) => {
-        db.exec("DROP TRIGGER fail_folder_status");
-      });
+      await server.clearFault("fail:folder-status-report");
     }
     expect((await get(id)).sign_ins[0]!.copies[0]).toMatchObject({
       sequence: 1,
@@ -983,61 +975,28 @@ describe("folder sync reports", () => {
     async () => {
       const id = await folder();
       const ack = await put(id);
-      const backup = join(
-        mkdtempSync(join(tmpdir(), "folder-health-backup-")),
-        "marfa.db",
-      );
+      const image = await server.image();
       try {
-        await server.restart(() => {
-          copyFileSync(server.sqlitePath, backup);
-        });
+        await server.restart();
         expect((await get(id)).sign_ins[0]!.copies[0]!.received_at).toBe(
           ack.received_at,
         );
         await put(id, { ...report, sequence: 2 });
-        await server.restart(() => {
-          copyFileSync(backup, server.sqlitePath);
-        });
-        expect((await get(id)).sign_ins[0]!.copies[0]).toMatchObject({
-          sequence: 1,
-          received_at: ack.received_at,
-        });
+        await bootServer({ state: image });
+        const env = parseEnvFile(readFileSync(`${image}/env`, "utf8"));
+        const restored = await fetch(
+          `${env.MARFA_API_URL}/folders/${id}/status`,
+          { headers: { authorization: `Bearer ${server.workingKey}` } },
+        );
+        expect(restored.status).toBe(200);
+        expect(
+          ((await restored.json()) as Status).sign_ins[0]!.copies[0],
+        ).toMatchObject({ sequence: 1, received_at: ack.received_at });
       } finally {
-        rmSync(join(backup, ".."), { recursive: true, force: true });
+        await stopServer({ state: image });
+        rmSync(image, { recursive: true, force: true });
       }
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
-  );
-  it(
-    "refuses an old schema without adding a health table or altering its database",
-    async () => {
-      const backup = join(
-        mkdtempSync(join(tmpdir(), "folder-health-schema-")),
-        "marfa.db",
-      );
-      await server.restart(() => {
-        copyFileSync(server.sqlitePath, backup);
-      });
-      const refused = await bootRefused("folder-status-old-schema", {
-        prepare: (path) => {
-          copyFileSync(backup, path);
-          withInstanceDatabase(path, (db) => {
-            db.exec("DROP TABLE folder_status");
-          });
-        },
-      });
-      try {
-        expect(refused.after.db).toBe(refused.before.db);
-        expect([
-          "absent",
-          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        ]).toContain(refused.after.wal);
-        expect(refused.output).toMatch(/refus|incompatible/i);
-      } finally {
-        await refused.stop();
-        rmSync(join(backup, ".."), { recursive: true, force: true });
-      }
-    },
-    FRESH_SERVER_TIMEOUT_MS,
   );
 });

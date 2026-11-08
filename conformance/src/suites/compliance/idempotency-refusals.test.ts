@@ -4,12 +4,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { movedClock } from "../../utils/moved-clock.js";
 
 /**
- * These cases need their own server: an in-flight claim needs stored state
- * arranged and the clock moved; an oversized answer needs a request cap above
+ * These cases need their own server: an in-flight claim needs a held write
+ * and the clock moved; an oversized answer needs a request cap above
  * the shared server's; a changed contract needs a restart onto another version.
  */
 let server: FreshServer | undefined;
@@ -137,48 +136,30 @@ describe("an Idempotency-Key repeated after its first answer was too large to ke
 });
 
 describe("an Idempotency-Key repeated while its first request is still being served", () => {
-  /**
-   * The state a writer leaves while it runs: the key claimed, no answer
-   * recorded. The window a live request holds it for is a few milliseconds
-   * on one event loop, which sixteen concurrent sends of one key over HTTP
-   * never landed in, so the record is arranged in the instance's own file.
-   * Its age is not: the claim is as old as the server's clock says.
-   */
-  function leaveClaimed(key: string): number {
-    return withInstanceDatabase(server!.sqlitePath, (db) => {
-      const changed = db
-        .prepare(
-          `UPDATE idempotency_records
-             SET state = 'in_flight', response_status = NULL,
-                 response_content_type = NULL, response_body = NULL,
-                 completed_at = NULL
-           WHERE idempotency_key = ?`,
-        )
-        .run(key);
-      return Number(changed.changes);
-    });
-  }
-
   it("answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease", async () => {
-    const key = "in-flight-claim";
     const request = { type: "core.note", properties: { body: "once" } };
     const before = await liveItems();
 
-    const first = await send("POST", "/items", request, {
-      "Idempotency-Key": key,
+    // The control: with the record complete, a repeat is a replay.
+    const done = await send("POST", "/items", request, {
+      "Idempotency-Key": "in-flight-control",
     });
-    expect(first.status).toBe(201);
-    // The control: with the record complete, the repeat is a replay.
+    expect(done.status).toBe(201);
     const replayed = await send("POST", "/items", request, {
-      "Idempotency-Key": key,
+      "Idempotency-Key": "in-flight-control",
     });
     expect(replayed.status).toBe(201);
     expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
     expect(await liveItems()).toBe(before + 1);
 
+    // The first request holds its claim while its write waits.
+    const key = "in-flight-claim";
+    await server!.setFault("hold:write=item.create@1");
+    const first = send("POST", "/items", request, { "Idempotency-Key": key });
+    await server!.waitForHold("hold:write");
+
     // Ten seconds inside the 60-second lease, so that the bound is what holds
     // the key and not the claim being new.
-    expect(leaveClaimed(key)).toBe(1);
     await clock.advance(50 * 1000);
     const busy = await send("POST", "/items", request, {
       "Idempotency-Key": key,
@@ -198,6 +179,8 @@ describe("an Idempotency-Key repeated while its first request is still being ser
     });
     expect(taken.status).toBe(201);
     expect(taken.headers.get("Idempotency-Replayed")).toBeNull();
+    await server!.clearFault("hold:write");
+    await first;
   });
 });
 

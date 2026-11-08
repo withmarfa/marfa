@@ -988,7 +988,7 @@ const getTypeRoute = createRoute({
         },
       },
       description:
-        "`type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it.",
+        "`type_chain_unresolvable`: the type's stored definition does not read. `PUT /types/{id}` can correct it.",
     },
   },
 });
