@@ -110,6 +110,43 @@ fn jpeg() -> Vec<u8> {
     ]
 }
 
+fn riff(chunks: &[Vec<u8>]) -> Vec<u8> {
+    let mut body = b"WEBP".to_vec();
+    body.extend(chunks.concat());
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+fn riff_chunk(name: &[u8; 4], data: &[u8], padded: bool) -> Vec<u8> {
+    let mut out = name.to_vec();
+    out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_le_bytes());
+    out.extend_from_slice(data);
+    if padded && data.len() % 2 == 1 {
+        out.push(0);
+    }
+    out
+}
+
+fn lossless(width: u32, height: u32, padded: bool) -> Vec<u8> {
+    let bits = (width - 1) | ((height - 1) << 14);
+    let mut data = vec![0x2f];
+    data.extend_from_slice(&bits.to_le_bytes());
+    riff_chunk(b"VP8L", &data, padded)
+}
+
+fn canvas(width: u32, height: u32) -> Vec<u8> {
+    let mut data = vec![0; 4];
+    data.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
+    data.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
+    riff_chunk(b"VP8X", &data, true)
+}
+
+fn digest_of(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
 fn etag_of(bytes: &[u8]) -> String {
     format!("\"{}\"", hex::encode(Sha256::digest(bytes)))
 }
@@ -291,6 +328,18 @@ async fn a_refused_picture_stores_nothing_and_keeps_the_previous_one() {
         ("huge declared size", png_sized(60_000, 60_000, 3, 0)),
         ("no width", png_sized(0, 8, 3, 0)),
         ("one past the limit", png_sized(4097, 1, 3, 0)),
+        (
+            "a webp image past the limit inside a one pixel canvas",
+            riff(&[canvas(1, 1), lossless(4097, 1, true)]),
+        ),
+        (
+            "a webp image that is not the canvas",
+            riff(&[canvas(8, 8), lossless(4, 4, true)]),
+        ),
+        (
+            "a webp chunk without its padding byte",
+            riff(&[lossless(8, 8, false)]),
+        ),
     ];
     for (label, bytes) in refused {
         let reply = instance.put_local(&bytes).await;
@@ -306,6 +355,8 @@ async fn a_refused_picture_stores_nothing_and_keeps_the_previous_one() {
     assert_eq!(instance.count("SELECT count(*) FROM blobs"), blobs);
     let witness = instance.put_local(&png_sized(4096, 1, 3, 0)).await;
     assert_eq!(witness.status, StatusCode::OK);
+    let webp = riff(&[canvas(8, 8), lossless(8, 8, true)]);
+    assert_eq!(instance.put_local(&webp).await.status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -521,4 +572,140 @@ async fn a_validator_that_still_matches_gets_304_and_a_stale_one_gets_the_pictur
     let stale = send(&instance.control, conditional("\"0000\"")).await;
     assert_eq!(stale.status, StatusCode::OK);
     assert_eq!(stale.bytes, file);
+}
+
+impl Instance {
+    fn references(&self) -> Vec<(String, String, bool)> {
+        let path = self._dir.path().join("marfa.db");
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let mut statement = connection
+            .prepare("SELECT hash, kind, lends FROM blob_references ORDER BY hash, kind")
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    async fn blob_status(&self, key: &str, hash: &str) -> StatusCode {
+        let mut built = request(Method::GET, &format!("/blobs/{hash}"), Body::empty());
+        built.headers_mut().insert(
+            header::AUTHORIZATION,
+            format!("Bearer {key}").parse().unwrap(),
+        );
+        send(&self.public, built).await.status
+    }
+
+    async fn plain_key(&self, source: &str, grants: Value) -> String {
+        let mut body = json!({ "label": source, "source": source, "permissions": [] });
+        body.as_object_mut()
+            .unwrap()
+            .extend(grants.as_object().unwrap().clone());
+        let minted = self.json(&self.control, Method::POST, "/keys", &body).await;
+        assert_eq!(minted.status, StatusCode::CREATED, "{:?}", minted.json());
+        minted.json()["key"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn the_picture_is_a_row_of_the_reference_index_that_follows_it_and_lends_nothing() {
+    let instance = Instance::start(true).await;
+    assert!(instance.references().is_empty());
+
+    let first = png(20);
+    assert_eq!(instance.put_local(&first).await.status, StatusCode::OK);
+    let held = digest_of(&first);
+    assert_eq!(
+        instance.references(),
+        vec![(held.clone(), "owner".to_string(), false)]
+    );
+    assert_eq!(instance.put_local(&first).await.status, StatusCode::OK);
+    assert_eq!(instance.references().len(), 1);
+
+    let second = jpeg();
+    assert_eq!(instance.put_local(&second).await.status, StatusCode::OK);
+    assert_eq!(
+        instance.references(),
+        vec![(digest_of(&second), "owner".to_string(), false)]
+    );
+
+    let refused = instance.put_local(&png_sized(4097, 1, 3, 0)).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        instance.references(),
+        vec![(digest_of(&second), "owner".to_string(), false)]
+    );
+
+    let removed = instance
+        .json(
+            &instance.control,
+            Method::PATCH,
+            "/owner",
+            &json!({ "avatar": null }),
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::OK);
+    assert!(instance.references().is_empty());
+
+    assert_eq!(instance.put_local(&first).await.status, StatusCode::OK);
+    let clearing = instance.key(json!({ "avatar": "write" })).await;
+    let mut built = request(
+        Method::PATCH,
+        "/profile",
+        Body::from(json!({ "avatar": null }).to_string()),
+    );
+    built
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    built.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {clearing}").parse().unwrap(),
+    );
+    let cleared = send(&instance.public, built).await;
+    assert_eq!(cleared.status, StatusCode::OK, "{:?}", cleared.json());
+    assert!(instance.references().is_empty());
+}
+
+#[tokio::test]
+async fn a_key_holding_every_type_reads_the_picture_blob_only_where_another_row_lends_it() {
+    let instance = Instance::start(true).await;
+    let kept = png(21);
+    assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
+    let hash = digest_of(&kept);
+
+    let every = instance
+        .plain_key("every", json!({ "type_permissions": { "*": "write" } }))
+        .await;
+    assert_eq!(
+        instance.blob_status(&every, &hash).await,
+        StatusCode::NOT_FOUND
+    );
+    let manager = instance
+        .plain_key("manager", json!({ "permissions": ["blobs.manage"] }))
+        .await;
+    assert_eq!(instance.blob_status(&manager, &hash).await, StatusCode::OK);
+
+    let mut upload = request(Method::POST, "/blobs", Body::from(kept.clone()));
+    upload.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {every}").parse().unwrap(),
+    );
+    assert_eq!(
+        send(&instance.public, upload).await.status,
+        StatusCode::CREATED
+    );
+    let body = json!({ "type": "core.note", "properties": { "body": format!("![x]({hash})") } });
+    let mut note = request(Method::POST, "/items", Body::from(body.to_string()));
+    note.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {every}").parse().unwrap(),
+    );
+    note.headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    assert_eq!(
+        send(&instance.public, note).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(instance.blob_status(&every, &hash).await, StatusCode::OK);
 }

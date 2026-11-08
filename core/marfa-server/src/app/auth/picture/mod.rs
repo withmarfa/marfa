@@ -2,8 +2,10 @@
 
 mod kind;
 
+use std::collections::BTreeMap;
+
 use rusqlite::{OptionalExtension, Transaction, params};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 pub use kind::MAX_BYTES;
 
@@ -11,6 +13,7 @@ use super::owner::{self, Owner};
 use super::{Note, Visit, note};
 use crate::app::App;
 use crate::app::access::{Caller, Level};
+use crate::app::blobs::references::{self, Naming, Row as Referencing};
 use crate::app::blobs::{Found, Hash};
 use crate::app::refusal::{Refusal, Result};
 
@@ -77,10 +80,25 @@ pub(super) fn exists(tx: &Transaction<'_>) -> Result<bool> {
 
 pub(super) fn remove(tx: &Transaction<'_>) -> Result<()> {
     tx.execute("DELETE FROM owner_picture", [])?;
-    Ok(())
+    references::forget(tx, Referencing::Owner)
 }
 
-fn set(tx: &Transaction<'_>, hash: &Hash, mime_type: &str, at: &str) -> Result<()> {
+/// The index names the picture's bytes, so a purge never takes them, and lends them to no one.
+fn set(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    hash: &Hash,
+    mime_type: &str,
+    at: &str,
+) -> Result<()> {
+    let properties = Map::from_iter([("picture".to_string(), Value::from(hash.as_str()))]);
+    let standing = BTreeMap::from([(hash.as_str().to_string(), false)]);
+    let naming = Naming {
+        inherited: Some(&standing),
+        ..Naming::default()
+    };
+    references::decide(tx, caller, Some(Referencing::Owner), &properties, naming)?
+        .apply(tx, Referencing::Owner)?;
     tx.execute(
         "INSERT INTO owner_picture (id, sha256, mime_type, updated_at) VALUES (1, ?1, ?2, ?3) \
          ON CONFLICT (id) DO UPDATE SET sha256 = excluded.sha256, \
@@ -120,7 +138,13 @@ impl App {
             door.admit(&unit.caller, &unit.at)?;
             let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
             let blob = placed.record(unit.tx(), None, &unit.at)?;
-            set(unit.tx(), &blob.hash, kind.mime_type(), &unit.at)?;
+            set(
+                unit.tx(),
+                &unit.caller,
+                &blob.hash,
+                kind.mime_type(),
+                &unit.at,
+            )?;
             found.avatar = true;
             note(
                 unit.tx(),

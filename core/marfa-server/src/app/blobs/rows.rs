@@ -174,6 +174,7 @@ fn keyed(row: Row<'_>) -> (&'static str, i64, &str, i64) {
         Row::Edge(seq) => ("edge", seq, "", 0),
         Row::Extension(seq, namespace) => ("extension", seq, namespace, 0),
         Row::Version(seq, version) => ("version", seq, "", version),
+        Row::Owner => ("owner", 0, "", 0),
     }
 }
 
@@ -204,7 +205,7 @@ fn types(tx: &Transaction<'_>, row: Row<'_>) -> Result<(String, String)> {
             )?
             .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?)))
             .optional()?,
-        Row::Version(..) => Some((String::new(), String::new())),
+        Row::Version(..) | Row::Owner => Some((String::new(), String::new())),
     };
     found.ok_or_else(|| Refusal::internal("a reference names a row that is not written"))
 }

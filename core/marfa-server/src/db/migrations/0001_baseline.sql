@@ -553,10 +553,11 @@ CREATE TABLE IF NOT EXISTS blob_proofs (
 -- (`seq` is its `seq`), an extension namespace on an item (`seq` and
 -- `namespace`) or an item version (`seq` and `version`). A reference that
 -- `lends` gives its readers the blob; one that does not only keeps it.
--- Cached lender types let reads skip duplicate references; versions have neither.
+-- Cached lender types let reads skip duplicate references; versions and the owner's picture
+-- (`owner`, `seq` 0) have neither and never lend.
 CREATE TABLE IF NOT EXISTS blob_references (
     hash TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version')),
+    kind TEXT NOT NULL CHECK (kind IN ('item', 'edge', 'extension', 'version', 'owner')),
     seq INTEGER NOT NULL,
     namespace TEXT NOT NULL DEFAULT '',
     version INTEGER NOT NULL DEFAULT 0,
