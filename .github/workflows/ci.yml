@@ -899,7 +899,7 @@ jobs:
     needs: [changes, rust-contract]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' }}
     name: Rust contract shard (${{ matrix.name }})
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     strategy:
       # Every shard reports, so one failure shows all the others there are.
@@ -921,58 +921,86 @@ jobs:
               module: false,
             }
           - {
-              name: "compliance 1/8",
+              name: "compliance 1/12",
               slug: compliance-1,
-              args: "--project compliance --shard=1/8",
+              args: "--project compliance --shard=1/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 2/8",
+              name: "compliance 2/12",
               slug: compliance-2,
-              args: "--project compliance --shard=2/8",
+              args: "--project compliance --shard=2/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 3/8",
+              name: "compliance 3/12",
               slug: compliance-3,
-              args: "--project compliance --shard=3/8",
+              args: "--project compliance --shard=3/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 4/8",
+              name: "compliance 4/12",
               slug: compliance-4,
-              args: "--project compliance --shard=4/8",
+              args: "--project compliance --shard=4/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 5/8",
+              name: "compliance 5/12",
               slug: compliance-5,
-              args: "--project compliance --shard=5/8",
+              args: "--project compliance --shard=5/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 6/8",
+              name: "compliance 6/12",
               slug: compliance-6,
-              args: "--project compliance --shard=6/8",
+              args: "--project compliance --shard=6/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 7/8",
+              name: "compliance 7/12",
               slug: compliance-7,
-              args: "--project compliance --shard=7/8",
+              args: "--project compliance --shard=7/12",
               binary: false,
               module: false,
             }
           - {
-              name: "compliance 8/8",
+              name: "compliance 8/12",
               slug: compliance-8,
-              args: "--project compliance --shard=8/8",
+              args: "--project compliance --shard=8/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 9/12",
+              slug: compliance-9,
+              args: "--project compliance --shard=9/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 10/12",
+              slug: compliance-10,
+              args: "--project compliance --shard=10/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 11/12",
+              slug: compliance-11,
+              args: "--project compliance --shard=11/12",
+              binary: false,
+              module: false,
+            }
+          - {
+              name: "compliance 12/12",
+              slug: compliance-12,
+              args: "--project compliance --shard=12/12",
               binary: false,
               module: false,
             }
