@@ -881,37 +881,37 @@ When a credential holding `webhooks.manage` sends `GET /webhooks`, the server MU
 
 ### `events/webhook-direct-read`
 
-When the owner's browser session or private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries`, the server MUST admit reads across every maker without creating a credential.
+When private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries`, the server MUST admit reads across every maker without creating a credential.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
+
+### `events/webhook-not-a-session`
+
+If the owner's browser session sends a request to any `/webhooks` door, then the server MUST answer `401 unauthorized`.
+
+**Reason:** a subscription belongs to the key or app that registered it, and a browser's session is neither. Its sign-in proves the owner is present now, which says nothing about whether the maker may still read what a redelivery would send. The private local socket keeps the owner's direct reads and redelivery.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses an owner's browser session on every webhook door with 401`.
 
 ### `events/webhook-maker`
 
 When the server lists or gets a subscription, the server MUST include its maker's `kind` (`key` or `app`), `id` (key ID or OAuth client ID) and current `name`, with `null` for a name no longer available.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-direct-retry`
 
-When the owner's browser session authenticated within five minutes or private local authority requests redelivery, the server MUST apply the same live subscription, maker, retention and retained-frame checks as a request by the subscription's maker.
+When private local authority requests redelivery, the server MUST apply the same live subscription, maker and retention checks as a request by the subscription's maker.
 
 **Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
-**Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through owner authority without exposing its frame`.
-
-### `events/webhook-direct-retry-recent`
-
-If the owner's browser session that requests redelivery signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A redelivery sends the maker's retained content to the maker's address again, so a browser left signed in, or a copied cookie, cannot cause one without the password.
-
-**Tests:** `compliance/webhooks-owner.test.ts › refuses the owner's redelivery to a browser session that signed in more than five minutes ago, and accepts it from a recent one`.
+**Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through local authority without exposing its frame`.
 
 ### `events/webhook-direct-mutations`
 
-When direct owner or local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.
+When private local authority sends a subscription create, update or delete, the server MUST refuse it with `401 unauthorized`.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-update`
 
@@ -1325,7 +1325,7 @@ If `GET /webhooks/{id}/deliveries` names a `limit` that is not a whole number of
 
 ## Retries
 
-A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or direct owner or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
+A delivery is attempted again when its receiver does not take it. The server attempts a pending delivery when its wait ends, with no job to run.
 
 ### `events/retry-5xx`
 
@@ -1381,11 +1381,13 @@ When a receiver answers every attempt with a retryable failure, the server MUST 
 
 **Tests:** `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
 
-### `events/retry-poll-run`
+### `events/retry-when-due`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
+When a pending delivery's wait ends, the server MUST attempt it without a request or a job run.
 
-**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`.
+**Reason:** a receiver that comes back is sent what it missed at the time the schedule names, not at the next run of a job.
+
+**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`, `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
 
 ### `events/retry-restart-once`
 
@@ -1457,11 +1459,11 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 ### `events/redeliver-conflict-reason`
 
-When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, `delivery_expired` if the delivery is older than the instance's audit retention, or `delivery_not_retained` if the server no longer holds the event in a form it can send.
+When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, or `delivery_expired` if the delivery is older than the instance's audit retention.
 
-**Reason:** the five refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again.
+**Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `dead_letter` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason the owner's redelivery is refused`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
 
 ### `events/redeliver-missing`
 
@@ -1559,9 +1561,9 @@ Where the instance does not allow private addresses, if the server answers `400 
 
 ### `events/address-name-unresolved`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, whose lookup does not finish within the registration limit of 3 seconds, or whose lookup the server does not make because it is already making two for registrations, then the server MUST answer `201`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup does not finish within the registration limit of 3 seconds, then the server MUST answer `201`.
 
-**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A lookup cannot be cancelled and holds a thread the server shares, so the number running at once is bounded, and the check at each attempt (`events/address-name-unsent`) still has the final say. The attempt records `The receiver could not be reached.` if it still fails.
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
 
 **Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
 
@@ -1633,11 +1635,11 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 ### `events/schedule-fails-visibly`
 
-If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST end each run of `webhook-schedule` with `last_outcome` `error`.
+If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST report an unhandled fault and queue no delivery for any event past the position.
 
-**Reason:** a gap the scheduler cannot account for would otherwise skip events that fan out without saying so.
+**Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
 
-**Tests:** `compliance/webhook-schedule-gap.test.ts › ends a webhook-schedule run with error when its log position cannot be accounted for`.
+**Tests:** `compliance/webhook-schedule-gap.test.ts › reports a place the log cannot account for as an unhandled fault, and queues nothing past it`.
 
 ### `events/webhook-bulk-backlog`
 

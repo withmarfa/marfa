@@ -9728,7 +9728,7 @@
               "string",
               "null"
             ],
-            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered."
+            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. `null` when Marfa sends item events of every type. Edge events aren't filtered."
           },
           "secret": {
             "type": "string",
@@ -9751,6 +9751,7 @@
           "id",
           "url",
           "events",
+          "type_filter",
           "secret",
           "active",
           "created_at",
@@ -36354,7 +36355,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.",
+        "description": "Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -36611,7 +36612,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.",
+        "description": "Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37674,7 +37675,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.",
+        "description": "Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37996,7 +37997,7 @@
           "Webhooks"
         ],
         "summary": "Redeliver a webhook delivery",
-        "description": "Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
+        "description": "Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -38123,7 +38124,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes.",
+            "description": "- `forbidden`: you don't have `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38183,7 +38184,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held.",
+            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention.",
             "content": {
               "application/json": {
                 "schema": {
@@ -62749,7 +62750,7 @@
     },
     {
       "name": "Webhooks",
-      "description": "Changes sent to a URL you choose, and each delivery's record.",
+      "description": "Changes sent to a URL you choose, and each delivery's record. Keys and apps use these endpoints; the owner's browser session can't.",
       "x-operation-order": [
         "createWebhook",
         "getWebhook",

@@ -4,7 +4,6 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext, WebhookDelivery } from "../../client/types.js";
 import {
   createTestContext,
-  getManagementClient,
   trackEdge,
   trackEdgeType,
   trackItem,
@@ -125,8 +124,7 @@ interface ScriptedReceiver {
   /**
    * The subscriptions made on this receiver. `close` deletes them first: a
    * subscription left active after its receiver is gone queues a failing
-   * delivery for every later note, and the attempt job claims only 50 due
-   * rows per run, so a backlog of them starves a fresh delivery.
+   * delivery for every later note, and a backlog of them delays a fresh one.
    */
   webhooks: { id: string; owner: MarfaClient }[];
   close: () => Promise<void>;
@@ -207,23 +205,11 @@ async function deliveryOf(
 }
 
 /**
- * Run the attempt job until `done`, so a retry whose wait has passed is
- * attempted now rather than at the job's own 30 second cadence. A run
- * before the wait ends attempts nothing; a run while the job's own cadence
- * holds it answers 409 and is run again.
+ * Waits until `done`: the server attempts a retry once its wait ends, with
+ * nothing to run.
  */
-async function runRetriesUntil(done: () => boolean, what: string) {
-  const manager = getManagementClient();
-  await waitFor(
-    what,
-    async () => {
-      if (done()) return true;
-      await manager.runHousekeeping("webhook-poll");
-      await new Promise((r) => setTimeout(r, 200));
-      return done() ? true : undefined;
-    },
-    60_000,
-  );
+async function waitForRetries(done: () => boolean, what: string) {
+  await waitFor(what, async () => (done() ? true : undefined), 60_000);
 }
 
 const signedAt = (attempt: Attempt): number =>
@@ -314,7 +300,7 @@ describe("outbound webhook delivery", () => {
         attempt: 1,
       });
 
-      await runRetriesUntil(
+      await waitForRetries(
         () => hook.attempts("retried").length >= 2,
         "the retry",
       );
@@ -357,7 +343,7 @@ describe("outbound webhook delivery", () => {
     try {
       const sub = await subscribe(hook, "retry-after");
       await makeNote("retry-after");
-      await runRetriesUntil(
+      await waitForRetries(
         () => hook.attempts("retry-after").length >= 3,
         "the third attempt",
       );
@@ -412,7 +398,7 @@ describe("outbound webhook delivery", () => {
 
       // The retried two are attempted again, and the run that does so would
       // have picked up any other row still pending.
-      await runRetriesUntil(
+      await waitForRetries(
         () =>
           hook.attempts("408").length >= 2 && hook.attempts("429").length >= 2,
         "the retries of the 408 and the 429",
@@ -509,7 +495,7 @@ describe("outbound webhook delivery", () => {
           (label) => hook.attempts(label)[0]!.at,
         ),
       );
-      await runRetriesUntil(
+      await waitForRetries(
         () =>
           hook.attempts("control").length >= 2 &&
           Date.now() >= lastFirst + 1500,
@@ -628,13 +614,12 @@ describe("outbound webhook delivery", () => {
       }
 
       // Every subscription's retry is due once the last first attempt is
-      // 1.5 seconds old, and each still selecting the event is retried by
-      // the run that finds it due, so waiting for both (not the control
-      // alone) leaves none to the job's own 30 second cadence.
+      // 1.5 seconds old, and each still selecting the event is retried then,
+      // so waiting for both, not the control alone, leaves none unsent.
       const lastFirst = Math.max(
         ...[...subs.keys()].map((label) => hook.attempts(label)[0]!.at),
       );
-      await runRetriesUntil(
+      await waitForRetries(
         () =>
           Date.now() >= lastFirst + 1500 &&
           ["unrelated", "control"].every(
@@ -775,7 +760,7 @@ describe("outbound webhook delivery", () => {
         error: "HTTP 503",
       });
 
-      await runRetriesUntil(
+      await waitForRetries(
         () => hook.attempts("cleared").length >= 2,
         "the retry",
       );
@@ -831,7 +816,7 @@ describe("outbound webhook delivery", () => {
       });
       expect(narrowed.ok, JSON.stringify(narrowed.error)).toBe(true);
       refuse = false;
-      await runRetriesUntil(
+      await waitForRetries(
         () => hook.attempts("narrowed").length >= 2,
         "the retry",
       );
@@ -879,7 +864,7 @@ describe("outbound webhook delivery", () => {
         hook.attempts("narrowed-away")[0]!.at,
         hook.attempts("control")[0]!.at,
       );
-      await runRetriesUntil(
+      await waitForRetries(
         () =>
           hook.attempts("control").length >= 2 &&
           Date.now() >= lastFirst + 1500,
@@ -1261,7 +1246,7 @@ describe("outbound webhook delivery", () => {
         hook.attempts("manage-removed")[0]!.at,
         hook.attempts("control")[0]!.at,
       );
-      await runRetriesUntil(
+      await waitForRetries(
         () =>
           hook.attempts("control").length >= 2 &&
           Date.now() >= lastFirst + 1500,
@@ -1458,7 +1443,7 @@ describe("outbound webhook delivery", () => {
       expect(retyped.data.item.type).toBe("core.task");
 
       refuse = false;
-      await runRetriesUntil(
+      await waitForRetries(
         () => hook.attempts("retyped").length >= 2,
         "the retry",
       );
@@ -1642,7 +1627,7 @@ describe("outbound webhook delivery", () => {
           hook.attempts("narrowed-source")[0]!.at,
           hook.attempts("control")[0]!.at,
         );
-        await runRetriesUntil(
+        await waitForRetries(
           () =>
             hook.attempts("control").length >= 2 &&
             Date.now() >= lastFirst + 1500,

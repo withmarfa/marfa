@@ -1089,7 +1089,7 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.
+         * @description Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.
          */
         get: operations["listWebhooks"];
         put?: never;
@@ -1113,7 +1113,7 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.
+         * @description Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.
          */
         get: operations["getWebhook"];
         put?: never;
@@ -1141,7 +1141,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.
+         * @description Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1163,7 +1163,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a webhook delivery
-         * @description Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.
+         * @description Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -6141,8 +6141,8 @@ export interface components {
             url: string;
             /** @description The events Marfa sends, such as `item.created`. */
             events: string[];
-            /** @description The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered. */
-            type_filter?: string | null;
+            /** @description The type, with its subtypes, or the pattern whose item events Marfa sends. `null` when Marfa sends item events of every type. Edge events aren't filtered. */
+            type_filter: string | null;
             /** @description The key Marfa signs each delivery with. Only `POST /webhooks` returns it whole; other responses show `****` and its last four characters. */
             secret: string;
             /** @description `true` if Marfa sends events to the webhook. */
@@ -19838,7 +19838,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19868,7 +19868,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held. */
+            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

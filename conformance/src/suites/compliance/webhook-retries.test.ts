@@ -7,7 +7,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { movedClock, runJob } from "../../utils/moved-clock.js";
+import { movedClock } from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 import {
   startReceiver,
@@ -20,8 +20,8 @@ import {
  * wait.
  *
  * A server of its own, because the waits run to hours and a fixture reaches
- * them only by moving the server's clock past each one, then running the
- * `webhook-poll` job. The receiver is the harness's: it fails each attempt as
+ * them only by moving the server's clock past each one, which the server
+ * notices at once. The receiver is the harness's: it fails each attempt as
  * the case tells it to, and names a `Retry-After` when the case asks.
  */
 const SECOND = 1000;
@@ -38,6 +38,10 @@ interface Answer {
 /** What the receiver answers the nth attempt on a path with. */
 type Plan = (attempt: number) => Answer;
 const plans = new Map<string, Plan>();
+
+/** Time for the server to act on what woke it. Each absence checked after it
+ *  has the arrival that follows as its witness. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 1000));
 
 function answerFor(received: Received): Answer {
   const label = received.path.replace(/^\/hook\//, "");
@@ -86,8 +90,6 @@ async function begin(label: string, plan: Plan): Promise<string> {
   });
   expect(created.status, JSON.stringify(created.error)).toBe(201);
   await write(label);
-  expect((await runJob(server, "webhook-schedule")).outcome).toBe("ok");
-  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
   return created.data.id;
 }
 
@@ -140,25 +142,26 @@ async function waitOut(
   notBeforeMs: number,
 ): Promise<void> {
   await clock.advance(notBeforeMs - 1);
-  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
+  await settle();
   expect(
     arrivals(label).length,
     `attempt ${String(n + 1)} came before ${String(notBeforeMs)} ms`,
   ).toBe(n);
   await clock.advance(1);
-  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
   await waitFor(
     `attempt ${String(n + 1)} of ${label} at its deadline`,
     async () => (arrivals(label).length > n ? true : undefined),
     60_000,
   );
   expect(arrivals(label)).toHaveLength(n + 1);
+  // The server signs with its own clock, which stands at the deadline. The
+  // receiver's record of the arrival can come before the move's own answer
+  // has moved the fixture's copy of the clock, so it is not compared.
   const arrived = arrivals(label)[n]!;
-  expect(arrived.at).toBe(clock.now());
   const timestamp = Number(
     /^t=(\d+),/.exec(String(arrived.headers["x-marfa-signature"]))?.[1],
   );
-  expect(timestamp).toBe(Math.floor(arrived.at / SECOND));
+  expect(timestamp).toBe(Math.floor(clock.now() / SECOND));
 }
 
 /** A Retry-After date `ms` ahead of the server's clock. */
@@ -179,9 +182,8 @@ describe("webhook retry waits", () => {
       for (let n = 1; n <= SCHEDULE.length; n += 1) {
         await attemptRecorded("schedule", id, n, "pending");
         if (n === 2) {
-          // A delayed harness and an automatic poll must not consume the next wait.
+          // Time passing on the host must not consume the next wait.
           await new Promise((resolve) => setTimeout(resolve, 6000));
-          await runJob(server, "webhook-poll");
           expect(arrivals("schedule")).toHaveLength(n);
         }
         await waitOut("schedule", n, SCHEDULE[n - 1]!);
@@ -196,10 +198,10 @@ describe("webhook retry waits", () => {
       );
       expect(ids.size, "one delivery_id across the attempts").toBe(1);
 
-      // The witness that the poll would send a ninth if one were due: the
+      // The witness that the server would send a ninth if one were due: the
       // clock goes past the longest wait there is.
       await clock.advance(2 * SCHEDULE[6]!);
-      await runJob(server, "webhook-poll");
+      await settle();
       expect(arrivals("schedule")).toHaveLength(8);
     } finally {
       await end(id);
@@ -275,7 +277,7 @@ describe("webhook retry waits", () => {
         await attemptRecorded(label, id, 1, "pending");
         const arrived = arrivals(label)[0]!;
         await server.restart({ signal });
-        await runJob(server, "webhook-poll");
+        await settle();
         if (clock.now() - arrived.at < 120 * SECOND) {
           expect(
             arrivals(label),
@@ -284,11 +286,9 @@ describe("webhook retry waits", () => {
         }
 
         await clock.advance(120 * SECOND);
-        await runJob(server, "webhook-poll");
         await attemptRecorded(label, id, 2, "success");
-        // A second run and the server's own cadence find nothing more to send.
-        await runJob(server, "webhook-poll");
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // The server finds nothing more to send.
+        await settle();
         expect(arrivals(label), "a restart sent an attempt twice").toHaveLength(
           2,
         );
@@ -319,15 +319,15 @@ describe("webhook retry waits", () => {
     // Entitled to none of what is written.
     const c = await subscribe("queued-c", ["item.deleted"]);
     try {
-      // Hold the job before it starts, write the events, then hold it again
-      // once it has queued their deliveries and not yet recorded its place
-      // in the event log, so the events are all behind it when it stops.
-      await server.setFault("hold:housekeeping:webhook-schedule");
+      // Hold the sender before it schedules, write the events, then hold it
+      // again once it has queued their deliveries and not yet recorded its
+      // place in the event log, so the events are all behind it when it stops.
+      await server.setFault("hold:webhook-schedule");
       for (const body of ["queued-1", "queued-2", "queued-3"]) {
         await write(body);
       }
       await server.setFault("hold:webhook-schedule:queued");
-      await server.clearFault("hold:housekeeping:webhook-schedule");
+      await server.clearFault("hold:webhook-schedule");
       await server.waitForHold("hold:webhook-schedule:queued");
 
       await server.restart({ signal: "SIGKILL" });
@@ -344,10 +344,8 @@ describe("webhook retry waits", () => {
             : undefined,
         60_000,
       );
-      // The runs that could queue a second set have run.
-      await runJob(server, "webhook-schedule");
-      await runJob(server, "webhook-poll");
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Time for a second scheduling of the same events to show.
+      await settle();
 
       for (const [label, webhook] of [
         ["queued-a", a],
