@@ -1,7 +1,4 @@
-//! One JSON-RPC message in a POST, and how it is told apart: a request of the 2026-07-28
-//! revision carries its protocol version, capabilities and client in `params._meta` and names
-//! its method and tool in headers; a request of an earlier revision opens with `initialize` or
-//! carries no claim. Neither era keeps a session, so every message stands alone.
+//! Classifies stateless JSON-RPC requests across supported MCP revisions.
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -340,8 +337,7 @@ fn unsupported(id: Value, requested: Option<&str>) -> Reply {
     )
 }
 
-/// A request of the modern revision names its version, method and, for a tool call, the tool,
-/// in headers a gateway can route on; each must say what the body says.
+/// Gateway routing headers must agree with the request body.
 fn standard_headers(
     headers: &HeaderMap,
     id: &Value,

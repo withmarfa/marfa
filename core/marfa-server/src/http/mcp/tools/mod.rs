@@ -1,5 +1,4 @@
-//! The tools: each reads its arguments against its input schema, calls the application layer
-//! with the credential that called, and answers a payload or the refusal that stopped it.
+//! Validates tool arguments and dispatches with the caller's credential.
 
 mod create;
 mod delete;
@@ -38,8 +37,7 @@ fn definitions() -> Vec<Definition> {
     ]
 }
 
-/// Whether a credential is offered `name`: every tool reads or writes items, and a tool that
-/// changes them is for a credential that may write.
+/// Write tools require write access to a type.
 fn offered(caller: &Caller, name: &str) -> bool {
     if !caller.reaches_a_type() {
         return false;

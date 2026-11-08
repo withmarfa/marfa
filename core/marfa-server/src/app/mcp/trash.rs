@@ -1,5 +1,4 @@
-//! Moving items to the trash on a confirmation: a preview names everything the trash would
-//! take and signs it, and the confirmed call trashes on that plan alone.
+//! A confirmation binds a trash operation to its preview.
 
 use std::sync::Arc;
 
@@ -77,8 +76,7 @@ pub fn token_for(
     )
 }
 
-/// `fresh` is the preview read for this call. The token is checked against it, and the trash
-/// commits only if its plan is still that one; the token is spent in the same transaction.
+/// The trash plan and token spend commit together.
 pub async fn confirmed(
     app: &Arc<App>,
     caller: &Caller,

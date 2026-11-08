@@ -1,5 +1,4 @@
-//! `marfa_update`: an item's fields, tags, edges and state, in steps that each name the version
-//! the one before left.
+//! Updates items in steps guarded by the preceding step's version.
 
 use std::sync::Arc;
 
@@ -198,9 +197,7 @@ fn same_time(a: Option<&str>, b: Option<&str>) -> bool {
     }
 }
 
-/// The fields the call would change that a write since `base` changed too: a field sent at
-/// the value it had at `base` is not a change, and a field `replace` leaves out or
-/// `clear_properties` names is cleared, which is where `base` held it.
+/// Reports fields both sides changed, including fields removed by replacement.
 fn conflicting_fields(
     arguments: &Map<String, Value>,
     base: &Value,
@@ -269,8 +266,7 @@ fn conflicting_fields(
     fields
 }
 
-/// The refusal of a call whose version is not the item's: the item now, and which of the
-/// fields the call would set were also changed by a write since the version it read.
+/// Reports the current item and overlapping changes for a stale version.
 async fn stale_answer(
     app: &Arc<App>,
     caller: &Caller,
@@ -378,9 +374,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     let read = items::detail(app, caller, id.clone(), Detail::default()).await;
     let current = match read {
         Ok(text) => parsed(&text)?.get("item").cloned().unwrap_or(Value::Null),
-        // A trashed item is read by no ID, so it is restored by a transition that names the
-        // version: a move to the trash keeps the version, and the transition moves nothing
-        // if it differs.
+        // Trashed items cannot be read by ID; restoration checks their retained version.
         Err(refusal) if refusal.code == Code::ItemNotFound && restore_only(&arguments) => {
             let change = Change::Transition {
                 id: id.clone(),

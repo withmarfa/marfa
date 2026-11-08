@@ -1,7 +1,4 @@
-//! `/mcp`: the Model Context Protocol over plain POSTs. Each message is one request and one
-//! JSON answer. There are no sessions and no streams, so any instance of the server answers any
-//! message, and the same credential is offered the same tools whichever revision the client
-//! speaks.
+//! Stateless MCP over POST, with JSON responses.
 
 mod results;
 mod rpc;
@@ -59,8 +56,7 @@ fn unauthenticated(app: &App) -> Response {
     )
 }
 
-/// A page may call the endpoint only from an origin this instance serves or an app the owner
-/// approved; a request with no `Origin` is not a browser's.
+/// Accepts instance and approved app origins when Origin is present.
 async fn origin_allowed(app: &Arc<App>, headers: &HeaderMap) -> bool {
     let Some(origin) = headers.get(ORIGIN) else {
         return true;
@@ -144,8 +140,7 @@ fn listing(era: Era, caller: &Caller) -> Value {
     complete(era, result)
 }
 
-/// The scope an app could be asked for to get past a refusal: the one the refusal names, or
-/// the one for the type or edge type it names, and only one an app can be granted.
+/// Challenges name only scopes an app can be granted.
 fn missing_scope(app: &App, stop: &Stop) -> Option<String> {
     let details = stop.refusal.as_ref()?.details.as_ref()?;
     let scope = match details.get("required_scope").and_then(Value::as_str) {
@@ -293,8 +288,7 @@ async fn post(State(app): State<Arc<App>>, request: Request) -> Response {
     }
 }
 
-/// The endpoint holds no session and opens no stream, so there is nothing for a GET to listen
-/// to or a DELETE to end.
+/// Without sessions or streams, GET and DELETE have no operation.
 async fn only_post() -> Response {
     let mut response = Reply::error(
         StatusCode::METHOD_NOT_ALLOWED,

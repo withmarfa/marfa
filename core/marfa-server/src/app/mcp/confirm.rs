@@ -1,7 +1,4 @@
-//! The confirmation a tool asks for before a change the person must agree to. A preview returns
-//! a token that signs the credential, what the preview covered and an expiry; the change goes
-//! ahead only on a token a fresh preview still matches, and a token is spent in the transaction
-//! of the change it allowed, so it allows one change.
+//! Signed confirmations bind one change to its credential and preview.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -37,7 +34,7 @@ pub enum Check {
     Changed,
 }
 
-/// The signature part of a token and its expiry, which is all a spent record keeps.
+/// The signed token's expiry and signature.
 pub struct Parsed {
     pub signature: String,
     pub expires_at_ms: i64,
@@ -68,8 +65,7 @@ pub fn subject_digest(ids: &[String], digest: &str) -> String {
     ))
 }
 
-/// What the named items alone are, without what the plan took with them, so a spent record can
-/// tell a repeat of the same call from another call that holds the token.
+/// Hashes only requested IDs so retries match after the trash changes.
 pub fn ids_digest(ids: &[String]) -> String {
     let mut sorted: Vec<&str> = ids.iter().map(String::as_str).collect();
     sorted.sort_unstable();
@@ -181,8 +177,7 @@ pub fn spend(
     Ok(())
 }
 
-/// A spent record outlives its token only by what a clock offset allows, so it goes with the
-/// next write that checks one.
+/// Removes expired records during the next confirmation write.
 pub fn sweep(tx: &Transaction<'_>, now_ms: i64) -> Result<()> {
     tx.execute(
         "DELETE FROM mcp_spent_confirmations WHERE expires_at <= ?1",

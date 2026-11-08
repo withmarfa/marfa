@@ -530,8 +530,7 @@ async fn a_confirmation_works_once_and_a_second_use_says_so_without_trashing_aga
     assert_eq!(first.payload()["trashed"][0], id.as_str());
     assert!(first.payload().get("already_trashed").is_none());
 
-    // The witness that a second trash would show: the item comes back, and the replay must
-    // not take it away again.
+    // Restoring the item makes an unsafe replay observable.
     let restored = instance
         .tool(
             &token,
@@ -812,8 +811,7 @@ impl Files {
 }
 
 impl Instance {
-    /// Makes `files.test` resolve to what `lookups` says, reaching this machine where the
-    /// answer says `>127.0.0.1`.
+    /// Scripts DNS answers, optionally mapping them to a local test host.
     fn resolves(&self, lookups: &str) {
         self.app
             .faults

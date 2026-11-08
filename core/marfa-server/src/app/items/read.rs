@@ -446,8 +446,7 @@ pub struct Caption {
     pub preview: Option<String>,
 }
 
-/// A part is named after a host whose type the caller may read; an item the caller cannot
-/// read has no caption.
+/// Captions and host-derived names include only types the caller may read.
 pub async fn captions(
     app: &App,
     caller: &Caller,

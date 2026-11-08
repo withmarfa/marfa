@@ -1,5 +1,4 @@
-//! What the MCP tools need of the application beyond what every door shares: confirmations that
-//! allow one change, the trash on a confirmation, and files fetched from a web address.
+//! Confirmation and fetch operations used by MCP tools.
 
 pub mod confirm;
 pub mod fetch;

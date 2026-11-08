@@ -296,8 +296,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
     }
 }
 
-/// What one lookup of a host answers: the addresses a check judges, and the ones a connection
-/// reaches. The two differ only where a fault writes an address as `judged>reached`.
+/// `judged>reached` lets a public-address check connect to a local fixture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resolved {
     pub judged: Vec<IpAddr>,
@@ -486,8 +485,7 @@ impl Faults {
         true
     }
 
-    /// The answer a `resolve:<host>` fault gives this lookup. The last answer repeats, and each
-    /// lookup counts as one firing.
+    /// Each lookup fires once; the last scripted answer repeats.
     pub fn resolve(&self, host: &str) -> Option<Resolved> {
         let name = format!("resolve:{host}");
         let mut armed = self.armed();

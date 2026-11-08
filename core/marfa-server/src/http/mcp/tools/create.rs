@@ -1,5 +1,4 @@
-//! `marfa_create`: a new item, with a file fetched from a web address or the chat where one is
-//! named.
+//! Creates items, optionally fetching files from web or chat URLs.
 
 use std::sync::Arc;
 

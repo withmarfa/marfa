@@ -76,8 +76,7 @@ pub struct NamingHost {
     pub properties: String,
 }
 
-/// The oldest edge out of `id` that names a part: an edge of a `with-hosts` type, or `excerpt-of`,
-/// to a host whose type `readable` allows.
+/// Finds the oldest readable host through a `with-hosts` or `excerpt-of` edge.
 pub fn naming_host(
     tx: &Transaction<'_>,
     catalog: &Catalog,

@@ -352,8 +352,7 @@ fn put_of(body: &ReadBody) -> Result<Put> {
     })
 }
 
-/// An item to put, from the fields a caller sent. `exact` refuses a number the body held too
-/// large to keep, where the caller sent text that could hold one.
+/// `exact` checks the original number spelling before parsing loses it.
 pub(super) fn put_from(
     object: Map<String, Value>,
     exact: impl FnOnce() -> Result<()>,

@@ -1,21 +1,16 @@
-//! The shape of every tool answer: the payload as `structuredContent` and the same JSON as
-//! the one text block, which is what a client that reads only `content` gets. A refusal is
-//! the server's own error, with what the agent can do next.
+//! Tool payloads appear as structured content and JSON text.
 
 use serde_json::{Map, Value, json};
 
 use crate::app::refusal::Refusal;
 use crate::http::answer::refusal_body;
 
-/// How long one tool answer may be, as JSON text. A client caps what one tool answer may
-/// hold, and an answer past the cap is lost to the agent, so every tool keeps its answer
-/// under this.
+/// Bounds read answers so clients can hand them to the model whole.
 pub const ANSWER_BUDGET_CHARS: usize = 40_000;
 
 pub type Outcome = std::result::Result<Value, Stop>;
 
-/// A tool call that did not give its answer: the error the agent reads, the refusal it came
-/// from, and whether the call had already changed something.
+/// A failure tracks prior writes to prevent an unsafe step-up retry.
 pub struct Stop(Box<Detail>);
 
 pub struct Detail {
@@ -72,8 +67,7 @@ impl Stop {
         Stop::coded("validation_error", message)
     }
 
-    /// The server's refusal as the tool's error, with the members a refusal carries beside
-    /// its error, such as the item a stale version met.
+    /// Converts a refusal to a tool error.
     pub fn refused(refusal: Refusal) -> Stop {
         let body = serde_json::from_slice::<Value>(&refusal_body(&refusal)).unwrap_or(Value::Null);
         let mut error = match body.get("error").cloned() {
@@ -148,8 +142,7 @@ pub struct Part {
     pub total_chars: usize,
 }
 
-/// Text from `offset`, in code points, as much as takes at most `room` characters once
-/// written as a JSON string, with what was left.
+/// Cuts at code-point boundaries within the encoded JSON budget.
 pub fn cut_text(text: &str, offset: usize, room: usize) -> Part {
     let points: Vec<char> = text.chars().collect();
     let start = offset.min(points.len());
@@ -170,8 +163,7 @@ pub fn cut_text(text: &str, offset: usize, room: usize) -> Part {
     }
 }
 
-/// `value` against the part of JSON Schema the tools' inputs use, naming the first thing
-/// that does not fit.
+/// Validates the subset of JSON Schema used by tool inputs.
 pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     let at = if path.is_empty() {
         "the arguments"

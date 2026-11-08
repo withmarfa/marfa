@@ -350,8 +350,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_windows (
 
 CREATE INDEX IF NOT EXISTS rate_limit_windows_expiry ON rate_limit_windows (expires_at);
 
--- The confirmations an MCP tool has spent, until they would have expired. `token` is the
--- signature part of the confirmation, and `expires_at` is in milliseconds.
+-- Spent signatures expire at `expires_at`, in milliseconds.
 CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
     token TEXT PRIMARY KEY NOT NULL,
     credential TEXT NOT NULL,

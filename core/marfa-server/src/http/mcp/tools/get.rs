@@ -116,8 +116,7 @@ fn id_of(item: &Value) -> &str {
     item.get("id").and_then(Value::as_str).unwrap_or_default()
 }
 
-/// Every field of `items` longer than `limit` characters as JSON cut: text to its first part,
-/// and any other value left out.
+/// Cuts long text fields and omits other oversized values.
 fn cut_fields(items: &[Value], limit: usize) -> (Vec<Value>, Vec<Value>) {
     let mut cut = Vec::new();
     let fitted = items
@@ -162,9 +161,7 @@ fn cut_fields(items: &[Value], limit: usize) -> (Vec<Value>, Vec<Value>) {
     (fitted, cut)
 }
 
-/// The answer for `items`, kept within `budget` characters as JSON: the longest fields cut to
-/// one length, as long as lets the items fit, and then, with every field at its shortest, the
-/// last items left out and named.
+/// Cuts fields, then omits trailing items until the answer fits.
 fn fit_to_budget(items: Vec<Value>, not_found: &[String], budget: usize) -> Value {
     let fits = |answer: &Value| json_length(answer) <= budget;
     let mut answer = answer_of(&items, not_found, &[], &[]);

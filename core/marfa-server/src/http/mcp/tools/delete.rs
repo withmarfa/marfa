@@ -1,5 +1,4 @@
-//! `marfa_delete`: a preview of what the trash would take, and the trash on a confirmation that
-//! allows it once.
+//! Previews trash operations and executes them on single-use confirmations.
 
 use std::sync::Arc;
 

@@ -1,7 +1,4 @@
-//! The file an MCP tool fetches from a web address, to save as a blob. The address comes from
-//! an agent, so nothing about it is trusted: the name is resolved once, every answer must be
-//! public, the connection reaches only what was judged, no redirect is followed, and the size
-//! and time limits hold while the body arrives.
+//! Fetches untrusted URLs through public, pinned addresses without redirects.
 
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
@@ -111,8 +108,7 @@ pub struct Fetched {
     pub file_name: Option<String>,
 }
 
-/// What an address says of itself in the audit log: its path and query only as lengths, the path
-/// with a hash to match it by, since either can carry a token.
+/// Paths and queries can contain secrets; log only lengths and a path hash.
 fn audited(raw: &str, parsed: Option<&Url>) -> serde_json::Value {
     let Some(url) = parsed else {
         return serde_json::json!({ "address_length": raw.chars().count() });
@@ -140,8 +136,7 @@ fn checked(raw: &str) -> Result<Url, Reason> {
     if plain { Ok(url) } else { Err(Reason::BadUrl) }
 }
 
-/// Resolve once and judge every answer: a name that also answers an address that is not public
-/// is not trusted for the sake of its public one. The addresses returned are the ones to reach.
+/// Every DNS answer must be public; only checked addresses may be reached.
 fn resolved(app: &App, url: &Url) -> Result<Vec<SocketAddr>, Reason> {
     let port = url.port_or_known_default().ok_or(Reason::BadUrl)?;
     let (judged, reached): (Vec<IpAddr>, Vec<IpAddr>) = match url.host() {
@@ -294,8 +289,7 @@ fn stream(
     Ok(Fetched { blob, file_name })
 }
 
-/// Fetches `raw` for `caller` and stores it, and records the attempt in the audit log whatever
-/// came of it.
+/// Records every fetch attempt, including refusals.
 pub async fn file(
     app: &Arc<App>,
     caller: &Caller,
