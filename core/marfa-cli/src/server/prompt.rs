@@ -110,15 +110,4 @@ impl Prompter {
             }
         }
     }
-
-    pub fn secret(&self, question: &str, flag: &str) -> Result<String, CliError> {
-        if !self.asking {
-            return Err(CliError::Usage(format!("pass {flag}")));
-        }
-        let answer = rpassword::prompt_password(format!("{question}: "))?;
-        if answer.is_empty() {
-            return Err(CliError::Usage(format!("{question} is empty")));
-        }
-        Ok(answer)
-    }
 }
