@@ -453,7 +453,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     // The account a root install runs as owns the folder, and nobody else
     // can read it.
     let identity = if manager == Some(Manager::SystemdSystem) {
-        steps.say(&format!("Making the {} account...", account::NAME));
+        if account::lookup(account::NAME).is_none() {
+            steps.say(&format!("Making the {} account...", account::NAME));
+        }
         Some(account::ensure(&folder.dir, !out.json)?)
     } else {
         None

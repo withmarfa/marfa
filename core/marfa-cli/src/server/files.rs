@@ -9,9 +9,10 @@ use std::path::Path;
 use crate::error::CliError;
 
 pub const COMPOSE: &str = "compose.yaml";
-/// Read by Compose itself: the name, release and port. It holds no secret.
+/// What the install records, and what Compose reads for a Docker install. It
+/// holds no secret.
 pub const DOTENV: &str = ".env";
-/// Read by the server: its secrets and its address.
+/// Read by the server: its secrets and the proxy it trusts.
 pub const SETTINGS: &str = "marfa.env";
 /// Present from the run that makes the secrets until an install succeeds. It
 /// holds no secret.

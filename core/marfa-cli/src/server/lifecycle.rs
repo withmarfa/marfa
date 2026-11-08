@@ -408,7 +408,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let address = held_address
         .or_else(|| state.address.clone())
         .unwrap_or_else(|| super::local_address(state.port));
-    let tail = if running {
+    let tail = if healthy {
         String::new()
     } else {
         match (&service, &docker) {

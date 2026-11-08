@@ -299,28 +299,36 @@ pub fn linger(trace: bool) -> Result<Linger, CliError> {
     })
 }
 
-/// The last lines the service logged, for a person who finds it down.
+/// The last lines the service logged, for a person who finds it down. A user
+/// service's lines are in the system journal, which only some accounts may
+/// read, and in the account's own journal, which a machine that keeps its
+/// journal in memory does not have, so each is tried.
 pub fn log_tail(scope: Scope, name: &str, lines: usize, since: Option<u64>) -> String {
     let unit = service(name);
-    let mut command = Command::new(tool("journalctl"));
-    if scope == Scope::User {
-        command.arg("--user");
+    let selections: Vec<Vec<String>> = match scope {
+        Scope::User => vec![
+            vec!["--user-unit".into(), unit.clone()],
+            vec!["--user".into(), "-u".into(), unit],
+        ],
+        Scope::System => vec![vec!["-u".into(), unit]],
+    };
+    for selection in selections {
+        let mut command = Command::new(tool("journalctl"));
+        command
+            .args(&selection)
+            .args(["-n", &lines.to_string(), "--no-pager", "--output=cat"]);
+        if let Some(since) = since {
+            command.arg(format!("--since=@{since}"));
+        }
+        let text = command
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !text.is_empty() {
+            return text;
+        }
     }
-    command.args([
-        "-u",
-        &unit,
-        "-n",
-        &lines.to_string(),
-        "--no-pager",
-        "--output=cat",
-    ]);
-    if let Some(since) = since {
-        command.arg(format!("--since=@{since}"));
-    }
-    command
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_default()
+    String::new()
 }
 
 #[cfg(test)]

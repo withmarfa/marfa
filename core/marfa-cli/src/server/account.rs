@@ -79,7 +79,7 @@ pub fn ensure(dir: &Path, trace: bool) -> Result<Identity, CliError> {
     if trace {
         eprintln!("  $ useradd {}", arguments.join(" "));
     }
-    let ran = Command::new("useradd")
+    let ran = Command::new(useradd())
         .args(arguments)
         .output()
         .map_err(|error| {
@@ -97,6 +97,14 @@ pub fn ensure(dir: &Path, trace: bool) -> Result<Identity, CliError> {
     lookup(NAME).ok_or_else(|| {
         CliError::Install(format!("the {NAME} account was made and cannot be found"))
     })
+}
+
+/// Where `useradd` is, for a root whose `PATH` has no system folder.
+fn useradd() -> &'static str {
+    ["/usr/sbin/useradd", "/sbin/useradd", "/usr/bin/useradd"]
+        .into_iter()
+        .find(|path| Path::new(path).exists())
+        .unwrap_or("useradd")
 }
 
 pub fn own(path: &Path, identity: Identity) -> Result<(), CliError> {
