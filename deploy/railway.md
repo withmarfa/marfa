@@ -18,14 +18,14 @@ Keep the server at **one replica**, with **Serverless disabled**. The instance u
 
 ## Claim your instance
 
-Claim and recovery commands run inside the deployed server through Railway SSH. They use Marfa's protected local control socket.
+Claim and recovery commands run inside the deployed server through Railway SSH. They use Marfa's protected local control socket. The image has no shell, so each command is passed to `railway ssh` after `--` rather than typed into a session, and paths are written out in full.
 
-1. Install the [Railway CLI](https://docs.railway.com/cli#installing-the-cli) and sign in with `railway login`.
-2. In the Railway dashboard, right-click the Marfa server and select **Copy SSH Command**. Run that command in your terminal. Register an SSH key if Railway prompts you to do so.
-3. For browser setup, run the following inside the container and open the link it prints:
+1. Install the [Railway CLI](https://docs.railway.com/cli#installing-the-cli), sign in with `railway login`, and link a folder to the project with `railway link`. Register an SSH key if Railway prompts you to do so.
+2. Find the server's public domain in its **Settings**, such as `marfa-production.up.railway.app`.
+3. For browser setup, run the following and open the link it prints:
 
    ```sh
-   marfa --socket "$MARFA_CONTROL_SOCKET" setup open --address "https://$RAILWAY_PUBLIC_DOMAIN" --no-browser
+   railway ssh -- marfa --socket /data/control/marfa.sock setup open --address https://<your-domain> --no-browser
    ```
 
 4. Create your owner account in that browser window.
@@ -33,7 +33,7 @@ Claim and recovery commands run inside the deployed server through Railway SSH. 
 To set up entirely in the terminal, replace step 3 with:
 
 ```sh
-marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --address "https://$RAILWAY_PUBLIC_DOMAIN" --email you@example.com --name "Your name"
+railway ssh -- marfa --socket /data/control/marfa.sock setup claim --address https://<your-domain> --email you@example.com --name "Your name"
 ```
 
 Enter your email and name in the command. The password uses a hidden prompt.
@@ -60,14 +60,13 @@ Keep the previous volume until you are sure you don't need it.
 
 ## Recover a forgotten password
 
-1. Connect to the running Marfa server using its copied Railway SSH command.
-2. Run the following inside the container:
+1. From the folder you linked with `railway link`, run:
 
    ```sh
-   marfa --socket "$MARFA_CONTROL_SOCKET" owner recover
+   railway ssh -- marfa --socket /data/control/marfa.sock owner recover
    ```
 
-3. Enter the new password at the hidden prompt, then sign in with it.
+2. Enter the new password at the hidden prompt, then sign in with it.
 
 Recovery ends existing browser sessions and preserves app access. It uses the same protected socket as claim. Keep the data volume and instance secrets in place throughout recovery.
 
