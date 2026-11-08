@@ -109,8 +109,8 @@ if native:
 parts.append(("The Rust standard library", "MIT OR Apache-2.0, with the licences of its own parts", "the Rust distribution that built the program"))
 if linux:
     parts.append(("musl libc 1.2.2-git-50-gb76f37fd", "MIT", "the COPYRIGHT file of musl at that commit"))
-    if native:
-        parts.append(("libstdc++ and libgcc from GCC 11.2.1", "GPL-3.0-or-later WITH GCC-exception-3.1", "COPYING3 and COPYING.RUNTIME of GCC 11.2.0"))
+    gcc = "libstdc++ and libgcc" if native else "libgcc"
+    parts.append((f"{gcc} from GCC 11.2.1", "GPL-3.0-or-later WITH GCC-exception-3.1", "COPYING3 and COPYING.RUNTIME of GCC 11.2.0"))
 for name, licence, source in parts:
     out.append(f"- {name}: {licence}. Text: {source}.")
 out.append(f"- {len(seen)} Rust crates (listed below with their licences).")
@@ -128,9 +128,8 @@ for name in ("MIT.txt", "Apache-2.0.txt"):
     section(f"Rust standard library: {name}", "share/doc/rust/licenses/" + name + " of the Rust distribution", read(os.path.join(rust_docs, "licenses", name)))
 if linux:
     section("musl libc", "COPYRIGHT of musl (manifest.txt)", read(os.path.join(stage, "musl.txt")))
-    if native:
-        section("libstdc++ and libgcc: GNU GPL version 3", "COPYING3 of GCC 11.2.0 (manifest.txt)", read(os.path.join(stage, "gcc-copying3.txt")))
-        section("libstdc++ and libgcc: GCC Runtime Library Exception 3.1", "COPYING.RUNTIME of GCC 11.2.0 (manifest.txt)", read(os.path.join(stage, "gcc-runtime-exception.txt")))
+    section(f"{gcc}: GNU GPL version 3", "COPYING3 of GCC 11.2.0 (manifest.txt)", read(os.path.join(stage, "gcc-copying3.txt")))
+    section(f"{gcc}: GCC Runtime Library Exception 3.1", "COPYING.RUNTIME of GCC 11.2.0 (manifest.txt)", read(os.path.join(stage, "gcc-runtime-exception.txt")))
 
 # A crate's licence files are its own, from the source Cargo.lock pinned.
 names = ("LICENSE", "LICENCE", "COPYING", "UNLICENSE", "NOTICE", "COPYRIGHT")
