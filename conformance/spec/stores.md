@@ -390,6 +390,14 @@ If a caller authorized by `blobs.manage` or direct owner or local authority send
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
+### `stores/drop-unreadable-minimum`
+
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` while the stored `blob_min_copies` is outside the values it accepts, then the server MUST answer `500 internal_error` without changing any copy.
+
+**Reason:** a drop that fell back to the default minimum of 1 could remove a copy the stored minimum keeps.
+
+**Tests:** `compliance/blob-store-settings.test.ts › refuses a drop 500 while blob_min_copies does not read, ahead of the minimum's 409, and keeps the copy`.
+
 ### `stores/drop-no-copy`
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_copy_not_found`.
@@ -424,11 +432,11 @@ If a caller authorized by `blobs.manage` or direct owner or local authority send
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a write or a deletion of the blob's bytes that is still out (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a write or a deletion of the blob's bytes that is still out (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; a stored `blob_min_copies` outside the values it accepts (`stores/drop-unreadable-minimum`), `500 internal_error`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
 **Reason:** the copy record is read before any store is asked, so a drop that the copy record alone refuses is answered without waiting on a store. A write or a deletion still out comes before the copy record's answers because the store can still be changing the blob's bytes, so a store that is not attached is also answered `503` while one is out.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
+**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/blob-store-settings.test.ts › refuses a drop 500 while blob_min_copies does not read, ahead of the minimum's 409, and keeps the copy`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
 ### `stores/drop-unfinished`
 

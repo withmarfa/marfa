@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
 use super::refusal::{Code, Refusal, Result};
-use super::{App, config};
+use super::{App, config, stored};
 use crate::db::Write;
 use crate::settings::registry::{Setting, Snapshot};
 
@@ -227,12 +227,16 @@ pub fn runs_statements(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name && job.statements)
 }
 
-/// The instant a retention keeps records from, or `None` while it is zero and
-/// keeps everything. Read as a job is about to delete, so a change takes effect
-/// at the next batch.
-pub fn cutoff(app: &App, retention: Setting<u64>, unit_ms: i64) -> Option<String> {
-    let kept = app.settings.live().get(retention);
-    (kept > 0).then(|| ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms))
+/// The instant a retention keeps records from, or `None` while it is zero and keeps everything.
+/// Read from `tx`, since the live settings lag a change the writer has committed.
+pub fn cutoff(
+    tx: &rusqlite::Transaction<'_>,
+    app: &App,
+    retention: Setting<u64>,
+    unit_ms: i64,
+) -> Result<Option<String>> {
+    let kept = stored::deciding(tx, &app.settings.seeds(), retention)?;
+    Ok((kept > 0).then(|| ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms)))
 }
 
 pub fn ago(app: &App, amount: i64, unit_ms: i64) -> String {
